@@ -13,6 +13,7 @@ SET ( SOURCES
   ${SOURCES}
   controllercomp.cpp
   apriltagsI.cpp
+apriltagsI.cpp
 
   genericmonitor.cpp
   commonbehaviorI.cpp
@@ -25,6 +26,7 @@ SET ( SOURCES
 SET ( HEADERS
   ${HEADERS}
   apriltagsI.h
+apriltagsI.h
 
   genericmonitor.h
   commonbehaviorI.h

@@ -4,7 +4,8 @@
 # This property is used to configure the endpoints of the subscriber adapter.
 #
 CommonBehavior.Endpoints=tcp -p 12235
-AprilTagsTopic.Endpoints=tcp -p 10261
+AprilTags0Topic.Endpoints=tcp -p 12236
+AprilTags1Topic.Endpoints=tcp -p 12237
 
 # Remote servers proxies example
 #RemoteProxy = remote:tcp -h remotehost -p 10001

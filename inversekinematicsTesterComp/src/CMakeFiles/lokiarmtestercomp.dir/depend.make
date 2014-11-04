@@ -2375,7 +2375,7 @@ src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/components/robocomp-u
 
 src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.o: /home/pbustos/robocomp/classes/qlog/qlog.h
 src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.o: /home/pbustos/robocomp/classes/rapplication/rapplication.h
-src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.o: /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsComp/src/target.h
+src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.o: /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsComp/src/target.h
 src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.o: src/commonbehaviorI.h
 src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.o: src/config.h
 src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.o: src/genericmonitor.h
@@ -5133,7 +5133,7 @@ src/CMakeFiles/lokiarmtestercomp.dir/moc_specificmonitor.cxx.o: src/JointMotor.h
 src/CMakeFiles/lokiarmtestercomp.dir/moc_specificmonitor.cxx.o: src/ui_guiDlg.h
 
 src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.o: /home/pbustos/robocomp/classes/qlog/qlog.h
-src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.o: /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsComp/src/target.h
+src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.o: /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsComp/src/target.h
 src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.o: src/moc_specificworker.cxx
 src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.o: src/specificworker.h
 src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.o: /opt/robocomp/include/innermodel/innermodel.h
@@ -6071,7 +6071,7 @@ src/CMakeFiles/lokiarmtestercomp.dir/specificmonitor.cpp.o: src/JointMotor.h
 src/CMakeFiles/lokiarmtestercomp.dir/specificmonitor.cpp.o: src/ui_guiDlg.h
 
 src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.o: /home/pbustos/robocomp/classes/qlog/qlog.h
-src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.o: /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsComp/src/target.h
+src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.o: /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsComp/src/target.h
 src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.o: src/specificworker.cpp
 src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.o: src/specificworker.h
 src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.o: /opt/robocomp/include/innermodel/innermodel.h

@@ -18,7 +18,7 @@
  */
 #include "apriltagsI.h"
 
-AprilTagsI::AprilTagsI(GenericWorker *_worker, QObject *parent) : QObject(parent)
+AprilTags0I::AprilTags0I(GenericWorker *_worker, QObject *parent) : QObject(parent)
 {
 	worker = _worker;
 	mutex = worker->mutex;       // Shared worker mutex
@@ -26,14 +26,34 @@ AprilTagsI::AprilTagsI(GenericWorker *_worker, QObject *parent) : QObject(parent
 }
 
 
-AprilTagsI::~AprilTagsI()
+AprilTags0I::~AprilTags0I()
 {
 	// Free component resources here
 }
 
 // Component functions, implementation
-void AprilTagsI::newAprilTag(const tagsList& tags, const Ice::Current&){
-	worker->newAprilTag(tags);
+void AprilTags0I::newAprilTag(const tagsList& tags, const Ice::Current&){
+	worker->newAprilTag0(tags);
+}
+
+
+
+AprilTags1I::AprilTags1I(GenericWorker *_worker, QObject *parent) : QObject(parent)
+{
+	worker = _worker;
+	mutex = worker->mutex;       // Shared worker mutex
+	// Component initialization...
+}
+
+
+AprilTags1I::~AprilTags1I()
+{
+	// Free component resources here
+}
+
+// Component functions, implementation
+void AprilTags1I::newAprilTag(const tagsList& tags, const Ice::Current&){
+	worker->newAprilTag1(tags);
 }
 
 

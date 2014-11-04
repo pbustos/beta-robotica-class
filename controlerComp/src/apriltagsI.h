@@ -31,12 +31,29 @@
 
 using namespace RoboCompAprilTags;
 
-class AprilTagsI : public QObject , public virtual RoboCompAprilTags::AprilTags
+class AprilTags0I : public QObject , public virtual RoboCompAprilTags::AprilTags
 {
 Q_OBJECT
 public:
-	AprilTagsI( GenericWorker *_worker, QObject *parent = 0 );
-	~AprilTagsI();
+	AprilTags0I( GenericWorker *_worker, QObject *parent = 0 );
+	~AprilTags0I();
+	void  newAprilTag(const tagsList& tags, const Ice::Current& = Ice::Current());
+
+
+	QMutex *mutex;
+private:
+
+	GenericWorker *worker;
+public slots:
+
+
+};
+class AprilTags1I : public QObject , public virtual RoboCompAprilTags::AprilTags
+{
+Q_OBJECT
+public:
+	AprilTags1I( GenericWorker *_worker, QObject *parent = 0 );
+	~AprilTags1I();
 	void  newAprilTag(const tagsList& tags, const Ice::Current& = Ice::Current());
 
 

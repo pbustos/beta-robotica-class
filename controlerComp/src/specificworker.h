@@ -33,7 +33,9 @@ public:
 	SpecificWorker(MapPrx& mprx, QObject *parent = 0);	
 	~SpecificWorker();
 	bool setParams(RoboCompCommonBehavior::ParameterList params);
-	void  newAprilTag(const tagsList& tags);
+	void  newAprilTag0(const tagsList& tags);
+	void  newAprilTag1(const tagsList& tags);
+	
 
 
 public slots:

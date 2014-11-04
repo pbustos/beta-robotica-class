@@ -61,7 +61,9 @@ public:
 	LaserPrx laser_proxy;
 	DifferentialRobotPrx differentialrobot_proxy;
 	BodyInverseKinematicsPrx bodyinversekinematics_proxy;
-	virtual void  newAprilTag(const tagsList& tags) = 0;
+	virtual void  newAprilTag0(const tagsList& tags) = 0;
+
+	virtual void  newAprilTag1(const tagsList& tags) = 0;
 
 protected:
 	QTimer timer;

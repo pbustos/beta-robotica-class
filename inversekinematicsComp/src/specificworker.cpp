@@ -103,43 +103,35 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
  */
 void SpecificWorker::init()
 {
+	
+	qDebug() <<__FUNCTION__;
+	
 	// RECONFIGURABLE PARA CADA ROBOT: Listas de motores de las distintas partes del robot
-	listaBrazoIzquierdo	<< "leftShoulder1" << "leftShoulder2" << "leftShoulder3" << "leftElbow" << "leftForeArm" << "leftWrist1" << "leftWrist2";
-	listaBrazoDerecho 	<< "rightShoulder1" << "rightShoulder2" << "rightShoulder3" << "rightElbow"<< "rightForeArm" << "rightWrist1" << "rightWrist2";
-	listaCabeza 		<< "head_yaw_joint" <<  "head_pitch_joint";
-	listaMotores 		<< "leftShoulder1" << "leftShoulder2" << "leftShoulder3" << "leftElbow" << "leftForeArm" << "leftWrist1" << "leftWrist2"
-						<< "rightShoulder1" << "rightShoulder2" << "rightShoulder3" << "rightElbow"<< "rightForeArm" << "rightWrist1" << "rightWrist2"
-// 						<< "base" 
-						<< "head_yaw_joint" << "head_pitch_joint";
+	listaBrazo 	<< "shoulder_right_1" << "shoulder_right_2" << "shoulder_right_3" << "elbow_right"<< "wrist_right_1" << "wrist_right_2" <<  "finger_right_1"  << "finger_right_2";
+	listaMotores 	= listaBrazo;
 
 	// PREPARA LA CINEMATICA INVERSA: necesita el innerModel, los motores y el tip:
-	QString tipRight = "grabPositionHandR";
-	//QString tipRight = "munon_t";
-	
-	QString tipLeft = "grabPositionHandL";
-	//QString nose = "rgbd_transform";  //OJO PROV
-	QString nose = "nose";  //OJO PROV NO FUNCIONA SI SE PONE EL TABLET
+	QString tip = "tip";
 
-
-	IK_BrazoDerecho = new Cinematica_Inversa(innerModel, listaBrazoDerecho, tipRight);
-	IK_BrazoIzquierdo = new Cinematica_Inversa(innerModel, listaBrazoIzquierdo, tipLeft);
-	IK_Cabeza = new Cinematica_Inversa(innerModel, listaCabeza, nose);	
+	IK_Brazo = new Cinematica_Inversa(innerModel, listaBrazo, tip);
 	
 	// CREA EL MAPA DE PARTES DEL CUERPO: por ahora los brazos.
-	bodyParts.insert("LEFTARM", BodyPart(innerModel, IK_BrazoIzquierdo, "LEFTARM", tipLeft, listaBrazoIzquierdo));
-	bodyParts.insert("RIGHTARM", BodyPart(innerModel, IK_BrazoDerecho, "RIGHTARM", tipRight, listaBrazoDerecho));
-	bodyParts.insert("HEAD", BodyPart(innerModel, IK_Cabeza, "HEAD", nose, listaCabeza));
+	bodyParts.insert("ARM", BodyPart(innerModel, IK_Brazo, "ARM", tip, listaBrazo));
 
 	//Initialize proxy to RCIS
 	proxy = jointmotor0_proxy;
-
+	qDebug() << "ghola -1";
 	actualizarInnermodel(listaMotores);  // actualizamos los ángulos de los motores del brazo derecho
-
+	qDebug() << "hola 0";
 	//goHomePosition(listaMotores);
  	foreach(BodyPart p, bodyParts)
- 		goHome(p.getPartName().toStdString());
-	setFingers(0);
-	sleep(1);
+		goHome(p.getPartName().toStdString());
+	
+	qDebug() << "ghola";
+	
+	//setFingers(0);    //XML DEPENDEND!!!
+	//sleep(1);
+	
 	actualizarInnermodel(listaMotores);
 
 // 	innerModel->transform("world", QVec::zeros(3),tipRight).print("RightTip in World");
@@ -857,6 +849,9 @@ void SpecificWorker::setJoint(const std::string& joint, float value, float maxSp
  */
 void SpecificWorker::actualizarInnermodel(const QStringList &listaJoints)
 {
+	
+	//qDebug() << listaJoints << listaJoints.size();
+	
 	try
 	{
 		MotorList mList;
@@ -866,11 +861,15 @@ void SpecificWorker::actualizarInnermodel(const QStringList &listaJoints)
 			mList.push_back(listaJoints[i].toStdString());
 		}
 
+		
 		RoboCompJointMotor::MotorStateMap mMap = proxy->getMotorStateMap(mList);
-
+		
+		for(auto i: mMap)
+			std::cout << i.first << std::endl;
+		
 		for (int j=0; j<listaJoints.size(); j++)
 		{
-// 			qDebug() << j;
+ 			//qDebug() << j << listaJoints[j];
 			innerModel->updateJointValue(listaJoints[j], mMap.at(listaJoints[j].toStdString()).pos);
 		}
 	}

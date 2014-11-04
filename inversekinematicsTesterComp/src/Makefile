@@ -42,10 +42,10 @@ EQUALS = =
 CMAKE_EDIT_COMMAND = /usr/bin/cmake-gui
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp
+CMAKE_SOURCE_DIR = /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp
+CMAKE_BINARY_DIR = /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -82,6 +82,16 @@ install/local: preinstall
 install/local/fast: install/local
 .PHONY : install/local/fast
 
+# Special rule for the target install/strip
+install/strip: preinstall
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Installing the project stripped..."
+	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
+.PHONY : install/strip
+
+# Special rule for the target install/strip
+install/strip/fast: install/strip
+.PHONY : install/strip/fast
+
 # Special rule for the target list_install_components
 list_install_components:
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Available install components are: \"Unspecified\""
@@ -103,14 +113,14 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp/CMakeFiles /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp/src/CMakeFiles/progress.marks
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp/CMakeFiles 0
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp/CMakeFiles /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp/src/CMakeFiles/progress.marks
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
 clean:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/clean
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/clean
 .PHONY : clean
 
 # The main clean target
@@ -119,22 +129,22 @@ clean/fast: clean
 
 # Prepare targets for installation.
 preinstall: all
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/preinstall
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/preinstall
 .PHONY : preinstall
 
 # Prepare targets for installation.
 preinstall/fast:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/preinstall
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/preinstall
 .PHONY : preinstall/fast
 
 # clear depends
 depend:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(CMAKE_COMMAND) -H$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(CMAKE_COMMAND) -H$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
 .PHONY : depend
 
 # Convenience name for target.
 src/CMakeFiles/lokiarmtestercomp.dir/rule:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/CMakeFiles/lokiarmtestercomp.dir/rule
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f CMakeFiles/Makefile2 src/CMakeFiles/lokiarmtestercomp.dir/rule
 .PHONY : src/CMakeFiles/lokiarmtestercomp.dir/rule
 
 # Convenience name for target.
@@ -143,7 +153,7 @@ lokiarmtestercomp: src/CMakeFiles/lokiarmtestercomp.dir/rule
 
 # fast build rule for target.
 lokiarmtestercomp/fast:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/build
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/build
 .PHONY : lokiarmtestercomp/fast
 
 AprilTags.o: AprilTags.cpp.o
@@ -151,7 +161,7 @@ AprilTags.o: AprilTags.cpp.o
 
 # target to build an object file
 AprilTags.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/AprilTags.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/AprilTags.cpp.o
 .PHONY : AprilTags.cpp.o
 
 AprilTags.i: AprilTags.cpp.i
@@ -159,7 +169,7 @@ AprilTags.i: AprilTags.cpp.i
 
 # target to preprocess a source file
 AprilTags.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/AprilTags.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/AprilTags.cpp.i
 .PHONY : AprilTags.cpp.i
 
 AprilTags.s: AprilTags.cpp.s
@@ -167,7 +177,7 @@ AprilTags.s: AprilTags.cpp.s
 
 # target to generate assembly for a file
 AprilTags.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/AprilTags.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/AprilTags.cpp.s
 .PHONY : AprilTags.cpp.s
 
 BodyInverseKinematics.o: BodyInverseKinematics.cpp.o
@@ -175,7 +185,7 @@ BodyInverseKinematics.o: BodyInverseKinematics.cpp.o
 
 # target to build an object file
 BodyInverseKinematics.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/BodyInverseKinematics.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/BodyInverseKinematics.cpp.o
 .PHONY : BodyInverseKinematics.cpp.o
 
 BodyInverseKinematics.i: BodyInverseKinematics.cpp.i
@@ -183,7 +193,7 @@ BodyInverseKinematics.i: BodyInverseKinematics.cpp.i
 
 # target to preprocess a source file
 BodyInverseKinematics.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/BodyInverseKinematics.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/BodyInverseKinematics.cpp.i
 .PHONY : BodyInverseKinematics.cpp.i
 
 BodyInverseKinematics.s: BodyInverseKinematics.cpp.s
@@ -191,7 +201,7 @@ BodyInverseKinematics.s: BodyInverseKinematics.cpp.s
 
 # target to generate assembly for a file
 BodyInverseKinematics.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/BodyInverseKinematics.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/BodyInverseKinematics.cpp.s
 .PHONY : BodyInverseKinematics.cpp.s
 
 CommonBehavior.o: CommonBehavior.cpp.o
@@ -199,7 +209,7 @@ CommonBehavior.o: CommonBehavior.cpp.o
 
 # target to build an object file
 CommonBehavior.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/CommonBehavior.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/CommonBehavior.cpp.o
 .PHONY : CommonBehavior.cpp.o
 
 CommonBehavior.i: CommonBehavior.cpp.i
@@ -207,7 +217,7 @@ CommonBehavior.i: CommonBehavior.cpp.i
 
 # target to preprocess a source file
 CommonBehavior.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/CommonBehavior.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/CommonBehavior.cpp.i
 .PHONY : CommonBehavior.cpp.i
 
 CommonBehavior.s: CommonBehavior.cpp.s
@@ -215,7 +225,7 @@ CommonBehavior.s: CommonBehavior.cpp.s
 
 # target to generate assembly for a file
 CommonBehavior.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/CommonBehavior.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/CommonBehavior.cpp.s
 .PHONY : CommonBehavior.cpp.s
 
 InnerModelManager.o: InnerModelManager.cpp.o
@@ -223,7 +233,7 @@ InnerModelManager.o: InnerModelManager.cpp.o
 
 # target to build an object file
 InnerModelManager.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/InnerModelManager.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/InnerModelManager.cpp.o
 .PHONY : InnerModelManager.cpp.o
 
 InnerModelManager.i: InnerModelManager.cpp.i
@@ -231,7 +241,7 @@ InnerModelManager.i: InnerModelManager.cpp.i
 
 # target to preprocess a source file
 InnerModelManager.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/InnerModelManager.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/InnerModelManager.cpp.i
 .PHONY : InnerModelManager.cpp.i
 
 InnerModelManager.s: InnerModelManager.cpp.s
@@ -239,7 +249,7 @@ InnerModelManager.s: InnerModelManager.cpp.s
 
 # target to generate assembly for a file
 InnerModelManager.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/InnerModelManager.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/InnerModelManager.cpp.s
 .PHONY : InnerModelManager.cpp.s
 
 JointMotor.o: JointMotor.cpp.o
@@ -247,7 +257,7 @@ JointMotor.o: JointMotor.cpp.o
 
 # target to build an object file
 JointMotor.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/JointMotor.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/JointMotor.cpp.o
 .PHONY : JointMotor.cpp.o
 
 JointMotor.i: JointMotor.cpp.i
@@ -255,7 +265,7 @@ JointMotor.i: JointMotor.cpp.i
 
 # target to preprocess a source file
 JointMotor.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/JointMotor.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/JointMotor.cpp.i
 .PHONY : JointMotor.cpp.i
 
 JointMotor.s: JointMotor.cpp.s
@@ -263,7 +273,7 @@ JointMotor.s: JointMotor.cpp.s
 
 # target to generate assembly for a file
 JointMotor.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/JointMotor.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/JointMotor.cpp.s
 .PHONY : JointMotor.cpp.s
 
 __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.o: __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.o
@@ -271,7 +281,7 @@ __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.o: __/__
 
 # target to build an object file
 __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/__/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/__/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.o
 .PHONY : __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.o
 
 __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.i: __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.i
@@ -279,7 +289,7 @@ __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.i: __/__
 
 # target to preprocess a source file
 __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/__/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/__/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.i
 .PHONY : __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.i
 
 __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.s: __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.s
@@ -287,7 +297,7 @@ __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.s: __/__
 
 # target to generate assembly for a file
 __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/__/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/__/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.s
 .PHONY : __/__/__/robocomp-ursus/components/inversekinematicsComp/src/moc_target.cxx.s
 
 apriltagsI.o: apriltagsI.cpp.o
@@ -295,7 +305,7 @@ apriltagsI.o: apriltagsI.cpp.o
 
 # target to build an object file
 apriltagsI.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/apriltagsI.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/apriltagsI.cpp.o
 .PHONY : apriltagsI.cpp.o
 
 apriltagsI.i: apriltagsI.cpp.i
@@ -303,7 +313,7 @@ apriltagsI.i: apriltagsI.cpp.i
 
 # target to preprocess a source file
 apriltagsI.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/apriltagsI.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/apriltagsI.cpp.i
 .PHONY : apriltagsI.cpp.i
 
 apriltagsI.s: apriltagsI.cpp.s
@@ -311,7 +321,7 @@ apriltagsI.s: apriltagsI.cpp.s
 
 # target to generate assembly for a file
 apriltagsI.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/apriltagsI.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/apriltagsI.cpp.s
 .PHONY : apriltagsI.cpp.s
 
 commonbehaviorI.o: commonbehaviorI.cpp.o
@@ -319,7 +329,7 @@ commonbehaviorI.o: commonbehaviorI.cpp.o
 
 # target to build an object file
 commonbehaviorI.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/commonbehaviorI.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/commonbehaviorI.cpp.o
 .PHONY : commonbehaviorI.cpp.o
 
 commonbehaviorI.i: commonbehaviorI.cpp.i
@@ -327,7 +337,7 @@ commonbehaviorI.i: commonbehaviorI.cpp.i
 
 # target to preprocess a source file
 commonbehaviorI.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/commonbehaviorI.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/commonbehaviorI.cpp.i
 .PHONY : commonbehaviorI.cpp.i
 
 commonbehaviorI.s: commonbehaviorI.cpp.s
@@ -335,7 +345,7 @@ commonbehaviorI.s: commonbehaviorI.cpp.s
 
 # target to generate assembly for a file
 commonbehaviorI.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/commonbehaviorI.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/commonbehaviorI.cpp.s
 .PHONY : commonbehaviorI.cpp.s
 
 genericmonitor.o: genericmonitor.cpp.o
@@ -343,7 +353,7 @@ genericmonitor.o: genericmonitor.cpp.o
 
 # target to build an object file
 genericmonitor.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericmonitor.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericmonitor.cpp.o
 .PHONY : genericmonitor.cpp.o
 
 genericmonitor.i: genericmonitor.cpp.i
@@ -351,7 +361,7 @@ genericmonitor.i: genericmonitor.cpp.i
 
 # target to preprocess a source file
 genericmonitor.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericmonitor.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericmonitor.cpp.i
 .PHONY : genericmonitor.cpp.i
 
 genericmonitor.s: genericmonitor.cpp.s
@@ -359,7 +369,7 @@ genericmonitor.s: genericmonitor.cpp.s
 
 # target to generate assembly for a file
 genericmonitor.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericmonitor.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericmonitor.cpp.s
 .PHONY : genericmonitor.cpp.s
 
 genericworker.o: genericworker.cpp.o
@@ -367,7 +377,7 @@ genericworker.o: genericworker.cpp.o
 
 # target to build an object file
 genericworker.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericworker.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericworker.cpp.o
 .PHONY : genericworker.cpp.o
 
 genericworker.i: genericworker.cpp.i
@@ -375,7 +385,7 @@ genericworker.i: genericworker.cpp.i
 
 # target to preprocess a source file
 genericworker.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericworker.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericworker.cpp.i
 .PHONY : genericworker.cpp.i
 
 genericworker.s: genericworker.cpp.s
@@ -383,7 +393,7 @@ genericworker.s: genericworker.cpp.s
 
 # target to generate assembly for a file
 genericworker.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericworker.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/genericworker.cpp.s
 .PHONY : genericworker.cpp.s
 
 home/pbustos/robocomp/classes/qlog/qlog.o: home/pbustos/robocomp/classes/qlog/qlog.cpp.o
@@ -391,7 +401,7 @@ home/pbustos/robocomp/classes/qlog/qlog.o: home/pbustos/robocomp/classes/qlog/ql
 
 # target to build an object file
 home/pbustos/robocomp/classes/qlog/qlog.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/qlog/qlog.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/qlog/qlog.cpp.o
 .PHONY : home/pbustos/robocomp/classes/qlog/qlog.cpp.o
 
 home/pbustos/robocomp/classes/qlog/qlog.i: home/pbustos/robocomp/classes/qlog/qlog.cpp.i
@@ -399,7 +409,7 @@ home/pbustos/robocomp/classes/qlog/qlog.i: home/pbustos/robocomp/classes/qlog/ql
 
 # target to preprocess a source file
 home/pbustos/robocomp/classes/qlog/qlog.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/qlog/qlog.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/qlog/qlog.cpp.i
 .PHONY : home/pbustos/robocomp/classes/qlog/qlog.cpp.i
 
 home/pbustos/robocomp/classes/qlog/qlog.s: home/pbustos/robocomp/classes/qlog/qlog.cpp.s
@@ -407,7 +417,7 @@ home/pbustos/robocomp/classes/qlog/qlog.s: home/pbustos/robocomp/classes/qlog/ql
 
 # target to generate assembly for a file
 home/pbustos/robocomp/classes/qlog/qlog.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/qlog/qlog.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/qlog/qlog.cpp.s
 .PHONY : home/pbustos/robocomp/classes/qlog/qlog.cpp.s
 
 home/pbustos/robocomp/classes/rapplication/rapplication.o: home/pbustos/robocomp/classes/rapplication/rapplication.cpp.o
@@ -415,7 +425,7 @@ home/pbustos/robocomp/classes/rapplication/rapplication.o: home/pbustos/robocomp
 
 # target to build an object file
 home/pbustos/robocomp/classes/rapplication/rapplication.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/rapplication/rapplication.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/rapplication/rapplication.cpp.o
 .PHONY : home/pbustos/robocomp/classes/rapplication/rapplication.cpp.o
 
 home/pbustos/robocomp/classes/rapplication/rapplication.i: home/pbustos/robocomp/classes/rapplication/rapplication.cpp.i
@@ -423,7 +433,7 @@ home/pbustos/robocomp/classes/rapplication/rapplication.i: home/pbustos/robocomp
 
 # target to preprocess a source file
 home/pbustos/robocomp/classes/rapplication/rapplication.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/rapplication/rapplication.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/rapplication/rapplication.cpp.i
 .PHONY : home/pbustos/robocomp/classes/rapplication/rapplication.cpp.i
 
 home/pbustos/robocomp/classes/rapplication/rapplication.s: home/pbustos/robocomp/classes/rapplication/rapplication.cpp.s
@@ -431,7 +441,7 @@ home/pbustos/robocomp/classes/rapplication/rapplication.s: home/pbustos/robocomp
 
 # target to generate assembly for a file
 home/pbustos/robocomp/classes/rapplication/rapplication.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/rapplication/rapplication.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/classes/rapplication/rapplication.cpp.s
 .PHONY : home/pbustos/robocomp/classes/rapplication/rapplication.cpp.s
 
 home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.o: home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.o
@@ -439,7 +449,7 @@ home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp
 
 # target to build an object file
 home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.o
 .PHONY : home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.o
 
 home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.i: home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.i
@@ -447,7 +457,7 @@ home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp
 
 # target to preprocess a source file
 home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.i
 .PHONY : home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.i
 
 home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.s: home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.s
@@ -455,7 +465,7 @@ home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp
 
 # target to generate assembly for a file
 home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.s
 .PHONY : home/pbustos/robocomp/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp.s
 
 lokiarmtestercomp.o: lokiarmtestercomp.cpp.o
@@ -463,7 +473,7 @@ lokiarmtestercomp.o: lokiarmtestercomp.cpp.o
 
 # target to build an object file
 lokiarmtestercomp.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.o
 .PHONY : lokiarmtestercomp.cpp.o
 
 lokiarmtestercomp.i: lokiarmtestercomp.cpp.i
@@ -471,7 +481,7 @@ lokiarmtestercomp.i: lokiarmtestercomp.cpp.i
 
 # target to preprocess a source file
 lokiarmtestercomp.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.i
 .PHONY : lokiarmtestercomp.cpp.i
 
 lokiarmtestercomp.s: lokiarmtestercomp.cpp.s
@@ -479,7 +489,7 @@ lokiarmtestercomp.s: lokiarmtestercomp.cpp.s
 
 # target to generate assembly for a file
 lokiarmtestercomp.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/lokiarmtestercomp.cpp.s
 .PHONY : lokiarmtestercomp.cpp.s
 
 moc_apriltagsI.o: moc_apriltagsI.cxx.o
@@ -487,7 +497,7 @@ moc_apriltagsI.o: moc_apriltagsI.cxx.o
 
 # target to build an object file
 moc_apriltagsI.cxx.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_apriltagsI.cxx.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_apriltagsI.cxx.o
 .PHONY : moc_apriltagsI.cxx.o
 
 moc_apriltagsI.i: moc_apriltagsI.cxx.i
@@ -495,7 +505,7 @@ moc_apriltagsI.i: moc_apriltagsI.cxx.i
 
 # target to preprocess a source file
 moc_apriltagsI.cxx.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_apriltagsI.cxx.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_apriltagsI.cxx.i
 .PHONY : moc_apriltagsI.cxx.i
 
 moc_apriltagsI.s: moc_apriltagsI.cxx.s
@@ -503,7 +513,7 @@ moc_apriltagsI.s: moc_apriltagsI.cxx.s
 
 # target to generate assembly for a file
 moc_apriltagsI.cxx.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_apriltagsI.cxx.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_apriltagsI.cxx.s
 .PHONY : moc_apriltagsI.cxx.s
 
 moc_commonbehaviorI.o: moc_commonbehaviorI.cxx.o
@@ -511,7 +521,7 @@ moc_commonbehaviorI.o: moc_commonbehaviorI.cxx.o
 
 # target to build an object file
 moc_commonbehaviorI.cxx.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_commonbehaviorI.cxx.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_commonbehaviorI.cxx.o
 .PHONY : moc_commonbehaviorI.cxx.o
 
 moc_commonbehaviorI.i: moc_commonbehaviorI.cxx.i
@@ -519,7 +529,7 @@ moc_commonbehaviorI.i: moc_commonbehaviorI.cxx.i
 
 # target to preprocess a source file
 moc_commonbehaviorI.cxx.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_commonbehaviorI.cxx.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_commonbehaviorI.cxx.i
 .PHONY : moc_commonbehaviorI.cxx.i
 
 moc_commonbehaviorI.s: moc_commonbehaviorI.cxx.s
@@ -527,7 +537,7 @@ moc_commonbehaviorI.s: moc_commonbehaviorI.cxx.s
 
 # target to generate assembly for a file
 moc_commonbehaviorI.cxx.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_commonbehaviorI.cxx.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_commonbehaviorI.cxx.s
 .PHONY : moc_commonbehaviorI.cxx.s
 
 moc_genericmonitor.o: moc_genericmonitor.cxx.o
@@ -535,7 +545,7 @@ moc_genericmonitor.o: moc_genericmonitor.cxx.o
 
 # target to build an object file
 moc_genericmonitor.cxx.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericmonitor.cxx.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericmonitor.cxx.o
 .PHONY : moc_genericmonitor.cxx.o
 
 moc_genericmonitor.i: moc_genericmonitor.cxx.i
@@ -543,7 +553,7 @@ moc_genericmonitor.i: moc_genericmonitor.cxx.i
 
 # target to preprocess a source file
 moc_genericmonitor.cxx.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericmonitor.cxx.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericmonitor.cxx.i
 .PHONY : moc_genericmonitor.cxx.i
 
 moc_genericmonitor.s: moc_genericmonitor.cxx.s
@@ -551,7 +561,7 @@ moc_genericmonitor.s: moc_genericmonitor.cxx.s
 
 # target to generate assembly for a file
 moc_genericmonitor.cxx.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericmonitor.cxx.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericmonitor.cxx.s
 .PHONY : moc_genericmonitor.cxx.s
 
 moc_genericworker.o: moc_genericworker.cxx.o
@@ -559,7 +569,7 @@ moc_genericworker.o: moc_genericworker.cxx.o
 
 # target to build an object file
 moc_genericworker.cxx.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericworker.cxx.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericworker.cxx.o
 .PHONY : moc_genericworker.cxx.o
 
 moc_genericworker.i: moc_genericworker.cxx.i
@@ -567,7 +577,7 @@ moc_genericworker.i: moc_genericworker.cxx.i
 
 # target to preprocess a source file
 moc_genericworker.cxx.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericworker.cxx.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericworker.cxx.i
 .PHONY : moc_genericworker.cxx.i
 
 moc_genericworker.s: moc_genericworker.cxx.s
@@ -575,7 +585,7 @@ moc_genericworker.s: moc_genericworker.cxx.s
 
 # target to generate assembly for a file
 moc_genericworker.cxx.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericworker.cxx.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_genericworker.cxx.s
 .PHONY : moc_genericworker.cxx.s
 
 moc_specificmonitor.o: moc_specificmonitor.cxx.o
@@ -583,7 +593,7 @@ moc_specificmonitor.o: moc_specificmonitor.cxx.o
 
 # target to build an object file
 moc_specificmonitor.cxx.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificmonitor.cxx.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificmonitor.cxx.o
 .PHONY : moc_specificmonitor.cxx.o
 
 moc_specificmonitor.i: moc_specificmonitor.cxx.i
@@ -591,7 +601,7 @@ moc_specificmonitor.i: moc_specificmonitor.cxx.i
 
 # target to preprocess a source file
 moc_specificmonitor.cxx.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificmonitor.cxx.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificmonitor.cxx.i
 .PHONY : moc_specificmonitor.cxx.i
 
 moc_specificmonitor.s: moc_specificmonitor.cxx.s
@@ -599,7 +609,7 @@ moc_specificmonitor.s: moc_specificmonitor.cxx.s
 
 # target to generate assembly for a file
 moc_specificmonitor.cxx.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificmonitor.cxx.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificmonitor.cxx.s
 .PHONY : moc_specificmonitor.cxx.s
 
 moc_specificworker.o: moc_specificworker.cxx.o
@@ -607,7 +617,7 @@ moc_specificworker.o: moc_specificworker.cxx.o
 
 # target to build an object file
 moc_specificworker.cxx.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.o
 .PHONY : moc_specificworker.cxx.o
 
 moc_specificworker.i: moc_specificworker.cxx.i
@@ -615,7 +625,7 @@ moc_specificworker.i: moc_specificworker.cxx.i
 
 # target to preprocess a source file
 moc_specificworker.cxx.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.i
 .PHONY : moc_specificworker.cxx.i
 
 moc_specificworker.s: moc_specificworker.cxx.s
@@ -623,7 +633,7 @@ moc_specificworker.s: moc_specificworker.cxx.s
 
 # target to generate assembly for a file
 moc_specificworker.cxx.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/moc_specificworker.cxx.s
 .PHONY : moc_specificworker.cxx.s
 
 specificmonitor.o: specificmonitor.cpp.o
@@ -631,7 +641,7 @@ specificmonitor.o: specificmonitor.cpp.o
 
 # target to build an object file
 specificmonitor.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificmonitor.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificmonitor.cpp.o
 .PHONY : specificmonitor.cpp.o
 
 specificmonitor.i: specificmonitor.cpp.i
@@ -639,7 +649,7 @@ specificmonitor.i: specificmonitor.cpp.i
 
 # target to preprocess a source file
 specificmonitor.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificmonitor.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificmonitor.cpp.i
 .PHONY : specificmonitor.cpp.i
 
 specificmonitor.s: specificmonitor.cpp.s
@@ -647,7 +657,7 @@ specificmonitor.s: specificmonitor.cpp.s
 
 # target to generate assembly for a file
 specificmonitor.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificmonitor.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificmonitor.cpp.s
 .PHONY : specificmonitor.cpp.s
 
 specificworker.o: specificworker.cpp.o
@@ -655,7 +665,7 @@ specificworker.o: specificworker.cpp.o
 
 # target to build an object file
 specificworker.cpp.o:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.o
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.o
 .PHONY : specificworker.cpp.o
 
 specificworker.i: specificworker.cpp.i
@@ -663,7 +673,7 @@ specificworker.i: specificworker.cpp.i
 
 # target to preprocess a source file
 specificworker.cpp.i:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.i
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.i
 .PHONY : specificworker.cpp.i
 
 specificworker.s: specificworker.cpp.s
@@ -671,7 +681,7 @@ specificworker.s: specificworker.cpp.s
 
 # target to generate assembly for a file
 specificworker.cpp.s:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.s
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(MAKE) -f src/CMakeFiles/lokiarmtestercomp.dir/build.make src/CMakeFiles/lokiarmtestercomp.dir/specificworker.cpp.s
 .PHONY : specificworker.cpp.s
 
 # Help Target
@@ -683,6 +693,7 @@ help:
 	@echo "... edit_cache"
 	@echo "... install"
 	@echo "... install/local"
+	@echo "... install/strip"
 	@echo "... list_install_components"
 	@echo "... lokiarmtestercomp"
 	@echo "... rebuild_cache"
@@ -763,6 +774,6 @@ help:
 # No rule that depends on this can have commands that come from listfiles
 # because they might be regenerated.
 cmake_check_build_system:
-	cd /home/pbustos/robocomp/components/robocomp-ursus-rockin/inversekinematicsTesterComp && $(CMAKE_COMMAND) -H$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
+	cd /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp && $(CMAKE_COMMAND) -H$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
 .PHONY : cmake_check_build_system
 

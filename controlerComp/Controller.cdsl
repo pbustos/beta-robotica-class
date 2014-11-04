@@ -7,7 +7,7 @@ Component ControllerComp
 	Communications
 	{
 		requires BodyInverseKinematics, Laser, DifferentialRobot;
-		subscribesTo AprilTags;
+		subscribesTo AprilTags, AprilTags;
 	};
 	language Cpp;
 };

@@ -85,13 +85,9 @@ class SpecificWorker : public GenericWorker
 		QQueue<Target> listaTargetsCabeza;					// Lista de targets para la cabeza
 
 		QStringList listaMotores; 							// Tiene TODOS los motores del robot. Para poder actualizar correctamente
-		QStringList listaBrazoDerecho;						// Tiene los motores del brazo derecho con los que trabajara cinematica_inversa
-		QStringList listaBrazoIzquierdo;					// Tiene los motores del brazo izquierdo con los que trabajara cinematica_inversa
-		QStringList listaCabeza;							// Tiene los motores de la cabeza con los que trabajara cinemática_inersa.
+		QStringList listaBrazo;						// Tiene los motores del brazo derecho con los que trabajara cinematica_inversa
 		
-		Cinematica_Inversa *IK_BrazoDerecho;				// Para realizar las operaciones de cinemática inversa para el brazo derecho
-		Cinematica_Inversa *IK_BrazoIzquierdo;				// Para realizar las operaciones de cinemática inversa para el brazo izquierdo
-		Cinematica_Inversa *IK_Cabeza;						// Para realizar las operaciones de cinemática inversa para la cabeza
+		Cinematica_Inversa *IK_Brazo;				// Para realizar las operaciones de cinemática inversa para el brazo derecho
 			
 		ofstream fichero;									// fichero de salida.
 		int	 correlativeID;
