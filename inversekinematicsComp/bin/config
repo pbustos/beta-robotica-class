@@ -1,0 +1,18 @@
+#
+# This property is used to configure the endpoints of the subscriber adapter.
+#
+BodyInverseKinematicsComp.Endpoints=tcp -p 10220
+CommonBehavior.Endpoints=tcp -p 12207
+
+JointMotor0Proxy = jointmotor:tcp -h localhost -p 20000
+JointMotor1Proxy = jointmotor:tcp -h localhost -p 40000
+
+BIK.InnerModel = /home/robocomp/robocomp/components/robocomp-ursus-rockin/files/RoCKIn@home/world/rockinSimple.xml
+
+
+Ice.Warn.Connections=0
+Ice.Trace.Network=0
+Ice.Trace.Protocol=0
+
+Ice.ACM.Client=10
+Ice.ACM.Server=10

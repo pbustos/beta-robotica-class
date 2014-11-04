@@ -1,0 +1,39 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+
+
+
+
+from math import *
+import sympy
+import numpy
+from sympy import cos as xcos
+from sympy import sin as xsin
+
+# ESTO DEVUELVE UNA MATRIZ DE ROTACIÓN SIMBÓLICA 'A LA ROBOLAB'
+def getSymbolicMatRot(x=sympy.Symbol('x'), y=sympy.Symbol('y'), z=sympy.Symbol('z')):
+	# X
+	RX = sympy.Matrix([[1,      0,       0],
+	                  [0, xcos(x), -xsin(x)],
+	                  [0, xsin(x),  xcos(x)]])
+	#print RX
+	# Y
+	RY = sympy.Matrix([[ xcos(y),  0,  xsin(y)],
+	                  [      0,  1,       0],
+	                  [-xsin(y),  0, xcos(y)]])
+	#print RY
+	# Z
+	RZ = sympy.Matrix([[xcos(z), -xsin(z), 0],
+	                  [xsin(z),  xcos(z), 0],
+	                  [     0,       0, 1]])
+	#print RZ
+	# ret
+	return RX * RY * RZ
+
+print '\ny = -pi'
+m = getSymbolicMatRot(y=-sympy.pi/2, z=0)
+print m
+print '\ny = +pi'
+m = getSymbolicMatRot(y=+sympy.pi/2, z=0)
+print m

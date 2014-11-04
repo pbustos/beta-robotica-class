@@ -1,0 +1,15 @@
+src/bodypart.h
+src/cinematica_inversa.cpp
+src/cinematica_inversa.h
+src/config.h
+src/generador.cpp
+src/generador.h
+src/planner.cpp
+src/planner.h
+src/specificmonitor.cpp
+src/specificmonitor.h
+src/specificworker.cpp
+src/specificworker.h
+src/target.cpp
+src/target.h
+src/tree.hh

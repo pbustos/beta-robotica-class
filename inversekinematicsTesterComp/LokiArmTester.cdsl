@@ -1,0 +1,14 @@
+import "/robocomp/interfaces/IDSLs/InnerModelManager.idsl";
+import "/robocomp/interfaces/IDSLs/BodyInverseKinematics.idsl";
+import "/robocomp/interfaces/IDSLs/AprilTags.idsl";
+import "/robocomp/interfaces/IDSLs/JointMotor.idsl";
+
+Component LokiArmTesterComp
+{
+	Communications{
+		requires BodyInverseKinematics, InnerModelManager, JointMotor;
+		subscribesTo AprilTags;
+	};
+	gui Qt(QDialog);
+	language Cpp;
+};

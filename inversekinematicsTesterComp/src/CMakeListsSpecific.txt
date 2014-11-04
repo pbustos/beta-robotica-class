@@ -1,0 +1,17 @@
+
+# Sources set
+SET ( SOURCES
+  specificworker.cpp
+  specificmonitor.cpp
+  $ENV{ROBOCOMP}/components/robocomp-ursus/components/inversekinematicsComp/src/target.cpp
+)
+
+# Headers set
+SET ( HEADERS
+  specificworker.h
+  specificmonitor.h
+  $ENV{ROBOCOMP}/components/robocomp-ursus/components/inversekinematicsComp/src/target.h
+
+)
+
+SET (LIBS ${LIBS} -losgViewer)
