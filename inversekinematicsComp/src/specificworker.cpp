@@ -118,17 +118,16 @@ void SpecificWorker::init()
 	// CREA EL MAPA DE PARTES DEL CUERPO: por ahora los brazos.
 	bodyParts.insert("ARM", BodyPart(innerModel, IK_Brazo, "ARM", tip, listaBrazo));
 
+	qDebug() << "hola";
+	
 	//Initialize proxy to RCIS
 	proxy = jointmotor0_proxy;
-	qDebug() << "ghola -1";
 	actualizarInnermodel(listaMotores);  // actualizamos los ángulos de los motores del brazo derecho
-	qDebug() << "hola 0";
+	qDebug() << "hola2";
 	//goHomePosition(listaMotores);
  	foreach(BodyPart p, bodyParts)
 		goHome(p.getPartName().toStdString());
-	
-	qDebug() << "ghola";
-	
+		
 	//setFingers(0);    //XML DEPENDEND!!!
 	//sleep(1);
 	
@@ -314,13 +313,16 @@ void SpecificWorker::compute( )
 {
 	actualizarInnermodel(listaMotores); //actualizamos TODOS los motores y la posicion de la base.
 	QMap<QString, BodyPart>::iterator iterador;
+	
 	for( iterador = bodyParts.begin(); iterador != bodyParts.end(); ++iterador)
 	{
 		if(iterador.value().noTargets() == false)
 		{
 			Target &target = iterador.value().getHeadFromTargets();
+			target.getPose().print("TARGET");
 	
- 			if ( target.getType() == Target::TargetType::ALIGNAXIS or  targetHasAPlan( *innerModel, target ) == true)
+ 			if ( target.getType() == Target::TargetType::ALIGNAXIS or target.getType() == Target::TargetType::ADVANCEAXIS or  
+						targetHasAPlan( *innerModel, target ) == true)
 				{
 					target.annotateInitialTipPose();
 					target.setInitialAngles(iterador.value().getMotorList());
@@ -654,7 +656,8 @@ void SpecificWorker::setFingers(float d)  ///ONLY RIGHT HAND. FIX
 void SpecificWorker::goHome(const string& part)
 {
 	QString partName = QString::fromStdString(part);
-	clearDraw();
+	
+	//clearDraw();
 	
 	if ( bodyParts.contains(partName)==false)
 	{
@@ -863,9 +866,9 @@ void SpecificWorker::actualizarInnermodel(const QStringList &listaJoints)
 
 		
 		RoboCompJointMotor::MotorStateMap mMap = proxy->getMotorStateMap(mList);
-		
+	/*	
 		for(auto i: mMap)
-			std::cout << i.first << std::endl;
+			std::cout << i.first << std::endl;*/
 		
 		for (int j=0; j<listaJoints.size(); j++)
 		{

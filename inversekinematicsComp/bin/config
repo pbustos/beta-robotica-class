@@ -6,6 +6,7 @@ CommonBehavior.Endpoints=tcp -p 12207
 
 JointMotor0Proxy = jointmotor:tcp -h localhost -p 20000
 JointMotor1Proxy = jointmotor:tcp -h localhost -p 40000
+DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
 
 BIK.InnerModel = /home/robocomp/robocomp/files/innermodel/betaWorldArm.xml
 

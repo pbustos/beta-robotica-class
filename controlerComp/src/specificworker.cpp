@@ -36,6 +36,20 @@ SpecificWorker::~SpecificWorker()
 }
 void SpecificWorker::compute( )
 {
+	try
+	{
+		RoboCompBodyInverseKinematics::Axis axis;
+		RoboCompBodyInverseKinematics::WeightVector weights;
+		axis.x = 0; axis.y = -1; axis.z=-1;
+		//bodyinversekinematics_proxy->setTargetPose6D("ARM", target, weights, 0);
+		qDebug() << "enviando";
+		bodyinversekinematics_proxy->advanceAlongAxis("ARM",axis, 300);
+		qFatal("enviado");
+		
+	}
+	catch(const Ice::Exception &ex)
+	{ std::cout << ex << std::endl;}
+	
 }
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
