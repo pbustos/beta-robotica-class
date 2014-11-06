@@ -33,13 +33,39 @@ public:
 	SpecificWorker(MapPrx& mprx, QObject *parent = 0);	
 	~SpecificWorker();
 	bool setParams(RoboCompCommonBehavior::ParameterList params);
-	void  newAprilTag0(const tagsList& tags);
-	void  newAprilTag1(const tagsList& tags);
+	void  sendData(const RoboCompJoystickAdapter::TData& data);
 	
-
 
 public slots:
  	void compute(); 	
+	
+private:
+	
+	struct FalconData
+	{
+		void update( const RoboCompJoystickAdapter::TData &data )
+		{
+			QMutexLocker m(&mu);
+			falconData = data;
+		};
+		void print()
+		{	
+			std::cout << "Id:" << falconData.id << std::endl;
+			std::cout << "Axes:" << std::endl;
+			for(auto i: falconData.axes)
+				std::cout << "	axe:" << i.name << ". Valor:" << i.value << std::endl;
+			std::cout << "Buttons:" << std::endl;
+			for(auto i: falconData.buttons)
+				std::cout << "	button:" << i.clicked << std::endl;
+			std::cout << "velAxisIndex:" << falconData.velAxisIndex << std::endl;
+			std::cout << "dirAxisIndex:" << falconData.dirAxisIndex << std::endl;
+			
+		}
+		RoboCompJoystickAdapter::TData falconData;
+		QMutex mu;
+	};
+
+	FalconData falcon;
 };
 
 #endif

@@ -56,10 +56,10 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	timer.start(Period);
 	return true;
 };
-void SpecificWorker::newAprilTag0(const tagsList& tags){
-	
-}
 
-void SpecificWorker::newAprilTag1(const tagsList& tags){
-	
+
+void SpecificWorker::sendData(const RoboCompJoystickAdapter::TData& data)
+{
+	falcon.update(data);
+	falcon.print();
 }

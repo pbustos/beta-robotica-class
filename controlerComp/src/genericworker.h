@@ -27,8 +27,9 @@
 #include <CommonBehavior.h>
 #include <Laser.h>
 #include <DifferentialRobot.h>
+#include <GetAprilTags.h>
 #include <BodyInverseKinematics.h>
-#include <AprilTags.h>
+#include <JoystickAdapter.h>
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
@@ -43,8 +44,9 @@ using namespace std;
 */
 using namespace RoboCompLaser;
 using namespace RoboCompDifferentialRobot;
+using namespace RoboCompGetAprilTags;
 using namespace RoboCompBodyInverseKinematics;
-using namespace RoboCompAprilTags;
+using namespace RoboCompJoystickAdapter;
 
 class GenericWorker : public QObject
 {
@@ -60,11 +62,10 @@ public:
 
 	LaserPrx laser_proxy;
 	DifferentialRobotPrx differentialrobot_proxy;
+	GetAprilTagsPrx getapriltags0_proxy;
+	GetAprilTagsPrx getapriltags1_proxy;
 	BodyInverseKinematicsPrx bodyinversekinematics_proxy;
-	virtual void  newAprilTag0(const tagsList& tags) = 0;
-
-	virtual void  newAprilTag1(const tagsList& tags) = 0;
-
+	virtual void  sendData(const RoboCompJoystickAdapter::TData& data) = 0;
 protected:
 	QTimer timer;
 	int Period;

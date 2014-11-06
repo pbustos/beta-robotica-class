@@ -3,18 +3,14 @@
 #
 # This property is used to configure the endpoints of the subscriber adapter.
 #
+JoystickAdapterComp.Endpoints=tcp -p 10206
 CommonBehavior.Endpoints=tcp -p 12235
-AprilTags0Topic.Endpoints=tcp -p 12236
-AprilTags1Topic.Endpoints=tcp -p 12237
 
 # Remote servers proxies example
 #RemoteProxy = remote:tcp -h remotehost -p 10001
 
 LaserProxy = laser:tcp -h localhost -p 10003
 DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
+GetAprilTags0Proxy = getapriltags:tcp -h localhost -p 12209
+GetAprilTags1Proxy = getapriltags:tcp -h localhost -p 12209
 BodyInverseKinematicsProxy = bodyinversekinematics:tcp -h localhost -p 10220
-
-#
-# This property is used by the clients to connect to IceStorm.
-#
-TopicManager.Proxy=DemoIceStorm/TopicManager:default -p 10000

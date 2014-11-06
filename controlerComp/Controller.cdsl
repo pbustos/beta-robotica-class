@@ -1,13 +1,15 @@
-import "/robocomp/interfaces/IDSLs/AprilTags.idsl";
+import "/robocomp/interfaces/IDSLs/GetAprilTags.idsl";
+import "/robocomp/interfaces/IDSLs/JoystickAdapter.idsl";
 import "/robocomp/interfaces/IDSLs/BodyInverseKinematics.idsl";
 import "/robocomp/interfaces/IDSLs/Laser.idsl";
 import "/robocomp/interfaces/IDSLs/DifferentialRobot.idsl";
+
 Component ControllerComp
 {
 	Communications
 	{
-		requires BodyInverseKinematics, Laser, DifferentialRobot;
-		subscribesTo AprilTags, AprilTags;
+		requires BodyInverseKinematics, Laser, DifferentialRobot, GetAprilTags, GetAprilTags;
+		implements JoystickAdapter;
 	};
 	language Cpp;
 };
