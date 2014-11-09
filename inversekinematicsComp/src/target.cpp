@@ -24,25 +24,53 @@
 */
 
 #include "target.h"
-#include <boost/graph/buffer_concepts.hpp>
+#include <boost/graph/graph_concepts.hpp>
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*
  * 								CONSTRUCTORES Y DESTRUCTORES												   *
  *~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/ 
-/**
- * \brief Constructor por defecto
- */
-Target::Target()
+Target::Target(const Target &t) : 
+	tip(t.tip),
+    start(t.start),	
+    activo(t.activo),
+    pose6D(t.pose6D),
+    pose6DChopped(t.pose6DChopped),
+    axis(t.axis),
+    inner(t.inner),
+    weights(t.weights),
+    targetType(t.targetType),
+    axisConstraint(t.axisConstraint),
+    axisAngleConstraint(t.axisAngleConstraint),
+    nameInInnerModel(t.nameInInnerModel),
+    error(t.error),
+    errorVector(t.errorVector),
+    step(t.step),
+    startTime(t.startTime),
+    runTime(t.runTime),
+  	elapsedTime(t.elapsedTime),
+  	finish(t.finish),
+    iter(t.iter),
+    finalAngles(t.finalAngles),
+    initialAngles(t.initialAngles),
+    initialTipPose(t.initialTipPose),
+    finalTipPose(t.finalTipPose),
+    executed(t.executed),
+	chopped(t.chopped),
+	radius(t.radius),
+	removal(t.removal),
+	atTarget(t.atTarget),
+	hasPlan(t.hasPlan)
 {
-	this->activo = false;
 }
 
-Target Target::operator=( Target tmp ) 
+Target& Target::operator=( Target tmp ) 
 {
-      std::swap( tip, tmp.tip );
-      std::swap( pose6D, tmp.pose6D );
-	  inner = tmp.inner;
+ 	  swap(*this, tmp);
       return *this;
+}
+
+void swap(Target first, Target second)
+{
 }
 
   /**

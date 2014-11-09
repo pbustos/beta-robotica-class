@@ -25,6 +25,13 @@
 
 SpecificWorker::SpecificWorker(MapPrx& mprx, QObject *parent) : GenericWorker(mprx, parent)	
 {
+	qDebug() << __FUNCTION__;
+	try
+	{
+		bodyinversekinematics_proxy->goHome("ARM");
+	}
+	catch(const Ice::Exception &ex)
+	{ std::cout << ex << std::endl;}
 }
 
 /**
@@ -38,14 +45,18 @@ void SpecificWorker::compute( )
 {
 	try
 	{
-		RoboCompBodyInverseKinematics::Axis axis;
-		RoboCompBodyInverseKinematics::WeightVector weights;
-		axis.x = 0; axis.y = -1; axis.z=-1;
-		//bodyinversekinematics_proxy->setTargetPose6D("ARM", target, weights, 0);
-		qDebug() << "enviando";
-		bodyinversekinematics_proxy->advanceAlongAxis("ARM",axis, 300);
-		qFatal("enviado");
-		
+		if( falcon.getAxis().norm2() > 0.2 and falcon.getButton() )
+		{
+			RoboCompBodyInverseKinematics::Axis axis;
+			QVec ax = falcon.getAxis();
+			//QVec axN = ax.normalize();
+			axis.x = ax.x(); axis.y = ax.y(); axis.z = ax.z();		
+			//RoboCompBodyInverseKinematics::WeightVector weights;
+			qDebug() << "enviando" << ax ;
+			bodyinversekinematics_proxy->advanceAlongAxis("ARM",axis, ax.norm2()*200 );
+		}
+		//else
+		//	bodyinversekinematics_proxy->stop("ARM");			
 	}
 	catch(const Ice::Exception &ex)
 	{ std::cout << ex << std::endl;}
@@ -61,5 +72,5 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 void SpecificWorker::sendData(const RoboCompJoystickAdapter::TData& data)
 {
 	falcon.update(data);
-	falcon.print();
+	//falcon.print();
 }

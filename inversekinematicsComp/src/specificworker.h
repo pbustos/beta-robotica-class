@@ -56,7 +56,7 @@ class SpecificWorker : public GenericWorker
 		SpecificWorker	(MapPrx& mprx, QWidget *parent = 0);	
 		~SpecificWorker	();
 		
-		bool		setParams(RoboCompCommonBehavior::ParameterList params);
+		bool	setParams(RoboCompCommonBehavior::ParameterList params);
 		void  	setTargetPose6D(const string& bodyPart, const Pose6D& target, const WeightVector& weights, float radius);
 		void  	pointAxisTowardsTarget(const string& bodyPart, const Pose6D& target, const Axis &axis, bool axisConstraint, float axisAngleConstraint);
 		void  	advanceAlongAxis(const string& bodyPart, const Axis& ax, float dist);
@@ -109,7 +109,8 @@ class SpecificWorker : public GenericWorker
 		void	 actualizarInnermodel					(const QStringList &listaJoints);
 		
 		// MÉTODOS PARA MOVER COSAS DE LUGAR //
-		void 	moveRobotPart							(QVec angles, const QStringList &listaJoints);
+		void 	setPartPos								(QVec angles, const QStringList &listaJoints);
+		void 	setPartSpeed							( const QVec &angles, const QStringList &listaJoints );
 		void 	createInnerModelTarget					(Target &target);
 		void 	removeInnerModelTarget					(const Target &target);
 		void 	convertInnerModelFromMilimetersToMeters	(InnerModelNode* node);

@@ -84,7 +84,7 @@ void Cinematica_Inversa::resolverTarget(Target& target)
 		
 		QVec p = inner->transform("world", axis, this->endEffector);
 		//p.print("target to reach in world");
-		inner->transform("world", QVec::zeros(3), this->endEffector).print("position of tip");
+		//inner->transform("world", QVec::zeros(3), this->endEffector).print("position of tip");
 		
 		QMat mat = inner->getRotationMatrixTo("world", this->endEffector);
 		QVec rot = mat.extractAnglesR();
@@ -437,10 +437,6 @@ QVec Cinematica_Inversa::computeErrorVector(const Target &target)
 	
 		errorTotal.inject(errorTInFrameBase,0);
 		errorTotal.inject(errorRInFrameBase, 3);
-		
-		
-		
-		
 	}
 	
 	if(target.getType() == Target::ALIGNAXIS)
@@ -599,7 +595,7 @@ void Cinematica_Inversa::levenbergMarquardt(Target &target)
 	
 	target.setError(error.norm2());
 	target.setErrorVector(error);
-  target.setFinalAngles(angulos);
+    target.setFinalAngles(angulos);
 	
 }
 
@@ -763,13 +759,16 @@ void Cinematica_Inversa::levenbergMarquardt2(Target &target)
 }
 QVec Cinematica_Inversa::computeH(const QVec &angs)
 {
-	QVec alfas(angs.size());
+	QVec alfas(angs.size(),0.f);
 	InnerModelJoint *joint;
 	for(int i=0; i< angs.size(); i++)
 	{
 		joint = dynamic_cast<InnerModelJoint *>(inner->getNode(listaJoints[i]));
-		float mid = (joint->max - joint->min)/2.f;
-		alfas[i] = 0.5*(angs[i] - mid);
+		if(joint != NULL)
+		{
+			float mid = (joint->max - joint->min)/2.f;
+			alfas[i] = 0.5*(angs[i] - mid);
+		}
 	}
 	return alfas;
 	

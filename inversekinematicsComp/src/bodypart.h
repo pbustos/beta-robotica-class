@@ -38,35 +38,32 @@ class BodyPart
 		 * 			- ml: lista de motores asociados a esa parte del cuerpo.
 		 * 			- t: nombre del efector final de la parte del cuerpo.
 		 */ 
-		BodyPart(InnerModel *in, Cinematica_Inversa *invkin, QString p, QString t, QStringList ml)
-		{ 
-			inner = in; 	
-			ik=invkin;
-			part=p;
-			motorList=ml; 	
-			tip=t;
-		};
-
- 		BodyPart(){}; 	// Constructor por defecto
-		~BodyPart(){};	// destructor por defecto.
-		
+		BodyPart(InnerModel *in, Cinematica_Inversa *invkin, QString p, QString t, QStringList ml);
+ 		BodyPart()=default; 						// Constructor por defecto
+		BodyPart(const BodyPart& bp);
+		BodyPart(BodyPart&& bp);
+ 		BodyPart& operator=(BodyPart bp);
+		friend void swap(BodyPart &first, BodyPart &second);
+		~BodyPart(){};	
+	
+		QMutex mutex;
 		//// MÉTODOS GET ////
-		QString getPartName() const 						{ return part;}; // Devuelve el nombre de la parte del cuerpo. 
-		QString getTip() const 								{ return tip; };	// Devuelve el nombre del efector final de la parte del cuerpo.
-		QStringList getMotorList() const 					{ return motorList;}; // Devuelve la lista de motores de la parte del cuerpo.
-		QQueue<Target> getTargets() const 					{ return listaTargets;}; // Devuelve toda la cola de targets de la parte del cuerpo.
-		Target& getHeadFromTargets() 					 	{ return listaTargets.head(); }; //Devuelve el primer target de la cola de targets.
-		Cinematica_Inversa* getInverseKinematics()			{ return ik;}; // Devuelve la variable de cinematica_inversa asignada a la partedel cuerpo.
-		void addListaTarget(const QQueue<Target> &lt)		{ listaTargets = lt;}; //Guarda la lista de targets que se le asigna en su atributo.
-		void addTargetToList(const Target &t)				{ listaTargets.enqueue(t);};
-		void removeHeadFromTargets()						{ if (listaTargets.size() > 0) listaTargets.dequeue();}; // Elimina el primer target de la cola de targets
-		bool noTargets() const								{ return listaTargets.isEmpty();};
-		void markForRemoval()								{ for( int i=0; i<listaTargets.size(); i++) listaTargets[i].markForRemoval(true);};
-		void addJointStep(const QVec &joints)				{ jointStepList.append(joints);};
-		QList<QVec> getJointStepList() const 				{ return jointStepList;};
-		void cleanJointStep()								{ jointStepList.clear();};
-		void setNewVisualTip(const RoboCompBodyInverseKinematics::Pose6D &pose)			{ ik->setNewTip(pose);}; 
+		QString getPartName()		 									{ QMutexLocker ml(&mutex); return part; } // Devuelve el nombre de la parte del cuerpo. 
+		QString getTip()  												{ QMutexLocker ml(&mutex); return tip; };	// Devuelve el nombre del efector final de la parte del cuerpo.
+		QStringList getMotorList()										{ QMutexLocker ml(&mutex); return motorList;}; // Devuelve la lista de motores de la parte del cuerpo.
+		QQueue<Target> getTargets()  									{ QMutexLocker ml(&mutex); return listaTargets;}; // Devuelve toda la cola de targets de la parte del cuerpo.
+		Target& getHeadFromTargets() 					 				{ QMutexLocker ml(&mutex); return listaTargets.head(); }; //Devuelve el primer target de la cola de targets.
+		Cinematica_Inversa* getInverseKinematics()						{ QMutexLocker ml(&mutex); return ik;}; // Devuelve la variable de cinematica_inversa asignada a la partedel cuerpo.
 		
+		void addListaTarget(const QQueue<Target> &lt)					{ QMutexLocker ml(&mutex); listaTargets = lt;}; //Guarda la lista de targets que se le asigna en su atributo.
+		void addTargetToList(const Target &t, bool replace = false)		{ QMutexLocker ml(&mutex); if( replace ) listaTargets.clear(); listaTargets.enqueue(t); };
+		void removeHeadFromTargets()									{ QMutexLocker ml(&mutex); if (listaTargets.size() > 0) listaTargets.dequeue();}; // Elimina el primer target de la cola de targets
+		bool noTargets() 												{ QMutexLocker ml(&mutex); return listaTargets.isEmpty();};
+		void markForRemoval()											{ QMutexLocker ml(&mutex); for( int i=0; i<listaTargets.size(); i++) listaTargets[i].markForRemoval(true);};
+		void addJointStep(const QVec &joints)							{ QMutexLocker ml(&mutex); jointStepList.append(joints);};
+		QList<QVec> getJointStepList() 		 							{ QMutexLocker ml(&mutex); return jointStepList;};
+		void cleanJointStep()											{ QMutexLocker ml(&mutex); jointStepList.clear();};
+		void setNewVisualTip(const RoboCompBodyInverseKinematics::Pose6D &pose)			{ QMutexLocker ml(&mutex); ik->setNewTip(pose);}; 
 		
 	private:
 		QString part;													// Nombre de la parte del cuerpo.
@@ -76,10 +73,7 @@ class BodyPart
 		InnerModel *inner;												// POR AHORA INÚTIL.
 		QQueue<Target> listaTargets;									// Lista de targets para esa parte del cuerpo.
 		QList<QVec> jointStepList;										// List of 
+	
 };
-
-
-
-
 
 #endif // BODYPART_H

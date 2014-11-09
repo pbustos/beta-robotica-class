@@ -51,13 +51,13 @@ public:
 	enum TargetType {POSE6D, ALIGNAXIS, ADVANCEAXIS};
 	enum FinishStatus { LOW_ERROR, KMAX, LOW_INCS, NAN_INCS, START };
 	
-	Target();
+	Target()=default;
 	Target(TargetType tt, InnerModel *inner, const QString &tip, const QVec &pose6D, const QVec &weights, bool chop=true);											// For Pose6D
 	Target(TargetType tt, InnerModel *inner, const QString &tip, const QVec &pose6D, const QVec &axis, const QVec &weights);		// For AlingAxis
 	Target(TargetType tt, InnerModel* inner, const QString &tip, const QVec& axis, float step);																	// For ADVANCEALONGAXIS
+	Target& operator=( Target tmp );
+	Target(const Target & t);
 	~Target();
-	Target operator=( Target tmp );
-	
 	
 	// MÉTODOS GET:
 	QString getTipName() const           { return this->tip; }            		 	// Devuelve el nombre del TIP.
@@ -79,6 +79,7 @@ public:
 	FinishStatus getStatus() const       { return finish; }
 	QVec getErrorVector() const          { return errorVector; }
 	QVec getFinalAngles() const          { return finalAngles; }
+	QVec getIncrementalAngles() const	 { return finalAngles - initialAngles;}
 	bool getExecuted() const          	 { return executed; }
 	bool isChopped() const				 { return chopped; }
 	bool isMarkedforRemoval() const		 { return removal; }
@@ -115,7 +116,7 @@ public:
 	};
 	void setInitialAngles(const QStringList &motors)
 	{
-				initialAngles.clear();
+		initialAngles.clear();
         foreach( QString motor, motors)
             initialAngles.append(inner->getJoint(motor)->getAngle());
 	}

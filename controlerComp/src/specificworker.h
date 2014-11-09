@@ -20,6 +20,7 @@
 #define SPECIFICWORKER_H
 
 #include <genericworker.h>
+#include <innermodel/innermodel.h>
 
 /**
        \brief
@@ -47,7 +48,38 @@ private:
 		{
 			QMutexLocker m(&mu);
 			falconData = data;
+			if((getAxis() - falconDataAnt).norm2() < 0.1)
+				newdata = false;
+			else
+				newdata = true;
+			falconDataAnt = getAxis();
 		};
+		bool newData()
+		{
+			if( newdata )
+				return true;
+			else
+				return false;
+		}
+		bool getButton()
+		{
+			for(auto b: falconData.buttons)
+				if( b.clicked )
+					return true;
+			else 
+				return false;
+		}
+		QVec getAxis()
+		{
+			QVec axes(3);
+			int k=0;
+			for( auto i: falconData.axes)
+			{
+				axes[k] = i.value;
+				k++;
+			}
+			return axes;
+		}
 		void print()
 		{	
 			std::cout << "Id:" << falconData.id << std::endl;
@@ -62,7 +94,9 @@ private:
 			
 		}
 		RoboCompJoystickAdapter::TData falconData;
+		QVec falconDataAnt;
 		QMutex mu;
+		bool newdata;
 	};
 
 	FalconData falcon;
