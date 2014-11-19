@@ -620,7 +620,7 @@ void SpecificWorker::setFingers(float d)  ///ONLY RIGHT HAND. FIX
 
 	//float len = 0.07; // check
 	//float len = innerModel->getTranslationVectorTo("rightFinger1","finger_right_1_1_tip").norm2();   //CONSULTAR CON LUIS POR QUÉ NO VA Y EL DE ABAJO SI
-	float len = innerModel->transform("rightFinger1", QVec::zeros(3), "finger_right_1_1_tip").norm2();
+	float len = innerModel->transform("finger_right_1", QVec::zeros(3), "finger_right_1_1_tip").norm2();
 	//qDebug() << "len" << len;
 	float D = (d/1000)/2.; 			// half distnace in meters
 	float s = D/len;
@@ -631,7 +631,7 @@ void SpecificWorker::setFingers(float d)  ///ONLY RIGHT HAND. FIX
 
 	/// OJO!!! DO THAT WITH innerModel->getNode("rightFinger1")->min
 	QStringList joints;
-	joints << "rightFinger1" << "rightFinger2";
+	joints << "finger_right_1" << "finger_right_2";
 	moveRobotPart(angles, joints);
 
 	// fingerRight1, fingerRight2 are the joints going from -1 to 0 (left) and from 1 to 0 (right)
