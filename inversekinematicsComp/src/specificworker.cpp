@@ -107,8 +107,8 @@ void SpecificWorker::init()
 	qDebug() <<__FUNCTION__;
 	
 	// RECONFIGURABLE PARA CADA ROBOT: Listas de motores de las distintas partes del robot
-	listaBrazo 	<< "shoulder_right_1" << "shoulder_right_2" << "shoulder_right_3" << "elbow_right"<< "wrist_right_1" << "wrist_right_2" <<  "finger_right_1"  << "finger_right_2";
-	listaMotores 	= listaBrazo;
+	listaBrazo 	<< "shoulder_right_1" << "shoulder_right_2" << "shoulder_right_3" << "elbow_right"; //<< "wrist_right_1" << "wrist_right_2" <<  "finger_right_1"  << "finger_right_2";
+	listaMotores <<  "shoulder_right_1" << "shoulder_right_2" << "shoulder_right_3" << "elbow_right"<< "wrist_right_1" << "wrist_right_2" <<  "finger_right_1"  << "finger_right_2";
 
 	// PREPARA LA CINEMATICA INVERSA: necesita el innerModel, los motores y el tip:
 	QString tip = "tip";
@@ -151,7 +151,8 @@ void SpecificWorker::init()
 	planner = new PlannerOMPL(*innerModel);
 	planner->initialize(&sampler);
 
-
+	//setPartSpeed(QVec::vec4(0,0,0,-1), listaBrazo);
+	
 	qDebug();
 	qDebug() << "---------------------------------";
 	qDebug() << "BodyInverseKinematics --> Waiting for requests!";
@@ -313,53 +314,73 @@ void SpecificWorker::compute( )
 {
 	actualizarInnermodel(listaMotores); //actualizamos TODOS los motores y la posicion de la base.
 	QMap<QString, BodyPart>::iterator iterador;
-	
+
 	for( iterador = bodyParts.begin(); iterador != bodyParts.end(); ++iterador)
 	{
-		if(iterador.value().noTargets() == false)
+		BodyPart &bodypart = iterador.value();
+		if( bodypart.noTargets() == false)
 		{
-			Target &target = iterador.value().getHeadFromTargets();
+			Target &target = bodypart.getHeadFromTargets();
 			target.getPose().print("TARGET");
 	
- 			if ( target.getType() == Target::TargetType::ALIGNAXIS or target.getType() == Target::TargetType::ADVANCEAXIS or  
-						targetHasAPlan( *innerModel, target ) == true)
-				{
+			switch ( target.getType() )	
+			{
+				case Target::TargetType::ADVANCEAXIS:
+					qDebug() << "CASE ADVANCEAXIS";
 					target.annotateInitialTipPose();
-					target.setInitialAngles(iterador.value().getMotorList());
+					target.setInitialAngles(bodypart.getMotorList());
+					qDebug() << "hola";
 					createInnerModelTarget(target);  	//Crear "target" online y borrarlo al final para no tener que meterlo en el xml
 					target.print("BEFORE PROCESSING");
-
-					iterador.value().getInverseKinematics()->resolverTarget(target);
-				
-					if(target.getError() <= 0.9 and target.isAtTarget() == false) //local goal achieved: execute the solution
-					{
-						moveRobotPart(target.getFinalAngles(), iterador.value().getMotorList());
-						//Acumulamos los angulos en una lista en bodyPart para lanzarlos con Reflexx
-						iterador.value().addJointStep(target.getFinalAngles());
-						usleep(20000);
-						target.setExecuted(true);
-					}
-					else
-					{
-						target.markForRemoval(true);
-					}
+					bodypart.getInverseKinematics()->resolverTarget(target);
+					target.print("AFTER PROCESSING");
+					//setPartSpeed(target.getIncrementalAngles(), iterador.value().getMotorList());
+					setPartPos(target.getFinalAngles(), bodypart.getMotorList());
+					usleep(90000);
+					target.setExecuted(true);
 					actualizarInnermodel(listaMotores); 			//actualizamos TODOS los motores.	La translación de la base no se actualiza!!!!
 					target.annotateFinalTipPose();
+					qDebug() << "hola1";
 					removeInnerModelTarget(target);
-					target.print("AFTER PROCESSING");
-		//		}
-			}
-// 				if( target.isChopped() == false)
-// 				{
-// 					doReflexxes( iterador.value().getJointStepList(), iterador.value().getMotorList());
-// 				}
+					
+					break;
+					
+				case (Target::TargetType::ALIGNAXIS or Target::TargetType::POSE6D):
+					if( targetHasAPlan( *innerModel, target ) == true )
+					{
+						target.annotateInitialTipPose();
+						target.setInitialAngles(bodypart.getMotorList());
+						createInnerModelTarget(target);  	//Crear "target" online y borrarlo al final para no tener que meterlo en el xml
+						target.print("BEFORE PROCESSING");
+						bodypart.getInverseKinematics()->resolverTarget(target);
+						if(target.getError() <= 0.9 and target.isAtTarget() == false) //local goal achieved: execute the solution
+						{
+							setPartPos(target.getFinalAngles(), bodypart.getMotorList());
+							//Acumulamos los angulos en una lista en bodyPart para lanzarlos con Reflexx
+							bodypart.addJointStep(target.getFinalAngles());
+							usleep(20000);
+							target.setExecuted(true);
+						}
+						else
+						{
+							target.markForRemoval(true);
+						}
+						actualizarInnermodel(listaMotores); 			//actualizamos TODOS los motores.	La translación de la base no se actualiza!!!!
+						target.annotateFinalTipPose();
+						removeInnerModelTarget(target);
+						target.print("AFTER PROCESSING");
+					}
+					break;
+					
+			}	//switch	
+//		if( target.isChopped() == false)
+// 		{
+// 			doReflexxes( iterador.value().getJointStepList(), iterador.value().getMotorList());
+// 		}
 			if(target.isChopped() == false or target.isMarkedforRemoval() == true or target.isAtTarget() )
 			{
-					mutex->lock();
-						iterador.value().removeHeadFromTargets(); //eliminamos el target resuelt
-						iterador.value().cleanJointStep();
-						
-					mutex->unlock();
+				bodypart.removeHeadFromTargets(); //eliminamos el target resuelt
+				bodypart.cleanJointStep();	
 			}
 		}//if
 	}//for
@@ -453,6 +474,7 @@ void SpecificWorker::doReflexxes( const QList<QVec> &jointValues, const QStringL
  */
 void SpecificWorker::createInnerModelTarget(Target &target)
 {
+	qDebug() << "fary";
 	InnerModelNode *nodeParent = innerModel->getNode("world");
 	target.setNameInInnerModel(QString::number(correlativeID++));
 	InnerModelTransform *node = innerModel->newTransform(target.getNameInInnerModel(), "static", nodeParent, 0, 0, 0, 0, 0, 0, 0);
@@ -463,7 +485,10 @@ void SpecificWorker::createInnerModelTarget(Target &target)
 }
 void SpecificWorker::removeInnerModelTarget(const Target& target)
 {
-	innerModel->removeNode(target.getNameInInnerModel());
+	qDebug() << "fary2qDebug()";
+	InnerModelNode *node = innerModel->getNode(target.getNameInInnerModel());
+	if(node != NULL)
+		innerModel->removeNode(target.getNameInInnerModel());
 }
 
 
@@ -509,13 +534,10 @@ void SpecificWorker::setTargetPose6D(const string& bodyPart, const Pose6D& targe
 	QVec w(6);
 	w[0]  = weights.x; 	w[1]  = weights.y; w[2]  = weights.z; w[3]  = weights.rx; w[4] = weights.ry; w[5] = weights.rz;
 
-   Target t(Target::POSE6D, innerModel, bodyParts[partName].getTip(), tar, w, radius);
-   t.setRadius(radius/1000.f);
-	 t.setHasPlan(!radius);  //Ñapa para que no planifique si este campo viene a false
-
-    mutex->lock();
-        bodyParts[partName].addTargetToList(t);
-    mutex->unlock();
+	Target t(Target::POSE6D, innerModel, bodyParts[partName].getTip(), tar, w, radius);
+	t.setRadius(radius/1000.f);
+	t.setHasPlan(!radius);  //Ñapa para que no planifique si este campo viene a false
+	bodyParts[partName].addTargetToList(t);
 
 	qDebug() << "--------------------------------------------------------------------------";
 	qDebug() << __FUNCTION__<< "New target arrived: " << partName << ". For target:" << tar << ". With weights: " << w;
@@ -560,10 +582,7 @@ void SpecificWorker::pointAxisTowardsTarget(const string& bodyPart, const Pose6D
 	QVec ax = QVec::vec3( axis.x , axis.y, axis.z);
 
 	Target t(Target::ALIGNAXIS, innerModel, bodyParts[partName].getTip(), tar, ax, w);
-
-	mutex->lock();
-		bodyParts[partName].addTargetToList(t);
-	mutex->unlock();
+	bodyParts[partName].addTargetToList(t);
 
 	qDebug() << "-----------------------------------------------------------------------";
 	qDebug() << __FUNCTION__ << __LINE__<< "New target arrived: " << partName;
@@ -598,14 +617,12 @@ void SpecificWorker::advanceAlongAxis(const string& bodyPart, const Axis& ax, fl
 	if(dist < -300) dist = -300;
 	dist = dist / 1000.;   //PASANDO A METROS
 
-	Target t(Target::ADVANCEAXIS, innerModel, bodyParts[partName].getTip(), axis, dist);
-
-	mutex->lock();
-		bodyParts[partName].addTargetToList(t);
-	mutex->unlock();
+	Target t(Target::TargetType::ADVANCEAXIS, innerModel, bodyParts[partName].getTip(), axis, dist);
+	bodyParts[partName].addTargetToList(t, true);  //OJO, limpia la cola
 
 	qDebug() << "-----------------------------------------------------------------------";
-	qDebug() <<  __FILE__ << __FUNCTION__ << __LINE__<< "New target arrived: " << partName;
+	qDebug() <<  __FILE__ << __FUNCTION__ << "New target arrived: " << partName  << axis << dist << t.getPose();
+	
 }
 
 /**
@@ -631,8 +648,9 @@ void SpecificWorker::setFingers(float d)  ///ONLY RIGHT HAND. FIX
 
 	/// OJO!!! DO THAT WITH innerModel->getNode("rightFinger1")->min
 	QStringList joints;
+	
 	joints << "finger_right_1" << "finger_right_2";
-	moveRobotPart(angles, joints);
+		setPartPos(angles, joints);
 
 	// fingerRight1, fingerRight2 are the joints going from -1 to 0 (left) and from 1 to 0 (right)
 	// se anclan en "arm_right_8"
@@ -677,9 +695,7 @@ void SpecificWorker::goHome(const string& part)
 			nodo.name = lmotors.at(i).toStdString();
 			nodo.position = innerModel->getJoint(lmotors.at(i))->home;
 			nodo.maxSpeed = 1; //radianes por segundo
-			mutex->lock();
-				proxy->setPosition(nodo);
-			mutex->unlock();
+			proxy->setPosition(nodo);
 
 		} catch (const Ice::Exception &ex) {
 			cout<<"Excepción en mover Brazo: "<<ex<<endl;
@@ -698,13 +714,11 @@ void SpecificWorker::goHome(const string& part)
  */
 void SpecificWorker::setRobot(const int t)
 {
-	mutex->lock();
 	this->typeR = t;
 	if (this->typeR == 0)
 		proxy = jointmotor0_proxy;
 	else if (this->typeR == 1)
 		proxy = jointmotor1_proxy;
-	mutex->unlock();
 }
 
 
@@ -736,7 +750,6 @@ TargetState SpecificWorker::getState(const std::string &part)
  		qDebug() << "----------------------------------------";
  		qDebug() << "New COMMAND arrived "<< __FUNCTION__ << partName;
 
-		mutex->lock();
 		if( bodyParts[partName].getTargets().isEmpty() )
 			state.finish = true;
 		else
@@ -744,8 +757,6 @@ TargetState SpecificWorker::getState(const std::string &part)
 			state.elapsedTime = bodyParts[partName].getHeadFromTargets().getElapsedTime();
 			state.finish = false;
 		}
-		
-		mutex->unlock();
 	}
 	return state;
 }
@@ -772,9 +783,7 @@ void SpecificWorker::stop(const std::string& part)
 	{
 		qDebug() << "-------------------------------------------------------------------";
 		qDebug() << "New COMMAND arrived " << __FUNCTION__ << QString::fromStdString(part);
-		mutex->lock();
-			bodyParts[partName].markForRemoval();
-		mutex->unlock();
+		bodyParts[partName].markForRemoval();
 	}
 }
 
@@ -803,14 +812,12 @@ void SpecificWorker::setNewTip(const std::string &part, const std::string &trans
 		qDebug() << "-------------------------------------------------------------------";
 		qDebug() << "New COMMAND arrived " << __FUNCTION__ << QString::fromStdString(part);
 
-		mutex->lock();
 		//bodyParts[partName].setNewVisualTip(pose);
 		//innerModel->transform("world", QVec::zeros(3),part).print("antes setNewTip");
 		innerModel->updateTransformValues(transformName, pose.x/1000., pose.y/1000., pose.z/1000., pose.rx, pose.ry, pose.rz);
 		//innerModel->updateTransformValues( "grabPositionHandR", pose.x/1000., pose.y/1000., pose.z/1000., 0,0,0);
 
 		//innerModel->transform("world", QVec::zeros(3), part).print("despues setNewTipo");
-		mutex->unlock();
 	}
 }
 
@@ -907,7 +914,7 @@ void SpecificWorker::actualizarInnermodel(const QStringList &listaJoints)
  * (el primer segmento) y con el primer segmento (el segundo segmento).
  * FUNCIONA.
  */
-void SpecificWorker::moveRobotPart(QVec angles, const QStringList &listaJoints)
+void SpecificWorker::setPartPos(QVec angles, const QStringList &listaJoints)
 {
 	for(int i=0; i<angles.size(); i++)
 	{
@@ -920,6 +927,32 @@ void SpecificWorker::moveRobotPart(QVec angles, const QStringList &listaJoints)
 			proxy->setPosition(nodo);
 		} catch (const Ice::Exception &ex) {
 			cout<<"Excepción en mover Brazo: "<<ex<<endl;
+		}
+	}
+}
+
+
+/**
+ * @brief ...
+ * 
+ * @param angles ...
+ * @param listaJoints ...
+ * @return void
+ */
+
+void SpecificWorker::setPartSpeed(const QVec& angles, const QStringList& listaJoints)
+{
+	for(int i=0; i<angles.size(); i++)
+	{
+		try
+		{
+			RoboCompJointMotor::MotorGoalVelocity vel;
+			vel.velocity = angles[i];
+			qDebug() << "Vel:" << vel.velocity << "joint" << listaJoints.at(i);
+			vel.maxAcc = 0.5;
+			proxy->setVelocity(vel);
+		} catch (const Ice::Exception &ex) {
+			cout<<"Exception in " << __FUNCTION__ <<"calling setVelocity(): "<< ex << endl;
 		}
 	}
 }

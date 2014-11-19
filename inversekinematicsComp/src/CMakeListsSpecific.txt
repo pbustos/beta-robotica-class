@@ -8,6 +8,7 @@ SET ( SOURCES
   plannerompl.cpp
   reflexx.cpp
   sampler.cpp
+  bodypart.cpp
 )
 
 # Headers set

@@ -1,4 +1,4 @@
-# Install script for directory: /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsComp/src
+# Install script for directory: /home/salabeta/robocomp/components/beta-robotica-class/inversekinematicsComp/src
 
 # Set the install prefix
 IF(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -41,6 +41,6 @@ IF(NOT CMAKE_INSTALL_COMPONENT OR "${CMAKE_INSTALL_COMPONENT}" STREQUAL "Unspeci
   IF (CMAKE_ERROR_ON_ABSOLUTE_INSTALL_DESTINATION)
     message(FATAL_ERROR "ABSOLUTE path INSTALL DESTINATION forbidden (by caller): ${CMAKE_ABSOLUTE_DESTINATION_FILES}")
   ENDIF (CMAKE_ERROR_ON_ABSOLUTE_INSTALL_DESTINATION)
-FILE(INSTALL DESTINATION "/opt/robocomp/bin" TYPE FILE PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE FILES "/home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsComp/src/../bin/lokiarmcomp")
+FILE(INSTALL DESTINATION "/opt/robocomp/bin" TYPE FILE PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE FILES "/home/salabeta/robocomp/components/beta-robotica-class/inversekinematicsComp/src/../bin/lokiarmcomp")
 ENDIF(NOT CMAKE_INSTALL_COMPONENT OR "${CMAKE_INSTALL_COMPONENT}" STREQUAL "Unspecified")
 

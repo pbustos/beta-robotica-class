@@ -4,16 +4,11 @@
 BodyInverseKinematicsComp.Endpoints=tcp -p 10220
 CommonBehavior.Endpoints=tcp -p 12207
 
-JointMotor0Proxy = jointmotor:tcp -h localhost -p 20000
-JointMotor1Proxy = jointmotor:tcp -h localhost -p 40000
+# Remote servers proxies example
+#RemoteProxy = remote:tcp -h remotehost -p 10001
+
+JointMotor0Proxy = jointmotor:tcp -h localhost -p 20000 
+JointMotor1Proxy = jointmotor:tcp -h localhost -p 10067
 DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
 
-BIK.InnerModel = /home/robocomp/robocomp/files/innermodel/betaWorldArm.xml
-
-
-Ice.Warn.Connections=0
-Ice.Trace.Network=0
-Ice.Trace.Protocol=0
-
-Ice.ACM.Client=10
-Ice.ACM.Server=10
+BIK.InnerModel = /home/robocomp/robocomp/files/innermodel/betaWorld.xml
