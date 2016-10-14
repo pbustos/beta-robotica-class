@@ -6,10 +6,6 @@
 
 #IncludeRegexTransform: 
 
-/home/pbustos/robocomp/classes/qlog/qlog.cpp
-qlog.h
-/home/pbustos/robocomp/classes/qlog/qlog.h
-
 /home/pbustos/robocomp/classes/qlog/qlog.h
 QtCore
 -
@@ -17,10 +13,6 @@ iostream
 -
 Logger.h
 -
-
-/home/pbustos/robocomp/classes/rapplication/rapplication.cpp
-rapplication.h
-/home/pbustos/robocomp/classes/rapplication/rapplication.h
 
 /home/pbustos/robocomp/classes/rapplication/rapplication.h
 Ice/Ice.h
@@ -42,34 +34,6 @@ qt4/QtCore/QTime
 qt4/QtCore/qmap.h
 -
 qt4/QtCore/qqueue.h
--
-
-/home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp/src/AprilTags.cpp
-AprilTags.h
--
-Ice/LocalException.h
--
-Ice/ObjectFactory.h
--
-Ice/BasicStream.h
--
-Ice/Object.h
--
-IceUtil/Iterator.h
--
-
-/home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp/src/BodyInverseKinematics.cpp
-BodyInverseKinematics.h
--
-Ice/LocalException.h
--
-Ice/ObjectFactory.h
--
-Ice/BasicStream.h
--
-Ice/Object.h
--
-IceUtil/Iterator.h
 -
 
 /home/pbustos/robocomp/components/beta-robotica-class/inversekinematicsTesterComp/src/CommonBehavior.cpp
@@ -609,6 +573,10 @@ gsl/gsl_rng.h
 -
 gsl/gsl_randist.h
 -
+boost/python.hpp
+-
+boost/python/list.hpp
+-
 qvec.h
 /opt/robocomp/include/qmat/qvec.h
 
@@ -636,6 +604,10 @@ vector
 limits
 -
 qmat/qmat.h
+-
+boost/python.hpp
+-
+boost/python/list.hpp
 -
 
 /usr/include/qt4/Qt3Support/q3cstring.h

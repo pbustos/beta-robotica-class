@@ -703,6 +703,9 @@ typedef ::IceUtil::Handle< Callback_InnerModelManager_getAttribute_Base> Callbac
 class Callback_InnerModelManager_removeNode_Base : virtual public ::IceInternal::CallbackBase { };
 typedef ::IceUtil::Handle< Callback_InnerModelManager_removeNode_Base> Callback_InnerModelManager_removeNodePtr;
 
+class Callback_InnerModelManager_moveNode_Base : virtual public ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_InnerModelManager_moveNode_Base> Callback_InnerModelManager_moveNodePtr;
+
 class Callback_InnerModelManager_collide_Base : virtual public ::IceInternal::CallbackBase { };
 typedef ::IceUtil::Handle< Callback_InnerModelManager_collide_Base> Callback_InnerModelManager_collidePtr;
 
@@ -2873,6 +2876,119 @@ private:
     
 public:
 
+    bool moveNode(const ::std::string& src, const ::std::string& dst)
+    {
+        return moveNode(src, dst, 0);
+    }
+    bool moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context& __ctx)
+    {
+        return moveNode(src, dst, &__ctx);
+    }
+#ifdef ICE_CPP11
+    ::Ice::AsyncResultPtr
+    begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::IceInternal::Function<void (bool)>& __response, const ::IceInternal::Function<void (const ::Ice::Exception&)>& __exception = ::IceInternal::Function<void (const ::Ice::Exception&)>(), const ::IceInternal::Function<void (bool)>& __sent = ::IceInternal::Function<void (bool)>())
+    {
+        return __begin_moveNode(src, dst, 0, __response, __exception, __sent);
+    }
+    ::Ice::AsyncResultPtr
+    begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::IceInternal::Function<void (const ::Ice::AsyncResultPtr&)>& __completed, const ::IceInternal::Function<void (const ::Ice::AsyncResultPtr&)>& __sent = ::IceInternal::Function<void (const ::Ice::AsyncResultPtr&)>())
+    {
+        return begin_moveNode(src, dst, 0, ::Ice::newCallback(__completed, __sent), 0);
+    }
+    ::Ice::AsyncResultPtr
+    begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context& __ctx, const ::IceInternal::Function<void (bool)>& __response, const ::IceInternal::Function<void (const ::Ice::Exception&)>& __exception = ::IceInternal::Function<void (const ::Ice::Exception&)>(), const ::IceInternal::Function<void (bool)>& __sent = ::IceInternal::Function<void (bool)>())
+    {
+        return __begin_moveNode(src, dst, &__ctx, __response, __exception, __sent);
+    }
+    ::Ice::AsyncResultPtr
+    begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context& __ctx, const ::IceInternal::Function<void (const ::Ice::AsyncResultPtr&)>& __completed, const ::IceInternal::Function<void (const ::Ice::AsyncResultPtr&)>& __sent = ::IceInternal::Function<void (const ::Ice::AsyncResultPtr&)>())
+    {
+        return begin_moveNode(src, dst, &__ctx, ::Ice::newCallback(__completed, __sent));
+    }
+    
+private:
+
+    ::Ice::AsyncResultPtr __begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context* __ctx, const ::IceInternal::Function<void (bool)>& __response, const ::IceInternal::Function<void (const ::Ice::Exception&)>& __exception, const ::IceInternal::Function<void (bool)>& __sent)
+    {
+        class Cpp11CB : public ::IceInternal::Cpp11FnCallbackNC
+        {
+        public:
+
+            Cpp11CB(const ::std::function<void (bool)>& responseFunc, const ::std::function<void (const ::Ice::Exception&)>& exceptionFunc, const ::std::function<void (bool)>& sentFunc) :
+                ::IceInternal::Cpp11FnCallbackNC(exceptionFunc, sentFunc),
+                _response(responseFunc)
+            {
+                CallbackBase::checkCallback(true, responseFunc || exceptionFunc != nullptr);
+            }
+
+            virtual void __completed(const ::Ice::AsyncResultPtr& __result) const
+            {
+                ::RoboCompInnerModelManager::InnerModelManagerPrx __proxy = ::RoboCompInnerModelManager::InnerModelManagerPrx::uncheckedCast(__result->getProxy());
+                bool __ret;
+                try
+                {
+                    __ret = __proxy->end_moveNode(__result);
+                }
+                catch(::Ice::Exception& ex)
+                {
+                    Cpp11FnCallbackNC::__exception(__result, ex);
+                    return;
+                }
+                if(_response != nullptr)
+                {
+                    _response(__ret);
+                }
+            }
+        
+        private:
+            
+            ::std::function<void (bool)> _response;
+        };
+        return begin_moveNode(src, dst, __ctx, new Cpp11CB(__response, __exception, __sent));
+    }
+    
+public:
+#endif
+
+    ::Ice::AsyncResultPtr begin_moveNode(const ::std::string& src, const ::std::string& dst)
+    {
+        return begin_moveNode(src, dst, 0, ::IceInternal::__dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context& __ctx)
+    {
+        return begin_moveNode(src, dst, &__ctx, ::IceInternal::__dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::CallbackPtr& __del, const ::Ice::LocalObjectPtr& __cookie = 0)
+    {
+        return begin_moveNode(src, dst, 0, __del, __cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context& __ctx, const ::Ice::CallbackPtr& __del, const ::Ice::LocalObjectPtr& __cookie = 0)
+    {
+        return begin_moveNode(src, dst, &__ctx, __del, __cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::RoboCompInnerModelManager::Callback_InnerModelManager_moveNodePtr& __del, const ::Ice::LocalObjectPtr& __cookie = 0)
+    {
+        return begin_moveNode(src, dst, 0, __del, __cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context& __ctx, const ::RoboCompInnerModelManager::Callback_InnerModelManager_moveNodePtr& __del, const ::Ice::LocalObjectPtr& __cookie = 0)
+    {
+        return begin_moveNode(src, dst, &__ctx, __del, __cookie);
+    }
+
+    bool end_moveNode(const ::Ice::AsyncResultPtr&);
+    
+private:
+
+    bool moveNode(const ::std::string&, const ::std::string&, const ::Ice::Context*);
+    ::Ice::AsyncResultPtr begin_moveNode(const ::std::string&, const ::std::string&, const ::Ice::Context*, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& __cookie = 0);
+    
+public:
+
     bool collide(const ::std::string& a, const ::std::string& b)
     {
         return collide(a, b, 0);
@@ -3217,6 +3333,8 @@ public:
 
     virtual bool removeNode(const ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&) = 0;
 
+    virtual bool moveNode(const ::std::string&, const ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&) = 0;
+
     virtual bool collide(const ::std::string&, const ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&) = 0;
 
     virtual void setPointCloudData(const ::std::string&, const ::RoboCompInnerModelManager::PointCloudVector&, const ::Ice::Context*, ::IceInternal::InvocationObserver&) = 0;
@@ -3275,6 +3393,8 @@ public:
 
     virtual bool removeNode(const ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&);
 
+    virtual bool moveNode(const ::std::string&, const ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&);
+
     virtual bool collide(const ::std::string&, const ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&);
 
     virtual void setPointCloudData(const ::std::string&, const ::RoboCompInnerModelManager::PointCloudVector&, const ::Ice::Context*, ::IceInternal::InvocationObserver&);
@@ -3332,6 +3452,8 @@ public:
     virtual bool getAttribute(const ::std::string&, const ::std::string&, ::std::string&, ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&);
 
     virtual bool removeNode(const ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&);
+
+    virtual bool moveNode(const ::std::string&, const ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&);
 
     virtual bool collide(const ::std::string&, const ::std::string&, const ::Ice::Context*, ::IceInternal::InvocationObserver&);
 
@@ -3413,6 +3535,9 @@ public:
 
     virtual bool removeNode(const ::std::string&, const ::Ice::Current& = ::Ice::Current()) = 0;
     ::Ice::DispatchStatus ___removeNode(::IceInternal::Incoming&, const ::Ice::Current&);
+
+    virtual bool moveNode(const ::std::string&, const ::std::string&, const ::Ice::Current& = ::Ice::Current()) = 0;
+    ::Ice::DispatchStatus ___moveNode(::IceInternal::Incoming&, const ::Ice::Current&);
 
     virtual bool collide(const ::std::string&, const ::std::string&, const ::Ice::Current& = ::Ice::Current()) = 0;
     ::Ice::DispatchStatus ___collide(::IceInternal::Incoming&, const ::Ice::Current&);
@@ -5354,6 +5479,106 @@ template<class T, typename CT> Callback_InnerModelManager_removeNodePtr
 newCallback_InnerModelManager_removeNode(T* instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
 {
     return new Callback_InnerModelManager_removeNode<T, CT>(instance, cb, excb, sentcb);
+}
+
+template<class T>
+class CallbackNC_InnerModelManager_moveNode : public Callback_InnerModelManager_moveNode_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(bool);
+
+    CallbackNC_InnerModelManager_moveNode(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), response(cb)
+    {
+    }
+
+    virtual void __completed(const ::Ice::AsyncResultPtr& __result) const
+    {
+        ::RoboCompInnerModelManager::InnerModelManagerPrx __proxy = ::RoboCompInnerModelManager::InnerModelManagerPrx::uncheckedCast(__result->getProxy());
+        bool __ret;
+        try
+        {
+            __ret = __proxy->end_moveNode(__result);
+        }
+        catch(::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::__exception(__result, ex);
+            return;
+        }
+        if(response)
+        {
+            (::IceInternal::CallbackNC<T>::callback.get()->*response)(__ret);
+        }
+    }
+
+    Response response;
+};
+
+template<class T> Callback_InnerModelManager_moveNodePtr
+newCallback_InnerModelManager_moveNode(const IceUtil::Handle<T>& instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_InnerModelManager_moveNode<T>(instance, cb, excb, sentcb);
+}
+
+template<class T> Callback_InnerModelManager_moveNodePtr
+newCallback_InnerModelManager_moveNode(T* instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_InnerModelManager_moveNode<T>(instance, cb, excb, sentcb);
+}
+
+template<class T, typename CT>
+class Callback_InnerModelManager_moveNode : public Callback_InnerModelManager_moveNode_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(bool, const CT&);
+
+    Callback_InnerModelManager_moveNode(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), response(cb)
+    {
+    }
+
+    virtual void __completed(const ::Ice::AsyncResultPtr& __result) const
+    {
+        ::RoboCompInnerModelManager::InnerModelManagerPrx __proxy = ::RoboCompInnerModelManager::InnerModelManagerPrx::uncheckedCast(__result->getProxy());
+        bool __ret;
+        try
+        {
+            __ret = __proxy->end_moveNode(__result);
+        }
+        catch(::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::__exception(__result, ex);
+            return;
+        }
+        if(response)
+        {
+            (::IceInternal::Callback<T, CT>::callback.get()->*response)(__ret, CT::dynamicCast(__result->getCookie()));
+        }
+    }
+
+    Response response;
+};
+
+template<class T, typename CT> Callback_InnerModelManager_moveNodePtr
+newCallback_InnerModelManager_moveNode(const IceUtil::Handle<T>& instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_InnerModelManager_moveNode<T, CT>(instance, cb, excb, sentcb);
+}
+
+template<class T, typename CT> Callback_InnerModelManager_moveNodePtr
+newCallback_InnerModelManager_moveNode(T* instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_InnerModelManager_moveNode<T, CT>(instance, cb, excb, sentcb);
 }
 
 template<class T>

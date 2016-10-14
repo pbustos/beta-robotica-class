@@ -9,6 +9,7 @@ SET ( SOURCES
   reflexx.cpp
   sampler.cpp
   bodypart.cpp
+  jacobian.cpp
 )
 
 # Headers set

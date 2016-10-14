@@ -78,6 +78,8 @@ const ::std::string __RoboCompInnerModelManager__InnerModelManager__getAttribute
 
 const ::std::string __RoboCompInnerModelManager__InnerModelManager__removeNode_name = "removeNode";
 
+const ::std::string __RoboCompInnerModelManager__InnerModelManager__moveNode_name = "moveNode";
+
 const ::std::string __RoboCompInnerModelManager__InnerModelManager__collide_name = "collide";
 
 const ::std::string __RoboCompInnerModelManager__InnerModelManager__setPointCloudData_name = "setPointCloudData";
@@ -1756,6 +1758,88 @@ IceProxy::RoboCompInnerModelManager::InnerModelManager::end_removeNode(const ::I
 }
 
 bool
+IceProxy::RoboCompInnerModelManager::InnerModelManager::moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context* __ctx)
+{
+    ::IceInternal::InvocationObserver __observer(this, __RoboCompInnerModelManager__InnerModelManager__moveNode_name, __ctx);
+    int __cnt = 0;
+    while(true)
+    {
+        ::IceInternal::Handle< ::IceDelegate::Ice::Object> __delBase;
+        try
+        {
+            __checkTwowayOnly(__RoboCompInnerModelManager__InnerModelManager__moveNode_name);
+            __delBase = __getDelegate(false);
+            ::IceDelegate::RoboCompInnerModelManager::InnerModelManager* __del = dynamic_cast< ::IceDelegate::RoboCompInnerModelManager::InnerModelManager*>(__delBase.get());
+            return __del->moveNode(src, dst, __ctx, __observer);
+        }
+        catch(const ::IceInternal::LocalExceptionWrapper& __ex)
+        {
+            __handleExceptionWrapper(__delBase, __ex, __observer);
+        }
+        catch(const ::Ice::LocalException& __ex)
+        {
+            __handleException(__delBase, __ex, true, __cnt, __observer);
+        }
+    }
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompInnerModelManager::InnerModelManager::begin_moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context* __ctx, const ::IceInternal::CallbackBasePtr& __del, const ::Ice::LocalObjectPtr& __cookie)
+{
+    __checkAsyncTwowayOnly(__RoboCompInnerModelManager__InnerModelManager__moveNode_name);
+    ::IceInternal::OutgoingAsyncPtr __result = new ::IceInternal::OutgoingAsync(this, __RoboCompInnerModelManager__InnerModelManager__moveNode_name, __del, __cookie);
+    try
+    {
+        __result->__prepare(__RoboCompInnerModelManager__InnerModelManager__moveNode_name, ::Ice::Normal, __ctx);
+        ::IceInternal::BasicStream* __os = __result->__startWriteParams(::Ice::DefaultFormat);
+        __os->write(src);
+        __os->write(dst);
+        __result->__endWriteParams();
+        __result->__send(true);
+    }
+    catch(const ::Ice::LocalException& __ex)
+    {
+        __result->__exceptionAsync(__ex);
+    }
+    return __result;
+}
+
+bool
+IceProxy::RoboCompInnerModelManager::InnerModelManager::end_moveNode(const ::Ice::AsyncResultPtr& __result)
+{
+    ::Ice::AsyncResult::__check(__result, this, __RoboCompInnerModelManager__InnerModelManager__moveNode_name);
+    bool __ret;
+    bool __ok = __result->__wait();
+    try
+    {
+        if(!__ok)
+        {
+            try
+            {
+                __result->__throwUserException();
+            }
+            catch(const ::RoboCompInnerModelManager::InnerModelManagerError&)
+            {
+                throw;
+            }
+            catch(const ::Ice::UserException& __ex)
+            {
+                throw ::Ice::UnknownUserException(__FILE__, __LINE__, __ex.ice_name());
+            }
+        }
+        ::IceInternal::BasicStream* __is = __result->__startReadParams();
+        __is->read(__ret);
+        __result->__endReadParams();
+        return __ret;
+    }
+    catch(const ::Ice::LocalException& ex)
+    {
+        __result->__getObserver().failed(ex.ice_name());
+        throw;
+    }
+}
+
+bool
 IceProxy::RoboCompInnerModelManager::InnerModelManager::collide(const ::std::string& a, const ::std::string& b, const ::Ice::Context* __ctx)
 {
     ::IceInternal::InvocationObserver __observer(this, __RoboCompInnerModelManager__InnerModelManager__collide_name, __ctx);
@@ -2754,6 +2838,52 @@ IceDelegateM::RoboCompInnerModelManager::InnerModelManager::removeNode(const ::s
     {
         ::IceInternal::BasicStream* __os = __og.startWriteParams(::Ice::DefaultFormat);
         __os->write(item);
+        __og.endWriteParams();
+    }
+    catch(const ::Ice::LocalException& __ex)
+    {
+        __og.abort(__ex);
+    }
+    bool __ok = __og.invoke();
+    bool __ret;
+    try
+    {
+        if(!__ok)
+        {
+            try
+            {
+                __og.throwUserException();
+            }
+            catch(const ::RoboCompInnerModelManager::InnerModelManagerError&)
+            {
+                throw;
+            }
+            catch(const ::Ice::UserException& __ex)
+            {
+                ::Ice::UnknownUserException __uue(__FILE__, __LINE__, __ex.ice_name());
+                throw __uue;
+            }
+        }
+        ::IceInternal::BasicStream* __is = __og.startReadParams();
+        __is->read(__ret);
+        __og.endReadParams();
+        return __ret;
+    }
+    catch(const ::Ice::LocalException& __ex)
+    {
+        throw ::IceInternal::LocalExceptionWrapper(__ex, false);
+    }
+}
+
+bool
+IceDelegateM::RoboCompInnerModelManager::InnerModelManager::moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context* __context, ::IceInternal::InvocationObserver& __observer)
+{
+    ::IceInternal::Outgoing __og(__handler.get(), __RoboCompInnerModelManager__InnerModelManager__moveNode_name, ::Ice::Normal, __context, __observer);
+    try
+    {
+        ::IceInternal::BasicStream* __os = __og.startWriteParams(::Ice::DefaultFormat);
+        __os->write(src);
+        __os->write(dst);
         __og.endWriteParams();
     }
     catch(const ::Ice::LocalException& __ex)
@@ -4463,6 +4593,88 @@ IceDelegateD::RoboCompInnerModelManager::InnerModelManager::removeNode(const ::s
 }
 
 bool
+IceDelegateD::RoboCompInnerModelManager::InnerModelManager::moveNode(const ::std::string& src, const ::std::string& dst, const ::Ice::Context* __context, ::IceInternal::InvocationObserver&)
+{
+    class _DirectI : public ::IceInternal::Direct
+    {
+    public:
+
+        _DirectI(bool& __result, const ::std::string& __p_src, const ::std::string& __p_dst, const ::Ice::Current& __current) : 
+            ::IceInternal::Direct(__current),
+            _result(__result),
+            _m_src(__p_src),
+            _m_dst(__p_dst)
+        {
+        }
+        
+        virtual ::Ice::DispatchStatus
+        run(::Ice::Object* object)
+        {
+            ::RoboCompInnerModelManager::InnerModelManager* servant = dynamic_cast< ::RoboCompInnerModelManager::InnerModelManager*>(object);
+            if(!servant)
+            {
+                throw ::Ice::OperationNotExistException(__FILE__, __LINE__, _current.id, _current.facet, _current.operation);
+            }
+            try
+            {
+                _result = servant->moveNode(_m_src, _m_dst, _current);
+                return ::Ice::DispatchOK;
+            }
+            catch(const ::Ice::UserException& __ex)
+            {
+                setUserException(__ex);
+                return ::Ice::DispatchUserException;
+            }
+        }
+        
+    private:
+        
+        bool& _result;
+        const ::std::string& _m_src;
+        const ::std::string& _m_dst;
+    };
+    
+    ::Ice::Current __current;
+    __initCurrent(__current, __RoboCompInnerModelManager__InnerModelManager__moveNode_name, ::Ice::Normal, __context);
+    bool __result;
+    try
+    {
+        _DirectI __direct(__result, src, dst, __current);
+        try
+        {
+            __direct.getServant()->__collocDispatch(__direct);
+        }
+        catch(...)
+        {
+            __direct.destroy();
+            throw;
+        }
+        __direct.destroy();
+    }
+    catch(const ::RoboCompInnerModelManager::InnerModelManagerError&)
+    {
+        throw;
+    }
+    catch(const ::Ice::SystemException&)
+    {
+        throw;
+    }
+    catch(const ::IceInternal::LocalExceptionWrapper&)
+    {
+        throw;
+    }
+    catch(const ::std::exception& __ex)
+    {
+        ::IceInternal::LocalExceptionWrapper::throwWrapper(__ex);
+    }
+    catch(...)
+    {
+        throw ::IceInternal::LocalExceptionWrapper(::Ice::UnknownException(__FILE__, __LINE__, "unknown c++ exception"), false);
+    }
+    return __result;
+}
+
+bool
 IceDelegateD::RoboCompInnerModelManager::InnerModelManager::collide(const ::std::string& a, const ::std::string& b, const ::Ice::Context* __context, ::IceInternal::InvocationObserver&)
 {
     class _DirectI : public ::IceInternal::Direct
@@ -5150,6 +5362,31 @@ RoboCompInnerModelManager::InnerModelManager::___removeNode(::IceInternal::Incom
 }
 
 ::Ice::DispatchStatus
+RoboCompInnerModelManager::InnerModelManager::___moveNode(::IceInternal::Incoming& __inS, const ::Ice::Current& __current)
+{
+    __checkMode(::Ice::Normal, __current.mode);
+    ::IceInternal::BasicStream* __is = __inS.startReadParams();
+    ::std::string src;
+    ::std::string dst;
+    __is->read(src);
+    __is->read(dst);
+    __inS.endReadParams();
+    try
+    {
+        bool __ret = moveNode(src, dst, __current);
+        ::IceInternal::BasicStream* __os = __inS.__startWriteParams(::Ice::DefaultFormat);
+        __os->write(__ret);
+        __inS.__endWriteParams(true);
+        return ::Ice::DispatchOK;
+    }
+    catch(const ::RoboCompInnerModelManager::InnerModelManagerError& __ex)
+    {
+        __inS.__writeUserException(__ex, ::Ice::DefaultFormat);
+    }
+    return ::Ice::DispatchUserException;
+}
+
+::Ice::DispatchStatus
 RoboCompInnerModelManager::InnerModelManager::___collide(::IceInternal::Incoming& __inS, const ::Ice::Current& __current)
 {
     __checkMode(::Ice::Normal, __current.mode);
@@ -5208,6 +5445,7 @@ const ::std::string __RoboCompInnerModelManager__InnerModelManager_all[] =
     "ice_ids",
     "ice_isA",
     "ice_ping",
+    "moveNode",
     "removeAttribute",
     "removeNode",
     "setAttribute",
@@ -5225,7 +5463,7 @@ const ::std::string __RoboCompInnerModelManager__InnerModelManager_all[] =
 ::Ice::DispatchStatus
 RoboCompInnerModelManager::InnerModelManager::__dispatch(::IceInternal::Incoming& in, const ::Ice::Current& current)
 {
-    ::std::pair< const ::std::string*, const ::std::string*> r = ::std::equal_range(__RoboCompInnerModelManager__InnerModelManager_all, __RoboCompInnerModelManager__InnerModelManager_all + 25, current.operation);
+    ::std::pair< const ::std::string*, const ::std::string*> r = ::std::equal_range(__RoboCompInnerModelManager__InnerModelManager_all, __RoboCompInnerModelManager__InnerModelManager_all + 26, current.operation);
     if(r.first == r.second)
     {
         throw ::Ice::OperationNotExistException(__FILE__, __LINE__, current.id, current.facet, current.operation);
@@ -5295,41 +5533,45 @@ RoboCompInnerModelManager::InnerModelManager::__dispatch(::IceInternal::Incoming
         }
         case 15:
         {
-            return ___removeAttribute(in, current);
+            return ___moveNode(in, current);
         }
         case 16:
         {
-            return ___removeNode(in, current);
+            return ___removeAttribute(in, current);
         }
         case 17:
         {
-            return ___setAttribute(in, current);
+            return ___removeNode(in, current);
         }
         case 18:
         {
-            return ___setPlane(in, current);
+            return ___setAttribute(in, current);
         }
         case 19:
         {
-            return ___setPlaneTexture(in, current);
+            return ___setPlane(in, current);
         }
         case 20:
         {
-            return ___setPointCloudData(in, current);
+            return ___setPlaneTexture(in, current);
         }
         case 21:
         {
-            return ___setPose(in, current);
+            return ___setPointCloudData(in, current);
         }
         case 22:
         {
-            return ___setPoseFromParent(in, current);
+            return ___setPose(in, current);
         }
         case 23:
         {
-            return ___setScale(in, current);
+            return ___setPoseFromParent(in, current);
         }
         case 24:
+        {
+            return ___setScale(in, current);
+        }
+        case 25:
         {
             return ___transform(in, current);
         }
