@@ -36,14 +36,15 @@ public:
 	SpecificWorker(MapPrx& mprx);	
 	~SpecificWorker();
 	bool setParams(RoboCompCommonBehavior::ParameterList params);
-
+	virtual void setPick(const Pick &myPick);
 
 public slots:
 	void compute(); 	
 
 private:
 	RoboCompDifferentialRobot::TBaseState bState;
-	
+	QVec target;
+	bool active = false;
 };
 
 #endif

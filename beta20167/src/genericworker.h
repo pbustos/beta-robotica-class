@@ -27,10 +27,11 @@
 #include <ui_mainUI.h>
 
 #include <CommonBehavior.h>
-#include <DifferentialRobot.h>
+
 #include <Laser.h>
-
-
+#include <DifferentialRobot.h>
+#include <DifferentialRobot.h>
+#include <RCISMousePicker.h>
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
@@ -40,6 +41,7 @@ typedef map <string,::IceProxy::Ice::Object*> MapPrx;
 using namespace std;
 
 using namespace RoboCompDifferentialRobot;
+using namespace RoboCompRCISMousePicker;
 using namespace RoboCompLaser;
 
 
@@ -63,14 +65,17 @@ public:
 	QMutex *mutex;
 	
 
-	DifferentialRobotPrx differentialrobot_proxy;
 	LaserPrx laser_proxy;
+	DifferentialRobotPrx differentialrobot_proxy;
 
-
+	virtual void setPick(const Pick &myPick) = 0;
 
 protected:
 	QTimer timer;
 	int Period;
+
+private:
+
 
 public slots:
 	virtual void compute() = 0;
