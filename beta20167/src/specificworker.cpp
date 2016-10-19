@@ -36,13 +36,9 @@ SpecificWorker::~SpecificWorker()
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
-
-
-
+	innermodel = new InnerModel("/home/robocomp/files/innermodel/simpleworld.xml");
 	
 	timer.start(Period);
-	
-
 	return true;
 }
 
@@ -62,7 +58,25 @@ void SpecificWorker::compute()
 }
 
 
+void SpecificWorker::checkRobotInLaser()
+{
+	QVec wd;
+	std::vector<Point> points, res;
+	for (auto &ld : laserData)
+	{
+		wd = innermodel->laserTo("world", "laser", ld.dist, ld.angle); //OPTIMIZE THIS FOR ALL CLASS METHODS
+		points.push_back(Point(wd.x(), wd.z()));
+	}
+	res = simPath.simplifyWithRDP(points, 70);  ///PARAMS
+	//qDebug() << __FUNCTION__ << "laser polygon after simp" << res.size();
 
+	// Create a QPolygon so we can check if robot outline falls inside
+	QPolygonF polygon;
+	for (auto &p: res)
+		polygon << QPointF(p.x, p.y);
+
+	
+}
 
 
 

@@ -3,6 +3,7 @@
 SET ( SOURCES
   specificworker.cpp
   specificmonitor.cpp
+  $ENV{ROBOCOMP}/classes/simplifypath/simplifyPath.cpp
 )
 
 # Headers set

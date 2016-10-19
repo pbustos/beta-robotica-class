@@ -28,6 +28,7 @@
 
 #include <genericworker.h>
 #include <innermodel/innermodel.h>
+#include <simplifypath/simplifyPath.h>
 
 class SpecificWorker : public GenericWorker
 {
@@ -42,7 +43,14 @@ public slots:
 	void compute(); 	
 
 private:
+	
+	void checkRobotInLaser();
+	
 	RoboCompDifferentialRobot::TBaseState bState;
+	RoboCompLaser::TLaserData laserData;
+	simplifyPath simPath;
+
+	InnerModel *innermodel;
 	
 };
 
