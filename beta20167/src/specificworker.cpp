@@ -23,40 +23,72 @@
 */
 SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
 {
-
 }
 
 /**
 * \brief Default destructor
 */
 SpecificWorker::~SpecificWorker()
-{
-	
+{	
 }
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
 	innermodel = new InnerModel("/home/robocomp/files/innermodel/simpleworld.xml");
-	
+	target = QVec::vec2(0,1000);
 	timer.start(Period);
 	return true;
+	
 }
 
 void SpecificWorker::compute()
 {
-	
-	try
+	if( active) 
 	{
-		differentialrobot_proxy->getBaseState(bState);
-		qDebug() << bState.x << bState.z << bState.alpha;
-		
-	}
-	catch(const Ice::Exception &e)
-	{
-		std::cout << "Error reading from Camera" << e << std::endl;
+		try
+		{
+			differentialrobot_proxy->getBaseState(bState);
+			qDebug() << bState.x << bState.z << bState.alpha;
+			
+			//Transform TARGET to Robot RS
+			Rot2DC rot(bState.alpha);
+			QVec res = (rot * ( target - QVec::vec2(bState.x, bState.z)));
+			res.print("res");
+				
+			float vrot = atan2(res.x(), res.y());
+			float vadv = res.norm2();
+			
+			if( vadv < 10)
+			{
+				vrot = 0;
+				vadv = 0;
+				active = false;
+			}
+			if( fabs(vrot) > 0.1 )
+				vadv = 0;
+			differentialrobot_proxy->setSpeedBase(vadv, vrot);
+			
+		}
+		catch(const Ice::Exception &e)
+		{
+			std::cout << "Error reading from Robot" << e << std::endl;
+		}
+		catch(...)
+		{
+			std::cout << "Error in QMat probably" << std::endl;
+		}
 	}
 }
 
+////////////////////////////////////////////
+////////////////////////////////////////////
+
+void SpecificWorker::setPick(const Pick& myPick)
+{
+	target[0] = myPick.x;
+	target[1] = myPick.z;
+	active = true;
+}
 
 void SpecificWorker::checkRobotInLaser()
 {

@@ -1,11 +1,13 @@
 import "/robocomp/interfaces/IDSLs/Laser.idsl";
 import "/robocomp/interfaces/IDSLs/DifferentialRobot.idsl";
+import "/robocomp/interfaces/IDSLs/RCISMousePicker.idsl";
 
 Component controller
 {
 	Communications
 	{
 		requires DifferentialRobot, Laser; 
+		subscribesTo RCISMousePicker;
 	};
 	language Cpp;
 	gui Qt(QWidget);

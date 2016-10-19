@@ -37,7 +37,7 @@ public:
 	SpecificWorker(MapPrx& mprx);	
 	~SpecificWorker();
 	bool setParams(RoboCompCommonBehavior::ParameterList params);
-
+	virtual void setPick(const Pick &myPick);
 
 public slots:
 	void compute(); 	
@@ -49,9 +49,9 @@ private:
 	RoboCompDifferentialRobot::TBaseState bState;
 	RoboCompLaser::TLaserData laserData;
 	simplifyPath simPath;
-
 	InnerModel *innermodel;
-	
+	QVec target;
+	bool active = false;
 };
 
 #endif
