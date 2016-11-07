@@ -84,7 +84,6 @@
 
 #include <Laser.h>
 #include <DifferentialRobot.h>
-#include <DifferentialRobot.h>
 #include <RCISMousePicker.h>
 
 
@@ -93,6 +92,12 @@
 // Namespaces
 using namespace std;
 using namespace RoboCompCommonBehavior;
+
+using namespace RoboCompLaser;
+using namespace RoboCompDifferentialRobot;
+using namespace RoboCompRCISMousePicker;
+
+
 
 class controller : public RoboComp::Application
 {

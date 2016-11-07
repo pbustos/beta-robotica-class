@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 2.8.11)
+
+cmake_minimum_required(VERSION 2.6)
 PROJECT(  controller )
 
  
@@ -45,7 +46,10 @@ SET( QT_USE_QTSTATE TRUE )
 SET( QT_USE_QTSTATEMACHINE TRUE )
 SET( CMAKE_AUTOMOC TRUE )
 INCLUDE( ${QT_USE_FILE} )
+
 QT4_WRAP_UI( UI_HEADERS mainUI.ui )
+
+
 
 # Specify construction and link process
 ADD_EXECUTABLE( controller ${SOURCES} ${MOC_SOURCES} ${RC_SOURCES} ${UI_HEADERS} )

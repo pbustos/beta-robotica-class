@@ -35,7 +35,7 @@ SpecificWorker::~SpecificWorker()
 bool SpecificWorker::setParams ( RoboCompCommonBehavior::ParameterList params )
 {
 	innerModel= new InnerModel ( "/home/robocomp/robocomp/files/innermodel/simpleworld.xml" );
-	timer.start ( Period );
+	timer.start(Period);
 	return true;
 }
 
@@ -121,9 +121,7 @@ void SpecificWorker::move( const TLaserData &tLaser )
 
 void SpecificWorker::buginit ( const TLaserData& ldata,const TBaseState& bState )
 {
-	QVec posi = QVec::zeros(3);
-	posi.setItem(0,bState.x);
-	posi.setItem(2,bState.z);
+	QVec posi = QVec::vec3(bState.x, 0., bState.z);
 	distanciaAnterior = fabs(linea.perpendicularDistanceToPoint(posi));
 	if( obstacle(ldata) == false)
 	{
@@ -146,7 +144,7 @@ void SpecificWorker::bug( const TLaserData &ldata,const TBaseState &bState )
 	//qDebug()<<diffToline;
 	
 	//Check if target is visible and the robot is approaching the line, to a
-	if ( targetAtSight ( ldata ) and diffToline <= 0 )
+	if ( targetAtSight (ldata) )
 	{
 		state = State::GOTO;
 		qDebug() << "Target visible: from BUG to GOTO";
@@ -169,9 +167,11 @@ void SpecificWorker::bug( const TLaserData &ldata,const TBaseState &bState )
 		return;
 	}
 
-	float vrot =  -((1./(1. + exp(-(dist - 450.))))-1./2.);
-	float vadv = 350 * exp ( - ( fabs ( vrot ) * alpha ) ); 
-	vrot *= 0.1;
+	float k=0.1;  // pendiente de la sigmoide
+	float vrot =  -((1./(1. + exp(-k*(dist - 450.))))-1./2.);		//sigmoide para meter vrot entre -0.5 y 0.5. La k ajusta la pendiente.
+	float vadv = 350 * exp ( - ( fabs ( vrot ) * alpha ) ); 		//gaussiana para amortiguar la vel. de avance en funcion de vrot
+	qDebug() << vrot << vadv;
+	//vrot *= 0.3;
 	differentialrobot_proxy->setSpeedBase ( vadv ,vrot );
 }
 
@@ -184,7 +184,34 @@ bool SpecificWorker::targetAtSight ( TLaserData ldata )
 		QPoint p ( r.x(),r.z() );
 		poly << p;
 	}
-	return poly.containsPoint ( QPoint ( pick.getPose().x(),pick.getPose().z() ), Qt::OddEvenFill );
+	QVec targetInRobot = innerModel->transform("base", pick.getPose(), "world");
+	float dist = targetInRobot.norm2();
+	int veces = int(dist / 200);  //number of times the robot semilength fits in the robot-to-target distance
+	float landa = 1./veces;
+	
+	QList<QPoint> points;
+	points << QPoint(pick.getPose().x(),pick.getPose().z());  //Add target
+	
+	//Add points along lateral lines of robot
+	for (float i=landa; i<= 1.; i+=landa)
+	{
+		QVec point = targetInRobot*(T)landa;
+		QVec pointW = innerModel->transform("world", point ,"base");
+		points << QPoint(pointW.x(), pointW.z());
+		
+		pointW = innerModel->transform("world", point - QVec::vec3(200,0,0), "base");
+		points << QPoint(pointW.x(), pointW.z());
+		
+		pointW = innerModel->transform("world", point + QVec::vec3(200,0,0), "base");
+		points << QPoint(pointW.x(), pointW.z());
+		
+	}
+	foreach( QPoint p, points)
+	{
+		if( poly.containsPoint(p , Qt::OddEvenFill) == false)
+			return false;
+	}
+	return true;
 }
 
 /////////////
@@ -202,12 +229,12 @@ float SpecificWorker::distanceToLine(const TBaseState& bState)
 
 float SpecificWorker::obstacleLeft(const TLaserData& tlaser)
 {
-	const int umbral = 85;
-	float min = tlaser[umbral].dist;
-	for(int i= 1; i<5;i++)
+	const int laserpos = 85;
+	float min = tlaser[laserpos].dist;
+	for(int i=laserpos-2; i<laserpos+2;i++)
 	{
-		if (tlaser[umbral + i].dist < min)
-			min = tlaser[umbral + i].dist;
+		if (tlaser[i].dist < min)
+			min = tlaser[i].dist;
 	}
 	return min;
 }
@@ -224,8 +251,8 @@ void SpecificWorker::stopRobot()
 
 bool SpecificWorker::obstacle ( TLaserData tLaser )
 {
-	const int offset = 35;
-	const int minDist = 400;
+	const int offset = 30;
+	const int minDist = 350;
 	
 	//sort laser data from small to large distances using a lambda function.
 	std::sort ( tLaser.begin() + offset, tLaser.end()- offset, [] ( RoboCompLaser::TData a, RoboCompLaser::TData b ){	return a.dist < b.dist;});
@@ -238,7 +265,7 @@ bool SpecificWorker::obstacle ( TLaserData tLaser )
 
 void SpecificWorker::setPick ( const Pick &mypick )
 {
-    qDebug() <<mypick.x<<mypick.z;
+    qDebug() << "New target selected: " << mypick.x << mypick.z;
     pick.copy ( mypick.x,mypick.z );
     pick.setActive ( true );
     state = State::INIT;

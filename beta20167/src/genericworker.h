@@ -27,11 +27,11 @@
 #include <ui_mainUI.h>
 
 #include <CommonBehavior.h>
-
-#include <Laser.h>
-#include <DifferentialRobot.h>
 #include <DifferentialRobot.h>
 #include <RCISMousePicker.h>
+#include <Laser.h>
+
+
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
@@ -70,12 +70,10 @@ public:
 
 	virtual void setPick(const Pick &myPick) = 0;
 
+
 protected:
 	QTimer timer;
 	int Period;
-
-private:
-
 
 public slots:
 	virtual void compute() = 0;
