@@ -174,7 +174,16 @@ int ::controller::run(int argc, char* argv[])
 	rInfo("DifferentialRobotProxy initialized Ok!");
 	mprx["DifferentialRobotProxy"] = (::IceProxy::Ice::Object*)(&differentialrobot_proxy);//Remote server proxy creation example
 
-	IceStorm::TopicManagerPrx topicManager = IceStorm::TopicManagerPrx::checkedCast(communicator()->propertyToProxy("TopicManager.Proxy"));
+	IceStorm::TopicManagerPrx topicManager;
+	try
+	{
+		topicManager = IceStorm::TopicManagerPrx::checkedCast(communicator()->propertyToProxy("TopicManager.Proxy"));
+	}
+	catch(const Ice::Exception& ex)
+	{
+		cout << "[" << PROGRAM_NAME << "]: Exception: STORM not running: " << ex << endl;
+		return EXIT_FAILURE;
+	}
 
 
 	SpecificWorker *worker = new SpecificWorker(mprx);
@@ -204,12 +213,6 @@ int ::controller::run(int argc, char* argv[])
 		adapterCommonBehavior->add(commonbehaviorI, communicator()->stringToIdentity("commonbehavior"));
 		adapterCommonBehavior->activate();
 
-
-
-
-
-
-
 		// Server adapter creation and publication
 		if (not GenericMonitor::configGetString(communicator(), prefix, "RCISMousePickerTopic.Endpoints", tmp, ""))
 		{
@@ -219,25 +222,29 @@ int ::controller::run(int argc, char* argv[])
 		RCISMousePickerPtr rcismousepickerI_ = new RCISMousePickerI(worker);
 		Ice::ObjectPrx rcismousepicker = RCISMousePicker_adapter->addWithUUID(rcismousepickerI_)->ice_oneway();
 		IceStorm::TopicPrx rcismousepicker_topic;
-		if(!rcismousepicker_topic){
-		try {
-			rcismousepicker_topic = topicManager->create("RCISMousePicker");
-		}
-		catch (const IceStorm::TopicExists&) {
-		//Another client created the topic
-		try{
-			rcismousepicker_topic = topicManager->retrieve("RCISMousePicker");
-		}
-		catch(const IceStorm::NoSuchTopic&)
+		if(!rcismousepicker_topic)
 		{
-			//Error. Topic does not exist
+			try 
+			{
+				rcismousepicker_topic = topicManager->create("RCISMousePicker");
 			}
-		}
-		IceStorm::QoS qos;
-		rcismousepicker_topic->subscribeAndGetPublisher(qos, rcismousepicker);
+			catch (const IceStorm::TopicExists&) 
+			{
+			//Another client created the topic
+				try
+				{
+					rcismousepicker_topic = topicManager->retrieve("RCISMousePicker");
+				}
+				catch(const IceStorm::NoSuchTopic&)
+				{
+					//Error. Topic does not exist
+				}
+			}
+			IceStorm::QoS qos;
+			rcismousepicker_topic->subscribeAndGetPublisher(qos, rcismousepicker);
 		}
 		RCISMousePicker_adapter->activate();
-
+		
 		// Server adapter creation and publication
 		cout << SERVER_FULL_NAME " started" << endl;
 
