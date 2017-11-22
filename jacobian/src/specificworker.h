@@ -46,7 +46,9 @@ public slots:
 	void compute();
 
 private:
-	InnerModelMgr innerModel;
+	//InnerModelMgr innerModel;
+	InnerModel *innerModel;
+	
 	RoboCompJointMotor::MotorParamsList mList;
 	QStringList joints;
 	QVec motores;

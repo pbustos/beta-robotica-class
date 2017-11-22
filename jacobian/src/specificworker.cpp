@@ -36,19 +36,9 @@ SpecificWorker::~SpecificWorker()
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
-//       THE FOLLOWING IS JUST AN EXAMPLE
-//
-//	try
-//	{
-//		RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
-//		innermodel_path = par.value;
-//		innermodel = new InnerModel(innermodel_path);
-//	}
-//	catch(std::exception e) { qFatal("Error reading config params"); }
 
-
-	innerModel = InnerModelMgr(std::make_shared<InnerModel>("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml"));
-	//innerModel = InnerModelMgr("/home/robocomp/robocomp/components/robocomp-araceli/etcSim/simulation.xml");   IMPLEMENTAR ESTE CONSTRUCTOR
+	//innerModel = InnerModelMgr(std::make_shared<InnerModel>("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml"));
+	innerModel = InnerModel("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml");  
 
 	try 
 	{ mList = jointmotor_proxy->getAllMotorParams();}
