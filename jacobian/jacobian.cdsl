@@ -1,0 +1,11 @@
+import "JointMotor.idsl";
+
+Component jacobian
+{
+	Communications
+	{
+		requires JointMotor;
+	};
+	language Cpp;
+};
+
