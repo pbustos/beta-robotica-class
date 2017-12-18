@@ -78,6 +78,7 @@ void SpecificWorker::compute()
 	catch(const Ice::Exception &e)
 	{	std::cout << e.what() << std::endl;}
 	
+	//Compute Jacobian for the chain of joints and using as tip "cameraHand" 
  	QMat jacobian = innerModel->jacobian(joints, motores, "cameraHand");
 	
 	RoboCompJointMotor::MotorGoalVelocityList vl;
@@ -120,7 +121,7 @@ void SpecificWorker::compute()
 void SpecificWorker::goHome()
 {
 	RoboCompJointMotor::MotorStateMap mMap;
- 	try
+	try
 	{
 		jointmotor_proxy->getAllMotorState(mMap);
 		for(auto m: mMap)
@@ -128,6 +129,7 @@ void SpecificWorker::goHome()
 			RoboCompJointMotor::MotorGoalPosition mg = { innerModel->getJoint(m.first)->home, 1.0, m.first };
 			jointmotor_proxy->setPosition(mg);
 		}
+		sleep(1);
 	}
 	catch(const Ice::Exception &e)
 	{	std::cout << e.what() << std::endl;}	
