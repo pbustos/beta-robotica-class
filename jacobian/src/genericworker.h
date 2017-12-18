@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <qlog/qlog.h>
 
+#include <ui_mainUI.h>
 
 #include <CommonBehavior.h>
 
@@ -46,7 +47,11 @@ using namespace RoboCompJointMotor;
 
 
 class GenericWorker :
+#ifdef USE_QTGUI
+public QWidget, public Ui_guiDlg
+#else
 public QObject
+#endif
 {
 Q_OBJECT
 public:
@@ -59,8 +64,8 @@ public:
 	QMutex *mutex;
 
 
-	DifferentialRobotPrx differentialrobot_proxy;
 	JointMotorPrx jointmotor_proxy;
+	DifferentialRobotPrx differentialrobot_proxy;
 
 
 protected:

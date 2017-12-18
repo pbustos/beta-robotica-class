@@ -8,5 +8,6 @@ Component jacobian
 		requires JointMotor, DifferentialRobot;
 	};
 	language Cpp;
+	gui Qt(QWidget);
 };
 

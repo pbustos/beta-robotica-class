@@ -31,7 +31,7 @@
 #include <innermodel/innermodel.h>
 #include <innermodel/innermodelmgr.h>
 
-
+#define INCREMENT 10
 
 class SpecificWorker : public GenericWorker
 {
@@ -44,14 +44,23 @@ public:
 
 public slots:
 	void compute();
-
-private:
-	//InnerModelMgr innerModel;
-	InnerModelMgr innerModel;
+	void leftSlot();
+	void rightSlot();
+	void upSlot();
+	void downSlot();
+	void frontSlot();
+	void backSlot();
+	void goHome();
 	
+private:
+	InnerModelMgr innerModel;
 	RoboCompJointMotor::MotorParamsList mList;
 	QStringList joints;
 	QVec motores;
+	QVec error;
+	bool pushedButton = false;
+	
+	bool isPushed();
 };
 
 #endif
