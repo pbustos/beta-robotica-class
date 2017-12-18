@@ -1,0 +1,11 @@
+import "InnerModelManager.idsl";
+
+Component verruga
+{
+	Communications
+	{
+		requires InnerModelManager;
+	};
+	language Python;
+};
+
