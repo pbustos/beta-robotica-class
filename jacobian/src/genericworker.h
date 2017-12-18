@@ -28,6 +28,8 @@
 #include <CommonBehavior.h>
 
 #include <JointMotor.h>
+#include <DifferentialRobot.h>
+#include <GenericBase.h>
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
@@ -36,6 +38,8 @@ typedef map <string,::IceProxy::Ice::Object*> MapPrx;
 
 using namespace std;
 
+using namespace RoboCompGenericBase;
+using namespace RoboCompDifferentialRobot;
 using namespace RoboCompJointMotor;
 
 
@@ -55,6 +59,7 @@ public:
 	QMutex *mutex;
 
 
+	DifferentialRobotPrx differentialrobot_proxy;
 	JointMotorPrx jointmotor_proxy;
 
 

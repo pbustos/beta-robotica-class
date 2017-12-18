@@ -1,10 +1,11 @@
 import "JointMotor.idsl";
+import "DifferentialRobot.idsl";
 
 Component jacobian
 {
 	Communications
 	{
-		requires JointMotor;
+		requires JointMotor, DifferentialRobot;
 	};
 	language Cpp;
 };

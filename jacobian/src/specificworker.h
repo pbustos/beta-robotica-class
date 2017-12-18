@@ -47,7 +47,7 @@ public slots:
 
 private:
 	//InnerModelMgr innerModel;
-	InnerModel *innerModel;
+	InnerModelMgr innerModel;
 	
 	RoboCompJointMotor::MotorParamsList mList;
 	QStringList joints;

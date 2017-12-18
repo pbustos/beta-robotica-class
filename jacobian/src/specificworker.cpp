@@ -37,8 +37,8 @@ SpecificWorker::~SpecificWorker()
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
 
-	//innerModel = InnerModelMgr(std::make_shared<InnerModel>("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml"));
-	innerModel = InnerModel("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml");  
+	innerModel = InnerModelMgr(std::make_shared<InnerModel>("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml"));
+	//innerModel = InnerModel("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml");  
 
 	try 
 	{ mList = jointmotor_proxy->getAllMotorParams();}

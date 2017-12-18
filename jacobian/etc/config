@@ -3,8 +3,7 @@ CommonBehavior.Endpoints=tcp -p 15000
 
 # Proxies for required interfaces
 JointMotorProxy = jointmotor:tcp -h localhost -p 20000
-
-
+DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
 
 Ice.Warn.Connections=0
 Ice.Trace.Network=0
