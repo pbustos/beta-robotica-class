@@ -56,7 +56,7 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	connect(pushButton_front, SIGNAL(pressed()), this, SLOT(frontSlot()));
 	connect(pushButton_back, SIGNAL(pressed()), this, SLOT(backSlot()));
 	connect(pushButton_home, SIGNAL(pressed()), this, SLOT(goHome()));
-	
+	connect(horizontalSlider_speed, SIGNAL(valueChanged(int)), this, SLOT(changeSpeed(int))); 
 	
 	timer.start(100);
 	return true;
@@ -80,25 +80,40 @@ void SpecificWorker::compute()
 	
  	QMat jacobian = innerModel->jacobian(joints, motores, "cameraHand");
 	
+	RoboCompJointMotor::MotorGoalVelocityList vl;
 	if( isPushed() )
+	{
 		try
 		{
 			QVec incs = jacobian.invert() * error;	
-			RoboCompJointMotor::MotorGoalPositionList ml;
 			int i=0;
 			for(auto m: joints)
 			{
-				RoboCompJointMotor::MotorGoalPosition mg = {mMap.find(m.toStdString())->second.pos + incs[i], 1.0, m.toStdString()};
-				ml.push_back(mg);
+				//RoboCompJointMotor::MotorGoalPosition mg = {mMap.find(m.toStdString())->second.pos + incs[i], 1.0, m.toStdString()};
+				RoboCompJointMotor::MotorGoalVelocity vg{FACTOR*incs[i], 1.0, m.toStdString()};
+				//ml.push_back(mg);
+				vl.push_back(vg);
 				i++;
 			}
-			try
-			{ jointmotor_proxy->setSyncPosition(ml); }
-			catch(const Ice::Exception &e)
-			{	std::cout << e.what() << std::endl;}
 		}	
 		catch(const QString &e)
 		{ qDebug() << e << "Error inverting matrix";}
+	}
+	else //Stop the arm
+	{
+		for(auto m: joints)
+		{
+			RoboCompJointMotor::MotorGoalVelocity vg{0.0, 1.0, m.toStdString()};
+			vl.push_back(vg);
+		}
+	}
+	//Do the thing
+	try
+	{ 
+		jointmotor_proxy->setSyncVelocity(vl);
+	}
+	catch(const Ice::Exception &e)
+	{	std::cout << e.what() << std::endl;}
 } 	
 	
 	
@@ -158,4 +173,9 @@ void SpecificWorker::upSlot()
 void SpecificWorker::downSlot()
 {
 	error = QVec::vec6(0,0,-INCREMENT,0,0,0);
+}
+
+void SpecificWorker::changeSpeed(int s)
+{
+	FACTOR = s;
 }

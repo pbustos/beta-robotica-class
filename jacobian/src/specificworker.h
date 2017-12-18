@@ -51,6 +51,7 @@ public slots:
 	void frontSlot();
 	void backSlot();
 	void goHome();
+	void changeSpeed(int);
 	
 private:
 	InnerModelMgr innerModel;
@@ -59,6 +60,7 @@ private:
 	QVec motores;
 	QVec error;
 	bool pushedButton = false;
+	int FACTOR = 1;
 	
 	bool isPushed();
 };
