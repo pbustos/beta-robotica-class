@@ -40,7 +40,9 @@ try:
 	icePaths.append('/opt/robocomp/interfaces')
 except:
 	print 'SLICE_PATH environment variable was not exported. Using only the default paths'
+	icePaths.append('/opt/robocomp/interfaces')
 	pass
+
 
 ice_InnerModelManager = False
 for p in icePaths:
