@@ -59,11 +59,13 @@ class SpecificWorker(GenericWorker):
 		return True
 
 	def detectPick(self):
+		print "PICK"
 		for box in self.listaBoxes:
 			for car in range(1, 6):
 				boxname = box + "_" + str(car)
 				try:
 					if self.innermodelmanager_proxy.collide("finger_right_2_mesh3", boxname):
+						print "Muevo cosas "
 						self.innermodelmanager_proxy.moveNode(box, "cameraHand")  # IF MOVING TO A MESH PETA
 						pose = Pose3D()
 						pose.x=0
@@ -73,7 +75,6 @@ class SpecificWorker(GenericWorker):
 						pose.ry=0
 						pose.rz=0
 						self.innermodelmanager_proxy.setPoseFromParent(box, pose)
-						time.sleep(5)
 						self.state = self.listState[1]
 						self.currentBox = box
 				except Ice.Exception, e:
@@ -81,11 +82,16 @@ class SpecificWorker(GenericWorker):
 					print e
 					sys.exit()
 
+		if (self.state.find(self.listState[1]) > -1):
+			time.sleep(5)
+
 	def detectRelease(self):
+		print "RELEASE"
 		for car in range(1, 6):
 			boxname = self.currentBox + "_" + str(car)
 			try:
 				if self.innermodelmanager_proxy.collide(boxname, "ddG"):
+					print "Muevo cosas"
 					pose = {}
 					accept,pose=self.innermodelmanager_proxy.getPose("world",self.currentBox,pose)
 					self.innermodelmanager_proxy.moveNode(self.currentBox, "world")  # IF MOVING TO A MESH PETA
@@ -93,7 +99,6 @@ class SpecificWorker(GenericWorker):
 					pose.rx=0
 					pose.rz=0
 					self.innermodelmanager_proxy.setPoseFromParent(self.currentBox, pose)
-					time.sleep(5)
 					self.state = self.listState[0]
 			except Ice.Exception, e:
 				traceback.print_exc()
@@ -102,3 +107,4 @@ class SpecificWorker(GenericWorker):
 
 		if (self.state.find(self.listState[0]) > -1):
 			self.currentBox = None
+			time.sleep(5)
