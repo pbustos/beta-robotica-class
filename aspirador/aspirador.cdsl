@@ -1,0 +1,13 @@
+import "DifferentialRobot.idsl";
+import "Laser.idsl";
+
+Component aspirador
+{
+	Communications
+	{
+		requires DifferentialRobot, Laser;
+	};
+	language Cpp;
+	gui Qt(QWidget);
+};
+
