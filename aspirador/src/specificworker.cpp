@@ -36,32 +36,31 @@ SpecificWorker::~SpecificWorker()
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
-//       THE FOLLOWING IS JUST AN EXAMPLE
-//
-//	try
-//	{
-//		RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
-//		innermodel_path = par.value;
-//		innermodel = new InnerModel(innermodel_path);
-//	}
-//	catch(std::exception e) { qFatal("Error reading config params"); }
-
-
-
+        
+    try
+    {
+	//RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
+	//innermodel_path = par.value;
+	//innermodel = new InnerModel(innermodel_path);
+    }
+    catch(std::exception e) { qFatal("Error reading config params"); }
 
 	timer.start(Period);
-
-
 	return true;
 }
 
 void SpecificWorker::compute()
 {
-	const float threshold = 200; // millimeters
-    float rot = 0.6;  // rads per second
+    //const float threshold = 200; // millimeters
+    //float rot = 0.6;  // rads per second
 
+    RoboCompGenericBase::TBaseState bState;
+    
     try
     {
+        differentialrobot_proxy->getBaseState(bState);
+        fm.addStep(bState.x, bState.z, bState.alpha);
+
     	// read laser data 
         RoboCompLaser::TLaserData ldata = laser_proxy->getLaserData(); 
 		//sort laser data from small to large distances using a lambda function.

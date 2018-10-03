@@ -18,35 +18,43 @@
 
 FloorMeter::FloorMeter()
 {
-	
+    initialize();
 
 }
 
 void FloorMeter::addStep(float x, float z, float angle)
 {
-	
+    static uint cont = 0;
+    auto k = pointToGrid(std::make_pair(x,z));
+    bool &ref =  fmap[k].free;
+    if(ref == true)
+    {
+        ref = false; 
+        cont++;
+    }
+    std::cout << "Covered porcentage: " << 100*cont/fmap.size() << " %" << std::endl;	
+    
 }
 
-
-FloorMeter::Key FloorMeter::pointToGrid(int hmin, int vmin, const std::pair<int,int> &p) const
+FloorMeter::Key FloorMeter::pointToGrid(const std::pair<int,int> &p) const
 {
-	int kx = (p.first-hmin)/TILE_SIZE;
-	int kz = (p.second-vmin)/TILE_SIZE;
+	int kx = (p.first-HMIN)/TILE_SIZE;
+	int kz = (p.second-VMIN)/TILE_SIZE;
 	
-	return Key(hmin + kx*TILE_SIZE, vmin + kz*TILE_SIZE);
+	return Key(HMIN + kx*TILE_SIZE, VMIN + kz*TILE_SIZE);
 }
 
 /**
  * @brief Constructs the graph from current sampler
  * 
  */
-void FloorMeter::initialize(int hmin, int hmax, int vmin, int vmax, uint tile_size)
+void FloorMeter::initialize()
 {
 	
 	uint k=0;
- 	for( long int i = hmin ; i < hmax ; i += tile_size)
- 		for( long int j = vmin ; j < vmax ; j += tile_size)
-			fmap.emplace( Key(i,j),Value{k++,false,1}); 
+ 	for( long int i = HMIN ; i < HMAX ; i += TILE_SIZE)
+ 		for( long int j = VMIN ; j < VMAX ; j += TILE_SIZE)
+			fmap.emplace( Key(i,j),Value{k++,true,1}); 
 	
-	//qDebug() << __FILE__ << __FUNCTION__ << "Map size: " << fmap.size();	
+	std::cout << "Map size: " << fmap.size() << std::endl;	
 }
