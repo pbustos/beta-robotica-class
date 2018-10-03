@@ -22,9 +22,8 @@ FloorMeter::FloorMeter()
 
 }
 
-void FloorMeter::addStep(float x, float z, float angle)
+float FloorMeter::addStep(float x, float z, float angle)
 {
-    static uint cont = 0;
     auto k = pointToGrid(std::make_pair(x,z));
     bool &ref =  fmap[k].free;
     if(ref == true)
@@ -32,8 +31,9 @@ void FloorMeter::addStep(float x, float z, float angle)
         ref = false; 
         cont++;
     }
-    std::cout << "Covered porcentage: " << 100*cont/fmap.size() << " %" << std::endl;	
-    
+    float r = 100. * cont / fmap.size();
+    //std::cout << "Covered porcentage: " << r << " %" << std::endl;	
+    return  r;
 }
 
 FloorMeter::Key FloorMeter::pointToGrid(const std::pair<int,int> &p) const

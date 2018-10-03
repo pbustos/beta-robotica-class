@@ -34,7 +34,8 @@ class FloorMeter
 {
 	const int TILE_SIZE = 200;
         const int HMIN=-2500, HMAX=2500, VMIN=-2500, VMAX=2500;
-        
+        uint cont = 0;
+         
 	struct Key
 		{
 			long int x;
@@ -76,7 +77,8 @@ class FloorMeter
 			
 	public:
 		FloorMeter();
-		void addStep(float x, float z, float angle);
+		float addStep(float x, float z, float angle);
+                void reset() { cont = 0;} ;
 	
 	private:
 		typedef	std::unordered_map<Key, Value, KeyHasher> FMap;	

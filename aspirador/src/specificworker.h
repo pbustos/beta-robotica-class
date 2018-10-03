@@ -42,6 +42,7 @@ public:
 
 public slots:
 	void compute();
+        void resetSlot();
 
 private:
 	InnerModel *innerModel;
