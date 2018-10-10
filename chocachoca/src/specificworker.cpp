@@ -52,10 +52,11 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	view.setScene(&scene);
 	view.scale(1, -1);
 	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
+	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
 	robot = scene.addRect(QRectF(-200, -200, 400, 400));
 
 	
-	timer.start(Period);
+	timer.start(200);
 	return true;
 }
 
@@ -69,7 +70,7 @@ void SpecificWorker::compute()
  	catch(const Ice::Exception &e)
 	{	std::cout << "Error reading from Camera" << e << std::endl; }
 	
-	robot->moveBy((int)(10.*std::rand()/RAND_MAX),(int)(10.*std::rand()/RAND_MAX));
+	robot->moveBy((int)(-5.+10.*std::rand()/RAND_MAX),(int)(-5.+10.*std::rand()/RAND_MAX));
 	draw();
 }
 
