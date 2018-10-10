@@ -48,6 +48,7 @@ class SpecificWorker : public GenericWorker
 		QGraphicsView view;
 		void draw();
 		QGraphicsRectItem *robot;
+                QGraphicsEllipseItem *noserobot;
 
 };
 

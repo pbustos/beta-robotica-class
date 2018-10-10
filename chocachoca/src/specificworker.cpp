@@ -54,6 +54,7 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
 	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
 	robot = scene.addRect(QRectF(-200, -200, 400, 400));
+        noserobot = new QGraphicsEllipseItem(0,100, 50,50, robot);
 
 	
 	timer.start(200);
@@ -66,11 +67,13 @@ void SpecificWorker::compute()
  	try
  	{
  		differentialrobot_proxy->getBaseState(bState);
+                robot->setPos(bState.x, bState.z);
+                robot->setRotation(-180.*bState.alpha/M_PI);
+
 	}
  	catch(const Ice::Exception &e)
 	{	std::cout << "Error reading from Camera" << e << std::endl; }
 	
-	robot->moveBy((int)(-5.+10.*std::rand()/RAND_MAX),(int)(-5.+10.*std::rand()/RAND_MAX));
 	draw();
 }
 
