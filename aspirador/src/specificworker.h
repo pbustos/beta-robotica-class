@@ -29,6 +29,7 @@
 
 #include <genericworker.h>
 #include <innermodel/innermodel.h>
+#include "floormeter.h"
 
 class SpecificWorker : public GenericWorker
 {
@@ -41,9 +42,11 @@ public:
 
 public slots:
 	void compute();
+        void resetSlot();
 
 private:
 	InnerModel *innerModel;
+        FloorMeter fm;
 
 };
 

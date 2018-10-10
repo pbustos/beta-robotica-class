@@ -23,7 +23,7 @@
 */
 SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
 {
-
+    connect(pushButton, SIGNAL(clicked()), this, SLOT(resetSlot()));
 }
 
 /**
@@ -31,58 +31,51 @@ SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
 */
 SpecificWorker::~SpecificWorker()
 {
-
+    
 }
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
-//       THE FOLLOWING IS JUST AN EXAMPLE
-//
-//	try
-//	{
-//		RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
-//		innermodel_path = par.value;
-//		innermodel = new InnerModel(innermodel_path);
-//	}
-//	catch(std::exception e) { qFatal("Error reading config params"); }
-
-
-
+        
+    try
+    {
+	//RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
+	//innermodel_path = par.value;
+	//innermodel = new InnerModel(innermodel_path);
+    }
+    catch(std::exception e) { qFatal("Error reading config params"); }
 
 	timer.start(Period);
-
-
 	return true;
 }
 
 void SpecificWorker::compute()
 {
-	const float threshold = 200; // millimeters
-    float rot = 0.6;  // rads per second
+    //const float threshold = 200; // millimeters
+    //float rot = 0.6;  // rads per second
 
+    RoboCompGenericBase::TBaseState bState;
+    
     try
     {
+        differentialrobot_proxy->getBaseState(bState);
+        auto current = fm.addStep(bState.x, bState.z, bState.alpha);
+        lcdNumber->display(current);
     	// read laser data 
-        RoboCompLaser::TLaserData ldata = laser_proxy->getLaserData(); 
+        // RoboCompLaser::TLaserData ldata = laser_proxy->getLaserData(); 
 		//sort laser data from small to large distances using a lambda function.
 		//         std::sort( ldata.begin(), ldata.end(), [](RoboCompLaser::TData a, RoboCompLaser::TData b){ return     a.dist < b.dist; });  
 		//         
-		// 		if( ldata.front().dist < threshold)
-		// 		{
-		// 			std::cout << ldata.front().dist << std::endl;
-		// 			differentialrobot_proxy->setSpeedBase(5, rot);
-		// 			usleep(rand()%(1500000-100000 + 1) + 100000);  // random wait between 1.5s and 0.1sec
-		// 		}
-		// 		else
-		// 		{
-		// 			differentialrobot_proxy->setSpeedBase(200, 0); 
-		// 		}
-	}
-	catch(const Ice::Exception &ex)
-	{
-		std::cout << ex << std::endl;
-	}
+    }
+    catch(const Ice::Exception &ex)
+    {
+	std::cout << ex << std::endl;
+    }
 }
 
 
-
+void SpecificWorker::resetSlot()
+{
+    
+    fm.reset();
+}

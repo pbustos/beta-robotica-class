@@ -19,6 +19,7 @@
 
 #include <unordered_map>
 #include <boost/functional/hash.hpp>
+#include <iostream> 
 
 //#define TILE_SIZE 300 // grid discrtization step
  
@@ -31,7 +32,10 @@ template<class T> auto operator<<(std::ostream& os, const T& t) -> decltype(t.pr
 
 class FloorMeter
 {
-	const int TILE_SIZE = 300;
+	const int TILE_SIZE = 200;
+        const int HMIN=-2500, HMAX=2500, VMIN=-2500, VMAX=2500;
+        uint cont = 0;
+         
 	struct Key
 		{
 			long int x;
@@ -73,13 +77,14 @@ class FloorMeter
 			
 	public:
 		FloorMeter();
-		void addStep(float x, float z, float angle);
+		float addStep(float x, float z, float angle);
+                void reset() { cont = 0;} ;
 	
 	private:
 		typedef	std::unordered_map<Key, Value, KeyHasher> FMap;	
 		FMap fmap;
-		Key pointToGrid(int hmin, int vmin, const std::pair<int,int> &p) const;
-		void initialize(int hmin, int hmax, int vmin, int vmax, uint tile_size);
+		Key pointToGrid(const std::pair<int,int> &p) const;
+		void initialize();
 		
 };
 
