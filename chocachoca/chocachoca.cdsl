@@ -1,11 +1,13 @@
 import "Laser.idsl";
 import "DifferentialRobot.idsl";
+import "RCISMousePicker.idsl";
 
 Component chocachoca
 {
 	Communications
 	{
 		requires Laser, DifferentialRobot;
+		subscribesTo RCISMousePicker;
 	};
 	language Cpp;
 	gui Qt(QWidget);

@@ -22,13 +22,12 @@
        @author authorname
 */
 
-
-
 #ifndef SPECIFICWORKER_H
 #define SPECIFICWORKER_H
 
 #include <genericworker.h>
 #include <innermodel/innermodel.h>
+#include "grid.h"
 
 class SpecificWorker : public GenericWorker
 {
@@ -37,7 +36,9 @@ class SpecificWorker : public GenericWorker
 		SpecificWorker(MapPrx& mprx);
 		~SpecificWorker();
 		bool setParams(RoboCompCommonBehavior::ParameterList params);
-
+		
+		// Ice subscription
+		void setPick(const Pick &myPick);
 
 	public slots:
 		void compute();
@@ -48,7 +49,19 @@ class SpecificWorker : public GenericWorker
 		QGraphicsView view;
 		void draw();
 		QGraphicsRectItem *robot;
-                QGraphicsEllipseItem *noserobot;
+		QGraphicsEllipseItem *noserobot;
+		QVec target;
+		
+		void updateVisitedCells(int x, int z);
+		void updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata);
+		void checkTransform(const RoboCompGenericBase::TBaseState &bState);
+		
+		/// Grid
+		using TCell = std::tuple<uint, bool, QGraphicsRectItem*, bool>;
+		constexpr static int cid = 0, cvisited = 1, crect = 2, cfree = 3;
+		using TDim = Grid<TCell>::Dimensions;
+		Grid<TCell> grid;
+		
 
 };
 
