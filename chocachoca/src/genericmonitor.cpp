@@ -25,7 +25,7 @@ GenericMonitor::GenericMonitor(GenericWorker *_worker,Ice::CommunicatorPtr _comm
 	worker = _worker;
 	this->communicator = _communicator;
 	period = 100;
-	state = RoboCompCommonBehavior::State::Starting;
+	state = RoboCompCommonBehavior::Starting;
 }
 /**
 * \brief Default destructor

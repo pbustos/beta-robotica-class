@@ -27,7 +27,11 @@ template<class T> auto operator<<(std::ostream& os, const T& t) -> decltype(t.sa
     t.save(os); 
     return os; 
 };
-
+template<class T> auto operator>>(std::istream& is, T& t) -> decltype(t.read(is), is) 
+{ 
+    t.read(is); 
+    return is; 
+};
 
 template <typename T>
 class Grid
@@ -53,6 +57,7 @@ class Grid
 				bool operator==(const Key &other) const
 					{ return x == other.x && z == other.z; };
 				void save(std::ostream &os) const { os << x << " " << z << " "; };	//method to save the keys
+				void read(std::istream &is)  { is >> x >> z; };	//method to read the keys
 		};
 
 		struct KeyHasher
@@ -104,6 +109,22 @@ class Grid
 		
 			std::cout << "Grid::Initialize. Grid initialized to map size: " << fmap.size() << std::endl;	
 		}
+		
+		void readFromFile(const std::string &fich)
+		{
+			std::ifstream myfile;
+			myfile.open(fich);
+			Key k; T v;
+			myfile >> k >> v;
+			while (!myfile.eof() ) 
+			{
+				fmap.emplace( k, v); 
+				std::cout << k << v << std::endl;
+				myfile >> k >> v;
+			}
+			myfile.close();	
+		}
+		
  		std::vector<std::pair<Key,T>> neighbours(const Key &k) const
 		{
 			using Cell = std::pair<Key,T>;

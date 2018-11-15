@@ -47,15 +47,13 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	scene.setSceneRect(-2500, -2500, 5000, 5000);
 	view.setScene(&scene);
 	view.scale(1, -1);
-	//view.setParent(scrollArea);
+	view.setParent(scrollArea);
 	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
 	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
-	robot = scene.addRect(QRectF(-200, -200, 400, 400), QPen(), QBrush(Qt::blue));
-	noserobot = new QGraphicsEllipseItem(-50,100, 100,100, robot);
-	noserobot->setBrush(Qt::magenta);
 
-	const int tilesize = 50;
-	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+	const int tilesize = 70;
+	//grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+	grid.readFromFile("map.txt");
 	
 	for(auto &[key, value] : grid)
 	{
@@ -63,12 +61,17 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 		tile->setPos(key.x,key.z);
 		value.rect = tile;
 	}
-	
+
+	robot = scene.addRect(QRectF(-200, -200, 400, 400), QPen(), QBrush(Qt::blue));
+	noserobot = new QGraphicsEllipseItem(-50,100, 100,100, robot);
+	noserobot->setBrush(Qt::magenta);
+
 	target = QVec::vec3(0,0,0);
 	
 	//qDebug() << __FILE__ << __FUNCTION__ << "CPP " << __cplusplus;
 	
 	connect(pushButton, SIGNAL(clicked()), this, SLOT(saveToFile()));
+	timer.start();
 	
 	return true;
 }
@@ -87,7 +90,7 @@ void SpecificWorker::compute()
 		robot->setRotation(-180.*bState.alpha/M_PI);
 		
 		//updateVisitedCells(bState.x, bState.z);
-		//updateOccupiedCells(bState, ldata);
+		updateOccupiedCells(bState, ldata);
 		
 		//checkTransform(bState);
 	
@@ -95,9 +98,9 @@ void SpecificWorker::compute()
  	catch(const Ice::Exception &e)
 	{	std::cout  << e << std::endl; }
 	
-	// Resize world widget if necessary, and render the world
-	//if (view.size() != scrollArea->size())
-	//		view.setFixedSize(scrollArea->width(), scrollArea->height());
+	//Resize world widget if necessary, and render the world
+	if (view.size() != scrollArea->size())
+			view.setFixedSize(scrollArea->width(), scrollArea->height());
 	draw();
 	
 }
@@ -126,10 +129,10 @@ void SpecificWorker::checkTransform(const RoboCompGenericBase::TBaseState &bStat
 
 void SpecificWorker::updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata)
 {
-	auto *n = innerModel->getNode<InnerModelLaser>(std::string("laser"));
+	auto *n = innerModel->getNode<InnerModelLaser>("laser");
 	for(auto l: ldata)
 	{
-		auto r = n->laserTo(std::string("world"), l.dist, l.angle);	// r is in world reference system
+		auto r = n->laserTo("world", l.dist, l.angle);	// r is in world reference system
 		// we set the cell corresponding to r as occupied 
 		auto [valid, cell] = grid.getCell(r.x(), r.z()); 
 		if(valid)

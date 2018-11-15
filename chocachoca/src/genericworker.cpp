@@ -31,24 +31,24 @@ QObject()
 	differentialrobot_proxy = (*(DifferentialRobotPrx*)mprx["DifferentialRobotProxy"]);
 	laser_proxy = (*(LaserPrx*)mprx["LaserProxy"]);
 
-	//mutex = new QMutex(QMutex::Recursive);
+	mutex = new QMutex(QMutex::Recursive);
 
 	#ifdef USE_QTGUI
 		setupUi(this);
 		show();
 	#endif
 	Period = BASIC_PERIOD;
-	timer = new QTimer();
-	connect(timer, SIGNAL(timeout()), this, SLOT(compute()));
- 	timer->start(Period);
+	connect(&timer, SIGNAL(timeout()), this, SLOT(compute()));
+// 	timer.start(Period);
 }
 
 /**
 * \brief Default destructor
 */
- GenericWorker::~GenericWorker()
-{}
+GenericWorker::~GenericWorker()
+{
 
+}
 void GenericWorker::killYourSelf()
 {
 	rDebug("Killing myself");
@@ -62,6 +62,6 @@ void GenericWorker::setPeriod(int p)
 {
 	rDebug("Period changed"+QString::number(p));
 	Period = p;
-	timer->start(Period);
+	timer.start(Period);
 }
 

@@ -70,6 +70,7 @@ class SpecificWorker : public GenericWorker
 			
 			// method to save the value
 			void save(std::ostream &os) const {	os << free << " " << visited; };
+			void read(std::istream &is) {	is >> free >> visited ;};
 		};
 		
 		using TDim = Grid<TCell>::Dimensions;

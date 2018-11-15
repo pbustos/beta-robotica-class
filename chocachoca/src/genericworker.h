@@ -20,14 +20,10 @@
 #define GENERICWORKER_H
 
 #include "config.h"
+#include <QtGui>
 #include <stdint.h>
 #include <qlog/qlog.h>
 
-#if Qt5_FOUND
-	#include <QtWidgets>
-#else
-	#include <QtGui>
-#endif
 #include <ui_mainUI.h>
 
 #include <CommonBehavior.h>
@@ -41,13 +37,17 @@
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
 
+typedef map <string,::IceProxy::Ice::Object*> MapPrx;
+
 using namespace std;
+
 using namespace RoboCompDifferentialRobot;
 using namespace RoboCompGenericBase;
 using namespace RoboCompLaser;
 using namespace RoboCompRCISMousePicker;
 
-typedef map <string,::IceProxy::Ice::Object*> MapPrx;
+
+
 
 class GenericWorker :
 #ifdef USE_QTGUI
@@ -64,7 +64,7 @@ public:
 	virtual void setPeriod(int p);
 
 	virtual bool setParams(RoboCompCommonBehavior::ParameterList params) = 0;
-	//QMutex *mutex;
+	QMutex *mutex;
 
 
 	DifferentialRobotPrx differentialrobot_proxy;
@@ -73,7 +73,7 @@ public:
 	virtual void setPick(const Pick &myPick) = 0;
 
 protected:
-	QTimer *timer;
+	QTimer timer;
 	int Period;
 
 private:
