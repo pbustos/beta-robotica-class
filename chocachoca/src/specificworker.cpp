@@ -22,7 +22,9 @@
 * \brief Default constructor
 */
 SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
-{}
+{
+	std::cout << std::boolalpha;   
+}
 
 /**
 * \brief Default destructor
@@ -51,22 +53,25 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	noserobot->setBrush(Qt::magenta);
 
 	const int tilesize = 50;
-	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{-1, true, nullptr, true} );
+	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+	
 	for(auto &[key, value] : grid)
 	{
 		auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));
 		tile->setPos(key.x,key.z);
-		std::get<crect>(value) = tile;
+		value.rect = tile;
 	}
 	
 	target = QVec::vec3(0,0,0);
 	
-	timer.start(100);
+	//qDebug() << __FILE__ << __FUNCTION__ << "CPP " << __cplusplus;
+	//timer->start(100);
 	return true;
 }
 
 void SpecificWorker::compute()
 {
+	qDebug() << __FILE__ << __FUNCTION__ << "CPP " << __cplusplus;
 	static RoboCompGenericBase::TBaseState bState;
  	try
  	{
@@ -87,6 +92,13 @@ void SpecificWorker::compute()
 	{	std::cout  << e << std::endl; }
 	
 	draw();
+	
+	for(auto &[k, v] : grid)
+	{
+		std::cout << k << " " << v << std::endl;
+	}
+	//exit(-1);
+
 }
 
 void SpecificWorker::checkTransform(const RoboCompGenericBase::TBaseState &bState)
@@ -110,7 +122,7 @@ void SpecificWorker::updateOccupiedCells(const RoboCompGenericBase::TBaseState &
 		auto [valid, cell] = grid.getCell(r.x(), r.z()); 
 		if(valid)
 		{
-			std::get<cfree>(cell) = false;
+			cell.free = false;
 		}
 	}
 }
@@ -121,7 +133,7 @@ void SpecificWorker::updateVisitedCells(int x, int z)
 	auto [valid, cell] = grid.getCell(x, z); 
 	if(valid)
 	{
-		auto &occupied = std::get<cvisited>(cell);
+		auto &occupied = cell.visited;
 		if(occupied)
 		{
 			occupied = false;
@@ -135,10 +147,10 @@ void SpecificWorker::draw()
 {
 	for(auto &[key, value] : grid)
 	{
-		if(std::get<cvisited>(value) == false)
-			std::get<crect>(value)->setBrush(Qt::lightGray);
-		if(std::get<cfree>(value) == false)
-			std::get<crect>(value)->setBrush(Qt::darkRed);
+		if(value.visited == false)
+			value.rect->setBrush(Qt::lightGray);
+		if(value.free == false)
+			value.rect->setBrush(Qt::darkRed);
 	}
 	view.show();
 }

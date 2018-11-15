@@ -16,7 +16,6 @@
  *    You should have received a copy of the GNU General Public License
  *    along with RoboComp.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 /**
        \brief
        @author authorname
@@ -28,6 +27,10 @@
 #include <genericworker.h>
 #include <innermodel/innermodel.h>
 #include "grid.h"
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QGraphicsEllipseItem>
+
 
 class SpecificWorker : public GenericWorker
 {
@@ -57,8 +60,16 @@ class SpecificWorker : public GenericWorker
 		void checkTransform(const RoboCompGenericBase::TBaseState &bState);
 		
 		/// Grid
-		using TCell = std::tuple<uint, bool, QGraphicsRectItem*, bool>;
-		constexpr static int cid = 0, cvisited = 1, crect = 2, cfree = 3;
+		struct TCell
+		{
+			bool free;
+			bool visited;
+			QGraphicsRectItem* rect;
+			
+			void save(std::ostream &os) const {	os << " free:" << free << " visited:" << visited; };
+		};
+		//using TCell = std::tuple<uint, bool, QGraphicsRectItem*, bool>;
+		//constexpr static int cid = 0, cvisited = 1, crect = 2, cfree = 3;
 		using TDim = Grid<TCell>::Dimensions;
 		Grid<TCell> grid;
 		

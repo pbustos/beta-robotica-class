@@ -11,5 +11,6 @@ Component chocachoca
 	};
 	language Cpp;
 	gui Qt(QWidget);
+	
 };
 

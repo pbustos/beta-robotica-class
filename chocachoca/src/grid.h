@@ -22,11 +22,12 @@
 #include <iostream> 
 
 
-template<class T> auto operator<<(std::ostream& os, const T& t) -> decltype(t.print(os), os) 
+template<class T> auto operator<<(std::ostream& os, const T& t) -> decltype(t.save(os), os) 
 { 
-    t.print(os); 
+    t.save(os); 
     return os; 
 };
+
 
 template <typename T>
 class Grid
@@ -51,7 +52,7 @@ class Grid
 				Key(const long int &x, const long int &z): x(x), z(z){};
 				bool operator==(const Key &other) const
 					{ return x == other.x && z == other.z; };
-				void print(std::ostream &os) const 	{ os << " x:" << x << " z:" << z; };
+				void save(std::ostream &os) const { os << " x:" << x << " z:" << z; };
 		};
 
 		struct KeyHasher
@@ -71,7 +72,7 @@ class Grid
 				};
 			};	
 			
-		using FMap =	std::unordered_map<Key, T, KeyHasher>;
+		using FMap = std::unordered_map<Key, T, KeyHasher>;
 		
 		Grid()																				{};
 		std::tuple<bool,T&> getCell(long int x, long int z) 											
@@ -92,12 +93,12 @@ class Grid
 			uint k=0;
 			for( int i = dim.HMIN ; i < dim.HMAX ; i += dim.TILE_SIZE)
 				for( int j = dim.VMIN ; j < dim.VMAX ; j += dim.TILE_SIZE)
-					fmap.emplace( Key(i,j),initValue); 
+					fmap.emplace( Key(i,j), initValue); 
 	
 			// list of increments to access the neighboors of a given position
 			I = dim.TILE_SIZE;
-		  xincs = {I,I,I,0,-I,-I,-I,0};
-		  zincs = {I,0,-I,-I,-I,0,I,I};	
+			xincs = {I,I,I,0,-I,-I,-I,0};
+			zincs = {I,0,-I,-I,-I,0,I,I};	
 		
 			std::cout << "Grid::Initialize. Grid initialized to map size: " << fmap.size() << std::endl;	
 		}
