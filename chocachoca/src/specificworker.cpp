@@ -52,6 +52,8 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
 
 	const int tilesize = 70;
+	
+	//choose here or create a button in the UI to load from file
 	//grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
 	grid.readFromFile("map.txt");
 	
