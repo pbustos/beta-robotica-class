@@ -30,7 +30,8 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QGraphicsEllipseItem>
-
+#include <iostream>
+#include <fstream>
 
 class SpecificWorker : public GenericWorker
 {
@@ -45,6 +46,7 @@ class SpecificWorker : public GenericWorker
 
 	public slots:
 		void compute();
+		void saveToFile();
 
 	private:
 		std::shared_ptr<InnerModel> innerModel;
@@ -66,10 +68,10 @@ class SpecificWorker : public GenericWorker
 			bool visited;
 			QGraphicsRectItem* rect;
 			
-			void save(std::ostream &os) const {	os << " free:" << free << " visited:" << visited; };
+			// method to save the value
+			void save(std::ostream &os) const {	os << free << " " << visited; };
 		};
-		//using TCell = std::tuple<uint, bool, QGraphicsRectItem*, bool>;
-		//constexpr static int cid = 0, cvisited = 1, crect = 2, cfree = 3;
+		
 		using TDim = Grid<TCell>::Dimensions;
 		Grid<TCell> grid;
 		

@@ -52,7 +52,7 @@ class Grid
 				Key(const long int &x, const long int &z): x(x), z(z){};
 				bool operator==(const Key &other) const
 					{ return x == other.x && z == other.z; };
-				void save(std::ostream &os) const { os << " x:" << x << " z:" << z; };
+				void save(std::ostream &os) const { os << x << " " << z << " "; };	//method to save the keys
 		};
 
 		struct KeyHasher
@@ -77,16 +77,18 @@ class Grid
 		Grid()																				{};
 		std::tuple<bool,T&> getCell(long int x, long int z) 											
 		{
- 			if(x<=dim.HMIN or x>=dim.HMAX or z <= dim.VMIN or z >= dim.VMAX)
+ 			if(x <= dim.HMIN or x >= dim.HMAX or z <= dim.VMIN or z >= dim.VMAX)
  			{ return std::forward_as_tuple(false, T());}
 			else
 				return std::forward_as_tuple(true, fmap.at(pointToGrid(x,z)));
 		}
+		
 		typename FMap::iterator begin() 							{ return fmap.begin(); };
 		typename FMap::iterator end() 								{ return fmap.end();   };
 		typename FMap::const_iterator begin() const   { return fmap.begin(); };
 		typename FMap::const_iterator end() const 	 	{ return fmap.begin(); };
 		size_t size() const 													{ return fmap.size();  };
+		
 		void initialize(const Dimensions &dim_, const T &initValue)
 		{
 			dim = dim_;
