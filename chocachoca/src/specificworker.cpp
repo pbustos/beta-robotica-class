@@ -50,8 +50,6 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	view.setParent(scrollArea);
 	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
 	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
-
-	const int tilesize = 70;
 	
 	//choose here or create a button in the UI to load from file
 	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
@@ -119,20 +117,23 @@ void SpecificWorker::readFromFile()
 	myfile.open(fileName, std::ifstream::in);
 	if(!myfile.fail())
 	{
+		//grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+		for( auto &[k,v] : grid)
+			delete v.rect;
 		grid.clear();
-		Grid::Key key; 
-		TCell value;
+		Grid<TCell>::Key key; TCell value;
 		myfile >> key >> value;
 		while(!myfile.eof()) 
 		{
-			auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));
+			auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));;
 			tile->setPos(key.x,key.z);
 			value.rect = tile;
-			fmap.insert(key, value); 
+			grid.insert<TCell>(key,value);
 			myfile >> key >> value;
 		}
 		myfile.close();	
-		std::cout << fmap.size() << " elements read from " << fich << std::endl;
+		robot->setZValue(1);
+		std::cout << grid.size() << " elements read from " << fileName << std::endl;
 	}
 	else
 		throw std::runtime_error("Cannot open file");
@@ -140,10 +141,10 @@ void SpecificWorker::readFromFile()
 		
 void SpecificWorker::updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata)
 {
-	auto *n = innerModel->getNode<InnerModelLaser>("laser");
+	auto *n = innerModel->getNode<InnerModelLaser>(std::string("laser"));
 	for(auto l: ldata)
 	{
-		auto r = n->laserTo("world", l.dist, l.angle);	// r is in world reference system
+		auto r = n->laserTo(std::string("world"), l.dist, l.angle);	// r is in world reference system
 		// we set the cell corresponding to r as occupied 
 		auto [valid, cell] = grid.getCell(r.x(), r.z()); 
 		if(valid)

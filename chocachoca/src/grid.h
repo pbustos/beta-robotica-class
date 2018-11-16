@@ -57,7 +57,7 @@ class Grid
 				bool operator==(const Key &other) const
 					{ return x == other.x && z == other.z; };
 				void save(std::ostream &os) const { os << x << " " << z << " "; };	//method to save the keys
-				void read(std::istream &is)  { is >> x >> z; };	//method to read the keys
+				void read(std::istream &is)  { is >> x  >> z; };	//method to read the keys
 		};
 
 		struct KeyHasher
@@ -98,6 +98,7 @@ class Grid
 		{
 			dim = dim_;
 			uint k=0;
+			fmap.clear();
 			for( int i = dim.HMIN ; i < dim.HMAX ; i += dim.TILE_SIZE)
 				for( int j = dim.VMIN ; j < dim.VMAX ; j += dim.TILE_SIZE)
 					fmap.emplace( Key(i,j), initValue); 
@@ -108,6 +109,17 @@ class Grid
 			zincs = {I,0,-I,-I,-I,0,I,I};	
 		
 			std::cout << "Grid::Initialize. Grid initialized to map size: " << fmap.size() << std::endl;	
+		}
+		
+		template<typename Q>
+		void insert(const Key &key, const Q &value)
+		{
+				fmap.insert(std::make_pair(key,value));
+		}
+		
+		void clear()
+		{
+				fmap.clear();
 		}
 		
 		void saveToFile(const std::string &fich)

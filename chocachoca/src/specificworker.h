@@ -58,6 +58,7 @@ class SpecificWorker : public GenericWorker
 		QGraphicsEllipseItem *noserobot;
 		QVec target;
 		std::string fileName = "map.txt";
+		const int tilesize = 70;
 		
 		void updateVisitedCells(int x, int z);
 		void updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata);
