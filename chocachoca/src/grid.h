@@ -150,6 +150,7 @@ class Grid
 			return neigh;
 		}	
      
+     
 	private:
 		FMap fmap;
 		Dimensions dim;

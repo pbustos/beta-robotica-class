@@ -73,6 +73,8 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	connect(pushButton, SIGNAL(clicked()), this, SLOT(readFromFile()));
 	//timer.start();
 	
+	cpptimer.start(100, std::function<void(void)>(std::bind(&GenericWorker::compute, this)));
+	
 	return true;
 }
 
