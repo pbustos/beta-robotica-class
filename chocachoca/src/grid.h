@@ -90,9 +90,9 @@ class Grid
 		
 		typename FMap::iterator begin() 							{ return fmap.begin(); };
 		typename FMap::iterator end() 								{ return fmap.end();   };
-		typename FMap::const_iterator begin() const   { return fmap.begin(); };
-		typename FMap::const_iterator end() const 	 	{ return fmap.begin(); };
-		size_t size() const 													{ return fmap.size();  };
+		typename FMap::const_iterator begin() const   				{ return fmap.begin(); };
+		typename FMap::const_iterator end() const 	 				{ return fmap.begin(); };
+		size_t size() const 										{ return fmap.size();  };
 		
 		void initialize(const Dimensions &dim_, const T &initValue)
 		{
@@ -110,20 +110,18 @@ class Grid
 			std::cout << "Grid::Initialize. Grid initialized to map size: " << fmap.size() << std::endl;	
 		}
 		
-		void readFromFile(const std::string &fich)
+		void saveToFile(const std::string &fich)
 		{
-			std::ifstream myfile;
-			myfile.open(fich);
-			Key k; T v;
-			myfile >> k >> v;
-			while (!myfile.eof() ) 
+			std::ofstream myfile;
+			myfile.open (fich);
+			for(auto &[k, v] : fmap)
 			{
-				fmap.emplace( k, v); 
-				std::cout << k << v << std::endl;
-				myfile >> k >> v;
+				myfile << k << v << std::endl;
 			}
-			myfile.close();	
+			myfile.close();
+			std::cout << fmap.size() << " elements written to " << fich << std::endl;
 		}
+		
 		
  		std::vector<std::pair<Key,T>> neighbours(const Key &k) const
 		{

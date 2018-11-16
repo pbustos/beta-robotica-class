@@ -47,6 +47,7 @@ class SpecificWorker : public GenericWorker
 	public slots:
 		void compute();
 		void saveToFile();
+		void readFromFile();
 
 	private:
 		std::shared_ptr<InnerModel> innerModel;
@@ -56,6 +57,7 @@ class SpecificWorker : public GenericWorker
 		QGraphicsRectItem *robot;
 		QGraphicsEllipseItem *noserobot;
 		QVec target;
+		std::string fileName = "map.txt";
 		
 		void updateVisitedCells(int x, int z);
 		void updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata);

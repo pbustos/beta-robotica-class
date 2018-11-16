@@ -54,9 +54,8 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	const int tilesize = 70;
 	
 	//choose here or create a button in the UI to load from file
-	//grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
-	grid.readFromFile("map.txt");
-	
+	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+
 	for(auto &[key, value] : grid)
 	{
 		auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));
@@ -72,8 +71,9 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	
 	//qDebug() << __FILE__ << __FUNCTION__ << "CPP " << __cplusplus;
 	
-	connect(pushButton, SIGNAL(clicked()), this, SLOT(saveToFile()));
-	timer.start();
+	connect(saveButton, SIGNAL(clicked()), this, SLOT(saveToFile()));
+	connect(pushButton, SIGNAL(clicked()), this, SLOT(readFromFile()));
+	//timer.start();
 	
 	return true;
 }
@@ -109,26 +109,35 @@ void SpecificWorker::compute()
 
 void SpecificWorker::saveToFile()
 {
-	std::ofstream myfile;
-  myfile.open ("map.txt");
-	for(auto &[k, v] : grid)
-	{
-		myfile << k << v << std::endl;
-	}
-	myfile.close();
+	grid.saveToFile(fileName);
 }
 
-void SpecificWorker::checkTransform(const RoboCompGenericBase::TBaseState &bState)
+
+void SpecificWorker::readFromFile()
 {
-	auto r = innerModel->transform("base", target, "world");		// using InnerModel
-	
-	Rot2D rot(bState.alpha);																		// create a 2D clockwise rotation matrix
-	QVec t = QVec::vec2(bState.x, bState.z);									  // create a 2D vector for robot translation
-	QVec t2 = QVec::vec2(target.x(), target.z());								// create a 2D vector from the 3D target
-	QVec q = rot.transpose() * ( t2 - t);												// multiply R_t * (y - T)
-	qDebug() << target << r << q;
+	std::ifstream myfile;
+	myfile.open(fileName, std::ifstream::in);
+	if(!myfile.fail())
+	{
+		grid.clear();
+		Grid::Key key; 
+		TCell value;
+		myfile >> key >> value;
+		while(!myfile.eof()) 
+		{
+			auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));
+			tile->setPos(key.x,key.z);
+			value.rect = tile;
+			fmap.insert(key, value); 
+			myfile >> key >> value;
+		}
+		myfile.close();	
+		std::cout << fmap.size() << " elements read from " << fich << std::endl;
+	}
+	else
+		throw std::runtime_error("Cannot open file");
 }
-
+		
 void SpecificWorker::updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata)
 {
 	auto *n = innerModel->getNode<InnerModelLaser>("laser");
@@ -170,8 +179,19 @@ void SpecificWorker::draw()
 	view.show();
 }
 
+void SpecificWorker::checkTransform(const RoboCompGenericBase::TBaseState &bState)
+{
+	auto r = innerModel->transform("base", target, "world");		// using InnerModel
+	
+	Rot2D rot(bState.alpha);																		// create a 2D clockwise rotation matrix
+	QVec t = QVec::vec2(bState.x, bState.z);									  // create a 2D vector for robot translation
+	QVec t2 = QVec::vec2(target.x(), target.z());								// create a 2D vector from the 3D target
+	QVec q = rot.transpose() * ( t2 - t);												// multiply R_t * (y - T)
+	qDebug() << target << r << q;
+}
+
 /////////////////////////////////////////////////////////77
-/////////
+///////// ROBOCOMP SUBSCRITPION
 //////////////////////////////////////////////////////////
 
 void SpecificWorker::setPick(const Pick &myPick)
