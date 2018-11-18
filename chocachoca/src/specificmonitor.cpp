@@ -69,7 +69,7 @@ bool SpecificMonitor::sendParamsToWorker(RoboCompCommonBehavior::ParameterList p
 	if(checkParams(params))
 	{
 		//Set params to worker
-		if(worker->setParams(params)) 
+		if(worker->setParams(params))   //AQUI ES DONDE NO SE PUEDEN HACER COSAS CON QT
 			return true;
 	}
 	else

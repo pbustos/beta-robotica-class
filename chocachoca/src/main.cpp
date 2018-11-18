@@ -119,12 +119,11 @@ void ::chocachoca::initialize()
 int ::chocachoca::run(int argc, char* argv[])
 {
 #ifdef USE_QTGUI
-	QApplication a(argc, argv);  // GUI application
+	//QApplication a(argc, argv);  // GUI application
 #else
-	QCoreApplication a(argc, argv);  // NON-GUI application
+	//QCoreApplication a(argc, argv);  // NON-GUI application
 #endif
-
-
+	
 	sigset_t sigs;
 	sigemptyset(&sigs);
 	sigaddset(&sigs, SIGHUP);
@@ -135,7 +134,8 @@ int ::chocachoca::run(int argc, char* argv[])
 	UnixSignalWatcher sigwatch;
 	sigwatch.watchForSignal(SIGINT);
 	sigwatch.watchForSignal(SIGTERM);
-	QObject::connect(&sigwatch, SIGNAL(unixSignal(int)), &a, SLOT(quit()));
+	
+	//QObject::connect(&sigwatch, SIGNAL(unixSignal(int)), &a, SLOT(quit()));
 
 	int status=EXIT_SUCCESS;
 
@@ -189,21 +189,22 @@ int ::chocachoca::run(int argc, char* argv[])
 		cout << "[" << PROGRAM_NAME << "]: Exception: STORM not running: " << ex << endl;
 		return EXIT_FAILURE;
 	}
-
+	
 	SpecificWorker *worker = new SpecificWorker(mprx);
+	
 	//Monitor thread
 	SpecificMonitor *monitor = new SpecificMonitor(worker,communicator());
-	QObject::connect(monitor, SIGNAL(kill()), &a, SLOT(quit()));
-	QObject::connect(worker, SIGNAL(kill()), &a, SLOT(quit()));
+	//QObject::connect(monitor, SIGNAL(kill()), &a, SLOT(quit()));
+	
+	//QObject::connect(worker, SIGNAL(kill()), &a, SLOT(quit()));
+	
 	monitor->start();
 
 	if ( !monitor->isRunning() )
 		return status;
 
 	while (!monitor->ready)
-	{
 		usleep(10000);
-	}
 
 	try
 	{
@@ -254,10 +255,14 @@ int ::chocachoca::run(int argc, char* argv[])
 
 #ifdef USE_QTGUI
 		//ignoreInterrupt(); // Uncomment if you want the component to ignore console SIGINT signal (ctrl+c).
-		a.setQuitOnLastWindowClosed( true );
+		
+		//a.setQuitOnLastWindowClosed( true );
 #endif
 		// Run QT Application Event Loop
-		a.exec();
+		
+		//a.exec();
+		
+		while(monitor->isRunning()){ std::this_thread::sleep_for(std::chrono::milliseconds(5)); };
 
 		std::cout << "Unsubscribing topic: rcismousepicker " <<std::endl;
 		rcismousepicker_topic->unsubscribe( rcismousepicker );
@@ -272,7 +277,7 @@ int ::chocachoca::run(int argc, char* argv[])
 		cout << ex;
 
 #ifdef USE_QTGUI
-		a.quit();
+		//a.quit();
 #endif
 		monitor->exit(0);
 }

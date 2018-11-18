@@ -33,6 +33,9 @@
 #include <iostream>
 #include <fstream>
 
+#include "userinterface.h"
+
+
 class SpecificWorker : public GenericWorker
 {
 	Q_OBJECT
@@ -44,25 +47,29 @@ class SpecificWorker : public GenericWorker
 		// Ice subscription
 		void setPick(const Pick &myPick);
 
-	public slots:
+	//public slots:
 		void compute();
 		void saveToFile();
 		void readFromFile();
 
 	private:
 		std::shared_ptr<InnerModel> innerModel;
-		QGraphicsScene scene;
-		QGraphicsView view;
-		void draw();
-		QGraphicsRectItem *robot;
-		QGraphicsEllipseItem *noserobot;
+// 		QGraphicsScene scene;
+// 		QGraphicsView view;
+// 		void draw();
+// 		QGraphicsRectItem *robot;
+// 		QGraphicsEllipseItem *noserobot;
 		QVec target;
 		std::string fileName = "map.txt";
 		const int tilesize = 70;
+		std::atomic<bool> readyToGo = false;
+		std::atomic<bool> firstTime = true;
+		RoboCompCommonBehavior::ParameterList myparams;
 		
 		void updateVisitedCells(int x, int z);
 		void updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata);
 		void checkTransform(const RoboCompGenericBase::TBaseState &bState);
+		void initialize();
 		
 		/// Grid
 		struct TCell
@@ -78,8 +85,12 @@ class SpecificWorker : public GenericWorker
 		
 		using TDim = Grid<TCell>::Dimensions;
 		Grid<TCell> grid;
-		
-
+	
+	signals:
+		void robotSetPoseSIGNAL(float, float, float);
+		void uiShowSIGNAL();
+		//void initGridSIGNAL(int, const Key&, TCell&);
+	
 };
 
 #endif

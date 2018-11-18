@@ -24,6 +24,7 @@
 SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
 {
 	std::cout << std::boolalpha;   
+	cpptimer.start(100, std::function<void(void)>(std::bind(&SpecificWorker::compute, this)));
 }
 
 /**
@@ -34,52 +35,66 @@ SpecificWorker::~SpecificWorker()
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
+	myparams = params;
+	readyToGo = true;
+	return true;
+}
+
+void SpecificWorker::initialize()
+{
 	try
 	{
-		RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
+		RoboCompCommonBehavior::Parameter par = myparams.at("InnerModelPath");
 		innerModel = std::make_shared<InnerModel>(par.value);
 	}
 	catch(std::exception e) { qFatal("Error reading config params"); }
-
-	qDebug() << __FILE__ ;
 	
 	// Scene
-	scene.setSceneRect(-2500, -2500, 5000, 5000);
-	view.setScene(&scene);
-	view.scale(1, -1);
-	view.setParent(scrollArea);
-	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
-	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
+// 	scene.setSceneRect(-2500, -2500, 5000, 5000);
+// 	view.setScene(&scene);
+// 	view.scale(1, -1);
+// 	view.setParent(scrollArea);
+// 	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
+// 	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
+// 	
+		grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+ 
+		qDebug() << "Grid initialize ok";
 	
-	//choose here or create a button in the UI to load from file
-	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+	
+// 		for(auto &[key, value] : grid)
+// 		{
+// 			value.rect = ui->scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));
+// 			value.rect->setPos(key.x,key.z);
+// 			//std::cout << key << std::endl;
+// 		}
 
-	for(auto &[key, value] : grid)
-	{
-		auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));
-		tile->setPos(key.x,key.z);
-		value.rect = tile;
-	}
+// 	robot = scene.addRect(QRectF(-200, -200, 400, 400), QPen(), QBrush(Qt::blue));
+// 	noserobot = new QGraphicsEllipseItem(-50,100, 100,100, robot);
+// 	noserobot->setBrush(Qt::magenta);
 
-	robot = scene.addRect(QRectF(-200, -200, 400, 400), QPen(), QBrush(Qt::blue));
-	noserobot = new QGraphicsEllipseItem(-50,100, 100,100, robot);
-	noserobot->setBrush(Qt::magenta);
-
+			qDebug() << "Grid initialize ok ok ";
+		
 	target = QVec::vec3(0,0,0);
 	
 	//qDebug() << __FILE__ << __FUNCTION__ << "CPP " << __cplusplus;
+	/*
+ 	connect(saveButton, SIGNAL(clicked()), this, SLOT(saveToFile()));
+ 	connect(pushButton, SIGNAL(clicked()), this, SLOT(readFromFile()));*/
+	connect(this, SIGNAL(robotSetPoseSIGNAL(float, float, float) ), ui, SLOT(robotSetPoseSLOT(float,float,float)), Qt::QueuedConnection);
+	connect(this, SIGNAL(uiShowSIGNAL()), ui, SLOT(showSLOT()), Qt::QueuedConnection);
+	//connect(this, SIGNAL(initGridSIGNAL(int, Key&, TCell&)), ui, SLOT(initGridSLOT(int, Key&, TCell&)), Qt::QueuedConnection);
 	
-	connect(saveButton, SIGNAL(clicked()), this, SLOT(saveToFile()));
-	connect(pushButton, SIGNAL(clicked()), this, SLOT(readFromFile()));
-	//timer.start();
-	
-	cpptimer.start(100, std::function<void(void)>(std::bind(&GenericWorker::compute, this)));
-	
-	return true;
+// 	for(auto &[key, value] : grid)
+// 		emit initGridSIGNAL(tilesize, key, value);
+
 }
 
 void SpecificWorker::compute()
 {
+	if(!readyToGo) return;
+	else if(firstTime) { initialize(); firstTime = false; }
+	
 	static RoboCompGenericBase::TBaseState bState;
  	try
  	{
@@ -88,11 +103,15 @@ void SpecificWorker::compute()
 		RoboCompLaser::TLaserData ldata = laser_proxy->getLaserData();
 		
 		//draw robot
-		robot->setPos(bState.x, bState.z);
-		robot->setRotation(-180.*bState.alpha/M_PI);
+//   		ui->robot->setPos(bState.x, bState.z);
+//   		ui->robot->setRotation(-180.*bState.alpha/M_PI);
+// 		ui->view.show();
 		
-		//updateVisitedCells(bState.x, bState.z);
-		updateOccupiedCells(bState, ldata);
+			emit robotSetPoseSIGNAL(bState.x, bState.z, -180.*bState.alpha/M_PI);
+			emit uiShowSIGNAL();
+		
+			//updateVisitedCells(bState.x, bState.z);
+		//updateOccupiedCells(bState, ldata);
 		
 		//checkTransform(bState);
 	
@@ -101,9 +120,9 @@ void SpecificWorker::compute()
 	{	std::cout  << e << std::endl; }
 	
 	//Resize world widget if necessary, and render the world
-	if (view.size() != scrollArea->size())
-			view.setFixedSize(scrollArea->width(), scrollArea->height());
-	draw();
+// 	if (view.size() != scrollArea->size())
+// 			view.setFixedSize(scrollArea->width(), scrollArea->height());
+// 	draw();
 	
 }
 
@@ -115,30 +134,30 @@ void SpecificWorker::saveToFile()
 
 void SpecificWorker::readFromFile()
 {
-	std::ifstream myfile;
-	myfile.open(fileName, std::ifstream::in);
-	if(!myfile.fail())
-	{
-		//grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
-		for( auto &[k,v] : grid)
-			delete v.rect;
-		grid.clear();
-		Grid<TCell>::Key key; TCell value;
-		myfile >> key >> value;
-		while(!myfile.eof()) 
-		{
-			auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));;
-			tile->setPos(key.x,key.z);
-			value.rect = tile;
-			grid.insert<TCell>(key,value);
-			myfile >> key >> value;
-		}
-		myfile.close();	
-		robot->setZValue(1);
-		std::cout << grid.size() << " elements read from " << fileName << std::endl;
-	}
-	else
-		throw std::runtime_error("Cannot open file");
+// 	std::ifstream myfile;
+// 	myfile.open(fileName, std::ifstream::in);
+// 	if(!myfile.fail())
+// 	{
+// 		//grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+// 		for( auto &[k,v] : grid)
+// 			delete v.rect;
+// 		grid.clear();
+// 		Grid<TCell>::Key key; TCell value;
+// 		myfile >> key >> value;
+// 		while(!myfile.eof()) 
+// 		{
+// 			auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));;
+// 			tile->setPos(key.x,key.z);
+// 			value.rect = tile;
+// 			grid.insert<TCell>(key,value);
+// 			myfile >> key >> value;
+// 		}
+// 		myfile.close();	
+// 		robot->setZValue(1);
+// 		std::cout << grid.size() << " elements read from " << fileName << std::endl;
+// 	}
+// 	else
+// 		throw std::runtime_error("Cannot open file");
 }
 		
 void SpecificWorker::updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata)
@@ -170,17 +189,19 @@ void SpecificWorker::updateVisitedCells(int x, int z)
 	}
 }
 
-void SpecificWorker::draw()
-{
-	for(auto &[key, value] : grid)
-	{
-		if(value.visited == false)
-			value.rect->setBrush(Qt::lightGray);
-		if(value.free == false)
-			value.rect->setBrush(Qt::darkRed);
-	}
-	view.show();
-}
+//void SpecificWorker::draw()
+//{
+// 	for(auto &[key, value] : grid)
+// 	{
+// // 		if(value.visited == false)
+// // 			value.rect->setBrush(Qt::lightGray);
+// 		if(value.free == false)
+// 			value.rect->setBrush(Qt::darkRed);
+// 	}
+// 			qDebug() << __FILE__ << __FUNCTION__;
+// 
+// 	view.show();
+//}
 
 void SpecificWorker::checkTransform(const RoboCompGenericBase::TBaseState &bState)
 {

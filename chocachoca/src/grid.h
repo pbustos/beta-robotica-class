@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <boost/functional/hash.hpp>
 #include <iostream> 
+#include <fstream>
 
 
 template<class T> auto operator<<(std::ostream& os, const T& t) -> decltype(t.save(os), os) 
@@ -80,6 +81,7 @@ class Grid
 		using FMap = std::unordered_map<Key, T, KeyHasher>;
 		
 		Grid()																				{};
+		
 		std::tuple<bool,T&> getCell(long int x, long int z) 											
 		{
  			if(x <= dim.HMIN or x >= dim.HMAX or z <= dim.VMIN or z >= dim.VMAX)
@@ -90,18 +92,19 @@ class Grid
 		
 		typename FMap::iterator begin() 							{ return fmap.begin(); };
 		typename FMap::iterator end() 								{ return fmap.end();   };
-		typename FMap::const_iterator begin() const   				{ return fmap.begin(); };
-		typename FMap::const_iterator end() const 	 				{ return fmap.begin(); };
-		size_t size() const 										{ return fmap.size();  };
+		typename FMap::const_iterator begin() const   { return fmap.begin(); };
+		typename FMap::const_iterator end() const 	 	{ return fmap.begin(); };
+		size_t size() const 													{ return fmap.size();  };
 		
-		void initialize(const Dimensions &dim_, const T &initValue)
+		void initialize(const Dimensions &dim_, T &&initValue)
 		{
 			dim = dim_;
 			uint k=0;
 			fmap.clear();
 			for( int i = dim.HMIN ; i < dim.HMAX ; i += dim.TILE_SIZE)
 				for( int j = dim.VMIN ; j < dim.VMAX ; j += dim.TILE_SIZE)
-					fmap.emplace( Key(i,j), initValue); 
+					//fmap.emplace( Key(i,j), initValue); 
+					fmap.insert_or_assign( Key(i,j), initValue);
 	
 			// list of increments to access the neighboors of a given position
 			I = dim.TILE_SIZE;

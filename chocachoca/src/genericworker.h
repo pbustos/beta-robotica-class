@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <qlog/qlog.h>
 #include <thread>
+#include <iostream>
 
 #if Qt5_FOUND
 	#include <QtWidgets>
@@ -30,14 +31,17 @@
 	#include <QtGui>
 #endif
 #include <ui_mainUI.h>
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QGraphicsEllipseItem>
 
 #include <CommonBehavior.h>
-
 #include <Laser.h>
 #include <GenericBase.h>
 #include <DifferentialRobot.h>
 #include <GenericBase.h>
 #include <RCISMousePicker.h>
+#include "userinterface.h"
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
@@ -76,8 +80,7 @@ class CallBackTimer
 							while (_execute.load(std::memory_order_acquire)) 
 							{
 									func();                   
-									std::this_thread::sleep_for(
-									std::chrono::milliseconds(interval));
+									std::this_thread::sleep_for(std::chrono::milliseconds(interval));
 							}
 					});
 			}
@@ -86,20 +89,22 @@ class CallBackTimer
 					return ( _execute.load(std::memory_order_acquire) && 
 									_thd.joinable() );
 			}
+			
+			std::thread _thd;
 	private:
 			std::atomic<bool> _execute;
-			std::thread _thd;
+		
 };
 
 
 typedef map <string,::IceProxy::Ice::Object*> MapPrx;
 
 class GenericWorker :
-	#ifdef USE_QTGUI
-	public QWidget, public Ui_guiDlg
-	#else
-	public QObject
-	#endif
+// 	#ifdef USE_QTGUI
+// 	public QWidget, public Ui_guiDlg
+// 	#else
+ 	public QObject
+// 	#endif
 {
 	Q_OBJECT
 	public:
@@ -123,14 +128,16 @@ class GenericWorker :
 		//QTimer *timer;
 		int Period;
 
-	private:
-		
-
-	public slots:
+	public:
+		std::thread uiThread;
+		void userInterface();
+		MyInterface *ui;
+	//public slots:
 		virtual void compute() = 0;
 		
 	signals:
 		void kill();
+	
 };
 
 #endif

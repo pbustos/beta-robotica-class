@@ -20,28 +20,36 @@
 /**
 * \brief Default constructor
 */
-GenericWorker::GenericWorker(MapPrx& mprx) :
-#ifdef USE_QTGUI
-Ui_guiDlg()
-#else
-QObject()
-#endif
+GenericWorker::GenericWorker(MapPrx& mprx) //:
+// #ifdef USE_QTGUI
+// Ui_guiDlg()
+// #else
+// QObject()
+// #endif
 
 {
 	differentialrobot_proxy = (*(DifferentialRobotPrx*)mprx["DifferentialRobotProxy"]);
 	laser_proxy = (*(LaserPrx*)mprx["LaserProxy"]);
 
+
 	//mutex = new QMutex(QMutex::Recursive);
 
-	#ifdef USE_QTGUI
-		setupUi(this);
-		show();
-	#endif
+// 	#ifdef USE_QTGUI
+// 		setupUi(this);
+// 		show();
+// 	#endif
 	Period = BASIC_PERIOD;
 	//timer = new QTimer();
 	//connect(timer, SIGNAL(timeout()), this, SLOT(compute()));
+	
  	//timer->start(Period);
 	
+	uiThread = std::thread(std::bind(&GenericWorker::userInterface, this));
+	
+	std::cout << __FILE__ << __FUNCTION__ << " 1" << std::endl;
+	//ui.start();
+	std::cout << __FILE__ << __FUNCTION__ << " 2" << std::endl;
+	//ui.show();
 	
 }
 
@@ -55,7 +63,7 @@ GenericWorker::~GenericWorker()
 void GenericWorker::killYourSelf()
 {
 	rDebug("Killing myself");
-	emit kill();
+//	emit kill();
 }
 /**
 * \brief Change compute period
@@ -66,5 +74,15 @@ void GenericWorker::setPeriod(int p)
 	rDebug("Period changed"+QString::number(p));
 	Period = p;
 	//timer->start(Period);
+}
+
+void GenericWorker::userInterface()
+{
+	int argc=0;
+	char **argv = nullptr;
+ 	QApplication a(argc, argv);
+	ui = new MyInterface();
+	ui->initialize();
+	a.exec();
 }
 
