@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <boost/functional/hash.hpp>
 #include <iostream> 
+#include <fstream>
 
 
 template<class T> auto operator<<(std::ostream& os, const T& t) -> decltype(t.save(os), os) 
@@ -57,7 +58,7 @@ class Grid
 				bool operator==(const Key &other) const
 					{ return x == other.x && z == other.z; };
 				void save(std::ostream &os) const { os << x << " " << z << " "; };	//method to save the keys
-				void read(std::istream &is)  { is >> x >> z; };	//method to read the keys
+				void read(std::istream &is)  { is >> x  >> z; };	//method to read the keys
 		};
 
 		struct KeyHasher
@@ -80,6 +81,7 @@ class Grid
 		using FMap = std::unordered_map<Key, T, KeyHasher>;
 		
 		Grid()																				{};
+		
 		std::tuple<bool,T&> getCell(long int x, long int z) 											
 		{
  			if(x <= dim.HMIN or x >= dim.HMAX or z <= dim.VMIN or z >= dim.VMAX)
@@ -94,13 +96,15 @@ class Grid
 		typename FMap::const_iterator end() const 	 	{ return fmap.begin(); };
 		size_t size() const 													{ return fmap.size();  };
 		
-		void initialize(const Dimensions &dim_, const T &initValue)
+		void initialize(const Dimensions &dim_, T &&initValue)
 		{
 			dim = dim_;
 			uint k=0;
+			fmap.clear();
 			for( int i = dim.HMIN ; i < dim.HMAX ; i += dim.TILE_SIZE)
 				for( int j = dim.VMIN ; j < dim.VMAX ; j += dim.TILE_SIZE)
-					fmap.emplace( Key(i,j), initValue); 
+					//fmap.emplace( Key(i,j), initValue); 
+					fmap.insert_or_assign( Key(i,j), initValue);
 	
 			// list of increments to access the neighboors of a given position
 			I = dim.TILE_SIZE;
@@ -110,20 +114,29 @@ class Grid
 			std::cout << "Grid::Initialize. Grid initialized to map size: " << fmap.size() << std::endl;	
 		}
 		
-		void readFromFile(const std::string &fich)
+		template<typename Q>
+		void insert(const Key &key, const Q &value)
 		{
-			std::ifstream myfile;
-			myfile.open(fich);
-			Key k; T v;
-			myfile >> k >> v;
-			while (!myfile.eof() ) 
-			{
-				fmap.emplace( k, v); 
-				std::cout << k << v << std::endl;
-				myfile >> k >> v;
-			}
-			myfile.close();	
+				fmap.insert(std::make_pair(key,value));
 		}
+		
+		void clear()
+		{
+				fmap.clear();
+		}
+		
+		void saveToFile(const std::string &fich)
+		{
+			std::ofstream myfile;
+			myfile.open (fich);
+			for(auto &[k, v] : fmap)
+			{
+				myfile << k << v << std::endl;
+			}
+			myfile.close();
+			std::cout << fmap.size() << " elements written to file " << fich << std::endl;
+		}
+		
 		
  		std::vector<std::pair<Key,T>> neighbours(const Key &k) const
 		{
@@ -139,6 +152,7 @@ class Grid
 			};
 			return neigh;
 		}	
+     
      
 	private:
 		FMap fmap;

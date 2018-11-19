@@ -51,11 +51,7 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
 	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
 
-	const int tilesize = 70;
-	
-	//choose here or create a button in the UI to load from file
-	//grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
-	grid.readFromFile("map.txt");
+	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
 	
 	for(auto &[key, value] : grid)
 	{
@@ -72,7 +68,9 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	
 	//qDebug() << __FILE__ << __FUNCTION__ << "CPP " << __cplusplus;
 	
-	connect(pushButton, SIGNAL(clicked()), this, SLOT(saveToFile()));
+	connect(buttonSave, SIGNAL(clicked()), this, SLOT(saveToFile()));
+	connect(buttonRead, SIGNAL(clicked()), this, SLOT(readFromFile()));
+	
 	timer.start();
 	
 	return true;
@@ -109,13 +107,35 @@ void SpecificWorker::compute()
 
 void SpecificWorker::saveToFile()
 {
-	std::ofstream myfile;
-  myfile.open ("map.txt");
-	for(auto &[k, v] : grid)
+	grid.saveToFile(fileName);
+}
+
+void SpecificWorker::readFromFile()
+{
+	std::ifstream myfile;
+	myfile.open(fileName, std::ifstream::in);
+	if(!myfile.fail())
 	{
-		myfile << k << v << std::endl;
+		//grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+		for( auto &[k,v] : grid)
+			delete v.rect;
+		grid.clear();
+		Grid<TCell>::Key key; TCell value;
+		myfile >> key >> value;
+		while(!myfile.eof()) 
+		{
+			auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));;
+			tile->setPos(key.x,key.z);
+			value.rect = tile;
+			grid.insert<TCell>(key,value);
+			myfile >> key >> value;
+		}
+		myfile.close();	
+		robot->setZValue(1);
+		std::cout << grid.size() << " elements read to grid " << fileName << std::endl;
 	}
-	myfile.close();
+	else
+		throw std::runtime_error("Cannot open file");
 }
 
 void SpecificWorker::checkTransform(const RoboCompGenericBase::TBaseState &bState)
@@ -162,8 +182,8 @@ void SpecificWorker::draw()
 {
 	for(auto &[key, value] : grid)
 	{
-		if(value.visited == false)
-			value.rect->setBrush(Qt::lightGray);
+// 		if(value.visited == false)
+// 			value.rect->setBrush(Qt::lightGray);
 		if(value.free == false)
 			value.rect->setBrush(Qt::darkRed);
 	}
