@@ -21,7 +21,7 @@
 #include <boost/functional/hash.hpp>
 #include <iostream> 
 #include <fstream>
-
+#include <queue>
 
 template<class T> auto operator<<(std::ostream& os, const T& t) -> decltype(t.save(os), os) 
 { 
@@ -103,8 +103,11 @@ class Grid
 			fmap.clear();
 			for( int i = dim.HMIN ; i < dim.HMAX ; i += dim.TILE_SIZE)
 				for( int j = dim.VMIN ; j < dim.VMAX ; j += dim.TILE_SIZE)
-					//fmap.emplace( Key(i,j), initValue); 
+				{
+					initValue.id = k++;
+					initValue.cost = 1;
 					fmap.insert_or_assign( Key(i,j), initValue);
+				}
 	
 			// list of increments to access the neighboors of a given position
 			I = dim.TILE_SIZE;
@@ -137,21 +140,10 @@ class Grid
 			std::cout << fmap.size() << " elements written to file " << fich << std::endl;
 		}
 		
-		
- 		std::vector<std::pair<Key,T>> neighbours(const Key &k) const
+		std::list<QVec> getOptimalPath(const QVec &origen, const QVec &dest)
 		{
-			using Cell = std::pair<Key,T>;
-			std::vector<Cell> neigh;
-			
-			for (auto itx = this->xincs.begin(), itz = this->zincs.begin(); itx != this->xincs.end(); ++itx, ++itz)
-			{
-				Key lk{k.x + *itx, k.z + *itz}; 
-				typename FMap::const_iterator it = fmap.find(lk);
-				if( it != fmap.end() )
-					neigh.push_back({lk,it->second});
-			};
-			return neigh;
-		}	
+			return djikstra(pointToGrid(origen.x(), origen.z()), pointToGrid(dest.x(), dest.z()));
+		}
      
 	private:
 		FMap fmap;
@@ -162,6 +154,20 @@ class Grid
 		std::vector<int> xincs;
 		std::vector<int> zincs;	
 		
+		using Cell = std::pair<Key,T>;
+		std::vector<Cell> neighbours(const Key &k) const
+		{
+			std::vector<Cell> neigh;
+			for (auto itx = this->xincs.begin(), itz = this->zincs.begin(); itx != this->xincs.end(); ++itx, ++itz)
+			{
+				Key lk{k.x + *itx, k.z + *itz}; 
+				typename FMap::const_iterator it = fmap.find(lk);
+				if( it != fmap.end() ) //and not an obstacle
+					neigh.push_back({lk,it->second});
+			};
+			return neigh;
+		}	
+		
 		auto pointToGrid(long int x, long int z) const -> decltype(Key())
 		{
 			int kx = (x-dim.HMIN)/dim.TILE_SIZE;
@@ -171,13 +177,15 @@ class Grid
 		
 		std::list<QVec> djikstra(const Key &source, const Key &target)
 		{
+			using Elem = std::pair<uint, Key>;
+			std::cout << "Keys " << source << target << " size" << fmap.size() << std::endl;
 			std::vector<uint> min_distance(fmap.size(), INT_MAX);
-			std::vector<std::pair<uint,Key>> previous(size(), std::make_pair(-1, Key()));
+			std::vector<Elem> previous(fmap.size(), std::make_pair(-1, Key()));
 			
 			min_distance[ fmap[source].id ] = 0;
-			auto comp = [this](std::pair<uint,Key> x, std::pair<uint,Key> y)
+			auto comp = [this](Elem x, Elem y)
 				{ return x.first < y.first or (!(y.first < x.first) and this->fmap[x.second].id < this->fmap[y.second].id); };
-			std::set< std::pair<uint,Key>, decltype(comp)> active_vertices(comp);
+			std::set< Elem, decltype(comp)> active_vertices(comp); //function pointer as Compare
 			
 			active_vertices.insert({0,source});
 			while (!active_vertices.empty()) 
@@ -190,9 +198,9 @@ class Grid
 					return orderPath(previous, source, target);
 				}
 				active_vertices.erase( active_vertices.begin() );
-				for (auto ed : neighboors(where)) 
+				for (auto ed : neighbours(where)) 
 				{
-					//qDebug() << __FILE__ << __FUNCTION__ << "antes del if" << ed.first.x << ed.first.z << ed.second.id << fmap[where].id << min_distance[ed.second.id] << min_distance[fmap[where].id];
+					qDebug() << "antes del if" << ed.first.x << ed.first.z << ed.second.id << fmap[where].id << min_distance[ed.second.id] << min_distance[fmap[where].id];
 					if (min_distance[ed.second.id] > min_distance[fmap[where].id] + ed.second.cost) 
 					{
 						active_vertices.erase( { min_distance[ed.second.id], ed.first } );

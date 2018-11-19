@@ -32,6 +32,7 @@
 #include <QGraphicsEllipseItem>
 #include <iostream>
 #include <fstream>
+#include <queue>
 
 class SpecificWorker : public GenericWorker
 {
@@ -59,6 +60,12 @@ class SpecificWorker : public GenericWorker
 		QVec target;
 		std::string fileName = "map.txt";
 		const int tilesize = 70;
+		std::atomic<bool> targetReady = false;
+		std::atomic<bool> planReady = false;
+		QVec currentPoint;
+		std::list<QVec> path;
+		std::vector<QGraphicsEllipseItem *> greenPath;
+		
 		
 		void updateVisitedCells(int x, int z);
 		void updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata);
@@ -67,9 +74,11 @@ class SpecificWorker : public GenericWorker
 		/// Grid
 		struct TCell
 		{
+			uint id;
 			bool free;
 			bool visited;
 			QGraphicsRectItem* rect;
+			float cost = 1;
 			
 			// method to save the value
 			void save(std::ostream &os) const {	os << free << " " << visited; };

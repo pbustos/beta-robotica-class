@@ -51,7 +51,7 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
 	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
 
-	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
+	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{0, true, false, nullptr, 0.} );
 	
 	for(auto &[key, value] : grid)
 	{
@@ -92,8 +92,35 @@ void SpecificWorker::compute()
 		//updateVisitedCells(bState.x, bState.z);
 		updateOccupiedCells(bState, ldata);
 		
-		//checkTransform(bState);
-	
+		if(targetReady)
+		{
+			if(planReady)
+			{
+				if(path.empty())
+				{
+					qDebug() << "Arrived to target";
+					targetReady = false; 
+				}
+				else
+						if((QVec::vec2(bState.x, bState.z) - currentPoint).norm2() < 50)
+						{
+							currentPoint = path.front();
+							path.pop_front();
+						}
+						else
+						{
+							//GOTO Point
+						}
+			}
+			else
+			{
+				qDebug() << bState.x << bState.z << target.x() << target.z() ;
+				path = grid.getOptimalPath(QVec::vec3(bState.x,0,bState.z), target);
+				for(auto &p: path)
+					greenPath.push_back(scene.addEllipse(p.x(),p.z(), 100, 100, QPen(Qt::green), QBrush(Qt::green)));
+				planReady = true;
+			}
+		}
 	}
  	catch(const Ice::Exception &e)
 	{	std::cout  << e << std::endl; }
@@ -123,11 +150,14 @@ void SpecificWorker::readFromFile()
 		grid.clear();
 		Grid<TCell>::Key key; TCell value;
 		myfile >> key >> value;
+		int k=0;
 		while(!myfile.eof()) 
 		{
 			auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));;
 			tile->setPos(key.x,key.z);
 			value.rect = tile;
+			value.id = k++;
+			value.cost = 1;
 			grid.insert<TCell>(key,value);
 			myfile >> key >> value;
 		}
@@ -206,4 +236,10 @@ void SpecificWorker::setPick(const Pick &myPick)
 	target[2] = myPick.z;
 	target[1] = 0;
 	qDebug() << __FILE__ << __FUNCTION__ << myPick.x << myPick.z ;
+	targetReady = true;
+	planReady = false;
+	for(auto gp: greenPath)
+		delete gp;
+	greenPath.clear();
+	
 }
