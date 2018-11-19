@@ -114,6 +114,7 @@ void SpecificWorker::readFromFile()
 {
 	std::ifstream myfile;
 	myfile.open(fileName, std::ifstream::in);
+	
 	if(!myfile.fail())
 	{
 		//grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{true, false, nullptr} );
@@ -189,6 +190,11 @@ void SpecificWorker::draw()
 	}
 	view.show();
 }
+
+/////////////// PATH PLANNING /////7
+
+
+
 
 /////////////////////////////////////////////////////////77
 /////////

@@ -153,7 +153,6 @@ class Grid
 			return neigh;
 		}	
      
-     
 	private:
 		FMap fmap;
 		Dimensions dim;
@@ -168,6 +167,58 @@ class Grid
 			int kx = (x-dim.HMIN)/dim.TILE_SIZE;
 			int kz = (z-dim.VMIN)/dim.TILE_SIZE;
 			return Key(dim.HMIN + kx*dim.TILE_SIZE, dim.VMIN + kz*dim.TILE_SIZE);
+		};
+		
+		std::list<QVec> djikstra(const Key &source, const Key &target)
+		{
+			std::vector<uint> min_distance(fmap.size(), INT_MAX);
+			std::vector<std::pair<uint,Key>> previous(size(), std::make_pair(-1, Key()));
+			
+			min_distance[ fmap[source].id ] = 0;
+			auto comp = [this](std::pair<uint,Key> x, std::pair<uint,Key> y)
+				{ return x.first < y.first or (!(y.first < x.first) and this->fmap[x.second].id < this->fmap[y.second].id); };
+			std::set< std::pair<uint,Key>, decltype(comp)> active_vertices(comp);
+			
+			active_vertices.insert({0,source});
+			while (!active_vertices.empty()) 
+			{
+				Key where = active_vertices.begin()->second;
+			
+				if (where == target) 
+				{
+					qDebug() << __FILE__ << __FUNCTION__  << "Min distance found:" << min_distance[fmap[where].id];  //exit point 
+					return orderPath(previous, source, target);
+				}
+				active_vertices.erase( active_vertices.begin() );
+				for (auto ed : neighboors(where)) 
+				{
+					//qDebug() << __FILE__ << __FUNCTION__ << "antes del if" << ed.first.x << ed.first.z << ed.second.id << fmap[where].id << min_distance[ed.second.id] << min_distance[fmap[where].id];
+					if (min_distance[ed.second.id] > min_distance[fmap[where].id] + ed.second.cost) 
+					{
+						active_vertices.erase( { min_distance[ed.second.id], ed.first } );
+						min_distance[ed.second.id] = min_distance[fmap[where].id] + ed.second.cost;
+						previous[ed.second.id] = std::make_pair(fmap[where].id, where);
+						active_vertices.insert( { min_distance[ed.second.id], ed.first } );
+					}
+				}
+			}
+			return std::list<QVec>();
+		}
+
+		std::list<QVec> orderPath(const std::vector<std::pair<uint,Key>> &previous, const Key &source, const Key &target)
+		{
+			std::list<QVec> res;
+			Key k = target;
+			uint u = fmap[k].id;
+			while(previous[u].first != (uint)-1)
+			{
+				QVec p = QVec::vec3(k.x, 0, k.z);
+				res.push_front(p);
+				u = previous[u].first;
+				k = previous[u].second;
+			}
+			qDebug() << __FILE__ << __FUNCTION__ << "Path length:" << res.size();  //exit point 
+			return res;
 		};
 };
 
