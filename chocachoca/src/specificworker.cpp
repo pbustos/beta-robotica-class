@@ -44,14 +44,14 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	qDebug() << __FILE__ ;
 	
 	// Scene
-	scene.setSceneRect(-2500, -2500, 5000, 5000);
+	scene.setSceneRect(-12000, -6000, 38000, 16000);
 	view.setScene(&scene);
 	view.scale(1, -1);
 	view.setParent(scrollArea);
 	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
 	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
 
-	grid.initialize( TDim{ tilesize, -2500, 2500, -2500, 2500}, TCell{0, true, false, nullptr, 0.} );
+	grid.initialize( TDim{ tilesize, -12000, 25000, -6000, 10000}, TCell{0, true, false, nullptr, 0.} );
 	
 	for(auto &[key, value] : grid)
 	{
@@ -71,6 +71,8 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	connect(buttonSave, SIGNAL(clicked()), this, SLOT(saveToFile()));
 	connect(buttonRead, SIGNAL(clicked()), this, SLOT(readFromFile()));
 	
+	view.show();
+
 	timer.start();
 	
 	return true;
@@ -78,6 +80,7 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 
 void SpecificWorker::compute()
 {
+
 	static RoboCompGenericBase::TBaseState bState;
  	try
  	{
@@ -128,7 +131,7 @@ void SpecificWorker::compute()
 	//Resize world widget if necessary, and render the world
 	if (view.size() != scrollArea->size())
 			view.setFixedSize(scrollArea->width(), scrollArea->height());
-	draw();
+	//draw();
 	
 }
 
@@ -148,22 +151,26 @@ void SpecificWorker::readFromFile()
 		for( auto &[k,v] : grid)
 			delete v.rect;
 		grid.clear();
-		Grid<TCell>::Key key; TCell value;
-		myfile >> key >> value;
+		Grid<TCell>::Key key; 
+		TCell value;
+		int libres= 0;
 		int k=0;
 		while(!myfile.eof()) 
 		{
+			myfile >> key >> value;
 			auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));;
 			tile->setPos(key.x,key.z);
 			value.rect = tile;
-			value.id = k++;
+			value.id = k;
 			value.cost = 1;
+			if(value.free) 
+				libres++;
 			grid.insert<TCell>(key,value);
-			myfile >> key >> value;
+			k++;
 		}
 		myfile.close();	
 		robot->setZValue(1);
-		std::cout << grid.size() << " elements read to grid " << fileName << std::endl;
+		std::cout << grid.size() << " elements read to grid " << "frees " << libres << " " << fileName << std::endl;
 	}
 	else
 		throw std::runtime_error("Cannot open file");
@@ -182,14 +189,17 @@ void SpecificWorker::checkTransform(const RoboCompGenericBase::TBaseState &bStat
 
 void SpecificWorker::updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata)
 {
-	auto *n = innerModel->getNode<InnerModelLaser>("laser");
+	InnerModelLaser *n = innerModel->getNode<InnerModelLaser>(QString("laser"));
 	for(auto l: ldata)
 	{
-		auto r = n->laserTo("world", l.dist, l.angle);	// r is in world reference system
+		auto r = n->laserTo(QString("world"), l.dist, l.angle);	// r is in world reference system
 		// we set the cell corresponding to r as occupied 
 		auto [valid, cell] = grid.getCell(r.x(), r.z()); 
 		if(valid)
+		{
 			cell.free = false;
+			cell.rect->setBrush(Qt::darkRed);
+		}
 	}
 }
 

@@ -131,7 +131,8 @@ class Grid
 		void saveToFile(const std::string &fich)
 		{
 			std::ofstream myfile;
-			myfile.open (fich);
+			std::cout << "Saving data..." << std::endl;
+			myfile.open (fich, std::ofstream::binary);
 			for(auto &[k, v] : fmap)
 			{
 				myfile << k << v << std::endl;
