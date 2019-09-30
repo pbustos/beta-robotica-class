@@ -49,6 +49,14 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	return true;
 }
 
+
+void SpecificWorker::initialize(int period)
+{
+	std::cout << "Initialize worker" << std::endl;
+	this->Period = period;
+	timer.start(Period);
+}
+
 void SpecificWorker::compute()
 {
     //const float threshold = 200; // millimeters
