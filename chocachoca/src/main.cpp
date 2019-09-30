@@ -1,5 +1,5 @@
 /*
- *    Copyright (C) 2018 by YOUR NAME HERE
+ *    Copyright (C) 2019 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -83,11 +83,8 @@
 
 #include <rcismousepickerI.h>
 
-#include <Laser.h>
 #include <GenericBase.h>
-#include <DifferentialRobot.h>
 #include <GenericBase.h>
-#include <RCISMousePicker.h>
 
 
 // User includes here
@@ -139,28 +136,11 @@ int ::chocachoca::run(int argc, char* argv[])
 
 	int status=EXIT_SUCCESS;
 
-	LaserPrx laser_proxy;
 	DifferentialRobotPrx differentialrobot_proxy;
+	LaserPrx laser_proxy;
 
 	string proxy, tmp;
 	initialize();
-
-
-	try
-	{
-		if (not GenericMonitor::configGetString(communicator(), prefix, "LaserProxy", proxy, ""))
-		{
-			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy LaserProxy\n";
-		}
-		laser_proxy = LaserPrx::uncheckedCast( communicator()->stringToProxy( proxy ) );
-	}
-	catch(const Ice::Exception& ex)
-	{
-		cout << "[" << PROGRAM_NAME << "]: Exception creating proxy Laser: " << ex;
-		return EXIT_FAILURE;
-	}
-	rInfo("LaserProxy initialized Ok!");
-	mprx["LaserProxy"] = (::IceProxy::Ice::Object*)(&laser_proxy);//Remote server proxy creation example
 
 
 	try
@@ -177,8 +157,25 @@ int ::chocachoca::run(int argc, char* argv[])
 		return EXIT_FAILURE;
 	}
 	rInfo("DifferentialRobotProxy initialized Ok!");
+
 	mprx["DifferentialRobotProxy"] = (::IceProxy::Ice::Object*)(&differentialrobot_proxy);//Remote server proxy creation example
 
+	try
+	{
+		if (not GenericMonitor::configGetString(communicator(), prefix, "LaserProxy", proxy, ""))
+		{
+			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy LaserProxy\n";
+		}
+		laser_proxy = LaserPrx::uncheckedCast( communicator()->stringToProxy( proxy ) );
+	}
+	catch(const Ice::Exception& ex)
+	{
+		cout << "[" << PROGRAM_NAME << "]: Exception creating proxy Laser: " << ex;
+		return EXIT_FAILURE;
+	}
+	rInfo("LaserProxy initialized Ok!");
+
+	mprx["LaserProxy"] = (::IceProxy::Ice::Object*)(&laser_proxy);//Remote server proxy creation example
 	IceStorm::TopicManagerPrx topicManager;
 	try
 	{
@@ -189,7 +186,6 @@ int ::chocachoca::run(int argc, char* argv[])
 		cout << "[" << PROGRAM_NAME << "]: Exception: STORM not running: " << ex << endl;
 		return EXIT_FAILURE;
 	}
-
 
 	SpecificWorker *worker = new SpecificWorker(mprx);
 	//Monitor thread
@@ -213,10 +209,9 @@ int ::chocachoca::run(int argc, char* argv[])
 			if (not GenericMonitor::configGetString(communicator(), prefix, "CommonBehavior.Endpoints", tmp, "")) {
 				cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy CommonBehavior\n";
 			}
-			Ice::ObjectAdapterPtr adapterCommonBehavior = communicator()->createObjectAdapterWithEndpoints(
-					"commonbehavior", tmp);
+			Ice::ObjectAdapterPtr adapterCommonBehavior = communicator()->createObjectAdapterWithEndpoints("commonbehavior", tmp);
 			CommonBehaviorI *commonbehaviorI = new CommonBehaviorI(monitor);
-			adapterCommonBehavior->add(commonbehaviorI, communicator()->stringToIdentity("commonbehavior"));
+			adapterCommonBehavior->add(commonbehaviorI, Ice::stringToIdentity("commonbehavior"));
 			adapterCommonBehavior->activate();
 		}
 		catch(const Ice::Exception& ex)
@@ -231,9 +226,6 @@ int ::chocachoca::run(int argc, char* argv[])
 
 
 
-
-
-
 		// Server adapter creation and publication
 		IceStorm::TopicPrx rcismousepicker_topic;
 		Ice::ObjectPrx rcismousepicker;
@@ -244,7 +236,7 @@ int ::chocachoca::run(int argc, char* argv[])
 				cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy RCISMousePickerProxy";
 			}
 			Ice::ObjectAdapterPtr RCISMousePicker_adapter = communicator()->createObjectAdapterWithEndpoints("rcismousepicker", tmp);
-			RCISMousePickerPtr rcismousepickerI_ = new RCISMousePickerI(worker);
+			RCISMousePickerPtr rcismousepickerI_ =  new RCISMousePickerI(worker);
 			Ice::ObjectPrx rcismousepicker = RCISMousePicker_adapter->addWithUUID(rcismousepickerI_)->ice_oneway();
 			if(!rcismousepicker_topic)
 			{
@@ -259,8 +251,8 @@ int ::chocachoca::run(int argc, char* argv[])
 					}
 					catch(const IceStorm::NoSuchTopic&)
 					{
-						//Error. Topic does not exist
 						cout << "[" << PROGRAM_NAME << "]: Topic doesn't exists and couldn't be created.\n";
+						//Error. Topic does not exist
 					}
 				}
 				IceStorm::QoS qos;

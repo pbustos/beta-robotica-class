@@ -39,7 +39,7 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 		RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
 		innerModel = std::make_shared<InnerModel>(par.value);
 	}
-	catch(std::exception e) { qFatal("Error reading config params"); }
+	catch(const std::exception &e) { qFatal("Error reading config params"); }
 
 	qDebug() << __FILE__ ;
 	
@@ -77,6 +77,14 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	
 	return true;
 }
+
+void SpecificWorker::initialize(int period)
+{
+        std::cout << "Initialize worker" << std::endl;
+        this->Period = period;
+        timer.start(Period);
+}
+
 
 void SpecificWorker::compute()
 {
@@ -240,7 +248,7 @@ void SpecificWorker::draw()
 /////////
 //////////////////////////////////////////////////////////
 
-void SpecificWorker::setPick(const Pick &myPick)
+void SpecificWorker::RCISMousePicker_setPick(const Pick &myPick)
 {
 	target[0] = myPick.x;
 	target[2] = myPick.z;

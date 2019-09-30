@@ -41,9 +41,10 @@ class SpecificWorker : public GenericWorker
 		SpecificWorker(MapPrx& mprx);
 		~SpecificWorker();
 		bool setParams(RoboCompCommonBehavior::ParameterList params);
+		void initialize(int period);
 		
 		// Ice subscription
-		void setPick(const Pick &myPick);
+		void RCISMousePicker_setPick(const Pick &myPick);
 
 	public slots:
 		void compute();

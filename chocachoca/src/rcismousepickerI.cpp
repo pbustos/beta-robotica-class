@@ -1,5 +1,5 @@
 /*
- *    Copyright (C) 2018 by YOUR NAME HERE
+ *    Copyright (C) 2019 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -30,6 +30,6 @@ RCISMousePickerI::~RCISMousePickerI()
 
 void RCISMousePickerI::setPick(const Pick  &myPick, const Ice::Current&)
 {
-	worker->setPick(myPick);
+	worker->RCISMousePicker_setPick(myPick);
 }
 

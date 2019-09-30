@@ -43,7 +43,7 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	//innermodel_path = par.value;
 	//innermodel = new InnerModel(innermodel_path);
     }
-    catch(std::exception e) { qFatal("Error reading config params"); }
+    catch(const std::exception &e) { qFatal("Error reading config params"); }
 
 	timer.start(Period);
 	return true;

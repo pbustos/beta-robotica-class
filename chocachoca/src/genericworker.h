@@ -1,5 +1,5 @@
 /*
- *    Copyright (C)2018 by YOUR NAME HERE
+ *    Copyright (C)2019 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -20,41 +20,41 @@
 #define GENERICWORKER_H
 
 #include "config.h"
-#include <QtGui>
 #include <stdint.h>
 #include <qlog/qlog.h>
 
+#if Qt5_FOUND
+	#include <QtWidgets>
+#else
+	#include <QtGui>
+#endif
 #include <ui_mainUI.h>
 
 #include <CommonBehavior.h>
 
-#include <Laser.h>
 #include <GenericBase.h>
 #include <DifferentialRobot.h>
-#include <GenericBase.h>
+#include <Laser.h>
 #include <RCISMousePicker.h>
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
 
-typedef map <string,::IceProxy::Ice::Object*> MapPrx;
-
 using namespace std;
-
-using namespace RoboCompDifferentialRobot;
 using namespace RoboCompGenericBase;
+using namespace RoboCompDifferentialRobot;
 using namespace RoboCompLaser;
 using namespace RoboCompRCISMousePicker;
 
-
+typedef map <string,::IceProxy::Ice::Object*> MapPrx;
 
 
 class GenericWorker :
 #ifdef USE_QTGUI
-public QWidget, public Ui_guiDlg
+	public QWidget, public Ui_guiDlg
 #else
-public QObject
-#endif
+	public QObject
+ #endif
 {
 Q_OBJECT
 public:
@@ -70,7 +70,7 @@ public:
 	DifferentialRobotPrx differentialrobot_proxy;
 	LaserPrx laser_proxy;
 
-	virtual void setPick(const Pick &myPick) = 0;
+	virtual void RCISMousePicker_setPick(const Pick &myPick) = 0;
 
 protected:
 	QTimer timer;
@@ -81,6 +81,7 @@ private:
 
 public slots:
 	virtual void compute() = 0;
+	virtual void initialize(int period) = 0;
 signals:
 	void kill();
 };
