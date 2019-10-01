@@ -1,5 +1,5 @@
 /*
- *    Copyright (C)2018 by YOUR NAME HERE
+ *    Copyright (C)2019 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -21,9 +21,9 @@
 /**
 * \brief Default constructor
 */
-SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
+SpecificWorker::SpecificWorker(TuplePrx tprx) : GenericWorker(tprx)
 {
-    connect(pushButton, SIGNAL(clicked()), this, SLOT(resetSlot()));
+
 }
 
 /**
@@ -31,7 +31,8 @@ SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
 */
 SpecificWorker::~SpecificWorker()
 {
-    
+	std::cout << "Destroying SpecificWorker" << std::endl;
+	emit computetofinalize();
 }
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
@@ -45,7 +46,12 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
     }
     catch(const std::exception &e) { qFatal("Error reading config params"); }
 
-	timer.start(Period);
+
+
+	defaultMachine.start();
+	
+
+
 	return true;
 }
 
@@ -55,6 +61,8 @@ void SpecificWorker::initialize(int period)
 	std::cout << "Initialize worker" << std::endl;
 	this->Period = period;
 	timer.start(Period);
+	emit this->initializetocompute();
+
 }
 
 void SpecificWorker::compute()
@@ -81,9 +89,24 @@ void SpecificWorker::compute()
     }
 }
 
-
-void SpecificWorker::resetSlot()
+void SpecificWorker::sm_compute()
 {
-    
-    fm.reset();
+	std::cout<<"Entered state compute"<<std::endl;
+	compute();
 }
+
+void SpecificWorker::sm_initialize()
+{
+	std::cout<<"Entered initial state initialize"<<std::endl;
+}
+
+void SpecificWorker::sm_finalize()
+{
+	std::cout<<"Entered final state finalize"<<std::endl;
+}
+
+
+
+
+
+

@@ -69,7 +69,7 @@ ParameterList CommonBehaviorI::getParameterList( const Ice::Current&)
 * \brief Change configurations parameters to worker
 * @param l Configuration parameters list
 */
-void CommonBehaviorI::setParameterList(const RoboCompCommonBehavior::ParameterList &l, const Ice::Current&) 
+void CommonBehaviorI::setParameterList(RoboCompCommonBehavior::ParameterList l, const Ice::Current&) 
 { 
 	monitor->setParameterList(l);
 }

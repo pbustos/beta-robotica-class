@@ -7,7 +7,8 @@ Component aspirador
 	{
 		requires DifferentialRobot, Laser;
 	};
-	language Cpp;
+	language Cpp11;
 	gui Qt(QWidget);
+	statemachine "statemachine.smdsl";
 };
 

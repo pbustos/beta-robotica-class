@@ -1,5 +1,5 @@
 /*
- *    Copyright (C)2018 by YOUR NAME HERE
+ *    Copyright (C)2019 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -35,20 +35,23 @@ class SpecificWorker : public GenericWorker
 {
 Q_OBJECT
 public:
-	SpecificWorker(MapPrx& mprx);
+	SpecificWorker(TuplePrx tprx);
 	~SpecificWorker();
 	bool setParams(RoboCompCommonBehavior::ParameterList params);
-	void initialize(int period);
 
 
 public slots:
 	void compute();
-        void resetSlot();
+	void initialize(int period);
+//Specification slot methods State Machine
+	void sm_compute();
+	void sm_initialize();
+	void sm_finalize();
 
+//--------------------
 private:
-	InnerModel *innerModel;
-        FloorMeter fm;
-
+	std::shared_ptr<InnerModel> innerModel;
+	FloorMeter fm;
 };
 
 #endif
