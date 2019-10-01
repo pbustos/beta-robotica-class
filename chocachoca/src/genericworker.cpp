@@ -20,7 +20,7 @@
 /**
 * \brief Default constructor
 */
-GenericWorker::GenericWorker(MapPrx& mprx) :
+GenericWorker::GenericWorker(TuplePrx tprx) :
 #ifdef USE_QTGUI
 Ui_guiDlg()
 #else
@@ -28,8 +28,26 @@ QObject()
 #endif
 
 {
-	differentialrobot_proxy = (*(DifferentialRobotPrx*)mprx["DifferentialRobotProxy"]);
-	laser_proxy = (*(LaserPrx*)mprx["LaserProxy"]);
+
+//Initialization State machine
+	initializeState->addTransition(this, SIGNAL(initializetocompute()), computeState);
+	computeState->addTransition(this, SIGNAL(computetocompute()), computeState);
+	computeState->addTransition(this, SIGNAL(computetofinalize()), finalizeState);
+
+	defaultMachine.addState(computeState);
+	defaultMachine.addState(initializeState);
+	defaultMachine.addState(finalizeState);
+
+	defaultMachine.setInitialState(initializeState);
+
+	QObject::connect(computeState, SIGNAL(entered()), this, SLOT(sm_compute()));
+	QObject::connect(initializeState, SIGNAL(entered()), this, SLOT(sm_initialize()));
+	QObject::connect(finalizeState, SIGNAL(entered()), this, SLOT(sm_finalize()));
+	QObject::connect(&timer, SIGNAL(timeout()), this, SIGNAL(computetocompute()));
+
+//------------------
+	differentialrobot_proxy = std::get<0>(tprx);
+	laser_proxy = std::get<1>(tprx);
 
 	mutex = new QMutex(QMutex::Recursive);
 

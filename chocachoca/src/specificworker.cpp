@@ -21,7 +21,7 @@
 /**
 * \brief Default constructor
 */
-SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
+SpecificWorker::SpecificWorker(TuplePrx tprx) : GenericWorker(tprx)
 {
 	std::cout << std::boolalpha;   
 }
@@ -30,7 +30,10 @@ SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
 * \brief Default destructor
 */
 SpecificWorker::~SpecificWorker()
-{}
+{
+	std::cout << "Destroying SpecificWorker" << std::endl;
+	emit computetofinalize();
+}
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
@@ -38,57 +41,79 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	{
 		RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
 		innerModel = std::make_shared<InnerModel>(par.value);
+		int xmin = std::stoi(params.at("xmin").value);
+		int xmax = std::stoi(params.at("xmax").value);
+		int ymin = std::stoi(params.at("ymin").value);
+		int ymax = std::stoi(params.at("ymax").value);
+		tilesize = std::stoi(params.at("tilesize").value);
+
+		qDebug() << __FILE__ ;
+	
+		// Scene
+		//scene.setSceneRect(-12000, -6000, 38000, 16000);
+		scene.setSceneRect(xmin, ymin, fabs(xmin)+fabs(xmax), fabs(ymin)+fabs(ymax));
+		view.setScene(&scene);
+		view.scale(1, -1);
+		view.setParent(scrollArea);
+		//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
+		view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
+
+		//grid.initialize( TDim{ tilesize, -12000, 25000, -6000, 10000}, TCell{0, true, false, nullptr, 0.} );
+		grid.initialize( TDim{ tilesize, xmin, xmax, ymin, ymax}, TCell{0, true, false, nullptr, 0.} );
+		
+		for(auto &[key, value] : grid)
+		{
+			auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));
+			tile->setPos(key.x,key.z);
+			value.rect = tile;
+		}
+
+		robot = scene.addRect(QRectF(-200, -200, 400, 400), QPen(), QBrush(Qt::blue));
+		noserobot = new QGraphicsEllipseItem(-50,100, 100,100, robot);
+		noserobot->setBrush(Qt::magenta);
+
+		target = QVec::vec3(0,0,0);
+		
+		//qDebug() << __FILE__ << __FUNCTION__ << "CPP " << __cplusplus;
+		
+		connect(buttonSave, SIGNAL(clicked()), this, SLOT(saveToFile()));
+		connect(buttonRead, SIGNAL(clicked()), this, SLOT(readFromFile()));
+		
+		view.show();
+
+		defaultMachine.start();
+		
+		return true;
 	}
 	catch(const std::exception &e) { qFatal("Error reading config params"); }
-
-	qDebug() << __FILE__ ;
-	
-	// Scene
-	scene.setSceneRect(-12000, -6000, 38000, 16000);
-	view.setScene(&scene);
-	view.scale(1, -1);
-	view.setParent(scrollArea);
-	//view.setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
-	view.fitInView(scene.sceneRect(), Qt::KeepAspectRatio );
-
-	grid.initialize( TDim{ tilesize, -12000, 25000, -6000, 10000}, TCell{0, true, false, nullptr, 0.} );
-	
-	for(auto &[key, value] : grid)
-	{
-		auto tile = scene.addRect(-tilesize/2,-tilesize/2, 100,100, QPen(Qt::NoPen));
-		tile->setPos(key.x,key.z);
-		value.rect = tile;
-	}
-
-	robot = scene.addRect(QRectF(-200, -200, 400, 400), QPen(), QBrush(Qt::blue));
-	noserobot = new QGraphicsEllipseItem(-50,100, 100,100, robot);
-	noserobot->setBrush(Qt::magenta);
-
-	target = QVec::vec3(0,0,0);
-	
-	//qDebug() << __FILE__ << __FUNCTION__ << "CPP " << __cplusplus;
-	
-	connect(buttonSave, SIGNAL(clicked()), this, SLOT(saveToFile()));
-	connect(buttonRead, SIGNAL(clicked()), this, SLOT(readFromFile()));
-	
-	view.show();
-
-	timer.start();
-	
-	return true;
 }
 
 void SpecificWorker::initialize(int period)
 {
-        std::cout << "Initialize worker" << std::endl;
-        this->Period = period;
-        timer.start(Period);
+    std::cout << "Initialize worker" << std::endl;
+	this->Period = period;
+	timer.start(Period);
+	emit this->initializetocompute();
 }
 
+void SpecificWorker::sm_compute()
+{
+	std::cout<<"Entered state compute"<<std::endl;
+	compute();
+}
+
+void SpecificWorker::sm_initialize()
+{
+	std::cout<<"Entered initial state initialize"<<std::endl;
+}
+
+void SpecificWorker::sm_finalize()
+{
+	std::cout<<"Entered final state finalize"<<std::endl;
+}
 
 void SpecificWorker::compute()
 {
-
 	static RoboCompGenericBase::TBaseState bState;
  	try
  	{
@@ -248,7 +273,7 @@ void SpecificWorker::draw()
 /////////
 //////////////////////////////////////////////////////////
 
-void SpecificWorker::RCISMousePicker_setPick(const Pick &myPick)
+void SpecificWorker::RCISMousePicker_setPick(Pick myPick)
 {
 	target[0] = myPick.x;
 	target[2] = myPick.z;

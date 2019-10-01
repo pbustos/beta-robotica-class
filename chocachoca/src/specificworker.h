@@ -38,18 +38,22 @@ class SpecificWorker : public GenericWorker
 {
 	Q_OBJECT
 	public:
-		SpecificWorker(MapPrx& mprx);
+		SpecificWorker(TuplePrx tprx);
 		~SpecificWorker();
 		bool setParams(RoboCompCommonBehavior::ParameterList params);
 		void initialize(int period);
 		
 		// Ice subscription
-		void RCISMousePicker_setPick(const Pick &myPick);
+		void RCISMousePicker_setPick(Pick myPick);
 
 	public slots:
 		void compute();
 		void saveToFile();
 		void readFromFile();
+		//Specification slot methods State Machine
+		void sm_compute();
+		void sm_initialize();
+		void sm_finalize();
 
 	private:
 		std::shared_ptr<InnerModel> innerModel;
@@ -60,13 +64,12 @@ class SpecificWorker : public GenericWorker
 		QGraphicsEllipseItem *noserobot;
 		QVec target;
 		std::string fileName = "map.txt";
-		const int tilesize = 70;
 		std::atomic<bool> targetReady = false;
 		std::atomic<bool> planReady = false;
 		QVec currentPoint;
 		std::list<QVec> path;
 		std::vector<QGraphicsEllipseItem *> greenPath;
-		
+		int tilesize;
 		
 		void updateVisitedCells(int x, int z);
 		void updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata);

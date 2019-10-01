@@ -34,7 +34,7 @@ public:
 RCISMousePickerI(GenericWorker *_worker);
 	~RCISMousePickerI();
 
-	void setPick(const Pick  &myPick, const Ice::Current&);
+	void setPick(Pick myPick, const Ice::Current&);
 
 private:
 

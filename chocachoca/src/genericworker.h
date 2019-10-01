@@ -29,7 +29,8 @@
 	#include <QtGui>
 #endif
 #include <ui_mainUI.h>
-
+#include <QStateMachine>
+#include <QState>
 #include <CommonBehavior.h>
 
 #include <GenericBase.h>
@@ -46,7 +47,7 @@ using namespace RoboCompDifferentialRobot;
 using namespace RoboCompLaser;
 using namespace RoboCompRCISMousePicker;
 
-typedef map <string,::IceProxy::Ice::Object*> MapPrx;
+using TuplePrx = std::tuple<RoboCompDifferentialRobot::DifferentialRobotPrxPtr,RoboCompLaser::LaserPrxPtr>;
 
 
 class GenericWorker :
@@ -58,7 +59,7 @@ class GenericWorker :
 {
 Q_OBJECT
 public:
-	GenericWorker(MapPrx& mprx);
+	GenericWorker(TuplePrx tprx);
 	virtual ~GenericWorker();
 	virtual void killYourSelf();
 	virtual void setPeriod(int p);
@@ -67,12 +68,21 @@ public:
 	QMutex *mutex;
 
 
-	DifferentialRobotPrx differentialrobot_proxy;
-	LaserPrx laser_proxy;
+	DifferentialRobotPrxPtr differentialrobot_proxy;
+	LaserPrxPtr laser_proxy;
 
-	virtual void RCISMousePicker_setPick(const Pick &myPick) = 0;
+	virtual void RCISMousePicker_setPick(Pick myPick) = 0;
 
 protected:
+//State Machine
+	QStateMachine defaultMachine;
+
+	QState *computeState = new QState();
+	QState *initializeState = new QState();
+	QFinalState *finalizeState = new QFinalState();
+
+//-------------------------
+
 	QTimer timer;
 	int Period;
 
@@ -80,10 +90,23 @@ private:
 
 
 public slots:
+//Slots funtion State Machine
+	virtual void sm_compute() = 0;
+	virtual void sm_initialize() = 0;
+	virtual void sm_finalize() = 0;
+
+//-------------------------
 	virtual void compute() = 0;
-	virtual void initialize(int period) = 0;
+    virtual void initialize(int period) = 0;
+	
 signals:
 	void kill();
+//Signals for State Machine
+	void initializetocompute();
+	void computetocompute();
+	void computetofinalize();
+
+//-------------------------
 };
 
 #endif

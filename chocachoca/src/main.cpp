@@ -84,7 +84,6 @@
 #include <rcismousepickerI.h>
 
 #include <GenericBase.h>
-#include <GenericBase.h>
 
 
 // User includes here
@@ -100,7 +99,7 @@ public:
 private:
 	void initialize();
 	std::string prefix;
-	MapPrx mprx;
+	TuplePrx tprx;
 
 public:
 	virtual int run(int, char*[]);
@@ -136,8 +135,8 @@ int ::chocachoca::run(int argc, char* argv[])
 
 	int status=EXIT_SUCCESS;
 
-	DifferentialRobotPrx differentialrobot_proxy;
-	LaserPrx laser_proxy;
+	DifferentialRobotPrxPtr differentialrobot_proxy;
+	LaserPrxPtr laser_proxy;
 
 	string proxy, tmp;
 	initialize();
@@ -149,7 +148,7 @@ int ::chocachoca::run(int argc, char* argv[])
 		{
 			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy DifferentialRobotProxy\n";
 		}
-		differentialrobot_proxy = DifferentialRobotPrx::uncheckedCast( communicator()->stringToProxy( proxy ) );
+		differentialrobot_proxy = Ice::uncheckedCast<DifferentialRobotPrx>( communicator()->stringToProxy( proxy ) );
 	}
 	catch(const Ice::Exception& ex)
 	{
@@ -158,7 +157,6 @@ int ::chocachoca::run(int argc, char* argv[])
 	}
 	rInfo("DifferentialRobotProxy initialized Ok!");
 
-	mprx["DifferentialRobotProxy"] = (::IceProxy::Ice::Object*)(&differentialrobot_proxy);//Remote server proxy creation example
 
 	try
 	{
@@ -166,7 +164,7 @@ int ::chocachoca::run(int argc, char* argv[])
 		{
 			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy LaserProxy\n";
 		}
-		laser_proxy = LaserPrx::uncheckedCast( communicator()->stringToProxy( proxy ) );
+		laser_proxy = Ice::uncheckedCast<LaserPrx>( communicator()->stringToProxy( proxy ) );
 	}
 	catch(const Ice::Exception& ex)
 	{
@@ -175,11 +173,10 @@ int ::chocachoca::run(int argc, char* argv[])
 	}
 	rInfo("LaserProxy initialized Ok!");
 
-	mprx["LaserProxy"] = (::IceProxy::Ice::Object*)(&laser_proxy);//Remote server proxy creation example
-	IceStorm::TopicManagerPrx topicManager;
+	IceStorm::TopicManagerPrxPtr topicManager;
 	try
 	{
-		topicManager = IceStorm::TopicManagerPrx::checkedCast(communicator()->propertyToProxy("TopicManager.Proxy"));
+		topicManager = Ice::checkedCast<IceStorm::TopicManagerPrx>(communicator()->propertyToProxy("TopicManager.Proxy"));
 	}
 	catch (const Ice::Exception &ex)
 	{
@@ -187,7 +184,8 @@ int ::chocachoca::run(int argc, char* argv[])
 		return EXIT_FAILURE;
 	}
 
-	SpecificWorker *worker = new SpecificWorker(mprx);
+	tprx = std::make_tuple(differentialrobot_proxy,laser_proxy);
+	SpecificWorker *worker = new SpecificWorker(tprx);
 	//Monitor thread
 	SpecificMonitor *monitor = new SpecificMonitor(worker,communicator());
 	QObject::connect(monitor, SIGNAL(kill()), &a, SLOT(quit()));
@@ -210,7 +208,7 @@ int ::chocachoca::run(int argc, char* argv[])
 				cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy CommonBehavior\n";
 			}
 			Ice::ObjectAdapterPtr adapterCommonBehavior = communicator()->createObjectAdapterWithEndpoints("commonbehavior", tmp);
-			CommonBehaviorI *commonbehaviorI = new CommonBehaviorI(monitor);
+			auto commonbehaviorI = std::make_shared<CommonBehaviorI>(monitor);
 			adapterCommonBehavior->add(commonbehaviorI, Ice::stringToIdentity("commonbehavior"));
 			adapterCommonBehavior->activate();
 		}
@@ -227,8 +225,8 @@ int ::chocachoca::run(int argc, char* argv[])
 
 
 		// Server adapter creation and publication
-		IceStorm::TopicPrx rcismousepicker_topic;
-		Ice::ObjectPrx rcismousepicker;
+		std::shared_ptr<IceStorm::TopicPrx> rcismousepicker_topic;
+		Ice::ObjectPrxPtr rcismousepicker;
 		try
 		{
 			if (not GenericMonitor::configGetString(communicator(), prefix, "RCISMousePickerTopic.Endpoints", tmp, ""))
@@ -236,8 +234,8 @@ int ::chocachoca::run(int argc, char* argv[])
 				cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy RCISMousePickerProxy";
 			}
 			Ice::ObjectAdapterPtr RCISMousePicker_adapter = communicator()->createObjectAdapterWithEndpoints("rcismousepicker", tmp);
-			RCISMousePickerPtr rcismousepickerI_ =  new RCISMousePickerI(worker);
-			Ice::ObjectPrx rcismousepicker = RCISMousePicker_adapter->addWithUUID(rcismousepickerI_)->ice_oneway();
+			RCISMousePickerPtr rcismousepickerI_ =  std::make_shared <RCISMousePickerI>(worker);
+			auto rcismousepicker = RCISMousePicker_adapter->addWithUUID(rcismousepickerI_)->ice_oneway();
 			if(!rcismousepicker_topic)
 			{
 				try {

@@ -9,8 +9,8 @@ Component chocachoca
 		requires Laser, DifferentialRobot;
 		subscribesTo RCISMousePicker;
 	};
-	language Cpp;
+	language Cpp11;
 	gui Qt(QWidget);
-	
+	statemachine "statemachine.smdsl";
 };
 

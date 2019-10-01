@@ -29,7 +29,7 @@ SpecificMonitor::SpecificMonitor(GenericWorker *_worker,Ice::CommunicatorPtr _co
 */
 SpecificMonitor::~SpecificMonitor()
 {
-
+	std::cout << "Destroying SpecificMonitor" << std::endl;
 }
 
 void SpecificMonitor::run()
@@ -61,7 +61,8 @@ void SpecificMonitor::initialize()
 		rError("Error reading config parameters. Exiting");
 		killYourSelf();
 	}
-	state = RoboCompCommonBehavior::Running;
+	state = RoboCompCommonBehavior::State::Running;
+	emit initializeWorker(period);
 }
 
 bool SpecificMonitor::sendParamsToWorker(RoboCompCommonBehavior::ParameterList params)
@@ -89,9 +90,29 @@ void SpecificMonitor::readConfig(RoboCompCommonBehavior::ParameterList &params )
 	aux.editable = true;
 	configGetString( "","InnerModelPath", aux.value,"nofile");
 	params["InnerModelPath"] = aux;
+
+	aux.editable = true;
+	configGetString( "","xmin", aux.value,"-2500");
+	params["xmin"] = aux;
+
+	aux.editable = true;
+	configGetString( "","xmax", aux.value, "2500");
+	params["xmax"] = aux;
+
+	aux.editable = true;
+	configGetString( "","ymin", aux.value,"-2500");
+	params["ymin"] = aux;
+
+	aux.editable = true;
+	configGetString( "","ymax", aux.value,"2500");
+	params["ymax"] = aux;
+
+	aux.editable = true;
+	configGetString( "","tilesize", aux.value,"70");
+	params["tilesize"] = aux;
 }
 
-//comprueba que los parametros sean correctos y los transforma a la estructura del worker
+//Check parameters and transform them to worker structure
 bool SpecificMonitor::checkParams(RoboCompCommonBehavior::ParameterList l)
 {
 	bool correct = true;
