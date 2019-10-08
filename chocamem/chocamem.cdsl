@@ -1,0 +1,16 @@
+import "Laser.idsl";
+import "DifferentialRobot.idsl";
+import "RCISMousePicker.idsl";
+
+Component ChocaMem
+{
+	Communications
+	{
+		requires Laser, DifferentialRobot;
+		subscribesTo RCISMousePicker;
+	};
+	language Cpp;
+	gui Qt(QWidget);
+	
+};
+

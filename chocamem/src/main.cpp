@@ -1,5 +1,5 @@
 /*
- *    Copyright (C) 2018 by YOUR NAME HERE
+ *    Copyright (C) 2019 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -18,11 +18,11 @@
  */
 
 
-/** \mainpage RoboComp::chocachoca
+/** \mainpage RoboComp::ChocaMem
  *
  * \section intro_sec Introduction
  *
- * The chocachoca component...
+ * The ChocaMem component...
  *
  * \section interface_sec Interface
  *
@@ -34,7 +34,7 @@
  * ...
  *
  * \subsection install2_ssec Compile and install
- * cd chocachoca
+ * cd ChocaMem
  * <br>
  * cmake . && make
  * <br>
@@ -52,7 +52,7 @@
  *
  * \subsection execution_ssec Execution
  *
- * Just: "${PATH_TO_BINARY}/chocachoca --Ice.Config=${PATH_TO_CONFIG_FILE}"
+ * Just: "${PATH_TO_BINARY}/ChocaMem --Ice.Config=${PATH_TO_CONFIG_FILE}"
  *
  * \subsection running_ssec Once running
  *
@@ -83,11 +83,7 @@
 
 #include <rcismousepickerI.h>
 
-#include <Laser.h>
 #include <GenericBase.h>
-#include <DifferentialRobot.h>
-#include <GenericBase.h>
-#include <RCISMousePicker.h>
 
 
 // User includes here
@@ -96,10 +92,10 @@
 using namespace std;
 using namespace RoboCompCommonBehavior;
 
-class chocachoca : public RoboComp::Application
+class ChocaMem : public RoboComp::Application
 {
 public:
-	chocachoca (QString prfx) { prefix = prfx.toStdString(); }
+	ChocaMem (QString prfx) { prefix = prfx.toStdString(); }
 private:
 	void initialize();
 	std::string prefix;
@@ -109,14 +105,14 @@ public:
 	virtual int run(int, char*[]);
 };
 
-void ::chocachoca::initialize()
+void ::ChocaMem::initialize()
 {
 	// Config file properties read example
 	// configGetString( PROPERTY_NAME_1, property1_holder, PROPERTY_1_DEFAULT_VALUE );
 	// configGetInt( PROPERTY_NAME_2, property1_holder, PROPERTY_2_DEFAULT_VALUE );
 }
 
-int ::chocachoca::run(int argc, char* argv[])
+int ::ChocaMem::run(int argc, char* argv[])
 {
 #ifdef USE_QTGUI
 	QApplication a(argc, argv);  // GUI application
@@ -347,7 +343,7 @@ int main(int argc, char* argv[])
 			printf("Configuration prefix: <%s>\n", prefix.toStdString().c_str());
 		}
 	}
-	::chocachoca app(prefix);
+	::ChocaMem app(prefix);
 
 	return app.main(argc, argv, configFile.c_str());
 }

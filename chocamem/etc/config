@@ -1,17 +1,19 @@
-CommonBehavior.Endpoints=tcp -p 11005
+CommonBehavior.Endpoints=tcp -p 10000
+
+
+# Endpoints for subscriptions
+RCISMousePickerTopic.Endpoints=tcp -p 15000
 
 
 # Proxies for required interfaces
-LaserProxy = laser:tcp -h localhost -p 10003
 DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
+LaserProxy = laser:tcp -h localhost -p 10003
 
-# Endpoints for subscriptions
-RCISMousePickerTopic.Endpoints=tcp -p 14000
-
-InnerModelPath=/home/robocomp/robocomp/files/innermodel/informatica-tercio.xml
 
 # This property is used by the clients to connect to IceStorm.
 TopicManager.Proxy=IceStorm/TopicManager:default -p 9999
+
+InnerModelPath = innermodel.xml
 
 Ice.Warn.Connections=0
 Ice.Trace.Network=0
