@@ -22,8 +22,6 @@
        @author authorname
 */
 
-
-
 #ifndef SPECIFICWORKER_H
 #define SPECIFICWORKER_H
 
@@ -35,16 +33,22 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QGraphicsEllipseItem>
+#include <stdlib.h>
+#include <random>
+const float threshold = 200; // millimeters
+const float rot = -0.75;
 
 class SpecificWorker : public GenericWorker
 {
 Q_OBJECT
 public:
+	enum class State {idle, walk, turn, findObj, spiral};
+	SpecificWorker::State actual_state;
 	SpecificWorker(MapPrx& mprx);
 	~SpecificWorker();
 	bool setParams(RoboCompCommonBehavior::ParameterList params);
+	void setState(SpecificWorker::State a_state);
 	void RCISMousePicker_setPick(const Pick &myPick);
-
 
 	/// Grid cell definition
 		struct TCell
@@ -79,7 +83,11 @@ private:
 	RoboCompLaser::TLaserData ldata;
 
 	void updateOccupiedCells(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata);
-	void readRobotState();
+	void readRobotState(RoboCompLaser::TLaserData ldata);
+	void idle();
+	void walk(RoboCompLaser::TLaserData ldata);
+	void turn(RoboCompLaser::TLaserData ldata);
+	void findObstacle(RoboCompLaser::TLaserData ldata);
 };
 
 #endif

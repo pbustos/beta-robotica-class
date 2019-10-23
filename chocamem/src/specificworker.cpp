@@ -22,7 +22,9 @@
 * \brief Default constructor
 */
 SpecificWorker::SpecificWorker(MapPrx& mprx) : GenericWorker(mprx)
-{}
+{
+	setState(State::idle);
+}
 
 /**
 * \brief Default destructor
@@ -77,21 +79,99 @@ void SpecificWorker::initialize(int period)
 
 }
 
+void SpecificWorker::setState(SpecificWorker::State a_state){
+    SpecificWorker::actual_state = a_state;
+} 
+
+void SpecificWorker::idle(){
+    setState(SpecificWorker::State::walk);
+}
+
+void SpecificWorker::walk(RoboCompLaser::TLaserData ldata)
+{
+    // ORDENA DE MENOR A MAYOR DISTANCIA A OBJETOS/PARED
+    std::sort( ldata.begin(), ldata.end(), [](RoboCompLaser::TData a, RoboCompLaser::TData b){ return     a.dist < b.dist; });
+    
+
+    if(ldata.front().dist < threshold)
+        setState(SpecificWorker::State::turn);
+    else
+        differentialrobot_proxy->setSpeedBase(500, 0);
+}
+
+void SpecificWorker::turn(RoboCompLaser::TLaserData ldata)
+{
+    static int giro = 0;
+    static bool turning = false;
+    // ORDENA DE MENOR A MAYOR DISTANCIA A OBJETOS/PARED
+    std::sort( ldata.begin(), ldata.end(), [](RoboCompLaser::TData a, RoboCompLaser::TData b){ return     a.dist < b.dist; });
+
+    // Preguntamos si hay que terminar de girar
+    if(ldata.front().dist > threshold)
+    {
+        setState(SpecificWorker::State::walk);
+        turning = false;
+    } else {
+        // Preguntar con qué dato giramos
+        if(turning == false){
+            turning = true;    
+            giro    = rand()%2;
+        } else{
+            if(giro == 0){
+                // Giro izquierda
+                differentialrobot_proxy->setSpeedBase(0, rot);
+            } else{
+                // Giro derecha
+                differentialrobot_proxy->setSpeedBase(0, abs(rot));
+            }
+            // Esto comprobar
+            if(abs(ldata.front().angle) > 1.50){
+                setState(SpecificWorker::State::findObj);
+            }
+        }
+    }        
+}
+
+void SpecificWorker::findObstacle(RoboCompLaser::TLaserData ldata)
+{
+}
+
+
 void SpecificWorker::compute()
 {
-	readRobotState();
+	// read laser data 
+	RoboCompLaser::TLaserData ldata = laser_proxy->getLaserData(); 
 
-	/// AQUI LA MAQUINA DE ESTADOS
+	readRobotState(ldata);
+    
+    switch(SpecificWorker::actual_state)
+    {
+        case State::idle:
+            cout << "Estado idle" << endl;
+            idle();
+        break;
+        case State::walk:
+            cout << "Estado andando" << endl;
+            walk(ldata);
+        break;
+        case State::turn:
+            cout << "Estado girar" << endl;
+            turn(ldata);
+        break;
+        case State::findObj:
+            findObstacle(ldata);
+        break;
+    }
 }
 	
 
-void SpecificWorker::readRobotState()
+void SpecificWorker::readRobotState(RoboCompLaser::TLaserData ldata)
 {
 	try
 	{
 		differentialrobot_proxy->getBaseState(bState);
 		innerModel->updateTransformValues("base", bState.x, 0, bState.z, 0, bState.alpha, 0);
-		RoboCompLaser::TLaserData ldata = laser_proxy->getLaserData();
+		//RoboCompLaser::TLaserData ldata = laser_proxy->getLaserData();
 		
 		//draw robot
 		robot->setPos(bState.x, bState.z);
