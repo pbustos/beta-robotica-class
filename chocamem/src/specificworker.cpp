@@ -141,27 +141,26 @@ void SpecificWorker::compute()
 {
 	// read laser data 
 	RoboCompLaser::TLaserData ldata = laser_proxy->getLaserData(); 
-
 	readRobotState(ldata);
     
-    switch(SpecificWorker::actual_state)
-    {
-        case State::idle:
-            cout << "Estado idle" << endl;
-            idle();
-        break;
-        case State::walk:
-            cout << "Estado andando" << endl;
-            walk(ldata);
-        break;
-        case State::turn:
-            cout << "Estado girar" << endl;
-            turn(ldata);
-        break;
-        case State::findObj:
-            findObstacle(ldata);
-        break;
-    }
+    // switch(SpecificWorker::actual_state)
+    // {
+    //     case State::idle:
+    //         cout << "Estado idle" << endl;
+    //         idle();
+    //     break;
+    //     case State::walk:
+    //         cout << "Estado andando" << endl;
+    //         walk(ldata);
+    //     break;
+    //     case State::turn:
+    //         cout << "Estado girar" << endl;
+    //         turn(ldata);
+    //     break;
+    //     case State::findObj:
+    //         findObstacle(ldata);
+    //     break;
+    // }
 }
 	
 
@@ -197,11 +196,25 @@ void SpecificWorker::updateOccupiedCells(const RoboCompGenericBase::TBaseState &
 	{
 		auto r = n->laserTo(QString("world"), l.dist, l.angle);	// r is in world reference system
 		// we set the cell corresponding to r as occupied 
+		QPointF P(bState.x, bState.z);
+		QPointF Q(r.x(), r.z());
 		auto [valid, cell] = grid.getCell(r.x(), r.z()); 
 		if(valid)
 		{
 			cell.free = false;
 			cell.rect->setBrush(Qt::darkRed);
+		}
+	
+		QLineF line(P,Q);
+		for(float landa = 0; landa <=1 ; landa += 0.1)
+		{
+			auto res = line.pointAt(landa);
+			auto [valid, cell] = grid.getCell(res.x(), res.y());
+			if(valid) 
+			{
+				cell.free = true;
+				cell.rect->setBrush(Qt::white);
+			}	
 		}
 	}
 }
