@@ -1,5 +1,5 @@
 /*
- *    Copyright (C)2017 by YOUR NAME HERE
+ *    Copyright (C)2019 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -20,38 +20,38 @@
 #define GENERICWORKER_H
 
 #include "config.h"
-#include <QtGui>
 #include <stdint.h>
 #include <qlog/qlog.h>
 
+#if Qt5_FOUND
+	#include <QtWidgets>
+#else
+	#include <QtGui>
+#endif
 #include <ui_mainUI.h>
-
 #include <CommonBehavior.h>
 
-#include <JointMotor.h>
-#include <DifferentialRobot.h>
 #include <GenericBase.h>
+#include <DifferentialRobot.h>
+#include <JointMotor.h>
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
 
-typedef map <string,::IceProxy::Ice::Object*> MapPrx;
-
 using namespace std;
-
 using namespace RoboCompGenericBase;
 using namespace RoboCompDifferentialRobot;
 using namespace RoboCompJointMotor;
 
-
+typedef map <string,::IceProxy::Ice::Object*> MapPrx;
 
 
 class GenericWorker :
 #ifdef USE_QTGUI
-public QWidget, public Ui_guiDlg
+	public QWidget, public Ui_guiDlg
 #else
-public QObject
-#endif
+	public QObject
+ #endif
 {
 Q_OBJECT
 public:
@@ -64,11 +64,12 @@ public:
 	QMutex *mutex;
 
 
-	JointMotorPrx jointmotor_proxy;
 	DifferentialRobotPrx differentialrobot_proxy;
+	JointMotorPrx jointmotor_proxy;
 
 
 protected:
+
 	QTimer timer;
 	int Period;
 
@@ -77,6 +78,8 @@ private:
 
 public slots:
 	virtual void compute() = 0;
+    virtual void initialize(int period) = 0;
+	
 signals:
 	void kill();
 };

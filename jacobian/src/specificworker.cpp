@@ -36,7 +36,7 @@ SpecificWorker::~SpecificWorker()
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
 
-	innerModel = InnerModelMgr(std::make_shared<InnerModel>("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml"));
+	innerModel = std::make_shared<InnerModel>("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml");
 
 	goHome();
 	sleep(1);
@@ -58,8 +58,15 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	connect(pushButton_home, SIGNAL(pressed()), this, SLOT(goHome()));
 	connect(horizontalSlider_speed, SIGNAL(valueChanged(int)), this, SLOT(changeSpeed(int))); 
 	
-	timer.start(100);
 	return true;
+}
+
+void SpecificWorker::initialize(int period)
+{
+	std::cout << "Initialize worker" << std::endl;
+	this->Period = period;
+	timer.start(Period);
+
 }
 
 void SpecificWorker::compute()

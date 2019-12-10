@@ -29,7 +29,6 @@
 
 #include <genericworker.h>
 #include <innermodel/innermodel.h>
-#include <innermodel/innermodelmgr.h>
 
 #define INCREMENT 10
 
@@ -52,9 +51,10 @@ public slots:
 	void backSlot();
 	void goHome();
 	void changeSpeed(int);
+	void initialize(int period);
 	
 private:
-	InnerModelMgr innerModel;
+	std::shared_ptr<InnerModel> innerModel;
 	RoboCompJointMotor::MotorParamsList mList;
 	QStringList joints;
 	QVec motores;
