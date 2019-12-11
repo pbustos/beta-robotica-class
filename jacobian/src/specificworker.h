@@ -49,6 +49,8 @@ public slots:
 	void downSlot();
 	void frontSlot();
 	void backSlot();
+	void rotLeftSlot();
+	void rotRightSlot();
 	void goHome();
 	void changeSpeed(int);
 	void initialize(int period);

@@ -42,8 +42,9 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	sleep(1);
 	
 	try 
-	{ mList = jointmotor_proxy->getAllMotorParams();}
-	catch(const Ice::Exception &e){ std::cout << e << std::endl;}
+	{ mList = jointmotor_proxy->getAllMotorParams(); }
+	catch(const Ice::Exception &e)
+	{ std::cout << e << std::endl;}
 	
 	joints << "shoulder_right_1"<<"shoulder_right_2"<<"shoulder_right_3"<<"elbow_right" << "wrist_right_1" << "wrist_right_2";
 	// Check that these names are in mList
@@ -56,7 +57,9 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	connect(pushButton_front, SIGNAL(pressed()), this, SLOT(frontSlot()));
 	connect(pushButton_back, SIGNAL(pressed()), this, SLOT(backSlot()));
 	connect(pushButton_home, SIGNAL(pressed()), this, SLOT(goHome()));
-	connect(horizontalSlider_speed, SIGNAL(valueChanged(int)), this, SLOT(changeSpeed(int))); 
+	connect(pushButton_rot_left, SIGNAL(pressed()), this, SLOT(rotLeftSlot()));
+	connect(pushButton_rot_right, SIGNAL(pressed()), this, SLOT(rotRightSlot()));
+	connect(doubleSpinBox, SIGNAL(valueChanged(int)), this, SLOT(changeSpeed(int))); 
 	
 	return true;
 }
@@ -76,11 +79,8 @@ void SpecificWorker::compute()
 	{
 		jointmotor_proxy->getAllMotorState(mMap);
 		for(auto m: mMap)
-		{
-			innerModel->updateJointValue(QString::fromStdString(m.first),m.second.pos);
-			//std::cout << m.first << "		" << m.second.pos << std::endl;
-		}
-		std::cout << "--------------------------" << std::endl;
+			innerModel->updateJointValue(QString::fromStdString(m.first),m.second.pos);			
+		//std::cout << "--------------------------" << std::endl;
 	}
 	catch(const Ice::Exception &e)
 	{	std::cout << e.what() << std::endl;}
@@ -182,6 +182,16 @@ void SpecificWorker::upSlot()
 void SpecificWorker::downSlot()
 {
 	error = QVec::vec6(0,0,-INCREMENT,0,0,0);
+}
+
+void SpecificWorker::rotRightSlot()
+{
+	error = QVec::vec6(0,0,0,0,0,-0.1);
+}
+
+void SpecificWorker::rotLeftSlot()
+{
+	error = QVec::vec6(0,0,0,0,0,0.1);
 }
 
 void SpecificWorker::changeSpeed(int s)
