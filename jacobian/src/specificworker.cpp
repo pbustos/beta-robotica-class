@@ -74,6 +74,15 @@ void SpecificWorker::initialize(int period)
 
 void SpecificWorker::compute()
 {
+	readArmState();
+	if( isPushed() )
+		moveArm(error.x(), error.y(), error.z());
+	else //Stop the arm
+		stopArm();
+} 	
+	
+void SpecificWorker::readArmState()
+{
 	RoboCompJointMotor::MotorStateMap mMap;
  	try
 	{
@@ -84,36 +93,51 @@ void SpecificWorker::compute()
 	}
 	catch(const Ice::Exception &e)
 	{	std::cout << e.what() << std::endl;}
+}
 	
-	//Compute Jacobian for the chain of joints and using as tip "cameraHand" 
- 	QMat jacobian = innerModel->jacobian(joints, motores, "cameraHand");
+void SpecificWorker::moveArm( float dx, float dy, float dz)
+{
+	if(dx < -INCREMENT) dx = -INCREMENT;
+	if(dx > +INCREMENT) dx = -INCREMENT;
+	if(dy < -INCREMENT) dy = -INCREMENT;
+	if(dy > +INCREMENT) dy = -INCREMENT;
+	if(dz < -INCREMENT) dz = -INCREMENT;
+	if(dz > +INCREMENT) dz = -INCREMENT;
 	
+	QMat jacobian = innerModel->jacobian(joints, motores, "cameraHand");
 	RoboCompJointMotor::MotorGoalVelocityList vl;
-	if( isPushed() )
+	QVec error = QVec::vec6(dx, dy, dz, 0.f, 0.f, 0.f);
+	try
 	{
-		try
-		{
-			QVec incs = jacobian.invert() * error;	
-			int i=0;
-			for(auto m: joints)
-			{
-				//RoboCompJointMotor::MotorGoalPosition mg = {mMap.find(m.toStdString())->second.pos + incs[i], 1.0, m.toStdString()};
-				RoboCompJointMotor::MotorGoalVelocity vg{FACTOR*incs[i], 1.0, m.toStdString()};
-				//ml.push_back(mg);
-				vl.push_back(vg);
-				i++;
-			}
-		}	
-		catch(const QString &e)
-		{ qDebug() << e << "Error inverting matrix";}
-	}
-	else //Stop the arm
-	{
+		QVec incs = jacobian.invert() * error;	
+		int i=0;
 		for(auto m: joints)
 		{
-			RoboCompJointMotor::MotorGoalVelocity vg{0.0, 1.0, m.toStdString()};
+			//RoboCompJointMotor::MotorGoalPosition mg = {mMap.find(m.toStdString())->second.pos + incs[i], 1.0, m.toStdString()};
+			RoboCompJointMotor::MotorGoalVelocity vg{FACTOR*incs[i], 1.0, m.toStdString()};
 			vl.push_back(vg);
+			i++;
 		}
+	}	
+	catch(const QString &e)
+	{ qDebug() << e << "Error inverting matrix";}
+
+	//Do the thing
+	try
+	{ 
+		jointmotor_proxy->setSyncVelocity(vl);
+	}
+	catch(const Ice::Exception &e)
+	{	std::cout << e.what() << std::endl;}
+}
+
+void SpecificWorker::stopArm()
+{
+	RoboCompJointMotor::MotorGoalVelocityList vl;
+	for(auto m: joints)
+	{
+		RoboCompJointMotor::MotorGoalVelocity vg{0.0, 1.0, m.toStdString()};
+		vl.push_back(vg);
 	}
 	//Do the thing
 	try
@@ -122,9 +146,10 @@ void SpecificWorker::compute()
 	}
 	catch(const Ice::Exception &e)
 	{	std::cout << e.what() << std::endl;}
-} 	
-	
-	
+}
+
+///////////////////////////////////////7
+
 void SpecificWorker::goHome()
 {
 	RoboCompJointMotor::MotorStateMap mMap;

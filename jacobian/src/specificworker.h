@@ -65,6 +65,9 @@ private:
 	int FACTOR = 1;
 	
 	bool isPushed();
+	void moveArm( float dx=0.f, float dy=0.f, float dz=0.f);
+	void stopArm();
+	void readArmState();
 };
 
 #endif
