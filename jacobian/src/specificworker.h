@@ -29,7 +29,6 @@
 
 #include <genericworker.h>
 #include <innermodel/innermodel.h>
-#include <innermodel/innermodelmgr.h>
 
 #define INCREMENT 10
 
@@ -50,11 +49,14 @@ public slots:
 	void downSlot();
 	void frontSlot();
 	void backSlot();
+	void rotLeftSlot();
+	void rotRightSlot();
 	void goHome();
 	void changeSpeed(int);
+	void initialize(int period);
 	
 private:
-	InnerModelMgr innerModel;
+	std::shared_ptr<InnerModel> innerModel;
 	RoboCompJointMotor::MotorParamsList mList;
 	QStringList joints;
 	QVec motores;
@@ -63,6 +65,9 @@ private:
 	int FACTOR = 1;
 	
 	bool isPushed();
+	void moveArm( float dx=0.f, float dy=0.f, float dz=0.f);
+	void stopArm();
+	void readArmState();
 };
 
 #endif

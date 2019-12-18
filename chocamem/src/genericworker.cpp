@@ -30,7 +30,7 @@ QObject()
 {
 
 	differentialrobot_proxy = (*(DifferentialRobotPrx*)mprx["DifferentialRobotProxy"]);
-	jointmotor_proxy = (*(JointMotorPrx*)mprx["JointMotorProxy"]);
+	laser_proxy = (*(LaserPrx*)mprx["LaserProxy"]);
 
 	mutex = new QMutex(QMutex::Recursive);
 

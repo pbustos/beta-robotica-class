@@ -36,14 +36,15 @@ SpecificWorker::~SpecificWorker()
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
 
-	innerModel = InnerModelMgr(std::make_shared<InnerModel>("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml"));
+	innerModel = std::make_shared<InnerModel>("/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml");
 
 	goHome();
 	sleep(1);
 	
 	try 
-	{ mList = jointmotor_proxy->getAllMotorParams();}
-	catch(const Ice::Exception &e){ std::cout << e << std::endl;}
+	{ mList = jointmotor_proxy->getAllMotorParams(); }
+	catch(const Ice::Exception &e)
+	{ std::cout << e << std::endl;}
 	
 	joints << "shoulder_right_1"<<"shoulder_right_2"<<"shoulder_right_3"<<"elbow_right" << "wrist_right_1" << "wrist_right_2";
 	// Check that these names are in mList
@@ -56,57 +57,87 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 	connect(pushButton_front, SIGNAL(pressed()), this, SLOT(frontSlot()));
 	connect(pushButton_back, SIGNAL(pressed()), this, SLOT(backSlot()));
 	connect(pushButton_home, SIGNAL(pressed()), this, SLOT(goHome()));
-	connect(horizontalSlider_speed, SIGNAL(valueChanged(int)), this, SLOT(changeSpeed(int))); 
+	connect(pushButton_rot_left, SIGNAL(pressed()), this, SLOT(rotLeftSlot()));
+	connect(pushButton_rot_right, SIGNAL(pressed()), this, SLOT(rotRightSlot()));
+	connect(doubleSpinBox, SIGNAL(valueChanged(int)), this, SLOT(changeSpeed(int))); 
 	
-	timer.start(100);
 	return true;
 }
 
+void SpecificWorker::initialize(int period)
+{
+	std::cout << "Initialize worker" << std::endl;
+	this->Period = period;
+	timer.start(Period);
+
+}
+
 void SpecificWorker::compute()
+{
+	readArmState();
+	if( isPushed() )
+		moveArm(error.x(), error.y(), error.z());
+	else //Stop the arm
+		stopArm();
+} 	
+	
+void SpecificWorker::readArmState()
 {
 	RoboCompJointMotor::MotorStateMap mMap;
  	try
 	{
 		jointmotor_proxy->getAllMotorState(mMap);
 		for(auto m: mMap)
-		{
-			innerModel->updateJointValue(QString::fromStdString(m.first),m.second.pos);
-			//std::cout << m.first << "		" << m.second.pos << std::endl;
-		}
-		std::cout << "--------------------------" << std::endl;
+			innerModel->updateJointValue(QString::fromStdString(m.first),m.second.pos);			
+		//std::cout << "--------------------------" << std::endl;
 	}
 	catch(const Ice::Exception &e)
 	{	std::cout << e.what() << std::endl;}
+}
 	
-	//Compute Jacobian for the chain of joints and using as tip "cameraHand" 
- 	QMat jacobian = innerModel->jacobian(joints, motores, "cameraHand");
+void SpecificWorker::moveArm( float dx, float dy, float dz)
+{
+	if(dx < -INCREMENT) dx = -INCREMENT;
+	if(dx > +INCREMENT) dx = -INCREMENT;
+	if(dy < -INCREMENT) dy = -INCREMENT;
+	if(dy > +INCREMENT) dy = -INCREMENT;
+	if(dz < -INCREMENT) dz = -INCREMENT;
+	if(dz > +INCREMENT) dz = -INCREMENT;
 	
+	QMat jacobian = innerModel->jacobian(joints, motores, "cameraHand");
 	RoboCompJointMotor::MotorGoalVelocityList vl;
-	if( isPushed() )
+	QVec error = QVec::vec6(dx, dy, dz, 0.f, 0.f, 0.f);
+	try
 	{
-		try
-		{
-			QVec incs = jacobian.invert() * error;	
-			int i=0;
-			for(auto m: joints)
-			{
-				//RoboCompJointMotor::MotorGoalPosition mg = {mMap.find(m.toStdString())->second.pos + incs[i], 1.0, m.toStdString()};
-				RoboCompJointMotor::MotorGoalVelocity vg{FACTOR*incs[i], 1.0, m.toStdString()};
-				//ml.push_back(mg);
-				vl.push_back(vg);
-				i++;
-			}
-		}	
-		catch(const QString &e)
-		{ qDebug() << e << "Error inverting matrix";}
-	}
-	else //Stop the arm
-	{
+		QVec incs = jacobian.invert() * error;	
+		int i=0;
 		for(auto m: joints)
 		{
-			RoboCompJointMotor::MotorGoalVelocity vg{0.0, 1.0, m.toStdString()};
+			//RoboCompJointMotor::MotorGoalPosition mg = {mMap.find(m.toStdString())->second.pos + incs[i], 1.0, m.toStdString()};
+			RoboCompJointMotor::MotorGoalVelocity vg{FACTOR*incs[i], 1.0, m.toStdString()};
 			vl.push_back(vg);
+			i++;
 		}
+	}	
+	catch(const QString &e)
+	{ qDebug() << e << "Error inverting matrix";}
+
+	//Do the thing
+	try
+	{ 
+		jointmotor_proxy->setSyncVelocity(vl);
+	}
+	catch(const Ice::Exception &e)
+	{	std::cout << e.what() << std::endl;}
+}
+
+void SpecificWorker::stopArm()
+{
+	RoboCompJointMotor::MotorGoalVelocityList vl;
+	for(auto m: joints)
+	{
+		RoboCompJointMotor::MotorGoalVelocity vg{0.0, 1.0, m.toStdString()};
+		vl.push_back(vg);
 	}
 	//Do the thing
 	try
@@ -115,9 +146,10 @@ void SpecificWorker::compute()
 	}
 	catch(const Ice::Exception &e)
 	{	std::cout << e.what() << std::endl;}
-} 	
-	
-	
+}
+
+///////////////////////////////////////7
+
 void SpecificWorker::goHome()
 {
 	RoboCompJointMotor::MotorStateMap mMap;
@@ -175,6 +207,16 @@ void SpecificWorker::upSlot()
 void SpecificWorker::downSlot()
 {
 	error = QVec::vec6(0,0,-INCREMENT,0,0,0);
+}
+
+void SpecificWorker::rotRightSlot()
+{
+	error = QVec::vec6(0,0,0,0,0,-0.1);
+}
+
+void SpecificWorker::rotLeftSlot()
+{
+	error = QVec::vec6(0,0,0,0,0,0.1);
 }
 
 void SpecificWorker::changeSpeed(int s)

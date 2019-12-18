@@ -18,11 +18,11 @@
  */
 
 
-/** \mainpage RoboComp::jacobian
+/** \mainpage RoboComp::ChocaMem
  *
  * \section intro_sec Introduction
  *
- * The jacobian component...
+ * The ChocaMem component...
  *
  * \section interface_sec Interface
  *
@@ -34,7 +34,7 @@
  * ...
  *
  * \subsection install2_ssec Compile and install
- * cd jacobian
+ * cd ChocaMem
  * <br>
  * cmake . && make
  * <br>
@@ -52,7 +52,7 @@
  *
  * \subsection execution_ssec Execution
  *
- * Just: "${PATH_TO_BINARY}/jacobian --Ice.Config=${PATH_TO_CONFIG_FILE}"
+ * Just: "${PATH_TO_BINARY}/ChocaMem --Ice.Config=${PATH_TO_CONFIG_FILE}"
  *
  * \subsection running_ssec Once running
  *
@@ -81,6 +81,7 @@
 #include "specificmonitor.h"
 #include "commonbehaviorI.h"
 
+#include <rcismousepickerI.h>
 
 #include <GenericBase.h>
 
@@ -91,10 +92,10 @@
 using namespace std;
 using namespace RoboCompCommonBehavior;
 
-class jacobian : public RoboComp::Application
+class ChocaMem : public RoboComp::Application
 {
 public:
-	jacobian (QString prfx) { prefix = prfx.toStdString(); }
+	ChocaMem (QString prfx) { prefix = prfx.toStdString(); }
 private:
 	void initialize();
 	std::string prefix;
@@ -104,14 +105,14 @@ public:
 	virtual int run(int, char*[]);
 };
 
-void ::jacobian::initialize()
+void ::ChocaMem::initialize()
 {
 	// Config file properties read example
 	// configGetString( PROPERTY_NAME_1, property1_holder, PROPERTY_1_DEFAULT_VALUE );
 	// configGetInt( PROPERTY_NAME_2, property1_holder, PROPERTY_2_DEFAULT_VALUE );
 }
 
-int ::jacobian::run(int argc, char* argv[])
+int ::ChocaMem::run(int argc, char* argv[])
 {
 #ifdef USE_QTGUI
 	QApplication a(argc, argv);  // GUI application
@@ -135,7 +136,7 @@ int ::jacobian::run(int argc, char* argv[])
 	int status=EXIT_SUCCESS;
 
 	DifferentialRobotPrx differentialrobot_proxy;
-	JointMotorPrx jointmotor_proxy;
+	LaserPrx laser_proxy;
 
 	string proxy, tmp;
 	initialize();
@@ -160,20 +161,30 @@ int ::jacobian::run(int argc, char* argv[])
 
 	try
 	{
-		if (not GenericMonitor::configGetString(communicator(), prefix, "JointMotorProxy", proxy, ""))
+		if (not GenericMonitor::configGetString(communicator(), prefix, "LaserProxy", proxy, ""))
 		{
-			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy JointMotorProxy\n";
+			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy LaserProxy\n";
 		}
-		jointmotor_proxy = JointMotorPrx::uncheckedCast( communicator()->stringToProxy( proxy ) );
+		laser_proxy = LaserPrx::uncheckedCast( communicator()->stringToProxy( proxy ) );
 	}
 	catch(const Ice::Exception& ex)
 	{
-		cout << "[" << PROGRAM_NAME << "]: Exception creating proxy JointMotor: " << ex;
+		cout << "[" << PROGRAM_NAME << "]: Exception creating proxy Laser: " << ex;
 		return EXIT_FAILURE;
 	}
-	rInfo("JointMotorProxy initialized Ok!");
+	rInfo("LaserProxy initialized Ok!");
 
-	mprx["JointMotorProxy"] = (::IceProxy::Ice::Object*)(&jointmotor_proxy);//Remote server proxy creation example
+	mprx["LaserProxy"] = (::IceProxy::Ice::Object*)(&laser_proxy);//Remote server proxy creation example
+	IceStorm::TopicManagerPrx topicManager;
+	try
+	{
+		topicManager = IceStorm::TopicManagerPrx::checkedCast(communicator()->propertyToProxy("TopicManager.Proxy"));
+	}
+	catch (const Ice::Exception &ex)
+	{
+		cout << "[" << PROGRAM_NAME << "]: Exception: STORM not running: " << ex << endl;
+		return EXIT_FAILURE;
+	}
 
 	SpecificWorker *worker = new SpecificWorker(mprx);
 	//Monitor thread
@@ -215,6 +226,46 @@ int ::jacobian::run(int argc, char* argv[])
 
 
 		// Server adapter creation and publication
+		IceStorm::TopicPrx rcismousepicker_topic;
+		Ice::ObjectPrx rcismousepicker;
+		try
+		{
+			if (not GenericMonitor::configGetString(communicator(), prefix, "RCISMousePickerTopic.Endpoints", tmp, ""))
+			{
+				cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy RCISMousePickerProxy";
+			}
+			Ice::ObjectAdapterPtr RCISMousePicker_adapter = communicator()->createObjectAdapterWithEndpoints("rcismousepicker", tmp);
+			RCISMousePickerPtr rcismousepickerI_ =  new RCISMousePickerI(worker);
+			Ice::ObjectPrx rcismousepicker = RCISMousePicker_adapter->addWithUUID(rcismousepickerI_)->ice_oneway();
+			if(!rcismousepicker_topic)
+			{
+				try {
+					rcismousepicker_topic = topicManager->create("RCISMousePicker");
+				}
+				catch (const IceStorm::TopicExists&) {
+					//Another client created the topic
+					try{
+						cout << "[" << PROGRAM_NAME << "]: Probably other client already opened the topic. Trying to connect.\n";
+						rcismousepicker_topic = topicManager->retrieve("RCISMousePicker");
+					}
+					catch(const IceStorm::NoSuchTopic&)
+					{
+						cout << "[" << PROGRAM_NAME << "]: Topic doesn't exists and couldn't be created.\n";
+						//Error. Topic does not exist
+					}
+				}
+				IceStorm::QoS qos;
+				rcismousepicker_topic->subscribeAndGetPublisher(qos, rcismousepicker);
+			}
+			RCISMousePicker_adapter->activate();
+		}
+		catch(const IceStorm::NoSuchTopic&)
+		{
+			cout << "[" << PROGRAM_NAME << "]: Error creating RCISMousePicker topic.\n";
+			//Error. Topic does not exist
+		}
+
+		// Server adapter creation and publication
 		cout << SERVER_FULL_NAME " started" << endl;
 
 		// User defined QtGui elements ( main window, dialogs, etc )
@@ -226,6 +277,15 @@ int ::jacobian::run(int argc, char* argv[])
 		// Run QT Application Event Loop
 		a.exec();
 
+		try
+		{
+			std::cout << "Unsubscribing topic: rcismousepicker " <<std::endl;
+			rcismousepicker_topic->unsubscribe( rcismousepicker );
+		}
+		catch(const Ice::Exception& ex)
+		{
+			std::cout << "ERROR Unsubscribing topic: rcismousepicker " <<std::endl;
+		}
 
 		status = EXIT_SUCCESS;
 	}
@@ -283,7 +343,7 @@ int main(int argc, char* argv[])
 			printf("Configuration prefix: <%s>\n", prefix.toStdString().c_str());
 		}
 	}
-	::jacobian app(prefix);
+	::ChocaMem app(prefix);
 
 	return app.main(argc, argv, configFile.c_str());
 }
