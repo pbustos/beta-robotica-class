@@ -81,8 +81,8 @@
 #include "specificmonitor.h"
 #include "commonbehaviorI.h"
 
+#include <simplearmI.h>
 
-#include <GenericBase.h>
 
 
 // User includes here
@@ -134,29 +134,11 @@ int ::jacobian::run(int argc, char* argv[])
 
 	int status=EXIT_SUCCESS;
 
-	DifferentialRobotPrx differentialrobot_proxy;
 	JointMotorPrx jointmotor_proxy;
 
 	string proxy, tmp;
 	initialize();
 
-
-	try
-	{
-		if (not GenericMonitor::configGetString(communicator(), prefix, "DifferentialRobotProxy", proxy, ""))
-		{
-			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy DifferentialRobotProxy\n";
-		}
-		differentialrobot_proxy = DifferentialRobotPrx::uncheckedCast( communicator()->stringToProxy( proxy ) );
-	}
-	catch(const Ice::Exception& ex)
-	{
-		cout << "[" << PROGRAM_NAME << "]: Exception creating proxy DifferentialRobot: " << ex;
-		return EXIT_FAILURE;
-	}
-	rInfo("DifferentialRobotProxy initialized Ok!");
-
-	mprx["DifferentialRobotProxy"] = (::IceProxy::Ice::Object*)(&differentialrobot_proxy);//Remote server proxy creation example
 
 	try
 	{
@@ -211,6 +193,24 @@ int ::jacobian::run(int argc, char* argv[])
 
 		}
 
+
+
+		try
+		{
+			// Server adapter creation and publication
+			if (not GenericMonitor::configGetString(communicator(), prefix, "SimpleArm.Endpoints", tmp, ""))
+			{
+				cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy SimpleArm";
+			}
+			Ice::ObjectAdapterPtr adapterSimpleArm = communicator()->createObjectAdapterWithEndpoints("SimpleArm", tmp);
+			SimpleArmI *simplearm = new SimpleArmI(worker);
+			adapterSimpleArm->add(simplearm, Ice::stringToIdentity("simplearm"));
+			adapterSimpleArm->activate();
+			cout << "[" << PROGRAM_NAME << "]: SimpleArm adapter created in port " << tmp << endl;
+			}
+			catch (const IceStorm::TopicExists&){
+				cout << "[" << PROGRAM_NAME << "]: ERROR creating or activating adapter for SimpleArm\n";
+			}
 
 
 

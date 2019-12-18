@@ -34,10 +34,10 @@ public:
 SimpleArmI(GenericWorker *_worker);
 	~SimpleArmI();
 
-	void openFingers(const float  d, const Ice::Current&);
-	void moveTo(Pose6D pose, const Ice::Current&);
-	void stop(const Ice::Current&);
 	void closeFingers(const float  d, const Ice::Current&);
+	void moveTo(Pose6D pose, const Ice::Current&);
+	void openFingers(const float  d, const Ice::Current&);
+	void stop(const Ice::Current&);
 
 private:
 

@@ -1,11 +1,12 @@
 import "JointMotor.idsl";
-import "DifferentialRobot.idsl";
+import "SimpleArm.idsl";
 
 Component jacobian
 {
 	Communications
 	{
-		requires JointMotor, DifferentialRobot;
+		requires JointMotor;
+		implements SimpleArm;
 	};
 	language Cpp;
 	gui Qt(QWidget);

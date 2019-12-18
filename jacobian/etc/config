@@ -1,9 +1,15 @@
 CommonBehavior.Endpoints=tcp -p 15000
 
+# Endpoints for implemented interfaces
+SimpleArm.Endpoints=tcp -p 19000
 
 # Proxies for required interfaces
 JointMotorProxy = jointmotor:tcp -h localhost -p 20000
 DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
+
+
+InnerModelPath=/home/robocomp/robocomp/files/innermodel/betaWorldArm.xml
+
 
 Ice.Warn.Connections=0
 Ice.Trace.Network=0

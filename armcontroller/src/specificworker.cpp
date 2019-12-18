@@ -1,4 +1,4 @@
-/*
+ /*
  *    Copyright (C)2019 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
@@ -37,28 +37,34 @@ SpecificWorker::~SpecificWorker()
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
-//       THE FOLLOWING IS JUST AN EXAMPLE
+//  THE FOLLOWING IS JUST AN EXAMPLE
 //	To use innerModelPath parameter you should uncomment specificmonitor.cpp readConfig method content
-//	try
-//	{
-//		RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
-//		std::string innermodel_path = par.value;
-//		innerModel = new InnerModel(innermodel_path);
-//	}
-//	catch(const std::exception &e) { qFatal("Error reading config params"); }
-
-
+	try
+	{
+		RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
+		std::string innermodel_path = par.value;
+		innerModel = std::make_shared<InnerModel>(innermodel_path);
+	}
+	catch(const std::exception &e) { qFatal("Error reading config params"); }
 
 	defaultMachine.start();
 	
-
-
 	return true;
 }
 
 void SpecificWorker::initialize(int period)
 {
 	std::cout << "Initialize worker" << std::endl;
+
+	try 
+	{ mList = jointmotor_proxy->getAllMotorParams(); }
+	catch(const Ice::Exception &e)
+	{ std::cout << e << std::endl;	}
+
+	joints << "shoulder_right_1"<<"shoulder_right_2"<<"shoulder_right_3"<<"elbow_right" << "wrist_right_1" << "wrist_right_2";
+	// Check that these names are in mList
+	motores = QVec::zeros(joints.size());
+
 	this->Period = period;
 	timer.start(Period);
 	emit this->t_initialize_to_compute();
@@ -67,20 +73,15 @@ void SpecificWorker::initialize(int period)
 
 void SpecificWorker::compute()
 {
-//computeCODE
-//QMutexLocker locker(mutex);
-//	try
-//	{
-//		camera_proxy->getYImage(0,img, cState, bState);
-//		memcpy(image_gray.data, &img[0], m_width*m_height*sizeof(uchar));
-//		searchTags(image_gray);
-//	}
-//	catch(const Ice::Exception &e)
-//	{
-//		std::cout << "Error reading from Camera" << e << std::endl;
-//	}
+	try
+	{
+		readArmState();
+	}
+	catch(const Ice::Exception &e)
+	{
+		std::cout << "Error reading from Arm" << e << std::endl;
+	}
 }
-
 
 void SpecificWorker::sm_compute()
 {
@@ -98,8 +99,22 @@ void SpecificWorker::sm_finalize()
 	std::cout<<"Entered final state finalize"<<std::endl;
 }
 
+//////////////////////////////////////////////////////////////////////77
 
-
+void SpecificWorker::readArmState()
+{
+	RoboCompJointMotor::MotorStateMap mMap;
+ 	try
+	{
+		jointmotor_proxy->getAllMotorState(mMap);
+		for(auto m: mMap)
+			innerModel->updateJointValue(QString::fromStdString(m.first),m.second.pos);			
+		//std::cout << "--------------------------" << std::endl;
+	}
+	catch(const Ice::Exception &e)
+	{	std::cout << e.what() << std::endl;}
+}
+////////////////////////////////////////////////////////////////////////
 
 
 void SpecificWorker::SimpleArm_openFingers(float d)

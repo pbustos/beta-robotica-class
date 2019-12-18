@@ -39,7 +39,11 @@ public:
 	SpecificWorker(MapPrx& mprx);
 	~SpecificWorker();
 	bool setParams(RoboCompCommonBehavior::ParameterList params);
-
+	
+	void SimpleArm_closeFingers(const float d);
+	void SimpleArm_moveTo(const Pose6D &pose);
+	void SimpleArm_openFingers(const float d);
+	void SimpleArm_stop();
 
 public slots:
 	void compute();

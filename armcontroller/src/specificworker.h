@@ -54,6 +54,13 @@ public slots:
 //--------------------
 private:
 	std::shared_ptr<InnerModel> innerModel;
+	RoboCompJointMotor::MotorParamsList mList;
+	QStringList joints;
+	QVec motores;
+	QVec error;
+
+	void readArmState();
+
 
 };
 

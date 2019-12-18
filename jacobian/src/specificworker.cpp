@@ -223,3 +223,33 @@ void SpecificWorker::changeSpeed(int s)
 {
 	FACTOR = s;
 }
+
+
+////////////////////////////////////////////////////////////////////////
+
+
+void SpecificWorker::SimpleArm_openFingers(float d)
+{
+//implementCODE
+
+}
+
+void SpecificWorker::SimpleArm_moveTo(const Pose6D &pose) 
+{
+//implementCODE
+
+}
+
+void SpecificWorker::SimpleArm_stop()
+{
+//implementCODE
+
+}
+
+void SpecificWorker::SimpleArm_closeFingers(float d)
+{
+//implementCODE
+
+}
+
+

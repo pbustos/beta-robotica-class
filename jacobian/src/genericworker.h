@@ -31,16 +31,14 @@
 #include <ui_mainUI.h>
 #include <CommonBehavior.h>
 
-#include <GenericBase.h>
-#include <DifferentialRobot.h>
+#include <SimpleArm.h>
 #include <JointMotor.h>
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
 
 using namespace std;
-using namespace RoboCompGenericBase;
-using namespace RoboCompDifferentialRobot;
+using namespace RoboCompSimpleArm;
 using namespace RoboCompJointMotor;
 
 typedef map <string,::IceProxy::Ice::Object*> MapPrx;
@@ -64,9 +62,12 @@ public:
 	QMutex *mutex;
 
 
-	DifferentialRobotPrx differentialrobot_proxy;
 	JointMotorPrx jointmotor_proxy;
 
+	virtual void SimpleArm_closeFingers(const float d) = 0;
+	virtual void SimpleArm_moveTo(const Pose6D &pose) = 0;
+	virtual void SimpleArm_openFingers(const float d) = 0;
+	virtual void SimpleArm_stop() = 0;
 
 protected:
 

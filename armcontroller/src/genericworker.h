@@ -56,18 +56,18 @@ public:
 
 	JointMotorPrxPtr jointmotor_proxy;
 
-	virtual void SimpleArm_openFingers(float d) = 0;
-	virtual void SimpleArm_moveTo(Pose6D pose) = 0;
-	virtual void SimpleArm_stop() = 0;
 	virtual void SimpleArm_closeFingers(float d) = 0;
+	virtual void SimpleArm_moveTo(Pose6D pose) = 0;
+	virtual void SimpleArm_openFingers(float d) = 0;
+	virtual void SimpleArm_stop() = 0;
 
 protected:
 //State Machine
 	QStateMachine defaultMachine;
 
-	QState *computeState = new QState();
-	QState *initializeState = new QState();
-	QFinalState *finalizeState = new QFinalState();
+	QState *computeState;
+	QState *initializeState;
+	QFinalState *finalizeState;
 
 //-------------------------
 

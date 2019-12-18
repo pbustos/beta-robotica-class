@@ -28,9 +28,9 @@ SimpleArmI::~SimpleArmI()
 {
 }
 
-void SimpleArmI::openFingers(const float  d, const Ice::Current&)
+void SimpleArmI::closeFingers(const float  d, const Ice::Current&)
 {
-	worker->SimpleArm_openFingers(d);
+	worker->SimpleArm_closeFingers(d);
 }
 
 void SimpleArmI::moveTo(Pose6D pose, const Ice::Current&)
@@ -38,13 +38,13 @@ void SimpleArmI::moveTo(Pose6D pose, const Ice::Current&)
 	worker->SimpleArm_moveTo(pose);
 }
 
+void SimpleArmI::openFingers(const float  d, const Ice::Current&)
+{
+	worker->SimpleArm_openFingers(d);
+}
+
 void SimpleArmI::stop(const Ice::Current&)
 {
 	worker->SimpleArm_stop();
-}
-
-void SimpleArmI::closeFingers(const float  d, const Ice::Current&)
-{
-	worker->SimpleArm_closeFingers(d);
 }
 
