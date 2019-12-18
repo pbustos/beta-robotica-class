@@ -86,7 +86,7 @@ void SpecificWorker::readArmState()
 	RoboCompJointMotor::MotorStateMap mMap;
  	try
 	{
-		jointmotor_proxy->getAllMotorState(mMap);
+		//jointmotor_proxy->getAllMotorState(mMap);
 		for(auto m: mMap)
 			innerModel->updateJointValue(QString::fromStdString(m.first),m.second.pos);			
 		//std::cout << "--------------------------" << std::endl;
@@ -228,22 +228,27 @@ void SpecificWorker::changeSpeed(int s)
 ////////////////////////////////////////////////////////////////////////
 
 
-void SpecificWorker::SimpleArm_openFingers(float d)
-{
-//implementCODE
-
-}
-
 void SpecificWorker::SimpleArm_moveTo(const Pose6D &pose) 
 {
-//implementCODE
-
+	float INC_X, INC_Y, INC_Z;
+	if(pose.x > 0) INC_X = INCREMENT;
+	if(pose.x < 0) INC_X = -INCREMENT;
+	if(pose.y > 0) INC_Y = INCREMENT;
+	if(pose.y < 0) INC_Y = -INCREMENT;
+	if(pose.z > 0) INC_Z = INCREMENT;
+	if(pose.z < 0) INC_Z = -INCREMENT;
+	
+	error = QVec::vec6(INC_X,INC_Y,INC_Z,0,0,0);	
 }
 
 void SpecificWorker::SimpleArm_stop()
 {
-//implementCODE
+	stopArm();
+}
 
+void SpecificWorker::SimpleArm_openFingers(float d)
+{
+	
 }
 
 void SpecificWorker::SimpleArm_closeFingers(float d)
