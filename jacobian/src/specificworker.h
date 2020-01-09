@@ -30,7 +30,7 @@
 #include <genericworker.h>
 #include <innermodel/innermodel.h>
 
-#define INCREMENT 10
+#define INCREMENT 1
 
 class SpecificWorker : public GenericWorker
 {

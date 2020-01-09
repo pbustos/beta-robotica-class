@@ -52,10 +52,10 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 
 	connect(pushButton_left, SIGNAL(pressed()), this, SLOT(leftSlot()));
 	connect(pushButton_right, SIGNAL(pressed()), this, SLOT(rightSlot()));
-	connect(pushButton_up, SIGNAL(pressed()), this, SLOT(upSlot()));
-	connect(pushButton_down, SIGNAL(pressed()), this, SLOT(downSlot()));
-	connect(pushButton_front, SIGNAL(pressed()), this, SLOT(frontSlot()));
-	connect(pushButton_back, SIGNAL(pressed()), this, SLOT(backSlot()));
+	connect(pushButton_up, SIGNAL(pressed()), this, SLOT(frontSlot()));
+	connect(pushButton_down, SIGNAL(pressed()), this, SLOT(backSlot()));
+	connect(pushButton_front, SIGNAL(pressed()), this, SLOT(upSlot()));
+	connect(pushButton_back, SIGNAL(pressed()), this, SLOT(downSlot()));
 	connect(pushButton_home, SIGNAL(pressed()), this, SLOT(goHome()));
 	connect(pushButton_rot_left, SIGNAL(pressed()), this, SLOT(rotLeftSlot()));
 	connect(pushButton_rot_right, SIGNAL(pressed()), this, SLOT(rotRightSlot()));
@@ -97,16 +97,10 @@ void SpecificWorker::readArmState()
 	
 void SpecificWorker::moveArm( float dx, float dy, float dz)
 {
-	if(dx < -INCREMENT) dx = -INCREMENT;
-	if(dx > +INCREMENT) dx = -INCREMENT;
-	if(dy < -INCREMENT) dy = -INCREMENT;
-	if(dy > +INCREMENT) dy = -INCREMENT;
-	if(dz < -INCREMENT) dz = -INCREMENT;
-	if(dz > +INCREMENT) dz = -INCREMENT;
 	
 	QMat jacobian = innerModel->jacobian(joints, motores, "cameraHand");
 	RoboCompJointMotor::MotorGoalVelocityList vl;
-	QVec error = QVec::vec6(dx, dy, dz, 0.f, 0.f, 0.f);
+	QVec error = QVec::vec6(dx, 10*dy, dz, 0.f, 0.f, 0.f);
 	try
 	{
 		QVec incs = jacobian.invert() * error;	
@@ -230,7 +224,8 @@ void SpecificWorker::changeSpeed(int s)
 
 void SpecificWorker::SimpleArm_moveTo(const Pose6D &pose) 
 {
-	float INC_X, INC_Y, INC_Z;
+	qDebug() << "moveTo";
+	float INC_X=0.f, INC_Y=0.f, INC_Z=0.f;
 	if(pose.x > 0) INC_X = INCREMENT;
 	if(pose.x < 0) INC_X = -INCREMENT;
 	if(pose.y > 0) INC_Y = INCREMENT;
@@ -238,7 +233,7 @@ void SpecificWorker::SimpleArm_moveTo(const Pose6D &pose)
 	if(pose.z > 0) INC_Z = INCREMENT;
 	if(pose.z < 0) INC_Z = -INCREMENT;
 	
-	error = QVec::vec6(INC_X,INC_Y,INC_Z,0,0,0);	
+	moveArm(INC_X,INC_Y,INC_Z);
 }
 
 void SpecificWorker::SimpleArm_stop()
