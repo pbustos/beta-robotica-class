@@ -35,18 +35,14 @@ class SpecificWorker : public GenericWorker
 {
 Q_OBJECT
 public:
-	SpecificWorker(TuplePrx tprx);
+    SpecificWorker(TuplePrx tprx, bool startup_check);
 	~SpecificWorker();
 	bool setParams(RoboCompCommonBehavior::ParameterList params);
-
 
 public slots:
 	void compute();
 	void initialize(int period);
 //Specification slot methods State Machine
-	void sm_compute();
-	void sm_initialize();
-	void sm_finalize();
 
 //--------------------
 private:

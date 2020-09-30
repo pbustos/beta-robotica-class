@@ -21,7 +21,7 @@
 /**
 * \brief Default constructor
 */
-SpecificWorker::SpecificWorker(TuplePrx tprx) : GenericWorker(tprx)
+SpecificWorker::SpecificWorker(TuplePrx tprx, bool startup_check) : GenericWorker(tprx)
 {
 
 }
@@ -32,7 +32,6 @@ SpecificWorker::SpecificWorker(TuplePrx tprx) : GenericWorker(tprx)
 SpecificWorker::~SpecificWorker()
 {
 	std::cout << "Destroying SpecificWorker" << std::endl;
-	emit computetofinalize();
 }
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
@@ -47,11 +46,6 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
     catch(const std::exception &e) { qFatal("Error reading config params"); }
 
 
-
-	defaultMachine.start();
-	
-
-
 	return true;
 }
 
@@ -61,7 +55,6 @@ void SpecificWorker::initialize(int period)
 	std::cout << "Initialize worker" << std::endl;
 	this->Period = period;
 	timer.start(Period);
-	emit this->initializetocompute();
 
 }
 
@@ -77,32 +70,12 @@ void SpecificWorker::compute()
         differentialrobot_proxy->getBaseState(bState);
         auto current = fm.addStep(bState.x, bState.z, bState.alpha);
         lcdNumber->display(current);
-    	// read laser data 
-        // RoboCompLaser::TLaserData ldata = laser_proxy->getLaserData(); 
-		//sort laser data from small to large distances using a lambda function.
-		//         std::sort( ldata.begin(), ldata.end(), [](RoboCompLaser::TData a, RoboCompLaser::TData b){ return     a.dist < b.dist; });  
-		//         
+
     }
     catch(const Ice::Exception &ex)
     {
 	std::cout << ex << std::endl;
     }
-}
-
-void SpecificWorker::sm_compute()
-{
-	std::cout<<"Entered state compute"<<std::endl;
-	compute();
-}
-
-void SpecificWorker::sm_initialize()
-{
-	std::cout<<"Entered initial state initialize"<<std::endl;
-}
-
-void SpecificWorker::sm_finalize()
-{
-	std::cout<<"Entered final state finalize"<<std::endl;
 }
 
 

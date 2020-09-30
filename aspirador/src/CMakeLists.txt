@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 2.8.11)
-PROJECT( aspirador )
 
 
 IF ( "$ENV{ROBOCOMP}" STREQUAL "")
@@ -28,13 +27,15 @@ SET ( SOURCES
 )
 
 
+
 ADD_DEFINITIONS ("-DICE_CPP11_MAPPING")
 FIND_PACKAGE( Ice REQUIRED COMPONENTS Ice++11 IceStorm++11)
 
 
 #ROBOCOMP
 ROBOCOMP_INITIALIZE( $ENV{ROBOCOMP}/ )
-ROBOCOMP_WRAP_ICE( CommonBehavior GenericBase DifferentialRobot Laser)
+ROBOCOMP_IDSL_TO_ICE( CommonBehavior DifferentialRobot GenericBase Laser)
+ROBOCOMP_ICE_TO_SRC( CommonBehavior DifferentialRobot GenericBase Laser)
 SET (EXECUTABLE_OUTPUT_PATH ${RC_COMPONENT_DEVEL_PATH}/bin)
 
 QT_WRAP_UI( UI_HEADERS mainUI.ui )

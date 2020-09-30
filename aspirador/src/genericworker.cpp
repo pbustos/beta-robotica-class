@@ -1,5 +1,5 @@
 /*
- *    Copyright (C)2019 by YOUR NAME HERE
+ *    Copyright (C) 2020 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -20,36 +20,14 @@
 /**
 * \brief Default constructor
 */
-GenericWorker::GenericWorker(TuplePrx tprx) :
-#ifdef USE_QTGUI
-Ui_guiDlg()
-#else
-QObject()
-#endif
-
+GenericWorker::GenericWorker(TuplePrx tprx) : Ui_guiDlg()
 {
 
-//Initialization State machine
-	initializeState->addTransition(this, SIGNAL(initializetocompute()), computeState);
-	computeState->addTransition(this, SIGNAL(computetocompute()), computeState);
-	computeState->addTransition(this, SIGNAL(computetofinalize()), finalizeState);
-
-	defaultMachine.addState(computeState);
-	defaultMachine.addState(initializeState);
-	defaultMachine.addState(finalizeState);
-
-	defaultMachine.setInitialState(initializeState);
-
-	QObject::connect(computeState, SIGNAL(entered()), this, SLOT(sm_compute()));
-	QObject::connect(initializeState, SIGNAL(entered()), this, SLOT(sm_initialize()));
-	QObject::connect(finalizeState, SIGNAL(entered()), this, SLOT(sm_finalize()));
-	QObject::connect(&timer, SIGNAL(timeout()), this, SIGNAL(computetocompute()));
-
-//------------------
 	differentialrobot_proxy = std::get<0>(tprx);
 	laser_proxy = std::get<1>(tprx);
 
 	mutex = new QMutex(QMutex::Recursive);
+
 
 	#ifdef USE_QTGUI
 		setupUi(this);
@@ -82,4 +60,3 @@ void GenericWorker::setPeriod(int p)
 	Period = p;
 	timer.start(Period);
 }
-

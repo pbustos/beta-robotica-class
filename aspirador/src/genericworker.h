@@ -1,5 +1,5 @@
 /*
- *    Copyright (C)2019 by YOUR NAME HERE
+ *    Copyright (C) 2020 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -29,31 +29,21 @@
 	#include <QtGui>
 #endif
 #include <ui_mainUI.h>
-#include <QStateMachine>
-#include <QState>
 #include <CommonBehavior.h>
 
-#include <GenericBase.h>
 #include <DifferentialRobot.h>
+#include <GenericBase.h>
 #include <Laser.h>
+
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
 
-using namespace std;
-using namespace RoboCompGenericBase;
-using namespace RoboCompDifferentialRobot;
-using namespace RoboCompLaser;
 
 using TuplePrx = std::tuple<RoboCompDifferentialRobot::DifferentialRobotPrxPtr,RoboCompLaser::LaserPrxPtr>;
 
 
-class GenericWorker :
-#ifdef USE_QTGUI
-	public QWidget, public Ui_guiDlg
-#else
-	public QObject
- #endif
+class GenericWorker : public QWidget, public Ui_guiDlg
 {
 Q_OBJECT
 public:
@@ -66,19 +56,11 @@ public:
 	QMutex *mutex;
 
 
-	DifferentialRobotPrxPtr differentialrobot_proxy;
-	LaserPrxPtr laser_proxy;
+	RoboCompDifferentialRobot::DifferentialRobotPrxPtr differentialrobot_proxy;
+	RoboCompLaser::LaserPrxPtr laser_proxy;
 
 
 protected:
-//State Machine
-	QStateMachine defaultMachine;
-
-	QState *computeState = new QState();
-	QState *initializeState = new QState();
-	QFinalState *finalizeState = new QFinalState();
-
-//-------------------------
 
 	QTimer timer;
 	int Period;
@@ -87,23 +69,11 @@ private:
 
 
 public slots:
-//Slots funtion State Machine
-	virtual void sm_compute() = 0;
-	virtual void sm_initialize() = 0;
-	virtual void sm_finalize() = 0;
-
-//-------------------------
 	virtual void compute() = 0;
-    virtual void initialize(int period) = 0;
+	virtual void initialize(int period) = 0;
 	
 signals:
 	void kill();
-//Signals for State Machine
-	void initializetocompute();
-	void computetocompute();
-	void computetofinalize();
-
-//-------------------------
 };
 
 #endif
