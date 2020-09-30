@@ -36,15 +36,6 @@ SpecificWorker::~SpecificWorker()
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
-        
-    try
-    {
-	//RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
-	//innermodel_path = par.value;
-	//innermodel = new InnerModel(innermodel_path);
-    }
-    catch(const std::exception &e) { qFatal("Error reading config params"); }
-
 
 	return true;
 }
@@ -53,6 +44,9 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 void SpecificWorker::initialize(int period)
 {
 	std::cout << "Initialize worker" << std::endl;
+	connect(pushButton, &QPushButton::clicked, this, &SpecificWorker::reset_time );
+
+	time.start();
 	this->Period = period;
 	timer.start(Period);
 
@@ -60,25 +54,26 @@ void SpecificWorker::initialize(int period)
 
 void SpecificWorker::compute()
 {
-    //const float threshold = 200; // millimeters
-    //float rot = 0.6;  // rads per second
-
     RoboCompGenericBase::TBaseState bState;
-    
     try
     {
         differentialrobot_proxy->getBaseState(bState);
         auto current = fm.addStep(bState.x, bState.z, bState.alpha);
-        lcdNumber->display(current);
+        lcdNumber_percent->display(current);
+        lcdNumber_time->display(60 - time.elapsed()/1000);
 
     }
     catch(const Ice::Exception &ex)
     {
-	std::cout << ex << std::endl;
+	    std::cout << ex << std::endl;
     }
 }
 
+void SpecificWorker::reset_time()
+{
+    time.restart();
 
+}
 
 
 

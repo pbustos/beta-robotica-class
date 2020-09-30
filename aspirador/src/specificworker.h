@@ -42,12 +42,13 @@ public:
 public slots:
 	void compute();
 	void initialize(int period);
-//Specification slot methods State Machine
+	void reset_time();
 
-//--------------------
+	//--------------------
 private:
 	std::shared_ptr<InnerModel> innerModel;
 	FloorMeter fm;
+	QTime time;
 };
 
 #endif
