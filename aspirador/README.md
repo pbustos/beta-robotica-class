@@ -3,7 +3,7 @@
 #
 ``` aspirador
 ```
-Intro to component here
+Componente que mide el porcentaje de barrido del robot sobre el mundo según avanza el tiempo.
 
 
 ## Configuration parameters
