@@ -37,6 +37,7 @@ SpecificWorker::~SpecificWorker()
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
 
+    COUNT_DOWN = stoi(params["max_time"].value);
 	return true;
 }
 
@@ -60,7 +61,7 @@ void SpecificWorker::compute()
         differentialrobot_proxy->getBaseState(bState);
         auto current = fm.addStep(bState.x, bState.z, bState.alpha);
         lcdNumber_percent->display(current);
-        lcdNumber_time->display(60 - time.elapsed()/1000);
+        lcdNumber_time->display(COUNT_DOWN - time.elapsed()/1000);
 
     }
     catch(const Ice::Exception &ex)

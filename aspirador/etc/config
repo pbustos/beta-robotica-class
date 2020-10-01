@@ -5,7 +5,7 @@ CommonBehavior.Endpoints=tcp -p 11000
 LaserProxy = laser:tcp -h localhost -p 10003
 DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
 
-
+max_time=120
 
 Ice.Warn.Connections=0
 Ice.Trace.Network=0

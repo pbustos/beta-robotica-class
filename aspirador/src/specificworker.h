@@ -49,6 +49,7 @@ private:
 	std::shared_ptr<InnerModel> innerModel;
 	FloorMeter fm;
 	QTime time;
+	int COUNT_DOWN=180; //secs
 };
 
 #endif
