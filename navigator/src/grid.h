@@ -69,10 +69,10 @@ public:
     void set_Value(int x, int z, bool v)
     {
        // this->array[x][z] = v;
-       auto [i, j] = transformar(x,z);
-       array[i][j].occupied = v;
-       if(v)
-            array[i][j].paint_cell->setColor(QColor());
+       //auto [i, j] = transformar(x,z);
+       //array[i][j].occupied = v;
+       //if(v)
+       //     array[i][j].paint_cell->setColor(QColor());
 
     }
     /**
@@ -81,19 +81,11 @@ public:
      * @param z
      * @return
      */
-    bool get_value(int x, int z){
-        //return  this->array[x][z];
-    }
-/**
- * mostramos por pantalla los valores del array
- */
-    void print()
+    bool get_value(int x, int z)
     {
-        for (int i = 0; i < this->tam; i++) {
-            for (int j = 0; j < this->tam; j++) {
-                std::cout << this->array[i][j].occupied + " ";
-            }
-        }
+        //auto [i, j] = transformar(x,z);
+        //return  this->array[x][z];
+        return true;
     }
 
 };
