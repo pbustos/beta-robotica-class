@@ -98,7 +98,8 @@ void SpecificWorker::initialize(int period)
     graphicsView->fitInView(scene.sceneRect(), Qt::KeepAspectRatio);
 
     // grid
-    //grid.create_graphic_items(scene);
+    grid.create_graphic_items(scene);
+    fill_grid_with_obstacles();
     // recorrer las cajas y poner a ocupado todos las celdas que caigan
     // recorrer las pared y poner las celdas a rojo
 
@@ -139,6 +140,30 @@ void SpecificWorker::compute()
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+void SpecificWorker::fill_grid_with_obstacles()
+{
+
+    for(int i=1; i<10; i++)
+    {
+        auto caja = "caja" + QString::number(i);
+        auto node = innerModel->getNode(caja);
+        auto mesh = innerModel->getNode("cajaMesh" + QString::number(i));
+        if(node and mesh)
+        {
+            auto pose = innerModel->transform("world", caja);
+            auto plane = dynamic_cast<InnerModelPlane*>(mesh);
+            std::cout << __FUNCTION__ << " " << pose.x() << " " << pose.z() << " " << plane->depth << " " << plane->width << std::endl;
+            int x = pose.x();
+            int z = pose.z();
+            int width = plane->depth;
+            int height = plane->width;
+            for(int k = x - width/2; k<= x + width/2; k++)
+                for(int l = z - height/2; l<= z + height/2; l++)
+                    grid.set_occupied(k,l);
+        }
+    }
+}
+
 
 void SpecificWorker::dynamicWindowApproach(RoboCompGenericBase::TBaseState bState, RoboCompLaser::TLaserData &ldata) {
     //coordenadas del target del mundo real al mundo del  robot
@@ -150,7 +175,7 @@ void SpecificWorker::dynamicWindowApproach(RoboCompGenericBase::TBaseState bStat
     {
         differentialrobot_proxy->setSpeedBase(0, 0);
         target_buffer.set_task_finished();
-        std::cout << __FUNCTION__ << " At target" << std::endl;
+        //std::cout << __FUNCTION__ << " At target" << std::endl;
         return;
     }
     else

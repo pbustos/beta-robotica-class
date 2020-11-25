@@ -7,12 +7,15 @@
 
 #include <QGraphicsItem>
 
-template<typename HMIN, HMIN hmin, typename WIDTH, WIDTH width, typename TILE, TILE tile>
+
+template<typename HMIN, HMIN hmin_, typename WIDTH, WIDTH width_, typename TILE, TILE tile_>
 class Grid
 {
+    int hmin, width, tile;
     public:
         Grid()
         {
+            hmin = hmin_; width = width_; tile = tile_;
             array.resize((int)(width/tile));
             for (auto &row : array)
                 row.resize((int)(width/tile));
@@ -30,7 +33,7 @@ class Grid
         struct Value
         {
             bool occupied = false;
-            QGraphicsItem * paint_cell = nullptr;
+            QGraphicsRectItem * paint_cell = nullptr;
             int cx, cy;
             int dist = 0; //dist vecinos
         };
@@ -42,52 +45,40 @@ class Grid
             for (auto &row : array)
                 for (auto &elem : row)
                 {
-                    elem.paint_cell = scene.addRect(-tile / 2, -tile / 2, tile, tile, QPen(QColor("Green")),
-                                                    QBrush(QColor("Green")));
+                    elem.paint_cell = scene.addRect(-tile / 2, -tile / 2, tile, tile, QPen(QColor("DarkGreen")), QBrush(QColor("LightGreen")));
                     elem.paint_cell->setPos(elem.cx, elem.cy);
                 }
         }
-    /*
- * Inicializamos el array a false, osea, no ocupades.
- */
-    void inicializate()
-    {
-        for (int i = 0; i < this->tam; ++i) {
-            for (int j = 0; j < this->tam; ++j) {
-                this->array[i][j] = false;
-            }
+
+        /**
+         * modificamos en funcion de v la coordenada x,z
+         * @param x
+         * @param z
+         * @param v
+         */
+        void set_occupied(int x, int z)
+        {
+            auto [i, j] = transform(x,z);
+            array[i][j].paint_cell->setBrush(QColor("Red"));
         }
-    }
+        /**
+         * devolvemos el valor de la coordenada x,z
+         * @param x
+         * @param z
+         * @return
+         */
+        bool get_value(int x, int z)
+        {
+            auto [i, j] = transform(x,z);
+            return  this->array[i][j];
+        }
 
-public:
-    /**
-     * modificamos en funcion de v la coordenada x,z
-     * @param x
-     * @param z
-     * @param v
-     */
-    void set_Value(int x, int z, bool v)
-    {
-       // this->array[x][z] = v;
-       //auto [i, j] = transformar(x,z);
-       //array[i][j].occupied = v;
-       //if(v)
-       //     array[i][j].paint_cell->setColor(QColor());
-
-    }
-    /**
-     * devolvemos el valor de la coordenada x,z
-     * @param x
-     * @param z
-     * @return
-     */
-    bool get_value(int x, int z)
-    {
-        //auto [i, j] = transformar(x,z);
-        //return  this->array[x][z];
-        return true;
-    }
-
+        std::tuple<int, int> transform(int x, int y)
+        {
+            int k = (1.f/tile)*x + (width/tile)/2;
+            int l = (1.f/tile)*y + (width/tile)/2;
+            return std::make_tuple(k,l);
+        }
 };
 
 

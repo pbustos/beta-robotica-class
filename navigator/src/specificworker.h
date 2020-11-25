@@ -100,6 +100,8 @@ private:
     std::vector<tupla> ordenar(std::vector<tupla> vector, float x, float z);
     std::vector<tupla> obstaculos(std::vector<tupla> vector, float aph,const RoboCompLaser::TLaserData &ldata);
     void dynamicWindowApproach(RoboCompGenericBase::TBaseState bState, RoboCompLaser::TLaserData &ldata);
+    void fill_grid_with_obstacles();
+
 
     //draw
     QGraphicsScene scene;

@@ -12,7 +12,7 @@ LaserProxy = laser:tcp -h localhost -p 10003
 # This property is used by the clients to connect to IceStorm.
 TopicManager.Proxy=IceStorm/TopicManager:default -p 9999
 
-InnerModelPath=/home/robocomp/robocomp/files/innermodel/simpleworld.xml
+InnerModelPath=/home/robocomp/robocomp/files/innermodel/simpleworld_puerta.xml
 
 Ice.Warn.Connections=0
 Ice.Trace.Network=0
