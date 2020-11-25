@@ -1,0 +1,16 @@
+
+import "DifferentialRobot.idsl";
+import "IDSLs/Laser.idsl";
+import "RCISMousePicker.idsl";
+Component gotoxy
+{
+    Communications
+    {
+        requires DifferentialRobot, Laser;
+        subscribesTo RCISMousePicker;
+    };
+    language Cpp11;
+    gui Qt(QWidget);
+
+};
+

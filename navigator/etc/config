@@ -1,0 +1,19 @@
+CommonBehavior.Endpoints=tcp -p 10000
+
+# Endpoints for subscriptions interfaces
+RCISMousePickerTopic.Endpoints=tcp -p 0
+
+
+# Proxies for required interfaces
+DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
+LaserProxy = laser:tcp -h localhost -p 10003
+
+
+# This property is used by the clients to connect to IceStorm.
+TopicManager.Proxy=IceStorm/TopicManager:default -p 9999
+
+InnerModelPath=/home/robocomp/robocomp/files/innermodel/simpleworld.xml
+
+Ice.Warn.Connections=0
+Ice.Trace.Network=0
+Ice.Trace.Protocol=0
