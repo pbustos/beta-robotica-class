@@ -42,10 +42,11 @@ class Grid
 
         void create_graphic_items(QGraphicsScene &scene)
         {
+            auto fondo = QColor("LightGreen"); fondo.setAlpha(40);
             for (auto &row : array)
                 for (auto &elem : row)
                 {
-                    elem.paint_cell = scene.addRect(-tile / 2, -tile / 2, tile, tile, QPen(QColor("DarkGreen")), QBrush(QColor("LightGreen")));
+                    elem.paint_cell = scene.addRect(-tile / 2, -tile / 2, tile, tile, QPen(QColor("DarkGreen")), QBrush(fondo));
                     elem.paint_cell->setPos(elem.cx, elem.cy);
                 }
         }

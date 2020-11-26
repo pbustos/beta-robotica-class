@@ -5,7 +5,7 @@
 #define USE_QTGUI
 
 
-#define PROGRAM_NAME    "gotoxy"
-#define SERVER_FULL_NAME   "RoboComp gotoxy:: gotoxy"
+#define PROGRAM_NAME    "navigator"
+#define SERVER_FULL_NAME   "RoboComp navigator:: navigator"
 
 #endif

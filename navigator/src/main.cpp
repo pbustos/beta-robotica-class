@@ -18,11 +18,11 @@
  */
 
 
-/** \mainpage RoboComp::gotoxy
+/** \mainpage RoboComp::navigator
  *
  * \section intro_sec Introduction
  *
- * The gotoxy component...
+ * The navigator component...
  *
  * \section interface_sec Interface
  *
@@ -34,7 +34,7 @@
  * ...
  *
  * \subsection install2_ssec Compile and install
- * cd gotoxy
+ * cd navigator
  * <br>
  * cmake . && make
  * <br>
@@ -52,7 +52,7 @@
  *
  * \subsection execution_ssec Execution
  *
- * Just: "${PATH_TO_BINARY}/gotoxy --Ice.Config=${PATH_TO_CONFIG_FILE}"
+ * Just: "${PATH_TO_BINARY}/navigator --Ice.Config=${PATH_TO_CONFIG_FILE}"
  *
  * \subsection running_ssec Once running
  *
@@ -87,10 +87,10 @@
 
 
 
-class gotoxy : public RoboComp::Application
+class navigator : public RoboComp::Application
 {
 public:
-	gotoxy (QString prfx, bool startup_check) { prefix = prfx.toStdString(); this->startup_check_flag=startup_check; }
+	navigator (QString prfx, bool startup_check) { prefix = prfx.toStdString(); this->startup_check_flag=startup_check; }
 private:
 	void initialize();
 	std::string prefix;
@@ -101,14 +101,14 @@ public:
 	virtual int run(int, char*[]);
 };
 
-void ::gotoxy::initialize()
+void ::navigator::initialize()
 {
 	// Config file properties read example
 	// configGetString( PROPERTY_NAME_1, property1_holder, PROPERTY_1_DEFAULT_VALUE );
 	// configGetInt( PROPERTY_NAME_2, property1_holder, PROPERTY_2_DEFAULT_VALUE );
 }
 
-int ::gotoxy::run(int argc, char* argv[])
+int ::navigator::run(int argc, char* argv[])
 {
 #ifdef USE_QTGUI
 	QApplication a(argc, argv);  // GUI application
@@ -362,7 +362,7 @@ int main(int argc, char* argv[])
 		}
 
 	}
-	::gotoxy app(prefix, startup_check_flag);
+	::navigator app(prefix, startup_check_flag);
 
 	return app.main(argc, argv, configFile.toLocal8Bit().data());
 }
