@@ -79,7 +79,7 @@ void SpecificWorker::initialize(int period)
     QBrush brush;
     brush.setColor(QColor("DarkGreen"));
     brush.setStyle(Qt::SolidPattern);
-    robot_polygon_draw = (QGraphicsItem *) scene.addPolygon(poly2, QPen(QColor("DarkGreen")), brush);
+    robot_polygon_draw = scene.addPolygon(poly2, QPen(QColor("DarkGreen")), brush);
     robot_polygon_draw->setZValue(5);
     auto front = scene.addEllipse(0,0,50,50, QPen(QColor("White")), QBrush(QColor("White")));
     front->setParentItem(robot_polygon_draw);
@@ -192,7 +192,7 @@ void SpecificWorker::dynamicWindowApproach(RoboCompGenericBase::TBaseState bStat
         if (vectorOrdenado.size() > 0)
         {
             auto[x, y, v, w, alpha] = vectorOrdenado.front();
-            std::cout << __FUNCTION__ << " " << x << " " << y << " " << v << " " << w << " " << alpha << std::endl;
+            //std::cout << __FUNCTION__ << " " << x << " " << y << " " << v << " " << w << " " << alpha << std::endl;
             // remove this
             if (w > M_PI) w = M_PI;
             if (w < -M_PI) w = -M_PI;
@@ -249,10 +249,17 @@ void
         if (laser_polygon_draw != nullptr)
             scene.removeItem(laser_polygon_draw);
         QPolygonF poly;
+        float size = ROBOT_LENGTH / 1.4;
+
         for (auto &l : ldata)
             poly << robot_polygon_draw->mapToScene(QPointF(l.dist * sin(l.angle), l.dist * cos(l.angle)));
-        QColor color("LightGreen");
-        color.setAlpha(40);
+        poly += robot_polygon_draw->mapToScene(QPointF(-size,size));
+        poly += robot_polygon_draw->mapToScene(QPointF(-size,-size));
+        poly += robot_polygon_draw->mapToScene(QPointF(size,-size));
+        poly += robot_polygon_draw->mapToScene(QPointF(size,size));
+
+        QColor color("LightPink");
+        color.setAlpha(60);
         laser_polygon_draw = scene.addPolygon(poly, QPen(color), QBrush(color));
         laser_polygon_draw->setZValue(13);
 
@@ -280,30 +287,42 @@ void
     std::vector <SpecificWorker::tupla> SpecificWorker::calcularPuntos(float current_adv, float current_rot)
     {
         std::vector <tupla> vectorT;
+        list_arcs.clear();
+        const float semiwidth = 50;
         //Calculamos las posiciones futuras del robot y se insertan en un vector.
-        for (float dt = 0.3; dt < 1; dt += 0.1)
+        //for (float dt = 0.3; dt < 1; dt += 0.1)
+        float dt = 1;
         { //velocidad robot
             for (float v = 0; v <= 1000; v += 100) //advance
             {
                 for (float w = -3; w <= 3; w += 0.1) //rotacion
                 {
+                    std::vector<tupla> list_points;
                     float new_adv = current_adv + v;
                     float new_rot = current_rot + w;
                     if (fabs(w) > 0.01)
                     {
                         // Nuevo punto posible
-                        float r = new_adv / new_rot; //distancia desde el centro del robot al target
+                        float r = new_adv / new_rot; // radio de giro ubicado en el eje x del robot
                         float x = r - r * cos(new_rot * dt); //coordenada futura X
                         float y = r * sin(new_rot * dt); //coordenada futura Z
                         float alp = new_rot * dt; //angulo nuevo del robot
-                        vectorT.emplace_back(std::make_tuple(x, y, new_adv, new_rot, alp)); //lo añadimos al vector de tuplas
-                        //  std::cout << __FUNCTION__ << " " << x << " " << y << " " << r << " " << vNuevo << " " << wNuevo << " " << std::endl;
+                        vectorT.emplace_back(std::make_tuple(x, y, new_adv, new_rot, alp));  //lo añadimos al vector de tuplas
+                        float arc_length = new_rot * dt * r;
+                        for (float t = semiwidth; t < arc_length; t += semiwidth)
+                            list_points.emplace_back(std::make_tuple(r - r * cos(t / r), r * sin(t / r), new_adv, new_rot, t / r));
                     }
                     else // para evitar la división por cero en el cálculo de r
+                    {
                         vectorT.emplace_back(std::make_tuple(0, v * dt, new_adv, new_rot, new_rot * dt));
+                        for(float t = semiwidth; t < v*dt; t+=semiwidth)
+                            list_points.emplace_back(std::make_tuple(t, 0.f, new_adv, new_rot, new_rot*dt));
+                    }
+                    list_arcs.push_back(list_points);
                 }
             }
         }
+
         return vectorT;
     }
 
@@ -321,33 +340,65 @@ void
     {
         QPolygonF polygonF_Laser;
         const float semiancho = 210; // el semiancho del robot
-        std::vector <tupla> vectorOBs;
+        std::vector<tupla> vectorOBs;
 
-        //poligono creado con los puntos del laser
+        // poligono creado con los puntos del laser
         for (auto &l: ldata)
             polygonF_Laser << QPointF(l.dist * sin(l.angle), l.dist * cos(l.angle));
+        // extend laser to include the robot's body
+        float size = ROBOT_LENGTH / 1.4;
+        polygonF_Laser << QPointF(-size,size) << QPointF(-size,-size) << QPointF(size,-size) << QPointF(size,size);
+
 
         //poligono del robot con los puntos futuros con sus esquinas
-        for (auto &[x, y, a, g, ang]:vector)
-        {
-            
-            // GENERAR UN CUADRADO CON EL CENTRO EN X, Y Y ORIENTACION ANG.
-            QPolygonF  temp_robot;
-            temp_robot << QPointF(x - semiancho, y + semiancho) << QPointF(x + semiancho, y + semiancho) << QPointF(x + semiancho, y - semiancho) << QPointF(x - semiancho, y - semiancho);
-            temp_robot = QTransform().rotate(aph).map(temp_robot);
+//        for (auto &[x, y, a, g, ang]:vector)
+//        {
+            // we need here the center and radius and span angle of each point x,y
+            // so we can sample the corresponding arc and provide test poses for the inner loop
 
-            //si el poligono del laser no contiene un punto del robot, no contiene alguna esquina por tanto pasamos a otro.
-            bool cuatroEsquinas = true;
-            for (auto &p : temp_robot)
-                if ( not polygonF_Laser.containsPoint(p, Qt::OddEvenFill))
-                {
-                    cuatroEsquinas = false;
+        for(auto &arc_points : list_arcs)
+        {
+            bool all_inside = true;
+            for (auto &[x, y, adv, giro, ang] : arc_points)
+            {
+                QPolygonF temp_robot;
+                temp_robot << QPointF(x - semiancho, y + semiancho) << QPointF(x + semiancho, y + semiancho) <<
+                           QPointF(x + semiancho, y - semiancho) << QPointF(x - semiancho, y - semiancho);
+                temp_robot = QTransform().rotate(ang).map(temp_robot);
+
+                //si el poligono del laser no contiene un punto del robot, no contiene alguna esquina por tanto pasamos a otro.
+                for (auto &p : temp_robot)
+                    if (not polygonF_Laser.containsPoint(p, Qt::OddEvenFill))
+                    {
+                        all_inside = false;
+                        break;
+                    }
+                if (not all_inside)
                     break;
-                }
-            // SI contiene las 4 esquinas , metemos el valor.
-            if (cuatroEsquinas)
-                vectorOBs.emplace_back(std::make_tuple(x, y, a, g, ang));
+            }
+            if(all_inside and not arc_points.empty())
+                vectorOBs.emplace_back(arc_points.back());
         }
+
+
+//            // GENERAR UN CUADRADO CON EL CENTRO EN X, Y Y ORIENTACION ANG.
+//            QPolygonF  temp_robot;
+//            temp_robot << QPointF(x - semiancho, y + semiancho) << QPointF(x + semiancho, y + semiancho) <<
+//                          QPointF(x + semiancho, y - semiancho) << QPointF(x - semiancho, y - semiancho);
+//            temp_robot = QTransform().rotate(aph).map(temp_robot);
+//
+//            //si el poligono del laser no contiene un punto del robot, no contiene alguna esquina por tanto pasamos a otro.
+//            bool cuatroEsquinas = true;
+//            for (auto &p : temp_robot)
+//                if ( not polygonF_Laser.containsPoint(p, Qt::OddEvenFill))
+//                {
+//                    cuatroEsquinas = false;
+//                    break;
+//                }
+//            // SI contiene las 4 esquinas , metemos el valor.
+//            if (cuatroEsquinas)
+//                vectorOBs.emplace_back(std::make_tuple(x, y, a, g, ang));
+//        }
         return vectorOBs;
     }
 

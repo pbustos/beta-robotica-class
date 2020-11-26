@@ -105,10 +105,10 @@ private:
     Target<Tpose> target_buffer;
     Tpose target;
     using tupla = std::tuple<float, float, float, float, float>;
-
+    std::vector<std::vector<tupla>> list_arcs;
     Eigen::Vector2f transformar_targetRW(RoboCompGenericBase::TBaseState bState);
 
-    //e4
+    //e
     std::vector<tupla> calcularPuntos(float vOrigen, float wOrigen);
     std::vector<tupla> ordenar(std::vector<tupla> vector, float x, float z);
     std::vector<tupla> obstaculos(std::vector<tupla> vector, float aph, const RoboCompLaser::TLaserData &ldata);
@@ -118,7 +118,7 @@ private:
     //draw
     QGraphicsScene scene;
     QGraphicsView *graphicsView;
-    QGraphicsItem *robot_polygon_draw = nullptr;
+    QGraphicsPolygonItem *robot_polygon_draw = nullptr;
     QPolygonF robot_polygon;
     QGraphicsItem *laser_polygon_draw = nullptr;
     const float ROBOT_LENGTH = 400;
