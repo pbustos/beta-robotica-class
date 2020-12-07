@@ -282,7 +282,7 @@ Eigen::Vector2f SpecificWorker::transformar_targetRW(RoboCompGenericBase::TBaseS
         list_arcs.clear();
         const float semiwidth = 50;
         //Calculamos las posiciones futuras del robot y se insertan en un vector.
-        float dt = 1; // 1 second ahead
+        float dt = 2; // 1 second ahead
         for (float v = -100; v <= 700; v += 100) //advance
         {
             for (float w = -2; w <= 2; w += 0.1) //rotacion
@@ -327,7 +327,7 @@ Eigen::Vector2f SpecificWorker::transformar_targetRW(RoboCompGenericBase::TBaseS
     SpecificWorker::obstaculos(std::vector <tupla> vector, float aph, const RoboCompLaser::TLaserData &ldata)
     {
         QPolygonF polygonF_Laser;
-        const float semiancho = 210; // el semiancho del robot
+        const float semiancho = 250; // el semiancho del robot
         std::vector<tupla> vectorOBs;
 
         // poligono creado con los puntos del laser
@@ -341,26 +341,24 @@ Eigen::Vector2f SpecificWorker::transformar_targetRW(RoboCompGenericBase::TBaseS
         for(auto &arc_points : list_arcs)
         {
             bool all_inside = true;
-            for (auto &[x, y, adv, giro, ang] : arc_points)
+            for (auto &point : arc_points)
             {
+                auto [x, y, adv, giro, ang] = point;
                 QPolygonF temp_robot;
                 temp_robot << QPointF(x - semiancho, y + semiancho) << QPointF(x + semiancho, y + semiancho) <<
                            QPointF(x + semiancho, y - semiancho) << QPointF(x - semiancho, y - semiancho);
                 temp_robot = QTransform().rotate(ang).map(temp_robot);
 
                 //si el poligono del laser no contiene un punto del robot, no contiene alguna esquina por tanto pasamos a otro.
-                for (auto &p : temp_robot)
-                    if (not polygonF_Laser.containsPoint(p, Qt::OddEvenFill))
-                    {
-                        all_inside = false;
-                        break;
-                    }
-                // else  meter los puntos del arco que sí pasan el test
-                if (not all_inside)
+
+                auto res = std::find_if_not(std::begin(temp_robot), std::end(temp_robot), [polygonF_Laser](const auto &p){return polygonF_Laser.containsPoint(p,Qt::OddEvenFill);});
+                if(res == std::end(temp_robot))  //all inside
+                     vectorOBs.emplace_back(point);
+                else
                     break;
             }
-            if(all_inside and not arc_points.empty())
-                vectorOBs.emplace_back(arc_points.back());
+//            if(all_inside and not arc_points.empty())
+//                vectorOBs.emplace_back(arc_points.back());
         }
         return vectorOBs;
     }

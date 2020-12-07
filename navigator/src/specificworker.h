@@ -30,6 +30,7 @@
 #include <genericworker.h>
 #include <innermodel/innermodel.h>
 #include <Eigen/Dense>
+#include <ranges>
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QGraphicsItem>
