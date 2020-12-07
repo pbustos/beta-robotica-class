@@ -1,4 +1,4 @@
-import "DifferentialRobot.idsl";
+import "OmniRobot.idsl";
 import "IDSLs/Laser.idsl";
 import "RCISMousePicker.idsl";
 
@@ -6,7 +6,7 @@ Component navigator
 {
     Communications
     {
-        requires DifferentialRobot, Laser;
+        requires OmniRobot, Laser;
         subscribesTo RCISMousePicker;
     };
     language Cpp11;

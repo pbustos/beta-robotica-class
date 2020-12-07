@@ -25,7 +25,7 @@ class Grid
                 int l=0;
                 for (int j = hmin; j < width/2; j += tile, l++)
                 {
-                    array[k][l] = Value{false, nullptr, i, j};
+                    array[k][l] = Value{false, nullptr, nullptr, i, j, k, l, -1};
                 }
             }
         };
@@ -34,51 +34,98 @@ class Grid
         {
             bool occupied = false;
             QGraphicsRectItem * paint_cell = nullptr;
-            int cx, cy;
-            int dist = 0; //dist vecinos
+            QGraphicsTextItem * text_cell = nullptr;
+            int cx, cy;         //world coor
+            int k,l;           //arrat coor
+            int dist;       //dist vecinos
         };
 
         std::vector<std::vector<Value>> array;
+        const std::vector<std::tuple<int, int>> neigh_coor{ {-1,-1}, {0,-1}, {1,-1}, {-1,0}, {1,0}, {-1,1}, {0,1}, {-1,1} };
 
-        void create_graphic_items(QGraphicsScene &scene)
+        void create_graphic_items(QGraphicsScene &scene, QGraphicsView *view)
         {
             auto fondo = QColor("LightGreen"); fondo.setAlpha(40);
+            QFont font("Bavaria");
+            font.setPointSize(40);
+            font.setWeight(QFont::TypeWriter);
             for (auto &row : array)
                 for (auto &elem : row)
                 {
                     elem.paint_cell = scene.addRect(-tile / 2, -tile / 2, tile, tile, QPen(QColor("DarkGreen")), QBrush(fondo));
                     elem.paint_cell->setPos(elem.cx, elem.cy);
+                    elem.text_cell = scene.addText("-1", font);
+                    elem.text_cell->setPos(elem.cx-tile/2, elem.cy-tile/2);
+                    // Get the current transform
+                    QTransform transform(elem.text_cell->transform());
+                    qreal m11 = transform.m11();    // Horizontal scaling
+                    qreal m12 = transform.m12();    // Vertical shearing
+                    qreal m13 = transform.m13();    // Horizontal Projection
+                    qreal m21 = transform.m21();    // Horizontal shearing
+                    qreal m22 = transform.m22();    // vertical scaling
+                    qreal m23 = transform.m23();    // Vertical Projection
+                    qreal m31 = transform.m31();    // Horizontal Position (DX)
+                    qreal m32 = transform.m32();    // Vertical Position (DY)
+                    qreal m33 = transform.m33();    // Addtional Projection Factor
+                    // Vertical flip
+                    m22 = -m22;
+                    // Write back to the matrix
+                    transform.setMatrix(m11, m12, m13, m21, m22, m23, m31, m32, m33);
+                    // Set the items transformation
+                    elem.text_cell->setTransform(transform);
                 }
         }
 
-        /**
-         * modificamos en funcion de v la coordenada x,z
-         * @param x
-         * @param z
-         * @param v
-         */
         void set_occupied(int x, int z)
         {
-            auto [i, j] = transform(x,z);
-            array[i][j].paint_cell->setBrush(QColor("Red"));
-        }
-        /**
-         * devolvemos el valor de la coordenada x,z
-         * @param x
-         * @param z
-         * @return
-         */
-        bool get_value(int x, int z)
-        {
-            auto [i, j] = transform(x,z);
-            return  this->array[i][j];
+            if(auto cell = transform(x,z); cell.has_value())
+            {
+                auto [i,j] = cell.value();
+                array[i][j].paint_cell->setBrush(QColor("Red"));
+            }
         }
 
-        std::tuple<int, int> transform(int x, int y)
+        std::optional<Value> get_value(int x, int z)
+        {
+            if( auto cell = transform(x,z); cell.has_value())
+            {
+                auto [i,j] = cell.value();
+                return this->array[i][j];
+            }
+            else
+                return {};
+        }
+        std::optional<std::tuple<int, int>> transform(int x, int y)
         {
             int k = (1.f/tile)*x + (width/tile)/2;
             int l = (1.f/tile)*y + (width/tile)/2;
-            return std::make_tuple(k,l);
+            if(k>0 and k<(int)array.size() and l>0 and l < (int)array.size())
+                return std::make_tuple(k,l);
+            else
+                return {};
+        }
+        std::vector<Value> neighboors(const Value &v, int dist)
+        {
+            std::vector<Value> selected;
+            for(auto [dk, dl] : neigh_coor)
+            {
+                int k = v.k + dk;        // OJO hay que añadir al struct Value las coordenadas de array
+                int l = v.l + dl;
+                if( k<(int)array.size() and k>0 and l<(int)array.size() and l>0  and  not array[k][l].occupied and array[k][l].dist == -1)
+                {
+                    array[k][l].dist = dist;
+                    array[k][l].text_cell->setPlainText(QString::number(dist));
+                    selected.push_back(array[k][l]);
+                }
+            }
+            return selected;
+        }
+
+        void reset_cell_distances()
+        {
+            for (auto &row : array)
+                for (auto &elem : row)
+                    elem.dist = -1;
         }
 };
 

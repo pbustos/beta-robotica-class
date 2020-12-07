@@ -5,7 +5,8 @@ RCISMousePickerTopic.Endpoints=tcp -p 0
 
 
 # Proxies for required interfaces
-DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
+#DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
+OmniRobotProxy = omnirobot:tcp -h localhost -p 10004
 LaserProxy = laser:tcp -h localhost -p 10003
 
 
