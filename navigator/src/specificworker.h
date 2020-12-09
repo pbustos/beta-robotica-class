@@ -35,6 +35,7 @@
 #include <QGraphicsView>
 #include <QGraphicsItem>
 #include "grid.h"
+#include <cppitertools/range.hpp>
 
 using namespace Eigen;
 
@@ -117,24 +118,28 @@ class SpecificWorker : public GenericWorker
         //tupla de 3 variables float para las coordenadas x,y,z.
         using Tpose = std::tuple<float, float, float>;
 
-        //variable tipo Target con la tupla Tpose
-        Target<Tpose> target_buffer;
-        Tpose target;
-        QGraphicsEllipseItem *target_draw = nullptr;
-        using tupla = std::tuple<float, float, float, float, float>;
-        std::vector<std::vector<tupla>> list_arcs;
-        Eigen::Vector2f transformar_targetRW(RoboCompGenericBase::TBaseState bState);
-
-        //DWA
-        std::vector<tupla> calcularPuntos(float vOrigen, float wOrigen);
-        std::vector<tupla> ordenar(std::vector<tupla> vector, float x, float z);
-        std::vector<tupla> obstaculos(std::vector<tupla> vector, float aph, const RoboCompLaser::TLaserData &ldata);
-        std::vector <tupla> dynamicWindowApproach(RoboCompGenericBase::TBaseState bState, RoboCompLaser::TLaserData &ldata);
-        void fill_grid_with_obstacles();
-
         //grid
         using MyGrid = Grid<int, -2500, int, 5000, int, 100>;
         MyGrid grid;
+
+        //variable tipo Target con la tupla Tpose
+        Target<Tpose> target_buffer;
+        Tpose target;
+        MyGrid::Value target_cell;
+        QGraphicsEllipseItem *target_draw = nullptr;
+        QGraphicsRectItem *subtarget_draw = nullptr;
+
+        using Tupla = std::tuple<float, float, float, float, float>;
+        Eigen::Vector2f transformar_targetRW(RoboCompGenericBase::TBaseState bState,  const MyGrid::Value &target);
+
+        //DWA
+        std::vector<std::vector<Tupla>> calcularPuntos(float vOrigen, float wOrigen);
+        std::optional<Tupla> ordenar(std::vector<Tupla> vector, float x, float y, float rx, float ry, float previous_turn);
+        std::vector<Tupla> obstaculos(std::vector<std::vector<Tupla>> vector, float aph, const RoboCompLaser::TLaserData &ldata);
+        std::vector<Tupla> dynamicWindowApproach(const RoboCompGenericBase::TBaseState &bState,
+                                                              const RoboCompLaser::TLaserData &ldata,
+                                                              const MyGrid::Value &target_cell);
+        void fill_grid_with_obstacles();
 
         // NF
         void navigation_function(const MyGrid::Value &target);
@@ -148,7 +153,7 @@ class SpecificWorker : public GenericWorker
         const float ROBOT_LENGTH = 400;
 
         void
-        draw_things(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata, const std::vector<tupla> &puntos);
+        draw_things(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata, const std::vector<Tupla> &puntos);
         std::vector<QGraphicsEllipseItem *> arcs_vector;
 
 

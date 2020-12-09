@@ -4,7 +4,7 @@
 
 #ifndef GOTOXY_GRID_H
 #define GOTOXY_GRID_H
-
+#include <functional>
 #include <QGraphicsItem>
 
 
@@ -82,6 +82,7 @@ class Grid
             {
                 auto [i,j] = cell.value();
                 array[i][j].paint_cell->setBrush(QColor("Red"));
+                array[i][j].occupied = true;
             }
         }
 
@@ -113,12 +114,27 @@ class Grid
                 int l = v.l + dl;
                 if( k<(int)array.size() and k>0 and l<(int)array.size() and l>0  and  not array[k][l].occupied and array[k][l].dist == -1)
                 {
-                    array[k][l].dist = dist;
-                    array[k][l].text_cell->setPlainText(QString::number(dist));
+                    if( has_adjacent_obstacle(k,l))
+                        array[k][l].dist = 9999;
+                    else
+                        array[k][l].dist = dist;
+                    array[k][l].text_cell->setPlainText(QString::number( array[k][l].dist));
                     selected.push_back(array[k][l]);
                 }
             }
             return selected;
+        }
+
+        bool has_adjacent_obstacle(int k, int l)
+        {
+            for(auto [dk, dl] : neigh_coor)
+            {
+                int kk = k + dk;        // OJO hay que añadir al struct Value las coordenadas de array
+                int ll = l + dl;
+                if (kk < (int) array.size() and kk > 0 and ll < (int) array.size() and ll > 0 and array[kk][ll].occupied)
+                    return true;
+            }
+            return false;
         }
 
         void reset_cell_distances()
@@ -127,6 +143,7 @@ class Grid
                 for (auto &elem : row)
                     elem.dist = -1;
         }
+
 };
 
 

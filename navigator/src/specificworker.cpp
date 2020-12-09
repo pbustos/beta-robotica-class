@@ -131,15 +131,18 @@ void SpecificWorker::compute()
         if(target_draw) scene.removeItem(target_draw);
         target_draw  = scene.addEllipse(x-50, z-50, 100, 100, QPen(QColor("red")), QBrush(QColor("red")));
         // calcular la función de navegación
-        if( auto v = grid.get_value(x,z) ; v.has_value())
-            navigation_function(v.value());
+        if( auto tg = grid.get_value(x,z) ; tg.has_value())
+        {
+            target_cell = tg.value();
+            navigation_function(target_cell);
+        }
         else
             qWarning() << __FUNCTION__ << "Target out of bounds";
     }
-    std::vector<tupla> points;
+    std::vector<Tupla> points;
     if( target_buffer.is_active())
     {
-        Eigen::Vector2f tr = transformar_targetRW(bState);
+        Eigen::Vector2f tr = transformar_targetRW(bState, target_cell);
         auto dist = tr.norm();
         //qInfo() << __FUNCTION__ << dist;
         if (dist < 70)
@@ -150,8 +153,15 @@ void SpecificWorker::compute()
             omnirobot_proxy->setSpeedBase(0, 0, 0);
         }
         //buscar el vecino más bajo en el grid
-        //llamar a DWA con ese punto
-        points = dynamicWindowApproach(bState, ldata);
+
+        if(auto robot_cell = grid.get_value(bState.x, bState.z); robot_cell.has_value())
+        {
+            //auto sub_target = grid.get_steepest_direction(robot_cell.value(), target_cell);
+            //if(subtarget_draw) scene.removeItem(subtarget_draw);
+            //subtarget_draw = scene.addRect(sub_target.cx-50, sub_target.cy-50, 100, 100, QPen(QColor("magenta")), QBrush(QColor("magenta")));
+            //llamar a DWA con ese punto
+            points = dynamicWindowApproach(bState, ldata, target_cell);
+        }
     }
     draw_things(bState, ldata, points);
 }
@@ -183,7 +193,6 @@ void SpecificWorker::fill_grid_with_obstacles()
 
 void SpecificWorker::navigation_function(const MyGrid::Value &target)
 {
-    qInfo() << __FUNCTION__;
     grid.reset_cell_distances();
     float dist = 0;
     auto L1 = grid.neighboors(target, dist++);
@@ -204,82 +213,48 @@ void SpecificWorker::navigation_function(const MyGrid::Value &target)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-std::vector <SpecificWorker::tupla> SpecificWorker::dynamicWindowApproach(RoboCompGenericBase::TBaseState bState, RoboCompLaser::TLaserData &ldata)
+std::vector<SpecificWorker::Tupla> SpecificWorker::dynamicWindowApproach(const RoboCompGenericBase::TBaseState &bState,
+                                                                          const RoboCompLaser::TLaserData &ldata,
+                                                                          const MyGrid::Value &target )
 {
 
 //posiciones originales del robot
     float current_adv = bState.advVz; // Advance V
     float current_rot = bState.rotV; // Rotation W
+    static float previous_turn = 0;
 
     // calculamos las posiciones futuras del robot y se insertan en un vector.
-    std::vector <tupla> vectorPuntos = calcularPuntos(current_adv, current_rot);
+    auto vector_arcos = calcularPuntos(current_adv, current_rot);
 
     // quitamos los puntos futuros que nos llevan a obstaculos
-    std::vector <tupla> vectorSInObs = obstaculos(vectorPuntos, bState.alpha, ldata);
+    auto vector_sin_obs = obstaculos(vector_arcos, bState.alpha, ldata);
 
     // ordenamos el vector de puntos segun la distancia
-    Eigen::Vector2f tr = transformar_targetRW(bState);
-    std::vector <tupla> vectorOrdenado = ordenar(vectorSInObs, tr.x(), tr.y());
+    Eigen::Vector2f tr = transformar_targetRW(bState, target);
+    auto best_choice = ordenar(vector_sin_obs, tr.x(), tr.y(), bState.x, bState.z, previous_turn);
 
-    if (vectorOrdenado.size() > 0)
+    if (best_choice.has_value())
     {
-        auto[x, y, v, w, alpha] = vectorOrdenado.front();
+        auto[x, y, v, w, alpha] = best_choice.value();
         //std::cout << __FUNCTION__ << " " << x << " " << y << " " << v << " " << w << " " << alpha << std::endl;
-        // remove this
-//        if (w > 1) w = 1;
-//        if (w < -1) w = -1;
-//        if (v < 0) v = 0;
-//        //
         auto va = std::min(v / 5, 1000.f);
-        //qInfo() << __FUNCTION__ << "w: "  << w;
-        try{  omnirobot_proxy->setSpeedBase(0, va, -w); }  // w should come positive
+        try{  omnirobot_proxy->setSpeedBase(0, va, -w); previous_turn = -w;}  // w should come positive
         catch (const Ice::Exception &e) { std::cout << e.what() << std::endl; }
-        return vectorOrdenado;
+        vector_sin_obs.insert(vector_sin_obs.begin(), best_choice.value());
+        return vector_sin_obs;
     }
     else
     {
         //std::cout << "Vector vacio" << std::endl;
-        return std::vector<tupla>{};
+        return std::vector<Tupla>{};
     }
 }
 
-/**
-* A traves de un punto calculamos las coordenadas del punto en el mundo real y las transformamos al mundo del robot
-* @param bState
-* @return
-*/
 
-Eigen::Vector2f SpecificWorker::transformar_targetRW(RoboCompGenericBase::TBaseState bState)
-{
-    // Coordenadas del target en el mundo real
-    auto[x, y, z] = target;
-
-    //Target mundo real
-    Eigen::Vector2f tw(x, z);
-
-    // Robot mundo robot
-    Eigen::Vector2f rw(bState.x, bState.z);
-
-    // Inicializamos una matriz de 2x2 en sentido horario.
-    Eigen::Matrix2f rot;
-    rot << cos(bState.alpha), sin(bState.alpha),
-            -sin(bState.alpha), cos(bState.alpha);
-
-    // Guardamos en un vector el resultado de la transpuesta de rot por la resta de tw - rw
-    Eigen::Vector2f tr = rot * (tw - rw);
-    //Eigen::Vector2f tr = rot * (tw - rw);
-    return tr;
-}
-/**
- * Devolvemos un vector con los puntos segun el algoritmo Dynamic Window Approach; con las posiciones originales del robot vamos calculando los futuros puntos donde deberia moverse para llegar al destino.
- * @param vOrigen
- * @param wOrigen
- * @return vector de tuplas <x,y,av,giro,angulo>
- */
-    std::vector <SpecificWorker::tupla> SpecificWorker::calcularPuntos(float current_adv, float current_rot)
+std::vector<std::vector<SpecificWorker::Tupla>> SpecificWorker::calcularPuntos(float current_adv, float current_rot)
     {
-        std::vector <tupla> vectorT;
-        list_arcs.clear();
+        std::vector <Tupla> vectorT;
+        std::vector<std::vector<Tupla>> list_arcs;
         const float semiwidth = 50;
         //Calculamos las posiciones futuras del robot y se insertan en un vector.
         float dt = 2; // 1 second ahead
@@ -287,7 +262,7 @@ Eigen::Vector2f SpecificWorker::transformar_targetRW(RoboCompGenericBase::TBaseS
         {
             for (float w = -2; w <= 2; w += 0.1) //rotacion
             {
-                std::vector<tupla> list_points;
+                std::vector<Tupla> list_points;
                 float new_adv = current_adv + v;
                 float new_rot = current_rot + w;
                 if (fabs(w) > 0.01)
@@ -297,50 +272,37 @@ Eigen::Vector2f SpecificWorker::transformar_targetRW(RoboCompGenericBase::TBaseS
                     float x = r - r * cos(new_rot * dt); //coordenada futura X
                     float y = r * sin(new_rot * dt); //coordenada futura Z
                     float alp = new_rot * dt; //angulo nuevo del robot
-                    vectorT.emplace_back(std::make_tuple(x, y, new_adv, new_rot, alp));  //lo añadimos al vector de tuplas
                     float arc_length = new_rot * dt * r;
                     for (float t = semiwidth; t < arc_length; t += semiwidth)
                         list_points.emplace_back(std::make_tuple(r - r * cos(t / r), r * sin(t / r), new_adv, new_rot, t / r));
                 }
                 else // para evitar la división por cero en el cálculo de r
                 {
-                    vectorT.emplace_back(std::make_tuple(0, v * dt, new_adv, new_rot, new_rot * dt));
                     for(float t = semiwidth; t < v*dt; t+=semiwidth)
                         list_points.emplace_back(std::make_tuple(0.f, t, new_adv, new_rot, new_rot*dt));
                 }
                 list_arcs.push_back(list_points);
             }
         }
-        return vectorT;
+        return list_arcs;
     }
 
-/**
-* Se devuelve un vector quitando los puntos futuros que nos llevan a obstaculos utilizando dos poligonos:
- * un poligono con los datos del laser y otro con los puntos de las coordenadas futuras del robot y sus esquinas.
- * Se comprueba si contiene las cuatro esquinas, si es verdad se inserta en el vector final, sino pasamos a otro punto.
- * @param vector
- * @param aph
- * @param ldata
- * @return
- */
-    std::vector <SpecificWorker::tupla>
-    SpecificWorker::obstaculos(std::vector <tupla> vector, float aph, const RoboCompLaser::TLaserData &ldata)
+    std::vector <SpecificWorker::Tupla>
+    SpecificWorker::obstaculos(std::vector<std::vector<Tupla>> vector_arcs, float aph, const RoboCompLaser::TLaserData &ldata)
     {
         QPolygonF polygonF_Laser;
         const float semiancho = 250; // el semiancho del robot
-        std::vector<tupla> vectorOBs;
+        std::vector<Tupla> vector_obs;
 
         // poligono creado con los puntos del laser
         for (auto &l: ldata)
             polygonF_Laser << QPointF(l.dist * sin(l.angle), l.dist * cos(l.angle));
         // extend laser to include the robot's body
-//        float size = ROBOT_LENGTH / 1.4;
-//        polygonF_Laser << QPointF(-size,size) << QPointF(-size,-size) << QPointF(size,-size) << QPointF(size,size);
+        //        float size = ROBOT_LENGTH / 1.4;
+        //        polygonF_Laser << QPointF(-size,size) << QPointF(-size,-size) << QPointF(size,-size) << QPointF(size,size);
 
-
-        for(auto &arc_points : list_arcs)
+        for(auto &arc_points : vector_arcs)
         {
-            bool all_inside = true;
             for (auto &point : arc_points)
             {
                 auto [x, y, adv, giro, ang] = point;
@@ -353,14 +315,12 @@ Eigen::Vector2f SpecificWorker::transformar_targetRW(RoboCompGenericBase::TBaseS
 
                 auto res = std::find_if_not(std::begin(temp_robot), std::end(temp_robot), [polygonF_Laser](const auto &p){return polygonF_Laser.containsPoint(p,Qt::OddEvenFill);});
                 if(res == std::end(temp_robot))  //all inside
-                     vectorOBs.emplace_back(point);
+                     vector_obs.emplace_back(point);
                 else
                     break;
             }
-//            if(all_inside and not arc_points.empty())
-//                vectorOBs.emplace_back(arc_points.back());
         }
-        return vectorOBs;
+        return vector_obs;
     }
 
 /**
@@ -370,17 +330,49 @@ Eigen::Vector2f SpecificWorker::transformar_targetRW(RoboCompGenericBase::TBaseS
  * @param z
  * @return vector ordenado
  */
-    std::vector<SpecificWorker::tupla> SpecificWorker::ordenar(std::vector <tupla> vector, float x, float z)
+    std::optional<SpecificWorker::Tupla> SpecificWorker::ordenar(std::vector<Tupla> vector_points, float tx, float ty, float rx, float ry, float previous_turn)
     {
-        std::sort(vector.begin(), vector.end(), [x, z](const auto &a, const auto &b) {
-            const auto &[ax, ay, ca, cw, aa] = a;
-            const auto &[bx, by, ba, bw, bb] = b;
-            return ((ax - x) * (ax - x) + (ay - z) * (ay - z)) < ((bx - x) * (bx - x) + (by - z) * (by - z));
-        });
-        return vector;
+        const float A=1, B=0.1, C=0.1, D=0;
+        int k=0;
+        std::vector<std::tuple<float, Tupla>> values;
+        values.resize(vector_points.size());
+        for(auto &point : vector_points)
+            {
+                auto [x, y, adv, giro, ang] = point;
+                auto va = this->grid.get_value(x,y); auto vb = this->grid.get_value(x,y);
+                if(va.has_value() and vb.has_value())
+                {
+                    float nav_function = va.value().dist;
+                    float dist_to_target = sqrt(pow(tx-x,2)+pow(ty-y,2));
+                    float dist_to_previous_turn =  fabs(ang - previous_turn);
+                    //float dist_from_robot = 1/sqrt(pow(rx-x,2)+pow(ry-y,2));
+                    //float clearance_to_obstacle = 1/grid.dist_to_nearest_obstacle(x, y);
+                    values[k++] = std::make_tuple(A * nav_function + B* dist_to_target + C*dist_to_previous_turn, point);
+                }
+            }
+        auto min = std::ranges::min_element(values, [](auto &a, auto &b){ return std::get<0>(a) < std::get<0>(b);});
+        if(min != values.end())
+            return std::get<Tupla>(*min);
+        else
+            return {};
+
+//        std::vector<tupla> vdist = vector;
+//        std::sort(vdist.begin(), vdist.end(), [x, z, this](const auto &a, const auto &b)
+//        {
+//            const auto &[ax, ay, ca, cw, aa] = a;
+//            const auto &[bx, by, ba, bw, bb] = b;
+//            //return ((ax - x) * (ax - x) + (ay - z) * (ay - z)) < ((bx - x) * (bx - x) + (by - z) * (by - z));
+//            auto va = this->grid.get_value(ax,ay); auto vb = this->grid.get_value(bx,by);
+//            if(va.has_value() and vb.has_value())
+//                return va.value().dist < vb.value().dist;
+//            else
+//                return false;
+//        });
+//
+//        return vector;
     }
 
-void SpecificWorker::draw_things(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata, const std::vector <tupla> &puntos)
+void SpecificWorker::draw_things(const RoboCompGenericBase::TBaseState &bState, const RoboCompLaser::TLaserData &ldata, const std::vector <Tupla> &puntos)
 {
     //draw robot
     //innerModel->updateTransformValues("base", bState.x, 0, bState.z, 0, bState.alpha, 0);
@@ -423,6 +415,29 @@ void SpecificWorker::draw_things(const RoboCompGenericBase::TBaseState &bState, 
     }
 }
 
+/**
+* A traves de un punto calculamos las coordenadas del punto en el mundo real y las transformamos al mundo del robot
+* @param bState
+* @return
+*/
+
+Eigen::Vector2f SpecificWorker::transformar_targetRW(RoboCompGenericBase::TBaseState bState, const MyGrid::Value &target)
+{
+    //Target mundo real
+    Eigen::Vector2f tw(target.cx, target.cy);
+
+    // Robot mundo robot
+    Eigen::Vector2f rw(bState.x, bState.z);
+
+    // Inicializamos una matriz de 2x2 en sentido horario.
+    Eigen::Matrix2f rot;
+    rot << cos(bState.alpha), sin(bState.alpha),
+            -sin(bState.alpha), cos(bState.alpha);
+
+    // Guardamos en un vector el resultado de la transpuesta de rot por la resta de tw - rw
+    Eigen::Vector2f tr = rot * (tw - rw);  //no trasnpose for Coppelia
+    return tr;
+}
 
 ////////////////////////////////////////////////////////////////
     int SpecificWorker::startup_check() {
