@@ -79,7 +79,12 @@ class SpecificWorker(GenericWorker):
         self.pr.launch(SCENE_FILE, headless=False)
         self.pr.start()
 
+        # robot
         self.robot_object = Shape("Pioneer")
+        self.left_wheel = Joint("Pioneer_p3dx_leftMotor")
+        self.right_wheel = Joint("Pioneer_p3dx_rightMotor")
+        self.radius = 100  # wheel radius in mm
+        self.semi_width = 165  # axle semi width in mm
 
         # cameras
         self.cameras_write = {}
@@ -235,10 +240,8 @@ class SpecificWorker(GenericWorker):
         #  Wr = ( adv + c*rot ) / r
         left_vel = (adv + self.semi_width * rot) / self.radius
         right_vel = (adv - self.semi_width * rot) / self.radius
-        self.back_left_wheel.set_joint_target_velocity(left_vel)
-        self.back_right_wheel.set_joint_target_velocity(right_vel)
-        self.front_left_wheel.set_joint_target_velocity(left_vel)
-        self.front_right_wheel.set_joint_target_velocity(right_vel)
+        self.left_wheel.set_joint_target_velocity(left_vel)
+        self.right_wheel.set_joint_target_velocity(right_vel)
         return left_vel, right_vel
 
     ###########################################
@@ -528,3 +531,29 @@ class SpecificWorker(GenericWorker):
         ret.percentage = 100
         return ret
     #
+    #######################################################
+    #### Laser
+    #######################################################
+    #
+    # getLaserAndBStateData
+    #
+    def Laser_getLaserAndBStateData(self):
+        bState = RoboCompGenericBase.TBaseState()
+        return self.ldata, bState
+
+   #
+   # getLaserConfData
+   #
+
+    def Laser_getLaserConfData(self):
+        ret = RoboCompLaser.LaserConfData()
+        return ret
+
+    #
+    # getLaserData
+    #
+
+    def Laser_getLaserData(self):
+        return self.ldata
+
+
