@@ -257,7 +257,7 @@ std::vector<std::vector<SpecificWorker::Tupla>> SpecificWorker::calcularPuntos(f
         std::vector<std::vector<Tupla>> list_arcs;
         const float semiwidth = 50;
         //Calculamos las posiciones futuras del robot y se insertan en un vector.
-        float dt = 2; // 1 second ahead
+        float dt = 1.5; // 1 second ahead
         for (float v = -100; v <= 700; v += 100) //advance
         {
             for (float w = -2; w <= 2; w += 0.1) //rotacion
@@ -332,7 +332,7 @@ std::vector<std::vector<SpecificWorker::Tupla>> SpecificWorker::calcularPuntos(f
  */
     std::optional<SpecificWorker::Tupla> SpecificWorker::ordenar(std::vector<Tupla> vector_points, float tx, float ty, float rx, float ry, float previous_turn)
     {
-        const float A=1, B=0.1, C=0.1, D=0;
+        const float A=1, B=0.1, C=10, D=0;
         int k=0;
         std::vector<std::tuple<float, Tupla>> values;
         values.resize(vector_points.size());
@@ -344,7 +344,7 @@ std::vector<std::vector<SpecificWorker::Tupla>> SpecificWorker::calcularPuntos(f
                 {
                     float nav_function = va.value().dist;
                     float dist_to_target = sqrt(pow(tx-x,2)+pow(ty-y,2));
-                    float dist_to_previous_turn =  fabs(ang - previous_turn);
+                    float dist_to_previous_turn =  fabs(-giro - previous_turn);
                     //float dist_from_robot = 1/sqrt(pow(rx-x,2)+pow(ry-y,2));
                     //float clearance_to_obstacle = 1/grid.dist_to_nearest_obstacle(x, y);
                     values[k++] = std::make_tuple(A * nav_function + B* dist_to_target + C*dist_to_previous_turn, point);
