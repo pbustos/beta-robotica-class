@@ -80,20 +80,14 @@ class SpecificWorker(GenericWorker):
         self.pr.start()
 
         self.robot_object = Shape("Pioneer")
-        self.back_left_wheel = Joint("p3at_back_left_wheel_joint")
-        self.back_right_wheel = Joint("p3at_back_right_wheel_joint")
-        self.front_left_wheel = Joint("p3at_front_left_wheel_joint")
-        self.front_right_wheel = Joint("p3at_front_right_wheel_joint")
-        self.radius = 110  # mm
-        self.semi_width = 140  # mm
 
         # cameras
         self.cameras_write = {}
         self.cameras_read = {}
 
-        self.front_left_camera_name = "pioneer_camera_left"
-        cam = VisionSensor(self.front_left_camera_name)
-        self.cameras_write[self.front_left_camera_name] = {"handle": cam,
+        self.front_camera_name = "pioneer_camera_center"
+        cam = VisionSensor(self.front_camera_name)
+        self.cameras_write[self.front_camera_name] = {"handle": cam,
                                                      "id": 0,
                                                      "angle": np.radians(cam.get_perspective_angle()),
                                                      "width": cam.get_resolution()[0],
@@ -103,29 +97,19 @@ class SpecificWorker(GenericWorker):
                                                      "rgb": np.array(0),
                                                      "depth": np.ndarray(0)}
 
-        self.front_right_camera_name = "pioneer_camera_right"
-        cam = VisionSensor(self.front_right_camera_name)
-        self.cameras_write[self.front_right_camera_name] = {"handle": cam,
-                                                     "id": 1,
-                                                     "angle": np.radians(cam.get_perspective_angle()),
-                                                     "width": cam.get_resolution()[0],
-                                                     "height": cam.get_resolution()[1],
-                                                     "focal": (cam.get_resolution()[0] / 2) / np.tan(
-                                                         np.radians(cam.get_perspective_angle() / 2)),
-                                                     "rgb": np.array(0),
-                                                     "depth": np.ndarray(0)}
-
-
         self.cameras_read = self.cameras_write.copy()
         self.mutex_c = Lock()
+
+        # laser
+        self.hokuyo_base_front_left = VisionSensor("Hokuyo_sensor2")
+        self.hokuyo_base_front_right = VisionSensor("Hokuyo_sensor1")
+        self.ldata = []
 
         # PoseEstimation
         self.robot_full_pose_write = RoboCompFullPoseEstimation.FullPoseEuler()
         self.robot_full_pose_read = RoboCompFullPoseEstimation.FullPoseEuler()
         self.mutex = Lock()
 
-
-        self.ldata = []
         self.joystick_newdata = []
         self.speed_robot = []
         self.speed_robot_ant = []
@@ -135,13 +119,62 @@ class SpecificWorker(GenericWorker):
         tc = TimeControl(0.05)
         while True:
             self.pr.step()
-            self.read_cameras([self.front_left_camera_name, self.front_right_camera_name])
+            self.read_laser()
+            self.read_cameras([self.front_camera_name])
             self.read_joystick()
             self.read_robot_pose()
             self.move_robot()
 
             tc.wait()
 
+    ###########################################
+    ### LASER get and publish laser data
+    ###########################################
+
+    def read_laser(self):
+        self.ldata = self.compute_omni_laser([self.hokuyo_base_front_right,
+                                              self.hokuyo_base_front_left], self.robot_object)
+        try:
+            self.laserpub_proxy.pushLaserData(self.ldata)
+        except Ice.Exception as e:
+            print(e)
+
+    def compute_omni_laser(self, lasers, robot):
+        c_data = []
+        coor = []
+        for laser in lasers:
+            semiwidth = laser.get_resolution()[0] / 2
+            semiangle = np.radians(laser.get_perspective_angle() / 2)
+            focal = semiwidth / np.tan(semiangle)
+            data = laser.capture_depth(in_meters=True)
+            m = laser.get_matrix(robot)  # these data should be read first
+            if type(m) != list:
+                m = [item for sublist in m for item in sublist]
+            imat = np.array(
+                [[m[0], m[1], m[2], m[3]], [m[4], m[5], m[6], m[7]], [m[8], m[9], m[10], m[11]], [0, 0, 0, 1]])
+
+            for i, d in enumerate(data.T):
+                z = d[0]  # min if more than one row in depth image
+                vec = np.array([-(i - semiwidth) * z / focal, 0, z, 1])
+                res = imat.dot(vec)[:3]  # translate to robot's origin, homogeneous
+                c_data.append([np.arctan2(res[0], res[1]), np.linalg.norm(res)])  # add to list in polar coordinates
+
+        # create 360 polar rep
+        c_data_np = np.asarray(c_data)
+        angles = np.linspace(-np.pi, np.pi, 360)  # create regular angular values
+        positions = np.searchsorted(angles, c_data_np[:, 0])  # list of closest position for each laser meas
+        ldata = [RoboCompLaser.TData(a, 0) for a in angles]  # create empty 360 angle array
+        pos, medians = npi.group_by(positions).median(c_data_np[:, 1])  # group by repeated positions
+        for p, m in zip_longest(pos, medians):  # fill the angles with measures
+            ldata[p].dist = int(m * 1000)  # to millimeters
+        if ldata[0] == 0:
+            ldata[0] = 200  # half robot width
+        for i in range(0, len(ldata)):
+            if ldata[i].dist == 0:
+                ldata[i].dist = ldata[i - 1].dist
+        # ldata[0].dist = ldata[len(data)-1].dist
+
+        return ldata
     ###########################################
     ### CAMERAS get and publish cameras data
     ###########################################
