@@ -32,9 +32,9 @@ template<class T> auto operator<<(std::ostream& os, const T& t) -> decltype(t.pr
 
 class FloorMeter
 {
-	const int TILE_SIZE = 200;
-        const int HMIN=-2500, HMAX=2500, VMIN=-2500, VMAX=2500;
-        uint cont = 0;
+	int TILE_SIZE = 200;
+    int HMIN=-2500, HMAX=2500, VMIN=-2500, VMAX=2500;
+    uint cont = 0;
          
 	struct Key
 		{
@@ -78,8 +78,12 @@ class FloorMeter
 	public:
 		FloorMeter();
 		float addStep(float x, float z, float angle);
-                void reset() { cont = 0;} ;
-	
+        void reset() { cont = 0;} ;
+        void set_dimensions(int hmin, int hmax, int vmin, int vmax, int tile_size)
+        {
+            HMIN = hmin; HMAX = hmax; VMIN = vmin; VMAX = vmax; TILE_SIZE = tile_size;
+        }
+
 	private:
 		typedef	std::unordered_map<Key, Value, KeyHasher> FMap;	
 		FMap fmap;

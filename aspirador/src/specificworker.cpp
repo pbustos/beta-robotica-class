@@ -38,6 +38,7 @@ bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
 
     COUNT_DOWN = stoi(params["max_time"].value);
+    fm.set_dimensions(-5000, 5000, -2500, 2500, 100);
 	return true;
 }
 
@@ -47,7 +48,6 @@ void SpecificWorker::initialize(int period)
 	std::cout << "Initialize worker" << std::endl;
 	connect(pushButton, &QPushButton::clicked, this, &SpecificWorker::reset_time );
 
-	time.start();
 	this->Period = period;
 	timer.start(Period);
 
