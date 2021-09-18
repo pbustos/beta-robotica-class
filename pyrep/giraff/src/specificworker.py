@@ -21,8 +21,6 @@
 
 from genericworker import *
 import os, time, queue
-from bisect import bisect_left
-from os.path import dirname, join, abspath
 from pyrep import PyRep
 from pyrep.objects.vision_sensor import VisionSensor
 from pyrep.objects.dummy import Dummy
@@ -30,16 +28,10 @@ from pyrep.objects.shape import Shape
 from pyrep.objects.shape import Object
 from pyrep.objects.joint import Joint
 import numpy as np
-from pytransform3d.transform_manager import TransformManager
-import pytransform3d.transformations as pytr
-import pytransform3d.rotations as pyrot
 import numpy_indexed as npi
-from itertools import zip_longest
 import cv2
-import imutils
+import itertools as it
 from threading import Lock
-from collections import namedtuple
-import math
 
 class TimeControl:
     def __init__(self, period_):
@@ -63,10 +55,6 @@ class TimeControl:
 class SpecificWorker(GenericWorker):
     def __init__(self, proxy_map):
         super(SpecificWorker, self).__init__(proxy_map)
-        self.tm = TransformManager()
-        self.tm.add_transform("origin", "world",
-                              pytr.transform_from(pyrot.active_matrix_from_intrinsic_euler_xyz([0.0, 0.0, 0.0]), [0.0, 0.0, 0.0])
-                              )
 
     def __del__(self):
         print('SpecificWorker destructor')
@@ -80,7 +68,7 @@ class SpecificWorker(GenericWorker):
         self.pr.start()
 
         # robot
-        self.robot_object = Shape("Pioneer")
+        self.robot_object = Shape("Giraff")
         self.left_wheel = Joint("Pioneer_p3dx_leftMotor")
         self.right_wheel = Joint("Pioneer_p3dx_rightMotor")
         self.radius = 100  # wheel radius in mm
@@ -106,8 +94,35 @@ class SpecificWorker(GenericWorker):
         self.mutex_c = Lock()
 
         # laser
-        self.hokuyo_base_front_left = VisionSensor("Hokuyo_sensor2")
-        self.hokuyo_base_front_right = VisionSensor("Hokuyo_sensor1")
+        self.lasers = {}
+        self.hokuyo_front_left_name = "Hokuyo_sensor2"
+        cam = VisionSensor(self.hokuyo_front_left_name)
+        self.lasers[self.hokuyo_front_left_name] = { "handle": cam,
+                                                      "id": 0,
+                                                      "angle": np.radians(cam.get_perspective_angle()),
+                                                      "width": cam.get_resolution()[0],
+                                                     "semiwidth": cam.get_resolution()[0] / 2.0,
+                                                      "height": cam.get_resolution()[1],
+                                                      "focal": (cam.get_resolution()[0] / 2) / np.tan(
+                                                          np.radians(cam.get_perspective_angle() / 2)),
+                                                      "rgb": np.array(0),
+                                                      "depth": np.ndarray(0),
+                                                      "offset_angle": -np.pi/3.0
+                                                     }
+        self.hokuyo_front_right_name = "Hokuyo_sensor1"
+        cam = VisionSensor(self.hokuyo_front_right_name)
+        self.lasers[self.hokuyo_front_right_name] = { "handle": cam,
+                                                      "id": 0,
+                                                      "angle": np.radians(cam.get_perspective_angle()),
+                                                      "width": cam.get_resolution()[0],
+                                                      "semiwidth": cam.get_resolution()[0]/2.0,
+                                                      "height": cam.get_resolution()[1],
+                                                      "focal": (cam.get_resolution()[0] / 2) / np.tan(
+                                                        np.radians(cam.get_perspective_angle() / 2)),
+                                                      "rgb": np.array(0),
+                                                      "depth": np.ndarray(0),
+                                                      "offset_angle": np.pi / 3.0
+                                                    }
         self.ldata = []
 
         # PoseEstimation
@@ -137,32 +152,68 @@ class SpecificWorker(GenericWorker):
     ###########################################
 
     def read_laser(self):
-        self.ldata = self.compute_omni_laser([self.hokuyo_base_front_right,
-                                              self.hokuyo_base_front_left], self.robot_object)
-        try:
-            self.laserpub_proxy.pushLaserData(self.ldata)
-        except Ice.Exception as e:
-            print(e)
+        data = self.pr.script_call("get_depth_data@Hokuyo", 1)
+        if len(data[1]) > 0:
+            polar = np.zeros(shape=(int(len(data[1])/3), 2))
+            i = 0
+            for x,y,z in self.grouper(data[1], 3):
+                polar[i] = [-np.arctan2(y, x), np.linalg.norm([x, y])]  # add to list in polar coordinates
+                i += 1
+
+            angles = np.linspace(-np.radians(120), np.radians(120), 360)  # create regular angular values
+            positions = np.searchsorted(angles, polar[:, 0])  # list of closest position in polar for each laser measurement
+            ldata = [RoboCompLaser.TData(a, 0) for a in angles]  # create empty 360 angle array
+            pos, medians = npi.group_by(positions).median(polar[:, 1])  # group by repeated positions
+            for p, m in it.zip_longest(pos, medians):  # fill the angles with measures
+                if p < len(ldata):
+                    ldata[p].dist = int(m * 1000)  # to millimeters
+            if ldata[0] == 0:
+                ldata[0] = 200  # half robot width
+            for i in range(0, len(ldata)):
+                if ldata[i].dist == 0:
+                    ldata[i].dist = ldata[i - 1].dist
+
+            self.ldata = ldata
+            try:
+                self.laserpub_proxy.pushLaserData(self.ldata)
+            except Ice.Exception as e:
+                print(e)
+
+    def grouper(self, inputs, n, fillvalue=None):
+        iters = [iter(inputs)] * n
+        return it.zip_longest(*iters, fillvalue=fillvalue)
+
+    def compute_laser_from_camera(self, lasers):
+        ldata = []
+
+        for name, laser in lasers.items():
+            semiwidth = laser["semiwidth"]
+            focal = laser["focal"]
+            data = laser["handle"].capture_depth(in_meters=True)
+            angle_offset = laser["offset_angle"]
+            for i, d in enumerate(data.T):
+                y = d[0] # m
+
+                ang = np.arctan2((i - semiwidth) * y, focal) + angle_offset
+                x = dist * np.sin(ang)
+                y = dist * np.cos(ang)
+                ldata.append(RoboCompLaser.TData(ang, int(dist)))
+
+        return ldata
+
 
     def compute_omni_laser(self, lasers, robot):
         c_data = []
         coor = []
-        for laser in lasers:
-            semiwidth = laser.get_resolution()[0] / 2
-            semiangle = np.radians(laser.get_perspective_angle() / 2)
-            focal = semiwidth / np.tan(semiangle)
-            data = laser.capture_depth(in_meters=True)
-            m = laser.get_matrix(robot)  # these data should be read first
-            if type(m) != list:
-                m = [item for sublist in m for item in sublist]
-            imat = np.array(
-                [[m[0], m[1], m[2], m[3]], [m[4], m[5], m[6], m[7]], [m[8], m[9], m[10], m[11]], [0, 0, 0, 1]])
-
+        for name, laser in lasers.items():
+            semiwidth = laser["semiwidth"]
+            focal = laser["focal"]
+            data = laser["handle"].capture_depth(in_meters=True)
+            angle_offset = laser["offset_angle"]
             for i, d in enumerate(data.T):
-                z = d[0]  # min if more than one row in depth image
-                vec = np.array([-(i - semiwidth) * z / focal, 0, z, 1])
-                res = imat.dot(vec)[:3]  # translate to robot's origin, homogeneous
-                c_data.append([np.arctan2(res[0], res[1]), np.linalg.norm(res)])  # add to list in polar coordinates
+                y = d[0]  # min if more than one row in depth image
+                vec = np.array([-(i - semiwidth) * y / focal, y])
+                c_data.append([np.arctan2(vec[0], vec[1]), np.linalg.norm(vec)])  # add to list in polar coordinates
 
         # create 360 polar rep
         c_data_np = np.asarray(c_data)
@@ -170,7 +221,7 @@ class SpecificWorker(GenericWorker):
         positions = np.searchsorted(angles, c_data_np[:, 0])  # list of closest position for each laser meas
         ldata = [RoboCompLaser.TData(a, 0) for a in angles]  # create empty 360 angle array
         pos, medians = npi.group_by(positions).median(c_data_np[:, 1])  # group by repeated positions
-        for p, m in zip_longest(pos, medians):  # fill the angles with measures
+        for p, m in it.zip_longest(pos, medians):  # fill the angles with measures
             ldata[p].dist = int(m * 1000)  # to millimeters
         if ldata[0] == 0:
             ldata[0] = 200  # half robot width
