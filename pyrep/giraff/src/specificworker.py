@@ -174,10 +174,10 @@ class SpecificWorker(GenericWorker):
 
             self.ldata_read, self.ldata_write = self.ldata_write, self.ldata_read
 
-            try:
-                self.laserpub_proxy.pushLaserData(self.ldata_read)
-            except Ice.Exception as e:
-                print(e)
+            # try:
+            #     self.laserpub_proxy.pushLaserData(self.ldata_read)
+            # except Ice.Exception as e:
+            #     print(e)
 
     def grouper(self, inputs, n, fillvalue=None):
         iters = [iter(inputs)] * n
