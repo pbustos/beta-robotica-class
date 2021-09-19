@@ -20,18 +20,16 @@
 #
 
 from genericworker import *
-import os, time, queue
+import time
 from pyrep import PyRep
 from pyrep.objects.vision_sensor import VisionSensor
 from pyrep.objects.dummy import Dummy
 from pyrep.objects.shape import Shape
-from pyrep.objects.shape import Object
 from pyrep.objects.joint import Joint
 import numpy as np
 import numpy_indexed as npi
 import cv2
 import itertools as it
-from threading import Lock
 
 class TimeControl:
     def __init__(self, period_):
@@ -91,7 +89,7 @@ class SpecificWorker(GenericWorker):
                                                      "depth": np.ndarray(0)}
 
         self.cameras_read = self.cameras_write.copy()
-        self.mutex_c = Lock()
+
 
         # laser
         self.lasers = {}
@@ -123,12 +121,13 @@ class SpecificWorker(GenericWorker):
                                                       "depth": np.ndarray(0),
                                                       "offset_angle": np.pi / 3.0
                                                     }
-        self.ldata = []
-
+        self.ldata_write = []
+        self.ldata_read = []
+        
         # PoseEstimation
         self.robot_full_pose_write = RoboCompFullPoseEstimation.FullPoseEuler()
         self.robot_full_pose_read = RoboCompFullPoseEstimation.FullPoseEuler()
-        self.mutex = Lock()
+
 
         self.joystick_newdata = []
         self.speed_robot = []
@@ -156,26 +155,27 @@ class SpecificWorker(GenericWorker):
         if len(data[1]) > 0:
             polar = np.zeros(shape=(int(len(data[1])/3), 2))
             i = 0
-            for x,y,z in self.grouper(data[1], 3):
+            for x,y,z in self.grouper(data[1], 3):                      # extract non-intersecting groups of 3
                 polar[i] = [-np.arctan2(y, x), np.linalg.norm([x, y])]  # add to list in polar coordinates
                 i += 1
 
             angles = np.linspace(-np.radians(120), np.radians(120), 360)  # create regular angular values
             positions = np.searchsorted(angles, polar[:, 0])  # list of closest position in polar for each laser measurement
-            ldata = [RoboCompLaser.TData(a, 0) for a in angles]  # create empty 360 angle array
+            self.ldata_write = [RoboCompLaser.TData(a, 0) for a in angles]  # create empty 360 angle array
             pos, medians = npi.group_by(positions).median(polar[:, 1])  # group by repeated positions
             for p, m in it.zip_longest(pos, medians):  # fill the angles with measures
-                if p < len(ldata):
-                    ldata[p].dist = int(m * 1000)  # to millimeters
-            if ldata[0] == 0:
-                ldata[0] = 200  # half robot width
-            for i in range(0, len(ldata)):
-                if ldata[i].dist == 0:
-                    ldata[i].dist = ldata[i - 1].dist
+                if p < len(self.ldata_write):
+                    self.ldata_write[p].dist = int(m * 1000)  # to millimeters
+            if self.ldata_write[0] == 0:
+                self.ldata_write[0] = 200  # half robot width
+            for i in range(0, len(self.ldata_write)):
+                if self.ldata_write[i].dist == 0:
+                    self.ldata_write[i].dist = self.ldata_write[i - 1].dist
 
-            self.ldata = ldata
+            self.ldata_read, self.ldata_write = self.ldata_write, self.ldata_read
+
             try:
-                self.laserpub_proxy.pushLaserData(self.ldata)
+                self.laserpub_proxy.pushLaserData(self.ldata_read)
             except Ice.Exception as e:
                 print(e)
 
@@ -183,54 +183,6 @@ class SpecificWorker(GenericWorker):
         iters = [iter(inputs)] * n
         return it.zip_longest(*iters, fillvalue=fillvalue)
 
-    def compute_laser_from_camera(self, lasers):
-        ldata = []
-
-        for name, laser in lasers.items():
-            semiwidth = laser["semiwidth"]
-            focal = laser["focal"]
-            data = laser["handle"].capture_depth(in_meters=True)
-            angle_offset = laser["offset_angle"]
-            for i, d in enumerate(data.T):
-                y = d[0] # m
-
-                ang = np.arctan2((i - semiwidth) * y, focal) + angle_offset
-                x = dist * np.sin(ang)
-                y = dist * np.cos(ang)
-                ldata.append(RoboCompLaser.TData(ang, int(dist)))
-
-        return ldata
-
-
-    def compute_omni_laser(self, lasers, robot):
-        c_data = []
-        coor = []
-        for name, laser in lasers.items():
-            semiwidth = laser["semiwidth"]
-            focal = laser["focal"]
-            data = laser["handle"].capture_depth(in_meters=True)
-            angle_offset = laser["offset_angle"]
-            for i, d in enumerate(data.T):
-                y = d[0]  # min if more than one row in depth image
-                vec = np.array([-(i - semiwidth) * y / focal, y])
-                c_data.append([np.arctan2(vec[0], vec[1]), np.linalg.norm(vec)])  # add to list in polar coordinates
-
-        # create 360 polar rep
-        c_data_np = np.asarray(c_data)
-        angles = np.linspace(-np.pi, np.pi, 360)  # create regular angular values
-        positions = np.searchsorted(angles, c_data_np[:, 0])  # list of closest position for each laser meas
-        ldata = [RoboCompLaser.TData(a, 0) for a in angles]  # create empty 360 angle array
-        pos, medians = npi.group_by(positions).median(c_data_np[:, 1])  # group by repeated positions
-        for p, m in it.zip_longest(pos, medians):  # fill the angles with measures
-            ldata[p].dist = int(m * 1000)  # to millimeters
-        if ldata[0] == 0:
-            ldata[0] = 200  # half robot width
-        for i in range(0, len(ldata)):
-            if ldata[i].dist == 0:
-                ldata[i].dist = ldata[i - 1].dist
-        # ldata[0].dist = ldata[len(data)-1].dist
-
-        return ldata
     ###########################################
     ### CAMERAS get and publish cameras data
     ###########################################
@@ -251,9 +203,7 @@ class SpecificWorker(GenericWorker):
                                                            alivetime=time.time(), depthFactor=1.0,
                                                            depth=depth.tobytes())
 
-        self.mutex_c.acquire()
         self.cameras_write, self.cameras_read = self.cameras_read, self.cameras_write
-        self.mutex_c.release()
 
             # try:
             #    self.camerargbdsimplepub_proxy.pushRGBD(cam["rgb"], cam["depth"])
@@ -335,9 +285,7 @@ class SpecificWorker(GenericWorker):
         self.robot_full_pose_write.vrz = ang_vel[2]
 
         # swap
-        self.mutex.acquire()
         self.robot_full_pose_write, self.robot_full_pose_read = self.robot_full_pose_read, self.robot_full_pose_write
-        self.mutex.release()
 
 
     ###########################################
@@ -590,7 +538,7 @@ class SpecificWorker(GenericWorker):
     #
     def Laser_getLaserAndBStateData(self):
         bState = RoboCompGenericBase.TBaseState()
-        return self.ldata, bState
+        return self.ldata_read, bState
 
    #
    # getLaserConfData
@@ -605,6 +553,5 @@ class SpecificWorker(GenericWorker):
     #
 
     def Laser_getLaserData(self):
-        return self.ldata
-
+        return self.ldata_read
 
