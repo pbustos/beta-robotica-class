@@ -27,6 +27,7 @@ except KeyError:
     print('$ROBOCOMP environment variable not set, using the default value /opt/robocomp')
     ROBOCOMP = '/opt/robocomp'
 
+
 Ice.loadSlice("-I ./src/ --all ./src/CommonBehavior.ice")
 import RoboCompCommonBehavior
 
@@ -41,7 +42,7 @@ import RoboCompJoystickAdapter
 Ice.loadSlice("-I ./src/ --all ./src/Laser.ice")
 import RoboCompLaser 
 Ice.loadSlice("-I ./src/ --all ./src/LaserPub.ice")
-import RoboCompLaserPub 
+import RoboCompLaserPub
 Ice.loadSlice("-I ./src/ --all ./src/DifferentialRobot.ice")
 import RoboCompDifferentialRobot
 Ice.loadSlice("-I ./src/ --all ./src/CoppeliaUtils.ice")
@@ -57,7 +58,7 @@ import RoboCompRSSIStatus
 
 
 import camerargbdsimpleI 
-import laserI 
+import laserI
 import differentialrobotI
 import joystickadapterI
 import coppeliautilsI
@@ -65,6 +66,7 @@ import fullposeestimationI
 import ultrasoundI
 import batterystatusI
 import rssistatusI
+
 
 class GenericWorker():
 

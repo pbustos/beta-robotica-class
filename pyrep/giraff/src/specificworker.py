@@ -58,7 +58,6 @@ class SpecificWorker(GenericWorker):
         print('SpecificWorker destructor')
 
     def setParams(self, params):
-
         SCENE_FILE = '../etc/salabeta.ttt'
 
         self.pr = PyRep()
