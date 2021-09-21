@@ -41,19 +41,22 @@ except:
 	print('SLICE_PATH environment variable was not exported. Using only the default paths')
 	pass
 
-ice_DifferentialRobot = False
-for p in icePaths:
-	print('Trying', p, 'to load DifferentialRobot.ice')
-	if os.path.isfile(p+'/DifferentialRobot.ice'):
-		print('Using', p, 'to load DifferentialRobot.ice')
-		preStr = "-I/opt/robocomp/interfaces/ -I"+ROBOCOMP+"/interfaces/ " + additionalPathStr + " --all "+p+'/'
-		wholeStr = preStr+"DifferentialRobot.ice"
-		Ice.loadSlice(wholeStr)
-		ice_DifferentialRobot = True
-		break
-if not ice_DifferentialRobot:
-	print('Couldn\'t load DifferentialRobot')
-	sys.exit(-1)
+# ice_DifferentialRobot = False
+#for p in icePaths:
+#	print('Trying', p, 'to load DifferentialRobot.ice')
+#	if os.path.isfile(p+'/DifferentialRobot.ice'):
+#		print('Using', p, 'to load DifferentialRobot.ice')
+#		preStr = "-I/opt/robocomp/interfaces/ -I"+ROBOCOMP+"/interfaces/ " + additionalPathStr + " --all "+p+'/'
+#		wholeStr = preStr+"DifferentialRobot.ice"
+#		Ice.loadSlice(wholeStr)
+#		ice_DifferentialRobot = True
+#		break
+#if not ice_DifferentialRobot:
+#	print('Couldn\'t load DifferentialRobot')
+#	sys.exit(-1)
+
+Ice.loadSlice("-I ./src/ --all ./src/DifferentialRobot.ice")
+
 from RoboCompDifferentialRobot import *
 
 class DifferentialRobotI(DifferentialRobot):
