@@ -30,32 +30,26 @@ except KeyError:
 
 Ice.loadSlice("-I ./src/ --all ./src/CommonBehavior.ice")
 import RoboCompCommonBehavior
-
 Ice.loadSlice("-I ./src/ --all ./src/CameraRGBDSimple.ice")
 import RoboCompCameraRGBDSimple 
-Ice.loadSlice("-I ./src/ --all ./src/CameraRGBDSimplePub.ice")
-import RoboCompCameraRGBDSimplePub 
 Ice.loadSlice("-I ./src/ --all ./src/GenericBase.ice")
 import RoboCompGenericBase 
 Ice.loadSlice("-I ./src/ --all ./src/JoystickAdapter.ice")
 import RoboCompJoystickAdapter 
 Ice.loadSlice("-I ./src/ --all ./src/Laser.ice")
 import RoboCompLaser 
-Ice.loadSlice("-I ./src/ --all ./src/LaserPub.ice")
-import RoboCompLaserPub
 Ice.loadSlice("-I ./src/ --all ./src/DifferentialRobot.ice")
 import RoboCompDifferentialRobot
 Ice.loadSlice("-I ./src/ --all ./src/CoppeliaUtils.ice")
 import RoboCompCoppeliaUtils
 Ice.loadSlice("-I ./src/ --all ./src/FullPoseEstimation.ice")
 import RoboCompFullPoseEstimation
-Ice.loadSlice("-I ./src/ --all ./src/Ultrasound.ice")
-import RoboCompUltrasound
 Ice.loadSlice("-I ./src/ --all ./src/BatteryStatus.ice")
 import RoboCompBatteryStatus
 Ice.loadSlice("-I ./src/ --all ./src/RSSIStatus.ice")
 import RoboCompRSSIStatus
-
+Ice.loadSlice("-I ./src/ --all ./src/JointMotorSimple.ice")
+import RoboCompJointMotorSimple
 
 import camerargbdsimpleI 
 import laserI
@@ -66,6 +60,7 @@ import fullposeestimationI
 import ultrasoundI
 import batterystatusI
 import rssistatusI
+import jointmotorsimpleI
 
 
 class GenericWorker():
@@ -75,6 +70,4 @@ class GenericWorker():
     def __init__(self, mprx):
         super(GenericWorker, self).__init__()
 
-        self.camerargbdsimplepub_proxy = mprx["CameraRGBDSimplePubPub"]
-        self.laserpub_proxy = mprx["LaserPubPub"]
 

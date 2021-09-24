@@ -117,43 +117,6 @@ if __name__ == '__main__':
         print(colored('Cannot connect to rcnode! This must be running to use pub/sub.', 'red'))
         exit(1)
 
-    # Create a proxy to publish a CameraRGBDSimplePub topic
-    topic = False
-    try:
-        topic = topicManager.retrieve("CameraRGBDSimplePub")
-    except:
-        pass
-    while not topic:
-        try:
-            topic = topicManager.retrieve("CameraRGBDSimplePub")
-        except IceStorm.NoSuchTopic:
-            try:
-                topic = topicManager.create("CameraRGBDSimplePub")
-            except:
-                print('Another client created the CameraRGBDSimplePub topic? ...')
-    pub = topic.getPublisher().ice_oneway()
-    camerargbdsimplepubTopic = RoboCompCameraRGBDSimplePub.CameraRGBDSimplePubPrx.uncheckedCast(pub)
-    mprx["CameraRGBDSimplePubPub"] = camerargbdsimplepubTopic
-
-    # Create a proxy to publish a LaserPub topic
-    topic = False
-    try:
-        topic = topicManager.retrieve("LaserPub")
-    except:
-        pass
-    while not topic:
-        try:
-            topic = topicManager.retrieve("LaserPub")
-        except IceStorm.NoSuchTopic:
-            try:
-                topic = topicManager.create("LaserPub")
-            except:
-                print('Another client created the LaserPub topic? ...')
-    pub = topic.getPublisher().ice_oneway()
-    laserpubTopic = RoboCompLaserPub.LaserPubPrx.uncheckedCast(pub)
-    mprx["LaserPubPub"] = laserpubTopic
-
-
 
     if status == 0:
         worker = SpecificWorker(mprx)
@@ -190,6 +153,10 @@ if __name__ == '__main__':
     adapter.add(rssistatusI.RSSIStatusI(worker), ic.stringToIdentity('rssistatus'))
     adapter.activate()
 
+    adapter = ic.createObjectAdapter('JointMotorSimple')
+    adapter.add(jointmotorsimpleI.JointMotorSimpleI(worker), ic.stringToIdentity('jointmotorsimple'))
+    adapter.activate()
+
     adapter = ic.createObjectAdapter('CoppeliaUtils')
     adapter.add(coppeliautilsI.CoppeliaUtilsI(worker), ic.stringToIdentity('coppeliautils'))
     adapter.activate()
@@ -197,6 +164,7 @@ if __name__ == '__main__':
     JoystickAdapter_adapter = ic.createObjectAdapter("JoystickAdapterTopic")
     joystickadapterI_ = joystickadapterI.JoystickAdapterI(worker)
     joystickadapter_proxy = JoystickAdapter_adapter.addWithUUID(joystickadapterI_).ice_oneway()
+
 
     subscribeDone = False
     while not subscribeDone:
