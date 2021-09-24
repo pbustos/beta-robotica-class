@@ -3,7 +3,8 @@
 SET ( SOURCES
   specificworker.cpp
   specificmonitor.cpp
-  floormeter.cpp
+  $ENV{ROBOCOMP}/classes/grid2d/grid.cpp
+  $ENV{ROBOCOMP}/classes/abstract_graphic_viewer/abstract_graphic_viewer.h
 )
 
 # Headers set
@@ -14,4 +15,4 @@ SET ( HEADERS
 
 set(CMAKE_CXX_STANDARD 17)
 
-SET (LIBS ${LIBS}  )
+SET (LIBS ${LIBS}  tbb)

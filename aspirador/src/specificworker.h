@@ -29,7 +29,8 @@
 
 #include <genericworker.h>
 #include <innermodel/innermodel.h>
-#include "floormeter.h"
+#include <grid2d/grid.h>
+#include <abstract_graphic_viewer/abstract_graphic_viewer.h>
 
 class SpecificWorker : public GenericWorker
 {
@@ -46,10 +47,14 @@ public slots:
 
 	//--------------------
 private:
-	std::shared_ptr<InnerModel> innerModel;
-	FloorMeter fm;
+	Grid fm;
 	QTime time;
 	int COUNT_DOWN=180; //secs
+    AbstractGraphicViewer *viewer;
+
+    //robot
+    const int ROBOT_LENGTH = 400;
+    QGraphicsPolygonItem *robot_polygon;
 };
 
 #endif

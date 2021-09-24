@@ -36,17 +36,23 @@ SpecificWorker::~SpecificWorker()
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
-
     COUNT_DOWN = stoi(params["max_time"].value);
-    fm.set_dimensions(-5000, 5000, -2500, 2500, 100);
-	return true;
+    return true;
 }
 
 
 void SpecificWorker::initialize(int period)
 {
 	std::cout << "Initialize worker" << std::endl;
-	connect(pushButton, &QPushButton::clicked, this, &SpecificWorker::reset_time );
+
+    // visor
+    viewer = new AbstractGraphicViewer(this->frame, QRectF(-5000, 2500, 10000, -5000));
+    robot_polygon = viewer->add_robot(ROBOT_LENGTH);
+
+    // grid
+    fm.initialize(QRectF(-5000, 2500, 10000, -5000), 200, &viewer->scene, false);
+
+    connect(pushButton, &QPushButton::clicked, this, &SpecificWorker::reset_time );
 
 	this->Period = period;
 	timer.start(Period);
@@ -59,8 +65,10 @@ void SpecificWorker::compute()
     try
     {
         differentialrobot_proxy->getBaseState(bState);
-        auto current = fm.addStep(bState.x, bState.z, bState.alpha);
-        lcdNumber_percent->display(current);
+        robot_polygon->setRotation(bState.alpha*180/M_PI);
+        robot_polygon->setPos(bState.x, bState.z);
+        fm.setVisited(fm.pointToGrid(bState.x, bState.z), true);
+        lcdNumber_percent->display(100.0 * fm.count_total_visited() / fm.count_total());
         lcdNumber_time->display(COUNT_DOWN - time.elapsed()/1000);
 
     }
@@ -73,7 +81,7 @@ void SpecificWorker::compute()
 void SpecificWorker::reset_time()
 {
     time.restart();
-
+    fm.set_all_to_not_visited();
 }
 
 
