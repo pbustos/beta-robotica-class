@@ -48,10 +48,10 @@ RM = /usr/bin/cmake -E remove -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/alumno/robocomp/components/beta-robotica-class/pyrep/giraff
+CMAKE_SOURCE_DIR = /home/pbustos/robocomp/components/beta-robotica-class/pyrep/giraff
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/alumno/robocomp/components/beta-robotica-class/pyrep/giraff
+CMAKE_BINARY_DIR = /home/pbustos/robocomp/components/beta-robotica-class/pyrep/giraff
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -69,8 +69,8 @@ rebuild_cache/fast: rebuild_cache
 
 # Special rule for the target edit_cache
 edit_cache:
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "No interactive CMake dialog available..."
-	/usr/bin/cmake -E echo No\ interactive\ CMake\ dialog\ available.
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Running CMake cache editor..."
+	/usr/bin/cmake-gui -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR)
 .PHONY : edit_cache
 
 # Special rule for the target edit_cache
@@ -80,9 +80,9 @@ edit_cache/fast: edit_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/alumno/robocomp/components/beta-robotica-class/pyrep/giraff/CMakeFiles /home/alumno/robocomp/components/beta-robotica-class/pyrep/giraff/CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/beta-robotica-class/pyrep/giraff/CMakeFiles /home/pbustos/robocomp/components/beta-robotica-class/pyrep/giraff/CMakeFiles/progress.marks
 	$(MAKE) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/alumno/robocomp/components/beta-robotica-class/pyrep/giraff/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/beta-robotica-class/pyrep/giraff/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
@@ -111,17 +111,17 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named ICES__home_alumno_robocomp_components_beta-robotica-class_pyrep_giraff_src
+# Target rules for targets named ICES__home_pbustos_robocomp_components_beta-robotica-class_pyrep_giraff_src
 
 # Build rule for target.
-ICES__home_alumno_robocomp_components_beta-robotica-class_pyrep_giraff_src: cmake_check_build_system
-	$(MAKE) -f CMakeFiles/Makefile2 ICES__home_alumno_robocomp_components_beta-robotica-class_pyrep_giraff_src
-.PHONY : ICES__home_alumno_robocomp_components_beta-robotica-class_pyrep_giraff_src
+ICES__home_pbustos_robocomp_components_beta-robotica-class_pyrep_giraff_src: cmake_check_build_system
+	$(MAKE) -f CMakeFiles/Makefile2 ICES__home_pbustos_robocomp_components_beta-robotica-class_pyrep_giraff_src
+.PHONY : ICES__home_pbustos_robocomp_components_beta-robotica-class_pyrep_giraff_src
 
 # fast build rule for target.
-ICES__home_alumno_robocomp_components_beta-robotica-class_pyrep_giraff_src/fast:
-	$(MAKE) -f src/CMakeFiles/ICES__home_alumno_robocomp_components_beta-robotica-class_pyrep_giraff_src.dir/build.make src/CMakeFiles/ICES__home_alumno_robocomp_components_beta-robotica-class_pyrep_giraff_src.dir/build
-.PHONY : ICES__home_alumno_robocomp_components_beta-robotica-class_pyrep_giraff_src/fast
+ICES__home_pbustos_robocomp_components_beta-robotica-class_pyrep_giraff_src/fast:
+	$(MAKE) -f src/CMakeFiles/ICES__home_pbustos_robocomp_components_beta-robotica-class_pyrep_giraff_src.dir/build.make src/CMakeFiles/ICES__home_pbustos_robocomp_components_beta-robotica-class_pyrep_giraff_src.dir/build
+.PHONY : ICES__home_pbustos_robocomp_components_beta-robotica-class_pyrep_giraff_src/fast
 
 # Help Target
 help:
@@ -131,7 +131,7 @@ help:
 	@echo "... depend"
 	@echo "... rebuild_cache"
 	@echo "... edit_cache"
-	@echo "... ICES__home_alumno_robocomp_components_beta-robotica-class_pyrep_giraff_src"
+	@echo "... ICES__home_pbustos_robocomp_components_beta-robotica-class_pyrep_giraff_src"
 .PHONY : help
 
 

@@ -141,10 +141,6 @@ if __name__ == '__main__':
     adapter.add(fullposeestimationI.FullPoseEstimationI(worker), ic.stringToIdentity('fullposeestimation'))
     adapter.activate()
 
-    adapter = ic.createObjectAdapter('Ultrasound')
-    adapter.add(ultrasoundI.UltrasoundI(worker), ic.stringToIdentity('ultrasound'))
-    adapter.activate()
-
     adapter = ic.createObjectAdapter('BatteryStatus')
     adapter.add(batterystatusI.BatteryStatusI(worker), ic.stringToIdentity('batterystatus'))
     adapter.activate()

@@ -371,7 +371,7 @@ class SpecificWorker(GenericWorker):
             raise e
 
     ##############################################
-    ## Omnibase
+    ## Differentialbase
     #############################################
 
     #
