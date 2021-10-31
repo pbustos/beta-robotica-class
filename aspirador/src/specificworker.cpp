@@ -57,6 +57,7 @@ void SpecificWorker::initialize(int period)
 	this->Period = period;
 	timer.start(Period);
 
+    std::cout << "Worker Initialized" << std::endl;
 }
 
 void SpecificWorker::compute()

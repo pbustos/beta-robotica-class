@@ -1,0 +1,20 @@
+# Sources set
+SET ( SOURCES
+  specificworker.cpp
+  specificmonitor.cpp
+  $ENV{ROBOCOMP}/classes/abstract_graphic_viewer/abstract_graphic_viewer.h
+  /home/robocomp/robocomp/classes/grid2d/grid.cpp
+)
+
+# Headers set
+SET ( HEADERS
+  specificworker.h
+  specificmonitor.h
+  $ENV{ROBOCOMP}/classes/grid2d/grid.h
+)
+
+add_definitions(-O3 -march=native  -fmax-errors=5 )
+SET (LIBS ${LIBS}  )
+
+
+SET (LIBS ${LIBS} tbb )
