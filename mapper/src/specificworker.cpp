@@ -75,12 +75,11 @@ void SpecificWorker::compute()
     static std::random_device rd;
     static std::mt19937 mt(rd());
     static std::uniform_real_distribution<double> noise(-0.01, 0.01);
-
+    //r_state.rz += noise(mt);    // add  noise
     //robot
     try
     {
         r_state = fullposeestimation_proxy->getFullPoseEuler();
-        r_state.rz += noise(mt);    // add  noise
         robot_polygon->setRotation(r_state.rz*180/M_PI);
         robot_polygon->setPos(r_state.x, r_state.y);
     }
@@ -104,7 +103,7 @@ void SpecificWorker::fit_rectangle()
     // create the SX expresión
     // create the opt problem
     // solve
-    // draw the rectangle 
+    // draw the rectangle
 
 }
 

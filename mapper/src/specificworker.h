@@ -61,7 +61,7 @@ private:
     const int MAX_LASER_RANGE = 4000;
 
     // grid
-    int TILE_SIZE = 100;
+    int TILE_SIZE = 50;
     QRectF dimensions;
     Grid grid;
 
