@@ -1,12 +1,14 @@
 import "DifferentialRobot.idsl";
 import "Laser.idsl";
 import "FullPoseEstimation.idsl";
+import "RoomDetection.idsl";
+
 
 Component mapper
 {
     Communications
     {
-        requires Laser, DifferentialRobot, FullPoseEstimation;
+        requires Laser, DifferentialRobot, FullPoseEstimation, RoomDetection;
     };
     language Cpp11;
     gui Qt(QWidget);

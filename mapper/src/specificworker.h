@@ -71,6 +71,19 @@ private:
     // random
 
     void fit_rectangle();
+
+    // target
+    struct Target
+    {
+        QPointF pos;
+        bool active=false;
+    };
+    Target target;
+
+    void check_free_path_to_target(const RoboCompLaser::TLaserData &ldata,
+                                   const Eigen::Vector2f &goal);
+
+    Eigen::Vector2f from_world_to_robot(const Eigen::Vector2f &p);
 };
 
 #endif

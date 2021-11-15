@@ -92,12 +92,83 @@ void SpecificWorker::compute()
         RoboCompLaser::TLaserData ldata(ldata_raw.begin()+3, ldata_raw.end()-3);
         draw_laser( ldata );
         update_map(ldata);
+        if(target.active)
+        {
+            check_free_path_to_target(ldata, Eigen::Vector2f(target.pos.x(), target.pos.y()));
+            // target.active = false;
+        }
+    }
+    catch(const Ice::Exception &e){ std::cout << e.what() << std::endl;}
+
+    //laser
+    try
+    {
+      RoboCompRoomDetection::ListOfPoints points;
+      // get points from grid
+      
+      roomdetection_proxy->detectRoom(points);
     }
     catch(const Ice::Exception &e){ std::cout << e.what() << std::endl;}
 
 }
 
 ///////////////////////////////////////////////////////////////////////
+void SpecificWorker::check_free_path_to_target( const RoboCompLaser::TLaserData &ldata,
+                                                const Eigen::Vector2f &goal)
+{
+    // lambda to convert from Eigen to QPointF
+    auto toQPointF = [](const Eigen::Vector2f &p){ return QPointF(p.x(),p.y());};
+
+    // create polyggon
+    QPolygonF pol;
+    pol << QPointF(0,0);
+    for(const auto &l: ldata)
+        pol << QPointF(l.dist*sin(l.angle), l.dist*cos(l.angle));
+
+    // create tube lines
+    auto goal_r = from_world_to_robot(goal);
+    Eigen::Vector2f robot(0.0,0.0);
+    // number of parts the target vector is divided into
+    float parts = (goal_r).norm()/(ROBOT_LENGTH/4);
+    Eigen::Vector2f rside(220, 200);
+    Eigen::Vector2f lside(-220, 200);
+    if(parts < 1) return;
+
+    QPointF p,q, r;
+    for(auto l: iter::range(0.0, 1.0, 1.0/parts))
+    {
+        p = toQPointF(robot*(1-l) + goal_r*l);
+        q = toQPointF((robot+rside)*(1-l) + (goal_r+rside)*l);
+        r = toQPointF((robot+lside)*(1-l) + (goal_r+lside)*l);
+        if( not pol.containsPoint(p, Qt::OddEvenFill) or
+            not pol.containsPoint(q, Qt::OddEvenFill) or
+            not pol.containsPoint(r, Qt::OddEvenFill))
+            break;
+    }
+
+    // draw
+    QLineF line_center(toQPointF(from_robot_to_world(robot)), toQPointF(from_robot_to_world(Eigen::Vector2f(p.x(),p.y()))));
+    QLineF line_right(toQPointF(from_robot_to_world(robot+rside)), toQPointF(from_robot_to_world(Eigen::Vector2f(q.x(),q.y()))));
+    QLineF line_left(toQPointF(from_robot_to_world(robot+lside)), toQPointF(from_robot_to_world(Eigen::Vector2f(r.x(),q.y()))));
+    static QGraphicsItem *graphics_line_center = nullptr;
+    static QGraphicsItem *graphics_line_right = nullptr;
+    static QGraphicsItem *graphics_line_left = nullptr;
+    static QGraphicsItem *graphics_target = nullptr;
+    if (graphics_line_center != nullptr)
+        viewer->scene.removeItem(graphics_line_center);
+    if (graphics_line_right != nullptr)
+        viewer->scene.removeItem(graphics_line_right);
+    if (graphics_line_left != nullptr)
+        viewer->scene.removeItem(graphics_line_left);
+    if (graphics_target != nullptr)
+        viewer->scene.removeItem(graphics_target);
+    graphics_line_center = viewer->scene.addLine(line_center, QPen(QColor("Blue"), 30));
+    graphics_line_right = viewer->scene.addLine(line_right, QPen(QColor("Orange"), 30));
+    graphics_line_left = viewer->scene.addLine(line_left, QPen(QColor("Magenta"), 30));
+    graphics_target = viewer->scene.addEllipse(-100, -100, 200, 200, QPen(QColor("Blue")), QBrush(QColor("Blue")));
+    graphics_target->setPos(goal.x(), goal.y());
+}
+
 void SpecificWorker::fit_rectangle()
 {
     // create the SX expresión
@@ -129,12 +200,17 @@ void SpecificWorker::update_map(const RoboCompLaser::TLaserData &ldata)
         }
     }
 }
-
 Eigen::Vector2f SpecificWorker::from_robot_to_world(const Eigen::Vector2f &p)
 {
     Eigen::Matrix2f matrix;
     matrix << cos(r_state.rz) , -sin(r_state.rz) , sin(r_state.rz) , cos(r_state.rz);
     return (matrix * p) + Eigen::Vector2f(r_state.x, r_state.y);
+}
+Eigen::Vector2f SpecificWorker::from_world_to_robot(const Eigen::Vector2f &p)
+{
+    Eigen::Matrix2f matrix;
+    matrix << cos(r_state.rz) , -sin(r_state.rz) , sin(r_state.rz) , cos(r_state.rz);
+    return (matrix.transpose() * (p - Eigen::Vector2f(r_state.x, r_state.y)));
 }
 void SpecificWorker::draw_laser(const RoboCompLaser::TLaserData &ldata) // robot coordinates
 {
@@ -153,9 +229,11 @@ void SpecificWorker::draw_laser(const RoboCompLaser::TLaserData &ldata) // robot
     laser_polygon = viewer->scene.addPolygon(laser_in_robot_polygon->mapToScene(poly), QPen(QColor("DarkGreen"), 30), QBrush(color));
     laser_polygon->setZValue(3);
 }
-void SpecificWorker::new_target_slot(QPointF target)
+void SpecificWorker::new_target_slot(QPointF t)
 {
-    qInfo() << __FUNCTION__ << " Received new target at " << target;
+    qInfo() << __FUNCTION__ << " Received new target at " << t;
+    target.pos = t;
+    target.active = true;
 }
 
 /////////////////////////////////////////////////////////
@@ -165,9 +243,6 @@ int SpecificWorker::startup_check()
 	QTimer::singleShot(200, qApp, SLOT(quit()));
 	return 0;
 }
-
-
-
 
 /**************************************/
 // From the RoboCompDifferentialRobot you can call this methods:

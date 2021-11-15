@@ -35,13 +35,14 @@
 #include <FullPoseEstimation.h>
 #include <GenericBase.h>
 #include <Laser.h>
+#include <RoomDetection.h>
 
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
 
 
-using TuplePrx = std::tuple<RoboCompDifferentialRobot::DifferentialRobotPrxPtr,RoboCompFullPoseEstimation::FullPoseEstimationPrxPtr,RoboCompLaser::LaserPrxPtr>;
+using TuplePrx = std::tuple<RoboCompDifferentialRobot::DifferentialRobotPrxPtr,RoboCompFullPoseEstimation::FullPoseEstimationPrxPtr,RoboCompLaser::LaserPrxPtr,RoboCompRoomDetection::RoomDetectionPrxPtr>;
 
 
 class GenericWorker : public QWidget, public Ui_guiDlg
@@ -60,6 +61,7 @@ public:
 	RoboCompDifferentialRobot::DifferentialRobotPrxPtr differentialrobot_proxy;
 	RoboCompFullPoseEstimation::FullPoseEstimationPrxPtr fullposeestimation_proxy;
 	RoboCompLaser::LaserPrxPtr laser_proxy;
+	RoboCompRoomDetection::RoomDetectionPrxPtr roomdetection_proxy;
 
 
 protected:
