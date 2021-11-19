@@ -4,6 +4,7 @@ CommonBehavior.Endpoints=tcp -p 10000
 DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
 LaserProxy = laser:tcp -h localhost -p 10003
 FullPoseEstimationProxy = fullposeestimation:tcp -h localhost -p 10696
+RoomDetectionProxy = roomdetection:tcp -h localhost -p  18046
 
 
 InnerModelPath = innermodel.xml

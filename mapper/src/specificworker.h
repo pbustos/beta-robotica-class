@@ -50,12 +50,28 @@ private:
 	bool startup_check_flag;
     AbstractGraphicViewer *viewer;
 
+    struct Constants
+    {
+        const float max_advance_speed = 800;
+        const float tile_size = 100;
+        const float max_laser_range = 4000;
+        float current_rot_speed = 0;
+        float current_adv_speed = 0;
+        float robot_length = 450;
+        const float robot_semi_length = robot_length/2.0;
+    };
+    Constants constants;
+
     //robot
     const int ROBOT_LENGTH = 400;
     QGraphicsPolygonItem *robot_polygon;
     QGraphicsRectItem *laser_in_robot_polygon;
     void draw_laser(const RoboCompLaser::TLaserData &ldata);
     RoboCompFullPoseEstimation::FullPoseEuler r_state;
+
+    // state machine
+    enum class State {IDLE, INIT_TURN, TURN, ESTIMATE};
+    State state = State::IDLE;
 
     // laser
     const int MAX_LASER_RANGE = 4000;
@@ -67,16 +83,15 @@ private:
 
     void update_map(const RoboCompLaser::TLaserData &ldata);
     Eigen::Vector2f from_robot_to_world(const Eigen::Vector2f &p);
-
-    // random
-
     void fit_rectangle();
 
     // target
     struct Target
     {
+        bool active = false;
         QPointF pos;
-        bool active=false;
+        Eigen::Vector2f to_eigen() const {return Eigen::Vector2f(pos.x(), pos.y());}
+        QGraphicsEllipseItem *draw = nullptr;
     };
     Target target;
 

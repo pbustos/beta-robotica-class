@@ -92,24 +92,55 @@ void SpecificWorker::compute()
         RoboCompLaser::TLaserData ldata(ldata_raw.begin()+3, ldata_raw.end()-3);
         draw_laser( ldata );
         update_map(ldata);
-        if(target.active)
-        {
-            check_free_path_to_target(ldata, Eigen::Vector2f(target.pos.x(), target.pos.y()));
-            // target.active = false;
-        }
     }
     catch(const Ice::Exception &e){ std::cout << e.what() << std::endl;}
 
-    //laser
-    try
+
+    static float initial_angle;
+    switch (state)
     {
-      RoboCompRoomDetection::ListOfPoints points;
-      // get points from grid
-      
-      roomdetection_proxy->detectRoom(points);
+        case State::IDLE:
+            qInfo() << __FUNCTION__ << "IDLE";
+            state = State::INIT_TURN;
+            break;
+        case State::INIT_TURN:
+            initial_angle = (r_state.rz<0) ? (2*M_PI+r_state.rz) : r_state.rz;
+            try{ differentialrobot_proxy->setSpeedBase(0.0, 0.4);}
+            catch(const Ice::Exception &e){ std::cout << e.what() << std::endl;}
+            state = State::TURN;
+            break;
+        case State::TURN:
+        {
+            float current = (r_state.rz < 0) ? (2 * M_PI + r_state.rz) : r_state.rz;
+            if (fabs(current - initial_angle) < (M_PI+0.1) and fabs(current - initial_angle) > (M_PI-0.1))
+            {
+                try
+                { differentialrobot_proxy->setSpeedBase(0.0, 0.0); }
+                catch (const Ice::Exception &e)
+                { std::cout << e.what() << std::endl; }
+                state = State::ESTIMATE;
+            }
+            break;
+        }
+        case State::ESTIMATE:
+            try
+            {
+              RoboCompRoomDetection::ListOfPoints points;
+              // get points from grid
+              for(const auto &[key, val] : grid)
+                if(not val.free)
+                    points.emplace_back(RoboCompRoomDetection::Corner{(int)key.x,(int)key.z});
+              qInfo() << __FUNCTION__ << "ESTIMATING...";
+              RoboCompRoomDetection::Rooms rooms = roomdetection_proxy->detectRoom(points);
+              qInfo() << __FUNCTION__ << rooms.size();
+              for(const auto &r: rooms)
+                //viewer->scene.addRect( QRectF(r[0].x, r[0].y, QPen(QColor("DarkGreen"), 30));
+                  qInfo() << r[0].x << r[0].y << r[1].x << r[1].y << r[2].x << r[2].y << r[3].x << r[3].y;
+              state = State::IDLE;
+            }
+            catch(const Ice::Exception &e){ std::cout << e.what() << std::endl;}
+            break;
     }
-    catch(const Ice::Exception &e){ std::cout << e.what() << std::endl;}
-
 }
 
 ///////////////////////////////////////////////////////////////////////
@@ -168,7 +199,6 @@ void SpecificWorker::check_free_path_to_target( const RoboCompLaser::TLaserData 
     graphics_target = viewer->scene.addEllipse(-100, -100, 200, 200, QPen(QColor("Blue")), QBrush(QColor("Blue")));
     graphics_target->setPos(goal.x(), goal.y());
 }
-
 void SpecificWorker::fit_rectangle()
 {
     // create the SX expresión
@@ -177,26 +207,36 @@ void SpecificWorker::fit_rectangle()
     // draw the rectangle
 
 }
-
 void SpecificWorker::update_map(const RoboCompLaser::TLaserData &ldata)
 {
+    // grid
     Eigen::Vector2f lw;
     for(const auto &l : ldata)
     {
-        if(l.dist < MAX_LASER_RANGE and l.dist > ROBOT_LENGTH/2.0)
+        if(l.dist > constants.robot_semi_length)
         {
-            //Eigen::Vector2f tip(l.dist*sin(l.angle), l.dist*cos(l.angle));
-            QLineF line(0.f, 0.f, l.dist*sin(l.angle), l.dist*cos(l.angle));
-            //Eigen::ParametrizedLine<float,2> line(Eigen::Vector2f(0.0, 0.0), tip);
-            float delta = 1.0 / (line.length()/TILE_SIZE/2);
-            for(const auto t : iter::range(0.f, 1-delta, delta))
+            Eigen::Vector2f tip(l.dist*sin(l.angle), l.dist*cos(l.angle));
+            Eigen::Vector2f p = from_robot_to_world(tip);
+            int target_kx = (p.x() - grid.dim.left()) / grid.TILE_SIZE;
+            int target_kz = (p.y() - grid.dim.bottom()) / grid.TILE_SIZE;
+            int last_kx = -1000000;
+            int last_kz = -1000000;
+
+            int num_steps = ceil(l.dist/(constants.tile_size/2.0));
+            for(const auto &&step : iter::range(0.0, 1.0-(1.0/num_steps), 1.0/num_steps))
             {
-                const auto p = line.pointAt(t);
-                //std::cout << t << "[ " << p.x() << ", " << p.y() << "]" << std::endl;
-                lw = from_robot_to_world(Eigen::Vector2f(p.x(), p.y()));
-                grid.add_miss(lw);
+                Eigen::Vector2f p = from_robot_to_world(tip*step);
+                int kx = (p.x() - grid.dim.left()) / grid.TILE_SIZE;
+                int kz = (p.y() - grid.dim.bottom()) / grid.TILE_SIZE;
+                if(kx != last_kx and kx != target_kx and kz != last_kz and kz != target_kz)
+                    grid.add_miss(from_robot_to_world(tip * step));
+                last_kx = kx;
+                last_kz = kz;
             }
-            grid.add_hit(lw);
+            if(l.dist <= constants.max_laser_range)
+                grid.add_hit(from_robot_to_world(tip));
+            // else
+            //     grid.add_miss(from_robot_to_world(tip));
         }
     }
 }
