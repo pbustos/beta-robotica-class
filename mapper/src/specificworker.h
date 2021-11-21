@@ -114,9 +114,27 @@ private:
         bool operator ==(const Door &d) { return ((d.p1-p1).norm() < diff and (d.p2-p2).norm() < diff) or
                                                  ((d.p1-p2).norm() < diff and (d.p2-p1).norm() < diff);};
         Eigen::Vector2f get_midpoint() const {return p1 + ((p2-p1)/2.0);};
+        Eigen::Vector2f get_external_midpoint() const
+        {
+            Eigen::ParametrizedLine<float, 2> r =  Eigen::ParametrizedLine<float, 2>(get_midpoint(), (p1-p2).unitOrthogonal());
+            qInfo() << __FUNCTION__ << r.pointAt(800.0).x() << r.pointAt(800.0).y();
+            return r.pointAt(1000.0);
+        };
+        std::optional<int> connecting_room(int inside_room) const
+        {
+            if( to_rooms.size() == 2 and to_rooms.find(inside_room) != to_rooms.end())
+            {
+                auto r = std::ranges::find_if_not(to_rooms, [inside_room](auto a) { return a == inside_room; });
+                return *r;
+            }
+            else
+                return {};
+        };
+
     };
     std::vector<Door> doors, selected_doors;
 
+    // thanks to https://github.com/CheckBoxStudio/IoU
     struct Room
     {
         IOU::Quad quad;

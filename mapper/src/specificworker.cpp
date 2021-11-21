@@ -206,6 +206,7 @@ void SpecificWorker::compute()
 
 
             auto max = std::ranges::max_element(rects, [](auto a, auto b) { return a.area() < b.area(); });
+            if(max == rects.end()) break;  // no rooms found
 
             // additional checks to make sure the rect explains most of the points around the robot.
             Room room(*max, current_room);
@@ -246,26 +247,38 @@ void SpecificWorker::compute()
         case State::GOTO_DOOR:
         {
             qInfo() << __FUNCTION__ << "GOTO_DOOR";
-            // pick center of door position
-            auto tr = from_world_to_robot(selected_doors.front().get_midpoint());
+            // pick a point 1 meter ahead of center of door position
+            auto tr = from_world_to_robot(selected_doors.front().get_external_midpoint());
             float dist = tr.norm();
             if(dist < 80)
             {
+                if( auto to_room_o = selected_doors.front().connecting_room(current_room); to_room_o.has_value())
+                    current_room = to_room_o.value();
+                else  //new room
+                    current_room = rooms.size();
+                qInfo() << __FUNCTION__ << "Leaving GOTO_DOOR, into room " << current_room;
                 state = State::GOTO_ROOM_CENTER;
                 break;
             }
-            float beta = atan2(tr.x(), tr.y());
+            float beta = 0.0;
+            if(dist>150)
+                beta = atan2(tr.x(), tr.y());
             float adv_break = std::clamp(constants.max_advance_speed/1000.0, 0.0, 1.0);
             float adv = constants.max_advance_speed * adv_break * gaussian(beta);
             qInfo() << __FUNCTION__ << "velocities " << adv << beta;
             // move
             try
-            { differentialrobot_proxy->setSpeedBase(0, beta); }
+            { differentialrobot_proxy->setSpeedBase(adv, beta); }
             catch (const Ice::Exception &e)
             { std::cout << e.what() << std::endl; }
+            break;
         }
         case State::GOTO_ROOM_CENTER:
         {
+            qInfo() << __FUNCTION__ << "GOTO_DOOR";
+            // if at room center goto INIT_TURN
+
+            // compute room center from laser area
             try
             { differentialrobot_proxy->setSpeedBase(0, 0); }
             catch (const Ice::Exception &e)
