@@ -4,6 +4,7 @@ SET ( SOURCES
   specificmonitor.cpp
   $ENV{ROBOCOMP}/classes/abstract_graphic_viewer/abstract_graphic_viewer.h
   /home/robocomp/robocomp/classes/grid2d/grid.cpp
+  IoU/src/iou.cpp
 )
 
 # Headers set

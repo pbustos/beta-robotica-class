@@ -31,6 +31,9 @@
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 #include <random>
+#include "IoU/src/iou.h"
+#include <cppitertools/zip_longest.hpp>
+
 
 class SpecificWorker : public GenericWorker
 {
@@ -68,9 +71,10 @@ private:
     QGraphicsRectItem *laser_in_robot_polygon;
     void draw_laser(const RoboCompLaser::TLaserData &ldata);
     RoboCompFullPoseEstimation::FullPoseEuler r_state;
+    float gaussian(float x);
 
     // state machine
-    enum class State {IDLE, INIT_TURN, TURN, ESTIMATE};
+    enum class State {IDLE, INIT_TURN, TURN, ESTIMATE, GOTO_DOOR, GOTO_ROOM_CENTER};
     State state = State::IDLE;
 
     // laser
@@ -99,6 +103,41 @@ private:
                                    const Eigen::Vector2f &goal);
 
     Eigen::Vector2f from_world_to_robot(const Eigen::Vector2f &p);
+
+    // doors
+    struct Door
+    {
+        Eigen::Vector2f p1,p2;
+        std::set<int> to_rooms;
+        const float diff = 400;
+        float width() const {return (p1-p2).norm();}
+        bool operator ==(const Door &d) { return ((d.p1-p1).norm() < diff and (d.p2-p2).norm() < diff) or
+                                                 ((d.p1-p2).norm() < diff and (d.p2-p1).norm() < diff);};
+        Eigen::Vector2f get_midpoint() const {return p1 + ((p2-p1)/2.0);};
+    };
+    std::vector<Door> doors, selected_doors;
+
+    struct Room
+    {
+        IOU::Quad quad;
+        int id;
+        IOU::Vertexes points;
+        const float diff = 300;
+        bool operator == (const Room &d)
+        {
+            double iou = IOU::iou(quad, d.quad);
+            return iou > 0.9;
+        }
+        Room(const IOU::Quad &quad_, int id_) : quad(quad_), id(id_)
+        {
+            quad.beInClockWise();
+            quad.getVertList(points);
+//            for(auto p:points)
+//                qInfo() << p.x << p.y;
+        };
+    };
+    std::vector<Room> rooms;
+
 };
 
 #endif
