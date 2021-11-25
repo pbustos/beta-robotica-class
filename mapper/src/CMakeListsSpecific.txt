@@ -5,6 +5,7 @@ SET ( SOURCES
   $ENV{ROBOCOMP}/classes/abstract_graphic_viewer/abstract_graphic_viewer.h
   /home/robocomp/robocomp/classes/grid2d/grid.cpp
   IoU/src/iou.cpp
+  dynamic_window.cpp
 )
 
 # Headers set

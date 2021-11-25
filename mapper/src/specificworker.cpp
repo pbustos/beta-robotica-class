@@ -104,6 +104,8 @@ void SpecificWorker::compute()
 
     static float initial_angle;
     static int current_room = 0;
+    static Eigen::Vector2f center_room_w;
+
     switch (state)
     {
         case State::IDLE:
@@ -114,7 +116,7 @@ void SpecificWorker::compute()
         case State::INIT_TURN:
             initial_angle = (r_state.rz < 0) ? (2 * M_PI + r_state.rz) : r_state.rz;
             try
-            { differentialrobot_proxy->setSpeedBase(0.0, 0.5); }
+            { differentialrobot_proxy->setSpeedBase(0.0, 0.3); }
             catch (const Ice::Exception &e)
             { std::cout << e.what() << std::endl; }
             state = State::TURN;
@@ -158,7 +160,7 @@ void SpecificWorker::compute()
             for (auto &&c: iter::combinations_with_replacement(peaks, 2))
             {
                 qInfo() << __FUNCTION__ << "dist " << (c[0] - c[1]).norm();
-                if ((c[0] - c[1]).norm() < 1100 and (c[0] - c[1]).norm() > 800)
+                if ((c[0] - c[1]).norm() < 1100 and (c[0] - c[1]).norm() > 600)
                 {
                     Door d{c[0], c[1]};
                     d.to_rooms.insert(current_room);
@@ -250,39 +252,77 @@ void SpecificWorker::compute()
             // pick a point 1 meter ahead of center of door position
             auto tr = from_world_to_robot(selected_doors.front().get_external_midpoint());
             float dist = tr.norm();
-            if(dist < 80)
+            if(dist < 100)
             {
+                try
+                { differentialrobot_proxy->setSpeedBase(0, 0); }
+                catch (const Ice::Exception &e)
+                { std::cout << e.what() << std::endl; }
                 if( auto to_room_o = selected_doors.front().connecting_room(current_room); to_room_o.has_value())
                     current_room = to_room_o.value();
                 else  //new room
                     current_room = rooms.size();
                 qInfo() << __FUNCTION__ << "Leaving GOTO_DOOR, into room " << current_room;
+                // center point for new room
+                float x = ldata.size()/2;
+                float d = x/4;
+                float laser_center = ldata[x].dist;
+                float izq = ldata[d].dist;
+                float der = ldata[ldata.size()-d].dist;
+                Eigen::Vector2f center_r ( (der-izq)/2, (-800 + laser_center)/2);
+                center_room_w = from_robot_to_world( center_r);
+                // draw
+                auto dest = viewer->scene.addEllipse(center_room_w.x()-100, center_room_w.y()-100, 200, 200, QPen(QColor("Magenta"), 50));
+                dest->setZValue(200);
+
+                qInfo() << __FUNCTION__ << "Center point " << center_room_w.x() << center_room_w.y();
                 state = State::GOTO_ROOM_CENTER;
                 break;
             }
-            float beta = 0.0;
-            if(dist>150)
-                beta = atan2(tr.x(), tr.y());
-            float adv_break = std::clamp(constants.max_advance_speed/1000.0, 0.0, 1.0);
-            float adv = constants.max_advance_speed * adv_break * gaussian(beta);
-            qInfo() << __FUNCTION__ << "velocities " << adv << beta;
-            // move
+            // call dynamic window
+            QPolygonF laser_poly;
+            for(auto &&l : ldata)
+                laser_poly << QPointF(l.dist*sin(l.angle), l.dist*cos(l.angle));
+            auto [_, __, adv, rot, ___] = dw.compute(tr, laser_poly,
+                                                       Eigen::Vector3f(r_state.x, r_state.y, r_state.rz),
+                                                       Eigen::Vector3f(r_state.vx, r_state.vy, r_state.vrz),
+                                                       &viewer->scene);
+            const float rgain = 0.8;
+            float rotation = rgain*rot;
+            float dist_break = std::clamp(from_world_to_robot(target.to_eigen()).norm() / 1000.0, 0.0, 1.0);
+            float advance = constants.max_advance_speed * dist_break * gaussian(rotation);
             try
-            { differentialrobot_proxy->setSpeedBase(adv, beta); }
+            { differentialrobot_proxy->setSpeedBase(advance, rotation); }
             catch (const Ice::Exception &e)
             { std::cout << e.what() << std::endl; }
             break;
         }
         case State::GOTO_ROOM_CENTER:
         {
-            qInfo() << __FUNCTION__ << "GOTO_DOOR";
+            qInfo() << __FUNCTION__ << "GOTO_ROOM_CENTER";
             // if at room center goto INIT_TURN
-
-            // compute room center from laser area
+            auto tr = from_world_to_robot(center_room_w);
+            float dist = tr.norm();
+            if(dist < 80)
+            {
+                try
+                { differentialrobot_proxy->setSpeedBase(0, 0); }
+                catch (const Ice::Exception &e)
+                { std::cout << e.what() << std::endl; }
+                //state = State::INIT_TURN;
+                qInfo() << "LLEGO -------------------------";
+                break;
+            }
+            float beta = 0.0;
+            if(dist>80)
+                beta = atan2(tr.x(), tr.y());
+            float adv_break = std::clamp(constants.max_advance_speed/1000.0, 0.0, 1.0);
+            float adv = constants.max_advance_speed * adv_break * gaussian(beta);
             try
-            { differentialrobot_proxy->setSpeedBase(0, 0); }
+            { differentialrobot_proxy->setSpeedBase(adv, beta); }
             catch (const Ice::Exception &e)
             { std::cout << e.what() << std::endl; }
+            break;
         }
     }
 }

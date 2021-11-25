@@ -33,6 +33,7 @@
 #include <random>
 #include "IoU/src/iou.h"
 #include <cppitertools/zip_longest.hpp>
+#include "dynamic_window.h"
 
 
 class SpecificWorker : public GenericWorker
@@ -156,6 +157,8 @@ private:
     };
     std::vector<Room> rooms;
 
+    // Dynanimc Window
+    Dynamic_Window dw;
 };
 
 #endif
