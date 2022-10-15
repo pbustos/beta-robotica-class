@@ -55,6 +55,11 @@ private:
     //robot
     const int ROBOT_LENGTH = 400;
     QGraphicsPolygonItem *robot_polygon;
+    int robot_id;
+    std::vector<QPointF> trail;
+    std::vector<QGraphicsItem *> items;
+    void draw_trail(const QPointF &new_point);
+
 };
 
 #endif

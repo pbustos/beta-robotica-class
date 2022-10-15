@@ -1,11 +1,10 @@
 CommonBehavior.Endpoints=tcp -p 11000
 
-
 # Proxies for required interfaces
-LaserProxy = laser:tcp -h localhost -p 10003
-DifferentialRobotProxy = differentialrobot:tcp -h localhost -p 10004
+DifferentialRobotMultiProxy = differentialrobotmulti:tcp -h localhost -p 10007
 
 max_time=180
+robot_id=2
 
 Ice.Warn.Connections=0
 Ice.Trace.Network=0

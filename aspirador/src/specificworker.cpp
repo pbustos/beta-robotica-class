@@ -36,7 +36,12 @@ SpecificWorker::~SpecificWorker()
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
-    COUNT_DOWN = stoi(params["max_time"].value);
+    try
+    {
+        COUNT_DOWN = stoi(params.at("max_time").value);
+        robot_id = stoi(params.at("robot_id").value);
+    }
+    catch(const std::exception &e) {std::cout << e.what() << " Error reading params. Aborting" << std::endl; std::terminate();}
     return true;
 }
 
@@ -47,11 +52,11 @@ void SpecificWorker::initialize(int period)
 
     // visor
     viewer = new AbstractGraphicViewer(this->frame, QRectF(-5000, 2500, 10000, -5000));
-    robot_polygon = viewer->add_robot(ROBOT_LENGTH);
+    auto [rp, rl] = viewer->add_robot(ROBOT_LENGTH, ROBOT_LENGTH);
+    robot_polygon = rp;
 
     // grid
-    fm.initialize(QRectF(-5000, 2500, 10000, -5000), 400, &viewer->scene, false);
-
+    fm.initialize(QRectF(-5000, -2500, 10000, 5000), 300, &viewer->scene, false);
     connect(pushButton, &QPushButton::clicked, this, &SpecificWorker::reset_time );
 
 	this->Period = period;
@@ -63,26 +68,29 @@ void SpecificWorker::initialize(int period)
 void SpecificWorker::compute()
 {
     RoboCompGenericBase::TBaseState bState;
-    try
-    {
-        differentialrobot_proxy->getBaseState(bState);
-        robot_polygon->setRotation(bState.alpha*180/M_PI);
-        robot_polygon->setPos(bState.x, bState.z);
-        fm.setVisited(fm.pointToGrid(bState.x, bState.z), true);
-        lcdNumber_percent->display(100.0 * fm.count_total_visited() / fm.count_total());
-        lcdNumber_time->display(COUNT_DOWN - time.elapsed()/1000);
+    try{ differentialrobotmulti_proxy->getBaseState(robot_id, bState); }
+    catch(const Ice::Exception &ex){std::cout << ex << std::endl; return;}
 
-    }
-    catch(const Ice::Exception &ex)
-    {
-	    std::cout << ex << std::endl;
-    }
+    static QPointF last_point(bState.x, bState.z);
+
+    robot_polygon->setRotation(bState.alpha*180/M_PI);
+    robot_polygon->setPos(bState.x, bState.z);
+    fm.setVisited(fm.pointToKey((long int)bState.x, (long int)bState.z), true);
+    lcdNumber_percent->display(100.0 * fm.count_total_visited() / fm.count_total());
+    lcdNumber_time->display(COUNT_DOWN - time.elapsed()/1000);
+    items.push_back(viewer->scene.addLine(last_point.x(), last_point.y(), bState.x, bState.z, QPen(QColor("blue"), 20)));
+    last_point = QPointF(bState.x, bState.z);
 }
 
 void SpecificWorker::reset_time()
 {
     time.restart();
     fm.set_all_to_not_visited();
+    trail.clear();
+    for(const auto &i: items)
+        viewer->scene.removeItem(i);
+    items.clear();
+
 }
 
 

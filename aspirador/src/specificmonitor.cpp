@@ -90,6 +90,9 @@ void SpecificMonitor::readConfig(RoboCompCommonBehavior::ParameterList &params )
 	aux.editable = true;
 	configGetString( "","max_time", aux.value, "180");
 	params["max_time"] = aux;
+
+    configGetString( "","robot_id", aux.value, "0");
+    params["robot_id"] = aux;
 }
 
 //Check parameters and transform them to worker structure

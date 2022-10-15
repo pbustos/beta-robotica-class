@@ -1,11 +1,10 @@
-import "DifferentialRobot.idsl";
-import "Laser.idsl";
+import "DifferentialRobotMulti.idsl";
 
 Component aspirador
 {
 	Communications
 	{
-		requires DifferentialRobot, Laser;
+		requires DifferentialRobotMulti;
 	};
 	language Cpp11;
 	gui Qt(QWidget);
