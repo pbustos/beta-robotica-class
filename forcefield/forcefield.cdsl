@@ -1,0 +1,17 @@
+import "CameraRGBDSimple.idsl";
+import "JoystickAdapter.idsl";
+import "OmniRobot.idsl";
+import "YoloObjects.idsl";
+import "JointMotorSimple.idsl";
+
+Component forcefield
+{
+    Communications
+    {
+        requires CameraRGBDSimple, OmniRobot, YoloObjects, JointMotorSimple;
+        subscribesTo JoystickAdapter;
+    };
+    language Cpp11;
+    gui Qt(QWidget);
+};
+
