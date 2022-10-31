@@ -51,19 +51,45 @@ class SpecificWorker : public GenericWorker
         void initialize(int period);
 
     private:
+    struct Robot
+    {
+        float current_adv_speed = 0;
+        float current_rot_speed = 0;
+        float width = 450;
+        float length = 450;
+        float semi_width =  width/2;
+        const float camera_tilt_angle = 0.35;  //  20º
+        float camera_pan_angle = 0.f;
+        RoboCompYoloObjects::TBox target;
+        bool no_target = true;
+    };
+    Robot robot;
     struct Constants
     {
         bool IS_COPPELIA = true;
         const float max_camera_depth_range = 5000;
         const float min_camera_depth_range = 300;
         const float omni_camera_height = 580; //mm
+        const float omni_camera_y_offset = 120; //mm
+        const float omni_camera_x_offset = 0; //mm
         const float top_camera_height = 1555; //mm
-        float robot_length = 500;
+        const float top_camera_y_offset = -40; //mm
         float num_angular_bins = 360;
         float coppelia_depth_scaling_factor = 19.f;
         float dreamvu_depth_scaling_factor = 10.f;
         const float max_hor_angle_error = 0.6; // rads
         const float yolo_threshold = 0.5;
+        const float depth_lines_max_height = 1550;
+        const float depth_lines_min_height = 350;
+        const float depth_lines_step = 100;
+        const float min_dist_from_robot_center = 300; //mm
+        const float max_distance_for_repulsion = 1500; // mm. Distance beyond which repulsion vanishes. It follows an inverse law with current robot speed
+        const float speed_for_max_repulsion = 1000;
+        float dynamic_threshold = max_distance_for_repulsion/(speed_for_max_repulsion*speed_for_max_repulsion);
+        float nu = 0.05f;
+        float quadratic_dynamic_threshold_coefficient = max_distance_for_repulsion / (speed_for_max_repulsion * speed_for_max_repulsion);
+        const float min_similarity_iou_threshold = 0.5;
+        const float min_dist_to_target = 500; //mm
     };
     Constants consts;
     float current_servo_angle = 0.f;
@@ -84,14 +110,26 @@ class SpecificWorker : public GenericWorker
     // draw
     void draw_floor_line(const vector<vector<Eigen::Vector2f>> &lines, int i=1);
     void draw_forces(const Eigen::Vector2f &force, const Eigen::Vector2f &target, const Eigen::Vector2f &res);
+    void draw_objects_on_2dview(RoboCompYoloObjects::TObjects objects, const RoboCompYoloObjects::TBox &selected);
+    void draw_dynamic_threshold(float threshold);
+    void draw_top_camera_optic_ray();
 
     // objects
     RoboCompYoloObjects::TObjectNames yolo_object_names;
     Eigen::MatrixX3f COLORS;
 
-    void draw_objects_on_2dview(RoboCompYoloObjects::TObjects objects, const RoboCompYoloObjects::TBox &selected);
+    // joy
+    void set_target_force(const Eigen::Vector2f &vec);
+    Eigen::Vector2f target_force{0.f, 0.f};
 
-    cv::Mat read_depth(const string &camera_name);
+    // state machine
+    Eigen::Vector2f state_machine(const RoboCompYoloObjects::TObjects &objects);
+    enum class State {IDLE, SEARCHING, APPROACHING};
+    State state = State::IDLE;
+    Eigen::Vector2f search_state(const RoboCompYoloObjects::TObjects &objects);
+    Eigen::Vector2f approach_state(const RoboCompYoloObjects::TObjects &objects);
+
+    float iou(const RoboCompYoloObjects::TBox &a, const RoboCompYoloObjects::TBox &b);
 
 };
 
