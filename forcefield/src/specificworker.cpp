@@ -194,7 +194,7 @@ void SpecificWorker::compute()
     RoboCompYoloObjects::TObjects objects = yolo_detect_objects(top_rgb_frame);
 
     /// draw top image
-    //cv::imshow("top", top_rgb_frame); cv::waitKey(1);
+    cv::imshow("top", top_rgb_frame); cv::waitKey(1);
 
     /// draw yolo_objects on 2D view
     draw_objects_on_2dview(objects, RoboCompYoloObjects::TBox());
@@ -202,22 +202,33 @@ void SpecificWorker::compute()
     // state machine to activate basic behaviours
     // states: IDLE, SEARCHING, APPROACHING
     // return a  target_force vector
-    target_force = state_machine(objects);
+    target_force = state_machine(objects, current_line);
 
     /// eye tracking: tracks  current selected object or  IOR if none
-    // eye_track(active_leader, leader);
+    eye_track(robot.has_target, robot.target);
     draw_top_camera_optic_ray();
 
     /// potential field algorithm
-    Eigen::Vector2f rep_force = compute_repulsion_forces(current_line);
-    draw_dynamic_threshold(consts.dynamic_threshold);
+    //Eigen::Vector2f rep_force = compute_repulsion_forces(current_line);
+    //draw_dynamic_threshold(consts.dynamic_threshold);
 
     /// compose with target
-    Eigen::Vector2f force = rep_force  + target_force; // comes from joystick
-    draw_forces(rep_force, target_force, force); // in robot coordinate system
+    //if(target_force.norm() > 1000.f) target_force = target_force.normalized()*1000.f;
+    //Eigen::Vector2f force = rep_force  /*+ target_force*/; // comes from joystick
+    //    if(fabs(rep_force.norm() - target_force.norm()) < consts.forces_similarity_threshold)  // probable deadlock. Move sideways
+    //    {
+    //        qInfo() << __FUNCTION__  << "-------------------------- SIDE FORCE";
+    //        Eigen::Rotation2Df rot(M_PI_2);
+    //        force += (rot * target_force.normalized()) * 1000;
+    //    }
+    //draw_forces(rep_force, target_force, force); // in robot coordinate system
 
+    auto [adv, rot, side] =  dwa.update(target_force, current_line, robot.current_adv_speed, robot.current_rot_speed, viewer);
+    //qInfo() << __FUNCTION__ << adv <<  side << rot;
+    try{ omnirobot_proxy->setSpeedBase(side, adv, rot); }
+    catch(const Ice::Exception &e){ std::cout << e.what() << "Error connecting to omnirobot" << std::endl;}
     // execute move commands
-    move_robot(force);
+    //move_robot(force);
 }
 
 //////////////////// BASIC REPULSION LOOP. EVERYTHING GOES ON TOP OF THIS/////////////////////////////////////////////////
@@ -277,7 +288,13 @@ RoboCompYoloObjects::TObjects SpecificWorker::yolo_detect_objects(cv::Mat rgb)
     { yolo_objects = yoloobjects_proxy->getYoloObjects(); }
     catch(const Ice::Exception &e){ std::cout << e.what() << std::endl; return objects;}
 
-    //Eigen::Vector2f target_force = {0.f, 0.f};
+    // remove unwanted types
+    yolo_objects.objects.erase(std::remove_if(yolo_objects.objects.begin(), yolo_objects.objects.end(), [names = yolo_object_names](auto p)
+    { return names[p.type] == "toilet"
+             or names[p.type] == "cup"
+             or names[p.type] == "trafficlight"
+             or names[p.type] == "bench"; }), yolo_objects.objects.end());
+
     for(auto &&o: yolo_objects.objects | iter::filter([th = consts.yolo_threshold](auto &o){return o.score > th;}))
     {
         objects.push_back(o);
@@ -308,10 +325,10 @@ Eigen::Vector2f SpecificWorker::compute_repulsion_forces(vector<Eigen::Vector2f>
     { std::cout << e.what() << " Error reading omnirobot_proxy::getBaseSpeed" << std::endl;}
 
     // update threshold with speed
-    if( fabs(robot.current_adv_speed) > 1.f)
-        consts.dynamic_threshold = consts.quadratic_dynamic_threshold_coefficient * (robot.current_adv_speed * robot.current_adv_speed);
-    else
-        consts.dynamic_threshold = robot.width*0.75;
+//    if( fabs(robot.current_adv_speed) > 10.f)
+//        consts.dynamic_threshold = consts.quadratic_dynamic_threshold_coefficient * (robot.current_adv_speed * robot.current_adv_speed);
+//    else
+//        consts.dynamic_threshold = robot.width;
     //qInfo() << __FUNCTION__ << consts.dynamic_threshold << robot.current_adv_speed  << "[" << target_force.x() << target_force.y()  << "]";
 
     //  computation in meters to reduce the size of the numbers
@@ -391,7 +408,6 @@ std::vector<std::vector<Eigen::Vector2f>> SpecificWorker::get_multi_level_3d_poi
             dist = depth_frame.ptr<float>(u)[v] * 1000;  //  -> to mm
             if(dist > consts.max_camera_depth_range) continue;
             if(dist < consts.min_camera_depth_range) continue;
-            qInfo() << __FUNCTION__ << dist;
             x = v * dist / sqrt(v*v + focalx*focalx);
             z = u * dist / sqrt(u*u + focaly*focaly);
             proy = sqrt(dist*dist - z*z);
@@ -426,12 +442,13 @@ void SpecificWorker::set_target_force(const Eigen::Vector2f &vec)
 }
 
 // action
-void SpecificWorker::eye_track(bool active_person, const RoboCompYoloObjects::TBox &person_box)
+void SpecificWorker::eye_track(bool active_person, const RoboCompYoloObjects::TBox &target)
 {
     static float error_ant = 0.f;
     if(active_person)
     {
-        float hor_angle = atan2(person_box.x, person_box.y);  // angle wrt camera origin
+        //qInfo() << __FUNCTION__ << " eye tracking to " << QString::fromStdString(yolo_object_names[target.type]);
+        float hor_angle = atan2(target.x, target.y);  // angle wrt camera origin
         auto angle = jointmotorsimple_proxy->getMotorState("camera_pan_joint").pos;
         if (std::isnan(angle) or std::isnan(hor_angle))
         { qWarning() << "NAN value in servo position";  return; }
@@ -463,27 +480,28 @@ void SpecificWorker::eye_track(bool active_person, const RoboCompYoloObjects::TB
     }
     else  // inhibition of return
         try
-        { jointmotorsimple_proxy->setPosition("camera_pan_joint", RoboCompJointMotorSimple::MotorGoalPosition(0, 1)); }
+        { jointmotorsimple_proxy->setPosition("camera_pan_joint", RoboCompJointMotorSimple::MotorGoalPosition(0.f, 1.f)); }
         catch(const Ice::Exception &e){ std::cout << e.what() << std::endl; return;}
 
 }
 void SpecificWorker::move_robot(Eigen::Vector2f force)
 {
-    auto sigmoid = [](auto x){ return std::clamp(x / 1000.f, 0.f, 1.f);};
+    //auto sigmoid = [](auto x){ return std::clamp(x / 1000.f, 0.f, 1.f);};
     try
     {
         Eigen::Vector2f gains{0.8, 0.8};
         force = force.cwiseProduct(gains);
-        float rot = atan2(force.x(), force.y()) * sigmoid(force.norm()) - 0.9*current_servo_angle;  // dumps rotation for small resultant force
+        float rot = atan2(force.x(), force.y())  - 0.9*current_servo_angle;  // dumps rotation for small resultant force
         float adv = force.y() ;
         float side = force.x() ;
+        qInfo() << __FUNCTION__ << side << adv << rot;
         omnirobot_proxy->setSpeedBase(side, adv, rot);
     }
     catch (const Ice::Exception &e){ std::cout << e.what() << std::endl;}
 }
 
-///////////////////////////////////////////////////////////////
-Eigen::Vector2f SpecificWorker::state_machine(const RoboCompYoloObjects::TObjects &objects)
+///////////////////  State machine ////////////////////////////////////////////
+Eigen::Vector2f SpecificWorker::state_machine(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line)
 {
     Eigen::Vector2f direction;
     switch (state)
@@ -495,7 +513,10 @@ Eigen::Vector2f SpecificWorker::state_machine(const RoboCompYoloObjects::TObject
             direction = search_state(objects); // turns around until it finds a valid target
             break;
         case State::APPROACHING:
-            direction = approach_state(objects);
+            direction = approach_state(objects, line);
+            break;
+        case State::WAITING:
+            wait_state();
             break;
     };
 
@@ -503,53 +524,93 @@ Eigen::Vector2f SpecificWorker::state_machine(const RoboCompYoloObjects::TObject
 }
 Eigen::Vector2f SpecificWorker::search_state(const RoboCompYoloObjects::TObjects &objects)
 {
-    //  get first object different form robot.target
-    if(robot.no_target)
-    {
-        for (const auto &o: objects)
-            if (o.score > 70)
-            {
-                robot.target = o;
-                state = State::APPROACHING;
-                return Eigen::Vector2f{0.f, 0.f};
-            }
-        return Eigen::Vector2f{100.f, 0.f};  // keep rotating
-    }
-    else
-    {
-        for (const auto &o: objects)
-            if (iou(o, robot.target) < 0.1)
-            {
-                robot.target = o;
-                state = State::APPROACHING;
-                return Eigen::Vector2f{0.f, 0.f};
-            }
-        return Eigen::Vector2f{100.f, 0.f}; // keep rotating
-    }
+    qInfo() << __FUNCTION__;
+    //  get first object different from current robot.target and stick with it (be persistent)
+    for (const auto &o: objects)
+        if(robot.target.type != o.type )
+        {
+            robot.target = o;
+            robot.has_target = true;
+            state = State::APPROACHING;
+            //qInfo() << __FUNCTION__ << "Target selected" << QString::fromStdString(yolo_object_names[o.type]);
+            return robot.current_target;
+        }
+    // keep rotating
+    return Eigen::Vector2f{100.f, 0.f};
 }
-Eigen::Vector2f SpecificWorker::approach_state(const RoboCompYoloObjects::TObjects &objects)
+Eigen::Vector2f SpecificWorker::approach_state(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line)
 {
-    // associate robot.target with fresh objects
-    auto res = std::ranges::min_element(objects, [&, t = robot.target](auto a, auto b){ return iou(a,t) < iou(b,t);});
-    auto index = std::distance(objects.begin(), res);   // position of minimum in array
-    if( iou(objects[index], robot.target) > consts.min_similarity_iou_threshold)
-        robot.target = *res;
-    //else no match, keep advancing for a while
-
-    // transform target x,y coordinates in camera CS to robot CS
-    Eigen::Transform<float, 3, Eigen::Affine> t = Eigen::Translation3f(Eigen::Vector3f{0.f, 0.f, consts.top_camera_height}) *
-                                                  Eigen::AngleAxisf(robot.camera_tilt_angle, Eigen::Vector3f::UnitX()) *
-                                                  Eigen::AngleAxisf(robot.camera_pan_angle, Eigen::Vector3f::UnitZ());
-    Eigen::Vector2f final = (t * Eigen::Vector3f{ robot.target.x, robot.target.y, robot.target.z}).head(2);
-    if(final.norm() < consts.min_dist_to_target)
+    // keep and refresh visual target while approaching
+    qInfo() << __FUNCTION__ << " target selected" << QString::fromStdString(yolo_object_names[robot.target.type]);
+    if(objects.empty())
     {
-        state = State::SEARCHING;
-        return Eigen::Vector2f{0.f, 0.f};
+        qWarning() << "Empty list of yolo objects";
+        return robot.current_target;
+    }
+    //auto res = std::ranges::min_element(objects, [&, t = robot.target](auto a, auto b){ return iou(a,t) < iou(b,t);});
+    //auto index = std::distance(objects.begin(), res);   // position of minimum in array
+    //if( iou(objects[index], robot.target) > consts.min_similarity_iou_threshold )
+    for(const auto &o: objects)
+        if(o.type == robot.target.type)
+        {
+            robot.target = o;
+            //qInfo() << __FUNCTION__ << "Match to previous target";
+            // transform target x,y coordinates in camera CS to robot CS
+            Eigen::Transform<float, 3, Eigen::Affine> t = Eigen::Translation3f(Eigen::Vector3f{0.f, 0.f, consts.top_camera_height}) *
+                                                          Eigen::AngleAxisf(robot.camera_tilt_angle, Eigen::Vector3f::UnitX()) *
+                                                          Eigen::AngleAxisf(robot.camera_pan_angle, Eigen::Vector3f::UnitZ());
+            robot.current_target = (t * Eigen::Vector3f{robot.target.x, robot.target.y, robot.target.z}).head(2);
+        }
+    // else keep going for a while and eventually forget the target and move to SEARCHING
+
+    //qInfo() << __FUNCTION__ << "distance to target" << robot.current_target.norm();
+    if(robot.current_target.norm() < consts.min_dist_to_target or closest_distance_ahead(line) < consts.min_dist_to_target/2) // arrival condition
+    {
+        state = State::WAITING;
+        robot.current_target = Eigen::Vector2f{0.f, 0.f};
+        robot.has_target = false;
+        std::cout << __FUNCTION__  << " Arrived " << robot.current_target << std::endl;
+        return robot.current_target;
     }
     else
-        return final;
+    {
+        //std::cout << "Keep going " << robot.current_target << std::endl;
+        return robot.current_target;
+    }
+}
+Eigen::Vector2f  SpecificWorker::wait_state()
+{
+    static rc::Timer clock;
+    static const uint  TIME_INTERVAL = 2000; //ms
+    static bool first_time = true;
+    if (first_time)
+    {
+        clock.tick();
+        first_time = false;
+        qInfo() << __FUNCTION__ << "Waiting";
+    }
+    else
+    {
+        clock.tock();
+        if(clock.duration() >= TIME_INTERVAL)
+        {
+            state = State::SEARCHING;
+            first_time = true;
+        }
+    }
+    return Eigen::Vector2f{0.f, 0.f};
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////7
+float SpecificWorker::closest_distance_ahead(const std::vector<Eigen::Vector2f> &line)
+{
+    // minimum distance in central sector
+    if(line.empty()) { qWarning() << __FUNCTION__ << "Empty line vector"; return 0.f;}
+    size_t offset = 4*line.size()/9;
+    auto res = std::min_element(line.begin()+offset, line.end()-offset, [](auto &a, auto &b){ return a.norm() < b.norm();});
+    return res->norm();
+
+}
 //// IOU auxiliary function
 float SpecificWorker::iou(const RoboCompYoloObjects::TBox &a, const RoboCompYoloObjects::TBox &b)
 {
@@ -575,6 +636,13 @@ float SpecificWorker::iou(const RoboCompYoloObjects::TBox &a, const RoboCompYolo
 
     float area_of_union = a_height * a_width + b_height * b_width - area_of_intersection;
     return area_of_intersection / area_of_union;
+}
+float SpecificWorker::gaussian(float x)
+{
+    const double xset = consts.xset_gaussian;
+    const double yset = consts.yset_gaussian;
+    const double s = -xset*xset/log(yset);
+    return exp(-x*x/s);
 }
 ////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::draw_floor_line(const vector<vector<Eigen::Vector2f>> &lines, int i)    //one vector for each height level
@@ -706,7 +774,7 @@ void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData dat
         if (axe.name == "advance") target_force += Eigen::Vector2f{0.f, axe.value/1000.f};
         if (axe.name == "rotate") target_force += Eigen::Vector2f{axe.value, 0.f};
     }
-    set_target_force(target_force);
+    //set_target_force(target_force);
 }
 
 /**************************************/

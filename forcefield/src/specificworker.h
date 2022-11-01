@@ -34,6 +34,8 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
+#include <dynamic_window.h>
+#include <timer/timer.h>
 
 class SpecificWorker : public GenericWorker
 {
@@ -60,8 +62,10 @@ class SpecificWorker : public GenericWorker
         float semi_width =  width/2;
         const float camera_tilt_angle = 0.35;  //  20º
         float camera_pan_angle = 0.f;
-        RoboCompYoloObjects::TBox target;
-        bool no_target = true;
+        RoboCompYoloObjects::TBox target{.type = -1};
+        Eigen::Vector2f current_target{0.f, 0.f};  // vector pointing to target
+        bool has_target = false;
+        float max_advance_speed = 1000;
     };
     Robot robot;
     struct Constants
@@ -83,13 +87,17 @@ class SpecificWorker : public GenericWorker
         const float depth_lines_min_height = 350;
         const float depth_lines_step = 100;
         const float min_dist_from_robot_center = 300; //mm
-        const float max_distance_for_repulsion = 1500; // mm. Distance beyond which repulsion vanishes. It follows an inverse law with current robot speed
+        const float max_distance_for_repulsion = 4000; // mm. Distance beyond which repulsion vanishes. It follows an inverse law with current robot speed
         const float speed_for_max_repulsion = 1000;
-        float dynamic_threshold = max_distance_for_repulsion/(speed_for_max_repulsion*speed_for_max_repulsion);
-        float nu = 0.05f;
+        //float dynamic_threshold = max_distance_for_repulsion/(speed_for_max_repulsion*speed_for_max_repulsion);
+        float dynamic_threshold = 500;
+        float nu = 0.1f;   // nervousness
         float quadratic_dynamic_threshold_coefficient = max_distance_for_repulsion / (speed_for_max_repulsion * speed_for_max_repulsion);
         const float min_similarity_iou_threshold = 0.5;
-        const float min_dist_to_target = 500; //mm
+        const float min_dist_to_target = 1100; //mm
+        const float forces_similarity_threshold = 200;
+        double xset_gaussian = 0.4;             // gaussian break x set value
+        double yset_gaussian = 0.3;             // gaussian break y set value
     };
     Constants consts;
     float current_servo_angle = 0.f;
@@ -123,13 +131,19 @@ class SpecificWorker : public GenericWorker
     Eigen::Vector2f target_force{0.f, 0.f};
 
     // state machine
-    Eigen::Vector2f state_machine(const RoboCompYoloObjects::TObjects &objects);
-    enum class State {IDLE, SEARCHING, APPROACHING};
+    Eigen::Vector2f state_machine(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line);
+    enum class State {IDLE, SEARCHING, APPROACHING, WAITING};
     State state = State::IDLE;
     Eigen::Vector2f search_state(const RoboCompYoloObjects::TObjects &objects);
-    Eigen::Vector2f approach_state(const RoboCompYoloObjects::TObjects &objects);
+    Eigen::Vector2f approach_state(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line);
+    Eigen::Vector2f wait_state();
 
     float iou(const RoboCompYoloObjects::TBox &a, const RoboCompYoloObjects::TBox &b);
+    float closest_distance_ahead(const vector<Eigen::Vector2f> &line);
+
+    // DWA
+    Dynamic_Window dwa;
+    float gaussian(float x);
 
 };
 

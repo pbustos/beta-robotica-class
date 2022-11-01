@@ -3,6 +3,7 @@ SET ( SOURCES
   specificworker.cpp
   specificmonitor.cpp
   $ENV{ROBOCOMP}/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp
+  dynamic_window.cpp
 )
 
 # Headers set
