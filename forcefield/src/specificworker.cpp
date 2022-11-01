@@ -183,12 +183,6 @@ void SpecificWorker::compute()
     auto omni_lines = get_multi_level_3d_points_omni(omni_depth_frame);
     draw_floor_line(omni_lines, 1);
     auto current_line = omni_lines[1];  // second line of the list of laser lines at different heights
-//    auto top_lines = get_multi_level_3d_points_top(top_depth_frame, focalx, focaly);
-    //draw_floor_line(top_lines, 1);
-//    cv::Mat nor(cv::Size(640,480), CV_8UC1);
-//    cv::normalize(top_depth_frame, nor, 0, 255, cv::NORM_MINMAX);
-//    cv::imshow("depth", nor);
-//    cv::waitKey(1);
 
     /// YOLO
     RoboCompYoloObjects::TObjects objects = yolo_detect_objects(top_rgb_frame);
@@ -208,27 +202,14 @@ void SpecificWorker::compute()
     eye_track(robot.has_target, robot.target);
     draw_top_camera_optic_ray();
 
-    /// potential field algorithm
-    //Eigen::Vector2f rep_force = compute_repulsion_forces(current_line);
-    //draw_dynamic_threshold(consts.dynamic_threshold);
-
-    /// compose with target
-    //if(target_force.norm() > 1000.f) target_force = target_force.normalized()*1000.f;
-    //Eigen::Vector2f force = rep_force  /*+ target_force*/; // comes from joystick
-    //    if(fabs(rep_force.norm() - target_force.norm()) < consts.forces_similarity_threshold)  // probable deadlock. Move sideways
-    //    {
-    //        qInfo() << __FUNCTION__  << "-------------------------- SIDE FORCE";
-    //        Eigen::Rotation2Df rot(M_PI_2);
-    //        force += (rot * target_force.normalized()) * 1000;
-    //    }
-    //draw_forces(rep_force, target_force, force); // in robot coordinate system
-
+    /// Dynamic Window algorithm to compute obstacle-free path to target
     auto [adv, rot, side] =  dwa.update(target_force, current_line, robot.current_adv_speed, robot.current_rot_speed, viewer);
     //qInfo() << __FUNCTION__ << adv <<  side << rot;
+
+    // move the robot
     try{ omnirobot_proxy->setSpeedBase(side, adv, rot); }
     catch(const Ice::Exception &e){ std::cout << e.what() << "Error connecting to omnirobot" << std::endl;}
-    // execute move commands
-    //move_robot(force);
+
 }
 
 //////////////////// BASIC REPULSION LOOP. EVERYTHING GOES ON TOP OF THIS/////////////////////////////////////////////////
@@ -314,34 +295,6 @@ RoboCompYoloObjects::TObjects SpecificWorker::yolo_detect_objects(cv::Mat rgb)
     }
     return objects;
 }
-
-// control
-Eigen::Vector2f SpecificWorker::compute_repulsion_forces(vector<Eigen::Vector2f> &floor_line)
-{
-    // current speed;
-    RoboCompGenericBase::TBaseState bState;
-    try{ omnirobot_proxy->getBaseState(bState); robot.current_adv_speed = bState.advVz; robot.current_rot_speed = bState.rotV;}
-    catch (const Ice::Exception &e)
-    { std::cout << e.what() << " Error reading omnirobot_proxy::getBaseSpeed" << std::endl;}
-
-    // update threshold with speed
-//    if( fabs(robot.current_adv_speed) > 10.f)
-//        consts.dynamic_threshold = consts.quadratic_dynamic_threshold_coefficient * (robot.current_adv_speed * robot.current_adv_speed);
-//    else
-//        consts.dynamic_threshold = robot.width;
-    //qInfo() << __FUNCTION__ << consts.dynamic_threshold << robot.current_adv_speed  << "[" << target_force.x() << target_force.y()  << "]";
-
-    //  computation in meters to reduce the size of the numbers
-    Eigen::Vector2f res = {0.f, 0.f};
-    float threshold = consts.dynamic_threshold/1000.f;   // to meters
-    for(const auto &ray: floor_line)
-    {
-        const float &dist = (ray/1000.f).norm();
-        if (dist <= threshold)
-            res += consts.nu * (1.0 / dist - 1.0 / 1.5) * (1.0 / (dist * dist)) * (-(ray/1000.f) / dist);  // as in original paper
-    }
-    return res*1000.f; //mm
-}
 std::vector<std::vector<Eigen::Vector2f>> SpecificWorker::get_multi_level_3d_points_omni(const cv::Mat &depth_frame)
 {
     std::vector<std::vector<Eigen::Vector2f>> points(int((consts.depth_lines_max_height-consts.depth_lines_min_height)/consts.depth_lines_step));  //height steps
@@ -392,54 +345,6 @@ std::vector<std::vector<Eigen::Vector2f>> SpecificWorker::get_multi_level_3d_poi
         };
     return points;
 }
-std::vector<std::vector<Eigen::Vector2f>> SpecificWorker::get_multi_level_3d_points_top(const cv::Mat &depth_frame, float focalx, float focaly)
-{
-    std::vector<std::vector<Eigen::Vector2f>> points(int((1550-350)/100));  //height steps
-    for(auto &p: points)
-        p.resize(360, Eigen::Vector2f(consts.max_camera_depth_range*2, consts.max_camera_depth_range*2));   // angular resolution
-
-    float  dist, x, y, z, proy;
-    const float ang_bin = 2.0*M_PI/consts.num_angular_bins;
-
-    //for(int u=0; u<depth_frame.rows; u++)
-        int u = 100;
-        for(int v=0; v<depth_frame.cols; v++)
-        {
-            dist = depth_frame.ptr<float>(u)[v] * 1000;  //  -> to mm
-            if(dist > consts.max_camera_depth_range) continue;
-            if(dist < consts.min_camera_depth_range) continue;
-            x = v * dist / sqrt(v*v + focalx*focalx);
-            z = u * dist / sqrt(u*u + focaly*focaly);
-            proy = sqrt(dist*dist - z*z);
-            y = sqrt(x*x+proy*proy);
-            z += consts.top_camera_height; // get from DSR
-            // add only to its bin if less than current value
-            for(auto &&[level, step] : iter::range(350, 1550, 100) | iter::enumerate)
-            {
-                if(z < 1000) qInfo() << __FUNCTION__ << z;
-                if (z > step and z < step + 100)
-                {
-                    int ang_index = floor((M_PI + atan2(x, y)) / ang_bin);
-                    Eigen::Vector2f new_point(x, y);
-                    //qInfo() << __FUNCTION__ << new_point.norm();
-                    if (new_point.norm() < points[level][ang_index].norm() and new_point.norm() > 400)
-                        points[level][ang_index] = new_point;
-                }
-            }
-        };
-
-    for(auto &level : points)
-        level.erase(std::remove_if(level.begin(), level.end(), [d=consts.max_camera_depth_range](auto p){ return p.x()==d*2 and p.y()==d*2;}), level.end());
-
-    for(auto &level :  points)
-        qInfo() << __FUNCTION__ << level.size();
-    qInfo() << __FUNCTION__ << "----------";
-    return points;
-}
-void SpecificWorker::set_target_force(const Eigen::Vector2f &vec)
-{
-    target_force = vec * 1000;  //to mm/sg
-}
 
 // action
 void SpecificWorker::eye_track(bool active_person, const RoboCompYoloObjects::TBox &target)
@@ -483,21 +388,6 @@ void SpecificWorker::eye_track(bool active_person, const RoboCompYoloObjects::TB
         { jointmotorsimple_proxy->setPosition("camera_pan_joint", RoboCompJointMotorSimple::MotorGoalPosition(0.f, 1.f)); }
         catch(const Ice::Exception &e){ std::cout << e.what() << std::endl; return;}
 
-}
-void SpecificWorker::move_robot(Eigen::Vector2f force)
-{
-    //auto sigmoid = [](auto x){ return std::clamp(x / 1000.f, 0.f, 1.f);};
-    try
-    {
-        Eigen::Vector2f gains{0.8, 0.8};
-        force = force.cwiseProduct(gains);
-        float rot = atan2(force.x(), force.y())  - 0.9*current_servo_angle;  // dumps rotation for small resultant force
-        float adv = force.y() ;
-        float side = force.x() ;
-        qInfo() << __FUNCTION__ << side << adv << rot;
-        omnirobot_proxy->setSpeedBase(side, adv, rot);
-    }
-    catch (const Ice::Exception &e){ std::cout << e.what() << std::endl;}
 }
 
 ///////////////////  State machine ////////////////////////////////////////////
@@ -667,27 +557,6 @@ void SpecificWorker::draw_floor_line(const vector<vector<Eigen::Vector2f>> &line
             items.push_back(item);
         }
 }
-void SpecificWorker::draw_forces(const Eigen::Vector2f &force, const Eigen::Vector2f &target, const Eigen::Vector2f &res)
-{
-      static std::vector<QGraphicsItem *> items;
-    for(const auto &i: items)
-        viewer->scene.removeItem(i);
-    items.clear();
-
-    auto large_force = force * 3.f;
-    QPointF tip1 = viewer->robot_poly()->mapToScene(large_force.x(), large_force.y());
-    QPointF tip2 = viewer->robot_poly()->mapToScene(target.x(), target.y());
-    QPointF tip3 = viewer->robot_poly()->mapToScene(res.x(), res.y());
-    items.push_back(viewer->scene.addLine(viewer->robot_poly()->x(), viewer->robot_poly()->pos().y(), tip1.x(), tip1.y(), QPen(QColor("red"), 50)));
-    auto item = viewer->scene.addEllipse(-50, -50, 100, 100, QPen(QColor("red")), QBrush(QColor("red")));
-    item->setPos(tip1.x(), tip1.y()); items.push_back(item);
-    items.push_back(viewer->scene.addLine(viewer->robot_poly()->pos().x(), viewer->robot_poly()->pos().y(), tip2.x(), tip2.y(), QPen(QColor("blue"), 50)));
-    item = viewer->scene.addEllipse(-50, -50, 100, 100, QPen(QColor("blue")), QBrush(QColor("blue")));
-    item->setPos(tip1.x(), tip1.y()); items.push_back(item);
-    items.push_back(viewer->scene.addLine(viewer->robot_poly()->pos().x(), viewer->robot_poly()->pos().y(), tip3.x(), tip3.y(), QPen(QColor("green"), 50)));
-    item = viewer->scene.addEllipse(-50, -50, 100, 100, QPen(QColor("green")), QBrush(QColor("green")));
-    item->setPos(tip1.x(), tip1.y()); items.push_back(item);
-}
 void SpecificWorker::draw_top_camera_optic_ray()
 {
     // draws a line from the robot to the intersection point with the floor
@@ -751,16 +620,6 @@ void SpecificWorker::draw_objects_on_2dview(RoboCompYoloObjects::TObjects object
         item->setPos(corrected.x(), corrected.y());
         items.push_back(item);
     }
-}
-void SpecificWorker::draw_dynamic_threshold(float threshold)
-{
-    static std::vector<QGraphicsItem *> items;
-    for(const auto &i: items)
-        viewer->scene.removeItem(i);
-    items.clear();
-
-    items.push_back(viewer->scene.addEllipse(-threshold, -threshold, 2*threshold, 2* threshold, QPen(QColor("yellow"), 20)));
-
 }
 
 ///

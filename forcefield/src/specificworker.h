@@ -65,7 +65,6 @@ class SpecificWorker : public GenericWorker
         RoboCompYoloObjects::TBox target{.type = -1};
         Eigen::Vector2f current_target{0.f, 0.f};  // vector pointing to target
         bool has_target = false;
-        float max_advance_speed = 1000;
     };
     Robot robot;
     struct Constants
@@ -89,13 +88,7 @@ class SpecificWorker : public GenericWorker
         const float min_dist_from_robot_center = 300; //mm
         const float max_distance_for_repulsion = 4000; // mm. Distance beyond which repulsion vanishes. It follows an inverse law with current robot speed
         const float speed_for_max_repulsion = 1000;
-        //float dynamic_threshold = max_distance_for_repulsion/(speed_for_max_repulsion*speed_for_max_repulsion);
-        float dynamic_threshold = 500;
-        float nu = 0.1f;   // nervousness
-        float quadratic_dynamic_threshold_coefficient = max_distance_for_repulsion / (speed_for_max_repulsion * speed_for_max_repulsion);
-        const float min_similarity_iou_threshold = 0.5;
         const float min_dist_to_target = 1100; //mm
-        const float forces_similarity_threshold = 200;
         double xset_gaussian = 0.4;             // gaussian break x set value
         double yset_gaussian = 0.3;             // gaussian break y set value
     };
@@ -106,20 +99,15 @@ class SpecificWorker : public GenericWorker
     AbstractGraphicViewer *viewer;
 
     std::vector<std::vector<Eigen::Vector2f>> get_multi_level_3d_points_omni(const cv::Mat &depth_frame);
-    vector<vector<Eigen::Vector2f>> get_multi_level_3d_points_top(const cv::Mat &depth_frame, float focalx, float focaly);
-    Eigen::Vector2f compute_repulsion_forces(vector<Eigen::Vector2f> &floor_line);
     cv::Mat read_depth_coppelia();
     cv::Mat read_rgb(const std::string &camera_name);
     std::tuple<cv::Mat, float, float> read_depth_top(const std::string &camera_name);
     void eye_track(bool active_person, const RoboCompYoloObjects::TBox &person_box);
-    void move_robot(Eigen::Vector2f force);
     RoboCompYoloObjects::TObjects yolo_detect_objects(cv::Mat rgb);
 
     // draw
     void draw_floor_line(const vector<vector<Eigen::Vector2f>> &lines, int i=1);
-    void draw_forces(const Eigen::Vector2f &force, const Eigen::Vector2f &target, const Eigen::Vector2f &res);
     void draw_objects_on_2dview(RoboCompYoloObjects::TObjects objects, const RoboCompYoloObjects::TBox &selected);
-    void draw_dynamic_threshold(float threshold);
     void draw_top_camera_optic_ray();
 
     // objects
