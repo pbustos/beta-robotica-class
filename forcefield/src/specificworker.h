@@ -63,7 +63,7 @@ class SpecificWorker : public GenericWorker
         const float camera_tilt_angle = 0.35;  //  20º
         float camera_pan_angle = 0.f;
         RoboCompYoloObjects::TBox target{.type = -1};
-        Eigen::Vector2f current_target{0.f, 0.f};  // vector pointing to target
+        Eigen::Vector2f target_coordinates{0.f, 0.f};  // vector pointing to target
         bool has_target = false;
     };
     Robot robot;
@@ -102,7 +102,7 @@ class SpecificWorker : public GenericWorker
     cv::Mat read_depth_coppelia();
     cv::Mat read_rgb(const std::string &camera_name);
     std::tuple<cv::Mat, float, float> read_depth_top(const std::string &camera_name);
-    void eye_track(bool active_person, const RoboCompYoloObjects::TBox &person_box);
+    void eye_track(const RoboCompYoloObjects::TObjects &objects);
     RoboCompYoloObjects::TObjects yolo_detect_objects(cv::Mat rgb);
 
     // draw

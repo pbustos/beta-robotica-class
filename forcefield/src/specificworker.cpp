@@ -179,7 +179,13 @@ void SpecificWorker::compute()
     auto [top_depth_frame, focalx, focaly] = read_depth_top("/Shadow/camera_top");
     if(top_depth_frame.empty()) { qWarning() << "depth_top_frame empty"; return;}
 
-    /// compute level_lines
+    /// read base current speed
+    RoboCompGenericBase::TBaseState bState;
+    try{ omnirobot_proxy->getBaseState(bState); robot.current_adv_speed = bState.advVz; robot.current_rot_speed = bState.rotV;}
+    catch (const Ice::Exception &e)
+    { std::cout << e.what() << " Error reading omnibase_proxy::getBaseState" << std::endl;}
+
+    /// compute level_lines  (aka read laser)
     auto omni_lines = get_multi_level_3d_points_omni(omni_depth_frame);
     draw_floor_line(omni_lines, 1);
     auto current_line = omni_lines[1];  // second line of the list of laser lines at different heights
@@ -196,20 +202,18 @@ void SpecificWorker::compute()
     // state machine to activate basic behaviours
     // states: IDLE, SEARCHING, APPROACHING
     // return a  target_force vector
-    target_force = state_machine(objects, current_line);
+    //target_force = state_machine(objects, current_line);
 
-    /// eye tracking: tracks  current selected object or  IOR if none
-    eye_track(robot.has_target, robot.target);
+    /// eye tracking: tracks  current selected object or  selects a new one
+    eye_track(objects);
     draw_top_camera_optic_ray();
 
     /// Dynamic Window algorithm to compute obstacle-free path to target
-    auto [adv, rot, side] =  dwa.update(target_force, current_line, robot.current_adv_speed, robot.current_rot_speed, viewer);
-    //qInfo() << __FUNCTION__ << adv <<  side << rot;
-
-    // move the robot
-    try{ omnirobot_proxy->setSpeedBase(side, adv, rot); }
-    catch(const Ice::Exception &e){ std::cout << e.what() << "Error connecting to omnirobot" << std::endl;}
-
+    if(robot.has_target)
+    {
+        auto [adv, rot, side] = dwa.update(robot.target_coordinates, current_line, robot.current_adv_speed, robot.current_rot_speed, viewer);
+        //qInfo() << __FUNCTION__ << adv <<  side << rot;
+    }
 }
 
 //////////////////// BASIC REPULSION LOOP. EVERYTHING GOES ON TOP OF THIS/////////////////////////////////////////////////
@@ -347,18 +351,31 @@ std::vector<std::vector<Eigen::Vector2f>> SpecificWorker::get_multi_level_3d_poi
 }
 
 // action
-void SpecificWorker::eye_track(bool active_person, const RoboCompYoloObjects::TBox &target)
+void SpecificWorker::eye_track(const RoboCompYoloObjects::TObjects &objects)
 {
     static float error_ant = 0.f;
-    if(active_person)
+    if(robot.has_target)  // track the target. The robot's base will turn to cancel the camera's angle
     {
-        //qInfo() << __FUNCTION__ << " eye tracking to " << QString::fromStdString(yolo_object_names[target.type]);
-        float hor_angle = atan2(target.x, target.y);  // angle wrt camera origin
+        // match current target with new objects
+        for(const auto &o: objects)
+            if(o.type == robot.target.type)
+            {
+                robot.target = o;
+                qInfo() << __FUNCTION__ << "Match to previous target";
+                // transform target x,y coordinates in camera CS to robot CS
+                Eigen::Transform<float, 3, Eigen::Affine> t = Eigen::Translation3f(Eigen::Vector3f{0.f, 0.f, consts.top_camera_height}) *
+                                                              Eigen::AngleAxisf(robot.camera_tilt_angle, Eigen::Vector3f::UnitX()) *
+                                                              Eigen::AngleAxisf(robot.camera_pan_angle, Eigen::Vector3f::UnitZ());
+                robot.target_coordinates = (t * Eigen::Vector3f{robot.target.x, robot.target.y, robot.target.z}).head(2);
+            }
+
+        float hor_angle = atan2(robot.target.x, robot.target.y);  // angle wrt camera origin
+        qInfo() << __FUNCTION__ << " eye tracking to " << QString::fromStdString(yolo_object_names[robot.target.type]) << "Angle:" << hor_angle;
         auto angle = jointmotorsimple_proxy->getMotorState("camera_pan_joint").pos;
         if (std::isnan(angle) or std::isnan(hor_angle))
         { qWarning() << "NAN value in servo position";  return; }
         robot.camera_pan_angle = angle;
-        if( fabs(hor_angle) > consts.max_hor_angle_error)  // saccade
+        if( fabs(hor_angle) > consts.max_hor_angle_error)  // saccadic: fast movement to the target when it is far from the center of the image
         {
             qInfo() << __FUNCTION__ << "saccade" << hor_angle;
             try
@@ -370,24 +387,32 @@ void SpecificWorker::eye_track(bool active_person, const RoboCompYoloObjects::TB
             catch (const Ice::Exception &e)
             {  std::cout << e.what() << " Error connecting to MotorGoalPosition" << std::endl; return; }
         }
-        else    // smooth pursuit
+        else    // smooth pursuit: velocity control (no jumps) when it is close to the center of the image
         {
             try
             {
-                float new_vel = -0.7 * hor_angle + 0.3 * (hor_angle - error_ant);
+                float new_vel = -0.7 * hor_angle + 0.3 * (hor_angle - error_ant);  // proportional - derivative control
+                new_vel -= 0.5*robot.current_rot_speed;  // compensate with current base rotation speed
                 new_vel = std::clamp(new_vel, -1.f, 1.f);  // dumping
                 jointmotorsimple_proxy->setVelocity("camera_pan_joint", RoboCompJointMotorSimple::MotorGoalVelocity(new_vel, 1));
-                //qInfo() << __FUNCTION__ << "smooth" << hor_angle << current_servo_angle << new_vel;
+                qInfo() << __FUNCTION__ << "error" << hor_angle << "deriv" << hor_angle-error_ant << "base" << robot.current_rot_speed;
+                error_ant = hor_angle;
             }
             catch (const Ice::Exception &e)
             {  std::cout << e.what() << " Error connecting to MotorGoalPosition" << std::endl; return; }
         }
     }
-    else  // inhibition of return
-        try
-        { jointmotorsimple_proxy->setPosition("camera_pan_joint", RoboCompJointMotorSimple::MotorGoalPosition(0.f, 1.f)); }
-        catch(const Ice::Exception &e){ std::cout << e.what() << std::endl; return;}
-
+    else  // choose a new target different from the current one.
+        for (const auto &o: objects)
+            if(robot.target.type != o.type )
+            {
+                robot.target = o;
+                robot.has_target = true;
+                qInfo() << __FUNCTION__ << "New target:" << QString::fromStdString(yolo_object_names[o.type]);
+            }
+        //try
+        //{ jointmotorsimple_proxy->setPosition("camera_pan_joint", RoboCompJointMotorSimple::MotorGoalPosition(0.f, 1.f)); }
+        //catch(const Ice::Exception &e){ std::cout << e.what() << std::endl; return;}
 }
 
 ///////////////////  State machine ////////////////////////////////////////////
@@ -423,7 +448,7 @@ Eigen::Vector2f SpecificWorker::search_state(const RoboCompYoloObjects::TObjects
             robot.has_target = true;
             state = State::APPROACHING;
             //qInfo() << __FUNCTION__ << "Target selected" << QString::fromStdString(yolo_object_names[o.type]);
-            return robot.current_target;
+            return robot.target_coordinates;
         }
     // keep rotating
     return Eigen::Vector2f{100.f, 0.f};
@@ -435,7 +460,7 @@ Eigen::Vector2f SpecificWorker::approach_state(const RoboCompYoloObjects::TObjec
     if(objects.empty())
     {
         qWarning() << "Empty list of yolo objects";
-        return robot.current_target;
+        return robot.target_coordinates;
     }
     //auto res = std::ranges::min_element(objects, [&, t = robot.target](auto a, auto b){ return iou(a,t) < iou(b,t);});
     //auto index = std::distance(objects.begin(), res);   // position of minimum in array
@@ -449,23 +474,23 @@ Eigen::Vector2f SpecificWorker::approach_state(const RoboCompYoloObjects::TObjec
             Eigen::Transform<float, 3, Eigen::Affine> t = Eigen::Translation3f(Eigen::Vector3f{0.f, 0.f, consts.top_camera_height}) *
                                                           Eigen::AngleAxisf(robot.camera_tilt_angle, Eigen::Vector3f::UnitX()) *
                                                           Eigen::AngleAxisf(robot.camera_pan_angle, Eigen::Vector3f::UnitZ());
-            robot.current_target = (t * Eigen::Vector3f{robot.target.x, robot.target.y, robot.target.z}).head(2);
+            robot.target_coordinates = (t * Eigen::Vector3f{robot.target.x, robot.target.y, robot.target.z}).head(2);
         }
     // else keep going for a while and eventually forget the target and move to SEARCHING
 
-    //qInfo() << __FUNCTION__ << "distance to target" << robot.current_target.norm();
-    if(robot.current_target.norm() < consts.min_dist_to_target or closest_distance_ahead(line) < consts.min_dist_to_target/2) // arrival condition
+    //qInfo() << __FUNCTION__ << "distance to target" << robot.target_coordinates.norm();
+    if(robot.target_coordinates.norm() < consts.min_dist_to_target or closest_distance_ahead(line) < consts.min_dist_to_target/2) // arrival condition
     {
         state = State::WAITING;
-        robot.current_target = Eigen::Vector2f{0.f, 0.f};
+        robot.target_coordinates = Eigen::Vector2f{0.f, 0.f};
         robot.has_target = false;
-        std::cout << __FUNCTION__  << " Arrived " << robot.current_target << std::endl;
-        return robot.current_target;
+        std::cout << __FUNCTION__  << " Arrived " << robot.target_coordinates << std::endl;
+        return robot.target_coordinates;
     }
     else
     {
-        //std::cout << "Keep going " << robot.current_target << std::endl;
-        return robot.current_target;
+        //std::cout << "Keep going " << robot.target_coordinates << std::endl;
+        return robot.target_coordinates;
     }
 }
 Eigen::Vector2f  SpecificWorker::wait_state()

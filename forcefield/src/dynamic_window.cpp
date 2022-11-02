@@ -190,13 +190,16 @@ void Dynamic_Window::draw(const Eigen::Vector3f &robot, const std::vector <Resul
         scene->removeItem(arc);
     arcs_vector.clear();
 
+    int radius = 30;
     QColor col("green");
+    QPen pen(col, 10);
+    QBrush brush(col);
     for (auto &[x, y, vx, wx, a] : puntos)
     {
         //QPointF centro = robot_polygon_draw->mapToScene(x, y);
         QPointF centro = to_qpointf(from_robot_to_world(Eigen::Vector2f(x, y), robot));
-        auto arc = scene->addEllipse(centro.x(), centro.y(), 50, 50, QPen(col, 10));
-        arc->setZValue(30);
+        auto arc = scene->addEllipse(-radius, -radius, 2*radius, 2*radius, pen, brush);
+        arc->setPos(centro.x(), centro.y());
         arcs_vector.push_back(arc);
     }
 
@@ -204,8 +207,8 @@ void Dynamic_Window::draw(const Eigen::Vector3f &robot, const std::vector <Resul
     {
         auto &[x, y, _, __, ___] = best.value();
         QPointF selected = to_qpointf(from_robot_to_world(Eigen::Vector2f(x, y), robot));
-        auto arc = scene->addEllipse(selected.x(), selected.y(), 180, 180, QPen(Qt::black), QBrush(Qt::black));
-        arc->setZValue(30);
+        auto arc = scene->addEllipse(-50, -50, 100, 100, QPen(Qt::black), QBrush(Qt::black));
+        arc->setPos(selected.x(), selected.y());
         arcs_vector.push_back(arc);
     }
 }
