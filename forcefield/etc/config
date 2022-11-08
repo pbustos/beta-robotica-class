@@ -1,7 +1,7 @@
 CommonBehavior.Endpoints=tcp -p 10000
 
 # Endpoints for subscriptions interfaces
-JoystickAdapterTopic.Endpoints=tcp -p 0
+JoystickAdapterTopic.Endpoints=tcp -p 123412
 
 
 # Proxies for required interfaces
