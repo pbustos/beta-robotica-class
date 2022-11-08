@@ -57,14 +57,17 @@ class SpecificWorker : public GenericWorker
     {
         float current_adv_speed = 0;
         float current_rot_speed = 0;
-        float width = 450;
-        float length = 450;
-        float semi_width =  width/2;
+        const float width = 450;
+        const float length = 450;
+        const float semi_width =  width/2;
+        const float semi_height = length/2;
+        const float dist_between_bumper_points = semi_width/8;
         const float camera_tilt_angle = 0.35;  //  20º
         float camera_pan_angle = 0.f;
         RoboCompYoloObjects::TBox target{.type = -1};
-        Eigen::Vector2f target_coordinates{0.f, 0.f};  // vector pointing to target
+        Eigen::Vector3f current_target{0.f, 0.f, 0.f};  // vector pointing to target
         bool has_target = false;
+        float max_advance_speed = 1000;
     };
     Robot robot;
     struct Constants
@@ -102,7 +105,7 @@ class SpecificWorker : public GenericWorker
     cv::Mat read_depth_coppelia();
     cv::Mat read_rgb(const std::string &camera_name);
     std::tuple<cv::Mat, float, float> read_depth_top(const std::string &camera_name);
-    void eye_track(const RoboCompYoloObjects::TObjects &objects);
+    void eye_track(Robot &robot);
     RoboCompYoloObjects::TObjects yolo_detect_objects(cv::Mat rgb);
 
     // draw
@@ -116,7 +119,6 @@ class SpecificWorker : public GenericWorker
 
     // joy
     void set_target_force(const Eigen::Vector2f &vec);
-    Eigen::Vector2f target_force{0.f, 0.f};
 
     // state machine
     Eigen::Vector2f state_machine(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line);
@@ -126,7 +128,6 @@ class SpecificWorker : public GenericWorker
     Eigen::Vector2f approach_state(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line);
     Eigen::Vector2f wait_state();
 
-    float iou(const RoboCompYoloObjects::TBox &a, const RoboCompYoloObjects::TBox &b);
     float closest_distance_ahead(const vector<Eigen::Vector2f> &line);
 
     // DWA
