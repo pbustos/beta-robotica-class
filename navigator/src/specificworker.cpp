@@ -218,7 +218,7 @@ std::vector<SpecificWorker::Tupla> SpecificWorker::dynamicWindowApproach(const R
                                                                           const MyGrid::Value &target )
 {
 
-//posiciones originales del robot
+    //posiciones originales del robot
     float current_adv = bState.advVz; // Advance V
     float current_rot = bState.rotV; // Rotation W
     static float previous_turn = 0;

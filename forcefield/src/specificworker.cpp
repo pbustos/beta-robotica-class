@@ -507,7 +507,8 @@ void SpecificWorker::draw_objects_on_2dview(RoboCompYoloObjects::TObjects object
     items.clear();
 
     Eigen::Transform<float, 3, Eigen::Affine> t = Eigen::Translation3f(Eigen::Vector3f{0.f, 0.f, consts.top_camera_height}) *
-                                                  Eigen::AngleAxisf(robot.camera_tilt_angle, Eigen::Vector3f::UnitX());
+                                                  Eigen::AngleAxisf(robot.camera_tilt_angle, Eigen::Vector3f::UnitX()) *
+                                                  Eigen::AngleAxisf(robot.camera_pan_angle, Eigen::Vector3f::UnitZ());
 
     // draw selected
 //    auto item = viewer->scene.addRect(-200, -200, 400, 400, QPen(QColor("green"), 20));
