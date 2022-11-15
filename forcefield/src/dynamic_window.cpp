@@ -75,7 +75,7 @@ std::vector<Dynamic_Window::Result> Dynamic_Window::compute_predictions(float cu
     // given advance acceleration, adv_a, in one second the robot will pass from current_speed to current_speed + adv_a
     float max_reachable_adv_speed =  constants.adv_accel * constants.time_ahead;
     float max_reachable_rot_speed =  constants.rot_accel * constants.time_ahead;
-    for(float v=constants.min_advance_velocity; v<=max_reachable_adv_speed; v+=constants.adv_step)
+    for(float v=0.f; v<=max_reachable_adv_speed; v+=constants.adv_step)
         for(float w=-max_reachable_rot_speed; w<=max_reachable_rot_speed; w+=constants.rot_step)
         {
             float new_adv = current_adv + v;
@@ -92,7 +92,7 @@ std::vector<Dynamic_Window::Result> Dynamic_Window::compute_predictions(float cu
                         list_points.emplace_back(std::move(point));
                 }
             }
-            else
+            else // para evitar la división por cero en el cálculo de r
             {
                 for(float t = constants.step_along_arc; t < new_adv * constants.time_ahead; t+=constants.step_along_arc)
                 {
@@ -232,8 +232,8 @@ void Dynamic_Window::draw_target(const Eigen::Vector3f &target_r, QGraphicsPolyg
         delete target_draw;
     }
 
-    auto target_world = robot_polygon->mapToScene(QPointF(target_r.x(), target_r.y()));
-    target_draw = scene->addRect(target_world.x()-100, target_world.y()-100, 200 , 200, QPen(QColor("Orange")), QBrush(QColor("Orange")));
+    target_draw = scene->addRect(-100, -100, 200 , 200, QPen(QColor("Orange")), QBrush(QColor("Orange")));
+    target_draw->setPos(target_r.x(), target_r.y());
 }
 void Dynamic_Window::draw_polygon(const QPolygonF &poly, QGraphicsScene *scene)
 {

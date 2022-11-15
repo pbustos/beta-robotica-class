@@ -36,10 +36,13 @@
 #include <opencv2/highgui.hpp>
 #include <dynamic_window.h>
 #include <timer/timer.h>
+#include "robot.h"
+#include "camera.h"
 
 class SpecificWorker : public GenericWorker
 {
     Q_OBJECT
+    using v2f = Eigen::Vector2f;
     public:
         SpecificWorker(TuplePrx tprx, bool startup_check);
         ~SpecificWorker();
@@ -53,23 +56,10 @@ class SpecificWorker : public GenericWorker
         void initialize(int period);
 
     private:
-    struct Robot
-    {
-        float current_adv_speed = 0;
-        float current_rot_speed = 0;
-        const float width = 450;
-        const float length = 450;
-        const float semi_width =  width/2;
-        const float semi_height = length/2;
-        const float dist_between_bumper_points = semi_width/8;
-        const float camera_tilt_angle = 0.35;  //  20º
-        float camera_pan_angle = 0.f;
-        RoboCompYoloObjects::TBox target{.type = -1};
-        Eigen::Vector3f current_target{0.f, 0.f, 0.f};  // vector pointing to target
-        bool has_target = false;
-        float max_advance_speed = 1000;
-    };
-    Robot robot;
+
+    rc::Robot robot;
+    rc::Camera top_camera;
+
     struct Constants
     {
         bool IS_COPPELIA = true;
@@ -77,21 +67,30 @@ class SpecificWorker : public GenericWorker
         const float min_camera_depth_range = 300;
         const float omni_camera_height = 580; //mm
         const float omni_camera_y_offset = 120; //mm
-        const float omni_camera_x_offset = 0; //mm
+        const float omni_camera_x_offset = 0.f; //mm
         const float top_camera_height = 1555; //mm
         const float top_camera_y_offset = -40; //mm
-        float num_angular_bins = 360;
+        const float top_camera_x_offset = 0.f; //mm
+        const float camera_tilt_angle = -0.35;  //  20º
+
+        int num_angular_bins = 360;
         float coppelia_depth_scaling_factor = 19.f;
         float dreamvu_depth_scaling_factor = 10.f;
         const float max_hor_angle_error = 0.6; // rads
-        const float yolo_threshold = 0.5;
+        const float yolo_threshold = 0.6;
         const float depth_lines_max_height = 1550;
         const float depth_lines_min_height = 350;
         const float depth_lines_step = 100;
         const float min_dist_from_robot_center = 300; //mm
-        const float max_distance_for_repulsion = 4000; // mm. Distance beyond which repulsion vanishes. It follows an inverse law with current robot speed
+        const float max_distance_for_repulsion = 1000; // mm. Distance beyond which repulsion vanishes. It follows an inverse law with current robot speed
         const float speed_for_max_repulsion = 1000;
-        const float min_dist_to_target = 1100; //mm
+        //float dynamic_threshold = max_distance_for_repulsion/(speed_for_max_repulsion*speed_for_max_repulsion);
+        float dynamic_threshold = 500;
+        float nu = 0.1f;   // nervousness
+        float quadratic_dynamic_threshold_coefficient = max_distance_for_repulsion / (speed_for_max_repulsion * speed_for_max_repulsion);
+        const float min_similarity_iou_threshold = 0.5;
+        const float min_dist_to_target = 500; //mm  target is defined 1000 mm before detection
+        const float forces_similarity_threshold = 200;
         double xset_gaussian = 0.4;             // gaussian break x set value
         double yset_gaussian = 0.3;             // gaussian break y set value
     };
@@ -102,15 +101,17 @@ class SpecificWorker : public GenericWorker
     AbstractGraphicViewer *viewer;
 
     std::vector<std::vector<Eigen::Vector2f>> get_multi_level_3d_points_omni(const cv::Mat &depth_frame);
+    Eigen::Vector2f compute_repulsion_forces(vector<Eigen::Vector2f> &floor_line);
     cv::Mat read_depth_coppelia();
-    cv::Mat read_rgb(const std::string &camera_name);
-    std::tuple<cv::Mat, float, float> read_depth_top(const std::string &camera_name);
-    void eye_track(Robot &robot);
+    void eye_track(rc::Robot &robot); // modifies pan angle
+    void move_robot(Eigen::Vector2f force);
     RoboCompYoloObjects::TObjects yolo_detect_objects(cv::Mat rgb);
 
     // draw
-    void draw_floor_line(const vector<vector<Eigen::Vector2f>> &lines, int i=1);
+    void draw_floor_line(const vector<vector<Eigen::Vector2f>> &lines, std::initializer_list<int> list);
+    void draw_forces(const Eigen::Vector2f &force, const Eigen::Vector2f &target, const Eigen::Vector2f &res);
     void draw_objects_on_2dview(RoboCompYoloObjects::TObjects objects, const RoboCompYoloObjects::TBox &selected);
+    void draw_dynamic_threshold(float threshold);
     void draw_top_camera_optic_ray();
 
     // objects
@@ -118,21 +119,29 @@ class SpecificWorker : public GenericWorker
     Eigen::MatrixX3f COLORS;
 
     // joy
-    void set_target_force(const Eigen::Vector2f &vec);
+    void set_target_force(const Eigen::Vector3f &vec);
+    Eigen::Vector3f target_coordinates{0.f, 0.f, 0.f};  //third component for pure  rotations
 
     // state machine
-    Eigen::Vector2f state_machine(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line);
+    Eigen::Vector3f state_machine(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line);
     enum class State {IDLE, SEARCHING, APPROACHING, WAITING};
-    State state = State::IDLE;
-    Eigen::Vector2f search_state(const RoboCompYoloObjects::TObjects &objects);
-    Eigen::Vector2f approach_state(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line);
-    Eigen::Vector2f wait_state();
+    State state = State::SEARCHING;
+    Eigen::Vector3f search_state(const RoboCompYoloObjects::TObjects &objects);
+    Eigen::Vector3f approach_state(const RoboCompYoloObjects::TObjects &objects, const std::vector<Eigen::Vector2f> &line);
+    Eigen::Vector3f wait_state();
 
+    float iou(const RoboCompYoloObjects::TBox &a, const RoboCompYoloObjects::TBox &b);
     float closest_distance_ahead(const vector<Eigen::Vector2f> &line);
 
     // DWA
     Dynamic_Window dwa;
     float gaussian(float x);
+
+    std::map<float, float> bumper_points;
+
+    // Clock
+    rc::Timer<> clock;
+
 
 };
 

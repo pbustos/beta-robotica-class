@@ -54,7 +54,7 @@ class Dynamic_Window
             const float adv_accel = 300; // mm/sg2
             const float rot_accel = 1.f; // rads/sg2
             const float adv_step = 100;
-            const float rot_step = 0.3;
+            const float rot_step = 0.1;
         };
         Constants constants;
 
