@@ -16,6 +16,8 @@ namespace rc
     {
         if(not has_target_flag)
             return Eigen::Vector3f{0.f, 0.f, 0.f};
+        if(get_pure_rotation() != 0)
+            return Eigen::Vector3f{0.f, 0.f, get_pure_rotation()};
 
         Eigen::Transform<float, 3, Eigen::Affine> tf = get_tf_cam_to_base();
         Eigen::Vector3f target = tf * get_camera_target_coordinates();

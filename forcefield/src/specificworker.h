@@ -143,6 +143,7 @@ class SpecificWorker : public GenericWorker
     rc::Timer<> clock;
 
 
+
 };
 
 #endif
