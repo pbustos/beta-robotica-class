@@ -28,38 +28,36 @@
 #define SPECIFICWORKER_H
 
 #include <genericworker.h>
-#include <innermodel/innermodel.h>
 #include <grid2d/grid.h>
 #include <abstract_graphic_viewer/abstract_graphic_viewer.h>
 
 class SpecificWorker : public GenericWorker
 {
-Q_OBJECT
-public:
-    SpecificWorker(TuplePrx tprx, bool startup_check);
-	~SpecificWorker();
-	bool setParams(RoboCompCommonBehavior::ParameterList params);
+    Q_OBJECT
+    public:
+        SpecificWorker(TuplePrx tprx, bool startup_check);
+        ~SpecificWorker();
+        bool setParams(RoboCompCommonBehavior::ParameterList params);
 
-public slots:
-	void compute();
-	void initialize(int period);
-	void reset_time();
+    public slots:
+        void compute();
+        void initialize(int period);
+        void reset_time();
 
-	//--------------------
-private:
-	Grid fm;
-	QTime time;
-	int COUNT_DOWN=180; //secs
-    AbstractGraphicViewer *viewer;
+        //--------------------
+    private:
+        Grid fm;
+        QElapsedTimer time;
+        int COUNT_DOWN=180; //secs
+        AbstractGraphicViewer *viewer;
 
-    //robot
-    const int ROBOT_LENGTH = 400;
-    QGraphicsPolygonItem *robot_polygon;
-    int robot_id;
-    std::vector<QPointF> trail;
-    std::vector<QGraphicsItem *> items;
-    void draw_trail(const QPointF &new_point);
-
+        //robot
+        const int ROBOT_LENGTH = 400;
+        QGraphicsPolygonItem *robot_polygon;
+        int robot_id;
+        std::vector<QPointF> trail;
+        std::vector<QGraphicsItem *> items;
+        void draw_trail(const QPointF &new_point);
 };
 
 #endif

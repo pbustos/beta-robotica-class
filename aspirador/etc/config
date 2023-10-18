@@ -1,7 +1,7 @@
 CommonBehavior.Endpoints=tcp -p 11000
 
 # Proxies for required interfaces
-DifferentialRobotMultiProxy = differentialrobotmulti:tcp -h localhost -p 10007
+OmniRobotProxy = omnirobot:tcp -h localhost -p 10004
 
 max_time=180
 robot_id=2
@@ -9,7 +9,4 @@ robot_id=2
 Ice.Warn.Connections=0
 Ice.Trace.Network=0
 Ice.Trace.Protocol=0
-# Ice.ACM.Client=10
-Ice.ACM.Client=0
-# Ice.ACM.Server=10
-Ice.ACM.Server=0
+

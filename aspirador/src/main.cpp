@@ -1,5 +1,5 @@
 /*
- *    Copyright (C) 2022 by YOUR NAME HERE
+ *    Copyright (C) 2023 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -130,28 +130,28 @@ int ::aspirador::run(int argc, char* argv[])
 
 	int status=EXIT_SUCCESS;
 
-	RoboCompDifferentialRobotMulti::DifferentialRobotMultiPrxPtr differentialrobotmulti_proxy;
+	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
 
 	string proxy, tmp;
 	initialize();
 
 	try
 	{
-		if (not GenericMonitor::configGetString(communicator(), prefix, "DifferentialRobotMultiProxy", proxy, ""))
+		if (not GenericMonitor::configGetString(communicator(), prefix, "OmniRobotProxy", proxy, ""))
 		{
-			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy DifferentialRobotMultiProxy\n";
+			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy OmniRobotProxy\n";
 		}
-		differentialrobotmulti_proxy = Ice::uncheckedCast<RoboCompDifferentialRobotMulti::DifferentialRobotMultiPrx>( communicator()->stringToProxy( proxy ) );
+		omnirobot_proxy = Ice::uncheckedCast<RoboCompOmniRobot::OmniRobotPrx>( communicator()->stringToProxy( proxy ) );
 	}
 	catch(const Ice::Exception& ex)
 	{
-		cout << "[" << PROGRAM_NAME << "]: Exception creating proxy DifferentialRobotMulti: " << ex;
+		cout << "[" << PROGRAM_NAME << "]: Exception creating proxy OmniRobot: " << ex;
 		return EXIT_FAILURE;
 	}
-	rInfo("DifferentialRobotMultiProxy initialized Ok!");
+	rInfo("OmniRobotProxy initialized Ok!");
 
 
-	tprx = std::make_tuple(differentialrobotmulti_proxy);
+	tprx = std::make_tuple(omnirobot_proxy);
 	SpecificWorker *worker = new SpecificWorker(tprx, startup_check_flag);
 	//Monitor thread
 	SpecificMonitor *monitor = new SpecificMonitor(worker,communicator());
