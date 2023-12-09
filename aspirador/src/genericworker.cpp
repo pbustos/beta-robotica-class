@@ -1,5 +1,5 @@
 /*
- *    Copyright (C) 2022 by YOUR NAME HERE
+ *    Copyright (C) 2023 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -23,9 +23,9 @@
 GenericWorker::GenericWorker(TuplePrx tprx) : Ui_guiDlg()
 {
 
-	differentialrobotmulti_proxy = std::get<0>(tprx);
+	omnirobot_proxy = std::get<0>(tprx);
 
-	mutex = new QMutex(QMutex::Recursive);
+	mutex = new QMutex();
 
 
 	#ifdef USE_QTGUI

@@ -1,5 +1,5 @@
 /*
- *    Copyright (C) 2022 by YOUR NAME HERE
+ *    Copyright (C) 2023 by YOUR NAME HERE
  *
  *    This file is part of RoboComp
  *
@@ -31,15 +31,15 @@
 #include <ui_mainUI.h>
 #include <CommonBehavior.h>
 
-#include <DifferentialRobotMulti.h>
 #include <GenericBase.h>
+#include <OmniRobot.h>
 
 
 #define CHECK_PERIOD 5000
 #define BASIC_PERIOD 100
 
 
-using TuplePrx = std::tuple<RoboCompDifferentialRobotMulti::DifferentialRobotMultiPrxPtr>;
+using TuplePrx = std::tuple<RoboCompOmniRobot::OmniRobotPrxPtr>;
 
 
 class GenericWorker : public QWidget, public Ui_guiDlg
@@ -55,7 +55,7 @@ public:
 	QMutex *mutex;
 
 
-	RoboCompDifferentialRobotMulti::DifferentialRobotMultiPrxPtr differentialrobotmulti_proxy;
+	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
 
 
 protected:

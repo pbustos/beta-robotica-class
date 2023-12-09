@@ -68,7 +68,14 @@ void SpecificWorker::initialize(int period)
 void SpecificWorker::compute()
 {
     RoboCompGenericBase::TBaseState bState;
-    try{ differentialrobotmulti_proxy->getBaseState(robot_id, bState); }
+    try
+    {
+        omnirobot_proxy->getBaseState(bState);
+        bState.x *= 1000;
+        bState.z *= 1000;
+        bState.alpha -= M_PI/2;
+        qInfo() << bState.x << bState.z;
+    }
     catch(const Ice::Exception &ex){std::cout << ex << std::endl; return;}
 
     static QPointF last_point(bState.x, bState.z);
@@ -77,7 +84,7 @@ void SpecificWorker::compute()
     robot_polygon->setPos(bState.x, bState.z);
     fm.setVisited(fm.pointToKey((long int)bState.x, (long int)bState.z), true);
     lcdNumber_percent->display(100.0 * fm.count_total_visited() / fm.count_total());
-    lcdNumber_time->display(COUNT_DOWN - time.elapsed()/1000);
+    lcdNumber_time->display((int)(COUNT_DOWN - time.elapsed()/1000));
     items.push_back(viewer->scene.addLine(last_point.x(), last_point.y(), bState.x, bState.z, QPen(QColor("blue"), 20)));
     last_point = QPointF(bState.x, bState.z);
 }

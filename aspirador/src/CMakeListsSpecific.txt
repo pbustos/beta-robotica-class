@@ -4,7 +4,7 @@ SET ( SOURCES
   specificworker.cpp
   specificmonitor.cpp
   $ENV{ROBOCOMP}/classes/grid2d/grid.cpp
-  $ENV{ROBOCOMP}/classes/abstract_graphic_viewer/abstract_graphic_viewer.h
+  $ENV{ROBOCOMP}/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp
 )
 
 # Headers set
@@ -15,5 +15,5 @@ SET ( HEADERS
 
 INCLUDE( $ENV{ROBOCOMP}/cmake/modules/opencv4.cmake )
 set(CMAKE_CXX_STANDARD 20)
-add_definitions(-O3  -fmax-errors=1)
-SET (LIBS ${LIBS}  tbb)
+add_definitions(-O3  -fmax-errors=1 -I/usr/include/x86_64-linux-gnu/qt6/QtOpenGLWidgets/)
+SET (LIBS ${LIBS}  tbb Qt6OpenGLWidgets)
