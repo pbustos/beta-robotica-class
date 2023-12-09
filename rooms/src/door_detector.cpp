@@ -11,9 +11,6 @@
 
 DoorDetector::DoorDetector()
 {
-    // Define the value of each range for all levels of lidar lines extracted from the pointcloud
-    height_ranges = {{0, 350}};
-    //    height_ranges = {{0, 350}, {1000, 2000}, {2000, 3000}, {3000, 4000}};
 }
 DoorDetector::Doors
 DoorDetector::detect(const Lines &lines, QGraphicsScene *scene)
