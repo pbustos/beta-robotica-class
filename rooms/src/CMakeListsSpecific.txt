@@ -1,0 +1,22 @@
+# Sources set
+SET ( SOURCES
+  specificworker.cpp
+  specificmonitor.cpp
+  /home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp
+  door_detector.cpp
+)
+
+# Headers set
+SET ( HEADERS
+  specificworker.h
+  specificmonitor.h
+  /home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.h
+)
+
+INCLUDE( $ENV{ROBOCOMP}/cmake/modules/opencv4.cmake )
+
+add_definitions(-g -fmax-errors=1 -fno-char8_t -I/usr/include/x86_64-linux-gnu/qt6/QtOpenGLWidgets/)
+
+SET (LIBS ${LIBS}  Qt6OpenGLWidgets)
+
+

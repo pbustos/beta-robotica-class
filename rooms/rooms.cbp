@@ -1,0 +1,627 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6"/>
+	<Project>
+		<Option title="rooms"/>
+		<Option makefile_is_custom="1"/>
+		<Option compiler="gcc"/>
+		<Option virtualFolders="CMake Files\;CMake Files\src\;CMake Files\..\;CMake Files\..\..\;CMake Files\..\..\..\;CMake Files\..\..\..\..\;CMake Files\..\..\..\..\..\;CMake Files\..\..\..\..\..\robocomp\;CMake Files\..\..\..\..\..\robocomp\robocomp\;CMake Files\..\..\..\..\..\robocomp\robocomp\cmake\;CMake Files\..\..\..\..\..\robocomp\robocomp\cmake\modules\;CMake Files\..\..\..\..\..\..\;CMake Files\..\..\..\..\..\..\usr\;CMake Files\..\..\..\..\..\..\usr\lib\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\3rdparty\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\3rdparty\kwin\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6CoreTools\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Gui\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6GuiTools\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBusTools\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6WidgetsTools\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6OpenGL\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Xml\;CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\opencv4\;"/>
+		<Build>
+			<Target title="all">
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 all"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="edit_cache">
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 edit_cache"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="rebuild_cache">
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 rebuild_cache"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="list_install_components">
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 list_install_components"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="install">
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 install"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="install/local">
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 install/local"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="install/strip">
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 install/strip"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="ICES__home_pbustos_robocomp_components_grupo-4-robotica_rooms_src">
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 ICES__home_pbustos_robocomp_components_grupo-4-robotica_rooms_src"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="rooms">
+				<Option output="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/bin/rooms" prefix_auto="0" extension_auto="0"/>
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/bin"/>
+				<Option object_output="./"/>
+				<Option type="1"/>
+				<Option compiler="gcc"/>
+				<Compiler>
+					<Add option="-DICE_CPP11_MAPPING"/>
+					<Add option="-DQT_GUI_LIB"/>
+					<Add option="-DQT_CORE_LIB"/>
+					<Add option="-DQT_WIDGETS_LIB"/>
+					<Add option="-DQT_OPENGL_LIB"/>
+					<Add option="-DQT_XML_LIB"/>
+					<Add directory="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/rooms_autogen/include"/>
+					<Add directory="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src"/>
+					<Add directory="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/."/>
+					<Add directory="/opt/robocomp/include"/>
+					<Add directory="/classes"/>
+					<Add directory="/home/pbustos/robocomp/components/grupo-4-robotica/rooms"/>
+					<Add directory="/home/robocomp/robocomp/classes"/>
+					<Add directory="/home/robocomp/robocomp/libs"/>
+					<Add directory="/home/robocomp/robocomp/interfaces"/>
+					<Add directory="/include"/>
+					<Add directory="/usr/include/opencv4"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtGui"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtCore"/>
+					<Add directory="/usr/lib/x86_64-linux-gnu/qt6/mkspecs/linux-g++"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtWidgets"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtOpenGL"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtXml"/>
+				</Compiler>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 rooms"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="rooms/fast">
+				<Option output="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/bin/rooms" prefix_auto="0" extension_auto="0"/>
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/bin"/>
+				<Option object_output="./"/>
+				<Option type="1"/>
+				<Option compiler="gcc"/>
+				<Compiler>
+					<Add option="-DICE_CPP11_MAPPING"/>
+					<Add option="-DQT_GUI_LIB"/>
+					<Add option="-DQT_CORE_LIB"/>
+					<Add option="-DQT_WIDGETS_LIB"/>
+					<Add option="-DQT_OPENGL_LIB"/>
+					<Add option="-DQT_XML_LIB"/>
+					<Add directory="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/rooms_autogen/include"/>
+					<Add directory="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src"/>
+					<Add directory="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/."/>
+					<Add directory="/opt/robocomp/include"/>
+					<Add directory="/classes"/>
+					<Add directory="/home/pbustos/robocomp/components/grupo-4-robotica/rooms"/>
+					<Add directory="/home/robocomp/robocomp/classes"/>
+					<Add directory="/home/robocomp/robocomp/libs"/>
+					<Add directory="/home/robocomp/robocomp/interfaces"/>
+					<Add directory="/include"/>
+					<Add directory="/usr/include/opencv4"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtGui"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtCore"/>
+					<Add directory="/usr/lib/x86_64-linux-gnu/qt6/mkspecs/linux-g++"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtWidgets"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtOpenGL"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/qt6/QtXml"/>
+				</Compiler>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 rooms/fast"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="rooms_autogen">
+				<Option working_dir="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 rooms_autogen"/>
+					<CompileFile command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/gmake -f &quot;/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+		</Build>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/CommonBehavior.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/CommonBehavior.cpp.rule">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/CommonBehavior.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/GenericBase.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/GenericBase.cpp.rule">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/GenericBase.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Lidar3D.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Lidar3D.cpp.rule">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/Lidar3D.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/OmniRobot.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/OmniRobot.cpp.rule">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/OmniRobot.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/commonbehaviorI.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/commonbehaviorI.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/genericmonitor.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/genericmonitor.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/genericworker.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/genericworker.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/main.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/mainUI.ui">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/rooms_autogen/mocs_compilation.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/specificmonitor.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/specificmonitor.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/specificworker.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/specificworker.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/ui_mainUI.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/robocomp/robocomp/classes/qlog/qlog.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/robocomp/robocomp/classes/qlog/qlog.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/robocomp/robocomp/classes/rapplication/rapplication.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/robocomp/robocomp/classes/rapplication/rapplication.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/robocomp/robocomp/classes/sigwatch/sigwatch.h">
+			<Option target="rooms"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/CMakeLists.txt">
+			<Option virtualFolder="CMake Files\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/CMakeLists.txt">
+			<Option virtualFolder="CMake Files\src\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/src/CMakeListsSpecific.txt">
+			<Option virtualFolder="CMake Files\src\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../robocomp/robocomp/cmake/robocomp.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\robocomp\robocomp\cmake\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../robocomp/robocomp/cmake/modules/opencv4.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\robocomp\robocomp\cmake\modules\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../robocomp/robocomp/cmake/modules/qt.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\robocomp\robocomp\cmake\modules\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/FindWrapAtomic.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/FindWrapOpenGL.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/FindWrapVulkanHeaders.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6Config.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6ConfigExtras.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6ConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6ConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6Dependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6Targets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6VersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtFeature.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtFeatureCommon.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicCMakeHelpers.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicCMakeVersionHelpers.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicDependencyHelpers.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicFinalizerHelpers.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicFindPackageHelpers.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicPluginHelpers.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicTargetHelpers.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicWalkLibsHelpers.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6/3rdparty/kwin/FindXKB.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6\3rdparty\kwin\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreConfigExtras.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreMacros.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Core/Qt6CoreVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Core\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6CoreTools/Qt6CoreToolsAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6CoreTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6CoreTools/Qt6CoreToolsConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6CoreTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6CoreTools/Qt6CoreToolsConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6CoreTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6CoreTools/Qt6CoreToolsConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6CoreTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6CoreTools/Qt6CoreToolsDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6CoreTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6CoreTools/Qt6CoreToolsTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6CoreTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6CoreTools/Qt6CoreToolsTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6CoreTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6CoreTools/Qt6CoreToolsVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6CoreTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Gui/Qt6GuiAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Gui\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Gui/Qt6GuiConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Gui\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Gui/Qt6GuiConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Gui\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Gui/Qt6GuiConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Gui\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Gui/Qt6GuiDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Gui\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Gui/Qt6GuiTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Gui\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Gui/Qt6GuiTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Gui\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Gui/Qt6GuiVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Gui\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6GuiTools/Qt6GuiToolsAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6GuiTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6GuiTools/Qt6GuiToolsConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6GuiTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6GuiTools/Qt6GuiToolsConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6GuiTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6GuiTools/Qt6GuiToolsConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6GuiTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6GuiTools/Qt6GuiToolsDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6GuiTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6GuiTools/Qt6GuiToolsTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6GuiTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6GuiTools/Qt6GuiToolsTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6GuiTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6GuiTools/Qt6GuiToolsVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6GuiTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBus/Qt6DBusAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBus/Qt6DBusConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBus/Qt6DBusConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBus/Qt6DBusConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBus/Qt6DBusDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBus/Qt6DBusMacros.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBus/Qt6DBusTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBus/Qt6DBusTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBus/Qt6DBusVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBus\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBusTools/Qt6DBusToolsAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBusTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBusTools/Qt6DBusToolsConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBusTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBusTools/Qt6DBusToolsConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBusTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBusTools/Qt6DBusToolsConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBusTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBusTools/Qt6DBusToolsDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBusTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBusTools/Qt6DBusToolsTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBusTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBusTools/Qt6DBusToolsTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBusTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6DBusTools/Qt6DBusToolsVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6DBusTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Widgets/Qt6WidgetsAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Widgets/Qt6WidgetsConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Widgets/Qt6WidgetsConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Widgets/Qt6WidgetsConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Widgets/Qt6WidgetsDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Widgets/Qt6WidgetsMacros.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Widgets/Qt6WidgetsTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Widgets/Qt6WidgetsTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Widgets/Qt6WidgetsVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Widgets\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6WidgetsTools/Qt6WidgetsToolsAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6WidgetsTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6WidgetsTools/Qt6WidgetsToolsConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6WidgetsTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6WidgetsTools/Qt6WidgetsToolsConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6WidgetsTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6WidgetsTools/Qt6WidgetsToolsConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6WidgetsTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6WidgetsTools/Qt6WidgetsToolsDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6WidgetsTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6WidgetsTools/Qt6WidgetsToolsTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6WidgetsTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6WidgetsTools/Qt6WidgetsToolsTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6WidgetsTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6WidgetsTools/Qt6WidgetsToolsVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6WidgetsTools\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6OpenGL/Qt6OpenGLAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6OpenGL\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6OpenGL/Qt6OpenGLConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6OpenGL\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6OpenGL/Qt6OpenGLConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6OpenGL\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6OpenGL/Qt6OpenGLConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6OpenGL\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6OpenGL/Qt6OpenGLDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6OpenGL\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6OpenGL/Qt6OpenGLTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6OpenGL\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6OpenGL/Qt6OpenGLTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6OpenGL\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6OpenGL/Qt6OpenGLVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6OpenGL\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Xml/Qt6XmlAdditionalTargetInfo.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Xml\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Xml/Qt6XmlConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Xml\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Xml/Qt6XmlConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Xml\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Xml/Qt6XmlConfigVersionImpl.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Xml\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Xml/Qt6XmlDependencies.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Xml\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Xml/Qt6XmlTargets-none.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Xml\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Xml/Qt6XmlTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Xml\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/Qt6Xml/Qt6XmlVersionlessTargets.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\Qt6Xml\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/opencv4/OpenCVConfig-version.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\opencv4\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/opencv4/OpenCVConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\opencv4\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/opencv4/OpenCVModules-release.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\opencv4\"/>
+		</Unit>
+		<Unit filename="/home/pbustos/robocomp/components/grupo-4-robotica/rooms/../../../../../../usr/lib/x86_64-linux-gnu/cmake/opencv4/OpenCVModules.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\..\usr\lib\x86_64-linux-gnu\cmake\opencv4\"/>
+		</Unit>
+	</Project>
+</CodeBlocks_project_file>
