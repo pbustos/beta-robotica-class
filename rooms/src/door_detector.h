@@ -90,7 +90,7 @@ class DoorDetector
         };
         Constants consts;
         Doors detect(const Lines &lines, QGraphicsScene *scene);
-        Line current_line;
+        Line filter_out_points_beyond_doors(const Line&floor_line, const Doors &doors);
 
 private:
         std::vector<std::vector<Eigen::Vector2f>> extract_lines(const RoboCompLidar3D::TPoints &points, const std::vector<std::pair<float, float>> &ranges);
@@ -98,7 +98,6 @@ private:
         Doors_list get_doors(const Peaks_list &peaks, const Lines &lines);
         Doors filter_doors(const Doors_list &doors);
         void draw_doors(const Doors &doors, const Door &current_door, QGraphicsScene *scene, QColor=QColor("green"));
-        Line filter_out_points_beyond_doors(const Line&floor_line_cart, const Doors &doors);
 
         std::vector<std::pair<float, float>> height_ranges;
 };

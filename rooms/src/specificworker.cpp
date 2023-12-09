@@ -71,6 +71,7 @@ void SpecificWorker::compute()
     // doors
     auto lines = extract_lines(points, consts.ranges_list);
     auto doors = door_detector.detect(lines, &viewer->scene);
+    //auto filtered = door_detector.filter_out_points_beyond_doors(lines[0], doors);
 
     // match door_target against new perceived doors. Sets door_target or changes state to SEARCH_DOOR
     match_door_target(doors, door_target);
