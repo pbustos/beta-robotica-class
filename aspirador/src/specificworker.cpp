@@ -74,13 +74,13 @@ void SpecificWorker::compute()
         bState.x *= 1000;
         bState.z *= 1000;
         bState.alpha -= M_PI/2;
-        qInfo() << bState.x << bState.z;
+        //qInfo() << bState.x << bState.z;
     }
     catch(const Ice::Exception &ex){std::cout << ex << std::endl; return;}
 
     static QPointF last_point(bState.x, bState.z);
 
-    robot_polygon->setRotation(bState.alpha*180/M_PI);
+    robot_polygon->setRotation(qRadiansToDegrees(bState.alpha));
     robot_polygon->setPos(bState.x, bState.z);
     fm.setVisited(fm.pointToKey((long int)bState.x, (long int)bState.z), true);
     lcdNumber_percent->display(100.0 * fm.count_total_visited() / fm.count_total());

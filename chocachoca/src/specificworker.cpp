@@ -25,10 +25,7 @@
 SpecificWorker::SpecificWorker(TuplePrx tprx, bool startup_check) : GenericWorker(tprx)
 {
 	this->startup_check_flag = startup_check;
-	// Uncomment if there's too many debug messages
-	// but it removes the possibility to see the messages
-	// shown in the console with qDebug()
-//	QLoggingCategory::setFilterRules("*.debug=false\n");
+    //	QLoggingCategory::setFilterRules("*.debug=false\n");
 }
 
 /**
@@ -146,7 +143,7 @@ void SpecificWorker::draw_lidar(auto &filtered_points, QGraphicsScene *scene) co
     auto brush = QBrush(QColor(Qt::green));
     for(const auto &p : filtered_points)
     {
-        auto item = scene->addRect(-100, -100, 200, 200, color, brush);
+        auto item = scene->addRect(-50, -50, 100, 100, color, brush);
         item->setPos(p.y*1000, p.x*1000);
         items.push_back(item);
     }

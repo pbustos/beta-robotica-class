@@ -54,7 +54,9 @@ class SpecificWorker : public GenericWorker
             float ROBOT_LENGTH = 480;  // mm
             std::string LIDAR_NAME_LOW = "bpearl";
             std::string LIDAR_NAME_HIGH = "helios";
-            QRectF GRID_MAX_DIM{-6000, -6000, 12000, 12000};
+            //QRectF GRID_MAX_DIM{-6000, -6000, 12000, 12000};
+            QRectF GRID_MAX_DIM{-5000, 2500, 10000, -5000};
+
         };
         Params params;
 
