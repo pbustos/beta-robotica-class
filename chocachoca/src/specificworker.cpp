@@ -72,7 +72,7 @@ void SpecificWorker::compute()
     catch(const Ice::Exception &e){std::cout << e << std::endl;}
 
     auto p_filter = std::ranges::views::filter(ldata.points,
-                                               [](auto  &a){ return a.z > 0.1 and a.z < 0.3 and a.distance2d > 0.2;});
+                                               [](auto  &a){ return a.z > 100 and a.z < 3000 and a.distance2d > 200;});
 
     draw_lidar(p_filter, &viewer->scene);
 
@@ -144,17 +144,17 @@ void SpecificWorker::draw_lidar(auto &filtered_points, QGraphicsScene *scene) co
     for(const auto &p : filtered_points)
     {
         auto item = scene->addRect(-50, -50, 100, 100, color, brush);
-        item->setPos(p.y*1000, p.x*1000);
+        item->setPos(p.x, p.y);
         items.push_back(item);
     }
     // compute and draw minimum distance point
     auto p_min = std::ranges::min_element(filtered_points, [](auto &a, auto &b){return a.distance2d < b.distance2d;});
     auto item = scene->addRect(-150, -150, 300, 300, QColor(Qt::red), QBrush(QColor(Qt::red)));
-    item->setPos(p_min->y*1000, p_min->x*1000);
+    item->setPos(p_min->x, p_min->y);
     items.push_back(item);
-    lcdNumber_minangle->display(atan2(p_min->y, p_min->x));
+    lcdNumber_minangle->display(atan2(p_min->x,p_min->y));
     lcdNumber_mindist->display(p_min->distance2d);
-    //qDebug()  << atan2(p_min->y, p_min->x) << p_min->phi;
+    qDebug()  << atan2(p_min->x, p_min->y) << p_min->phi;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
