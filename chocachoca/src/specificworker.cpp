@@ -123,9 +123,9 @@ SpecificWorker::RetVal SpecificWorker::forward(auto &points)
     auto min_point = std::min_element(std::begin(points) + offset, std::end(points) - offset, [](auto &a, auto &b)
         {  return a.distance2d < b.distance2d; });
     if (min_point != points.end() and min_point->distance2d < params.STOP_THRESHOLD)
-            return SpecificWorker::RetVal(STATE::TURN, 0.f, 0.f);  // stop and change state if obstacle detected
+            return RetVal(STATE::TURN, 0.f, 0.f);  // stop and change state if obstacle detected
     else
-        return SpecificWorker::RetVal(STATE::FORWARD, params.MAX_ADV_SPEED, 0.f);
+        return RetVal(STATE::FORWARD, params.MAX_ADV_SPEED, 0.f);
 }
 
 /**
@@ -152,7 +152,7 @@ SpecificWorker::RetVal SpecificWorker::turn(auto &points)
     if(min_point != std::end(points) and min_point->distance2d > params.ADVANCE_THRESHOLD)
     {
         first_time = true;
-        return SpecificWorker::RetVal(STATE::FORWARD, 0.f, 0.f);
+        return RetVal(STATE::FORWARD, 0.f, 0.f);
     }
     else    // Keep doing my business
     {
@@ -164,7 +164,7 @@ SpecificWorker::RetVal SpecificWorker::turn(auto &points)
             if (sign == 0) sign = -1; else sign = 1;
             first_time = false;
         }
-        return SpecificWorker::RetVal(STATE::TURN, 0.f, sign * params.MAX_ROT_SPEED);
+        return RetVal(STATE::TURN, 0.f, sign * params.MAX_ROT_SPEED);
     }
 }
 
