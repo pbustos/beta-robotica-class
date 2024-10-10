@@ -73,8 +73,8 @@ void SpecificWorker::compute()
         omnirobot_proxy->getBaseState(bState);
         bState.x *= 1000;
         bState.z *= 1000;
-        bState.alpha -= M_PI/2;
-        //qInfo() << bState.x << bState.z;
+        //bState.alpha -= M_PI/2;
+        //qInfo() << bState.x << bState.z << bState.alpha;
     }
     catch(const Ice::Exception &ex){std::cout << ex << std::endl; return;}
 
