@@ -76,6 +76,7 @@ void SpecificWorker::compute()
     std::ranges::copy_if(ldata.points, std::back_inserter(p_filter),
                                                [](auto  &a){ return a.z < 500 and a.distance2d > 200;});
 
+
     draw_lidar(p_filter, &viewer->scene);
 
     /// Add State machine with your sweeping logic
@@ -155,34 +156,41 @@ SpecificWorker::RetVal SpecificWorker::turn(auto &points)
     static bool first_time = true;
     static int sign = 1;
 
-    // check if the central part of the filtered_points vector is free to go. If so stop turning and change state to FORWARD
+    /// check if the narrow central part of the filtered_points vector is free to go. If so stop turning and change state to FORWARD
     auto offset_begin = closest_lidar_index_to_given_angle(points, -params.LIDAR_FRONT_SECTION);
     auto offset_end = closest_lidar_index_to_given_angle(points, params.LIDAR_FRONT_SECTION);
-    if(offset_begin and offset_end)
-    {
-        auto min_point = std::min_element(std::begin(points) + offset_begin.value(), std::begin(points) + offset_end.value(), [](auto &a, auto &b)
-        { return a.distance2d < b.distance2d; });
-        if (min_point != std::end(points) and min_point->distance2d > params.ADVANCE_THRESHOLD)
-        {
-            first_time = true;
-            return RetVal(STATE::FORWARD, 0.f, 0.f);
-        } else    // Keep doing my business
-        {
-            // Generate a random sign (-1 or 1) if first_time = true;
-            if (first_time)
-            {
-                sign = dist(gen);
-                if (sign == 0) sign = -1; else sign = 1;
-                first_time = false;
-            }
-            return RetVal(STATE::TURN, 0.f, sign * params.MAX_ROT_SPEED);
-        }
-    }
-    else // no valid readings
+
+    // exit if no valid readings
+    if (not offset_begin or not offset_end)
     {
         qWarning() << "No valid readings. Stopping";
         return RetVal(STATE::FORWARD, 0.f, 0.f);
     }
+
+    auto min_point = std::min_element(std::begin(points) + offset_begin.value(), std::begin(points) + offset_end.value(), [](auto &a, auto &b)
+    { return a.distance2d < b.distance2d; });
+    if (min_point != std::end(points) and min_point->distance2d > params.ADVANCE_THRESHOLD)
+    {
+        first_time = true;
+        return RetVal(STATE::FORWARD, 0.f, 0.f);
+    }
+
+    /// Keep doing my business
+    // get the min_element for all points range anc check if angle is greater, less or closer to zero to choose the direction
+    auto min_point_all = std::ranges::min_element(points, [](auto &a, auto &b)
+        { return a.distance2d < b.distance2d; });
+    // if min_point_all phi is negative, turn right, otherwise turn left. If it is close to zero, turn randomly
+    if (first_time)
+    {
+        if (min_point_all->phi < 0.1 and min_point_all->phi > -0.1)
+        {
+            sign = dist(gen);
+            if (sign == 0) sign = -1; else sign = 1;
+        } else
+            sign = min_point_all->phi > 0 ? -1 : 1;
+        first_time = false;
+    }
+    return RetVal(STATE::TURN, 0.f, sign * params.MAX_ROT_SPEED);
 }
 
 /**
