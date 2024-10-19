@@ -24,10 +24,6 @@
 SpecificWorker::SpecificWorker(TuplePrx tprx, bool startup_check) : GenericWorker(tprx)
 {
 	this->startup_check_flag = startup_check;
-	// Uncomment if there's too many debug messages
-	// but it removes the possibility to see the messages
-	// shown in the console with qDebug()
-//	QLoggingCategory::setFilterRules("*.debug=false\n");
 }
 
 /**
@@ -40,17 +36,6 @@ SpecificWorker::~SpecificWorker()
 
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
-//	THE FOLLOWING IS JUST AN EXAMPLE
-//	To use innerModelPath parameter you should uncomment specificmonitor.cpp readConfig method content
-//	try
-//	{
-//		RoboCompCommonBehavior::Parameter par = params.at("InnerModelPath");
-//		std::string innermodel_path = par.value;
-//		innerModel = std::make_shared(innermodel_path);
-//	}
-//	catch(const std::exception &e) { qFatal("Error reading config params"); }
-	
-
 	return true;
 }
 
@@ -72,29 +57,27 @@ void SpecificWorker::initialize()
 		//this->setPeriod(STATES::Emergency, 500);
 
 	}
-
 }
 
 void SpecificWorker::compute()
 {
     std::cout << "Compute worker" << std::endl;
-	//computeCODE
-	//QMutexLocker locker(mutex);
-	//try
-	//{
-	//  camera_proxy->getYImage(0,img, cState, bState);
-    //    if (img.empty())
-    //        emit goToEmergency()
-	//  memcpy(image_gray.data, &img[0], m_width*m_height*sizeof(uchar));
-	//  searchTags(image_gray);
-	//}
-	//catch(const Ice::Exception &e)
-	//{
-	//  std::cout << "Error reading from Camera" << e << std::endl;
-	//}
-	
-	
+
 }
+
+//////////////////////////////////////////////////////////////////
+/// YOUR CODE HERE
+//////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////////////////
+/// AUXILIARY FUNCTIONS
+//////////////////////////////////////////////////////////////////
 
 void SpecificWorker::emergency()
 {
@@ -120,9 +103,6 @@ int SpecificWorker::startup_check()
 	QTimer::singleShot(200, qApp, SLOT(quit()));
 	return 0;
 }
-
-
-
 
 /**************************************/
 // From the RoboCompLidar3D you can call this methods:

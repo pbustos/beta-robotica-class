@@ -264,14 +264,17 @@ SpecificWorker::RetVal SpecificWorker::wall(auto &filtered_points)
     auto rot_brake = std::clamp(1.f/(params.ROBOT_WIDTH/3.f) * std::fabs(error), 0.f, 1.f);
 
     // check the left/right hand side and the distance to the wall conditions
-    if(min_obj.phi >= 0 and error > 0)   // right hand side and too far from the wall: turn left
+    if(min_obj.phi >= 0 and error >= 0)   // right hand side and too far from the wall: turn left
         return RetVal(STATE::WALL, params.MAX_ADV_SPEED * adv_brake, params.MAX_ROT_SPEED * rot_brake);
     if(min_obj.phi >= 0 and error < 0)   // right hand side and too close to the wall: turn right
         return RetVal(STATE::WALL, params.MAX_ADV_SPEED * adv_brake, -params.MAX_ROT_SPEED * rot_brake);
-    if(min_obj.phi < 0 and error > 0)   // left hand side and too far from the wall: turn left
+    if(min_obj.phi < 0 and error >= 0)   // left hand side and too far from the wall: turn left
         return RetVal(STATE::WALL, params.MAX_ADV_SPEED * adv_brake, -params.MAX_ROT_SPEED * rot_brake);
     if(min_obj.phi < 0 and error < 0)   // left hand side and too close to the wall: turn right
         return RetVal(STATE::WALL, params.MAX_ADV_SPEED * adv_brake, params.MAX_ROT_SPEED * rot_brake);
+
+    qWarning() << "We should not reach this point. Stopping";
+    return RetVal (STATE::WALL, 0.f, 0.f);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
