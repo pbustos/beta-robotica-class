@@ -10,6 +10,7 @@ LIST(APPEND HEADERS
   specificmonitor.h
 )
 
+add_definitions(-fmax-errors=1 -fno-char8_t)
 
 LIST(APPEND LIBS ${LIBS}  )
 

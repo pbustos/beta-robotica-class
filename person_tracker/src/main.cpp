@@ -81,10 +81,11 @@
 #include "specificmonitor.h"
 #include "commonbehaviorI.h"
 
+#include <visualelementspubI.h>
 
 #include <Camera360RGB.h>
 #include <GenericBase.h>
-#include <Person.h>
+#include <Lidar3D.h>
 
 
 
@@ -134,7 +135,6 @@ int ::person_tracker::run(int argc, char* argv[])
 
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy;
 	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
-	RoboCompVisualElements::VisualElementsPrxPtr visualelements_proxy;
 
 	string proxy, tmp;
 	initialize();
@@ -171,23 +171,24 @@ int ::person_tracker::run(int argc, char* argv[])
 	rInfo("OmniRobotProxy initialized Ok!");
 
 
+	IceStorm::TopicManagerPrxPtr topicManager;
 	try
 	{
-		if (not GenericMonitor::configGetString(communicator(), prefix, "VisualElementsProxy", proxy, ""))
+		topicManager = topicManager = Ice::checkedCast<IceStorm::TopicManagerPrx>(communicator()->propertyToProxy("TopicManager.Proxy"));
+		if (!topicManager)
 		{
-			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy VisualElementsProxy\n";
+		    cout << "[" << PROGRAM_NAME << "]: TopicManager.Proxy not defined in config file."<<endl;
+		    cout << "	 Config line example: TopicManager.Proxy=IceStorm/TopicManager:default -p 9999"<<endl;
+	        return EXIT_FAILURE;
 		}
-		visualelements_proxy = Ice::uncheckedCast<RoboCompVisualElements::VisualElementsPrx>( communicator()->stringToProxy( proxy ) );
 	}
-	catch(const Ice::Exception& ex)
+	catch (const Ice::Exception &ex)
 	{
-		cout << "[" << PROGRAM_NAME << "]: Exception creating proxy VisualElements: " << ex;
+		cout << "[" << PROGRAM_NAME << "]: Exception: 'rcnode' not running: " << ex << endl;
 		return EXIT_FAILURE;
 	}
-	rInfo("VisualElementsProxy initialized Ok!");
 
-
-	tprx = std::make_tuple(lidar3d_proxy,omnirobot_proxy,visualelements_proxy);
+	tprx = std::make_tuple(lidar3d_proxy,omnirobot_proxy);
 	SpecificWorker *worker = new SpecificWorker(tprx, startup_check_flag);
 	//Monitor thread
 	SpecificMonitor *monitor = new SpecificMonitor(worker,communicator());
@@ -227,6 +228,53 @@ int ::person_tracker::run(int argc, char* argv[])
 
 
 		// Server adapter creation and publication
+		std::shared_ptr<IceStorm::TopicPrx> visualelementspub_topic;
+		Ice::ObjectPrxPtr visualelementspub;
+		try
+		{
+			if (not GenericMonitor::configGetString(communicator(), prefix, "VisualElementsPubTopic.Endpoints", tmp, ""))
+			{
+				cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy VisualElementsPubProxy";
+			}
+			Ice::ObjectAdapterPtr VisualElementsPub_adapter = communicator()->createObjectAdapterWithEndpoints("visualelementspub", tmp);
+			RoboCompVisualElementsPub::VisualElementsPubPtr visualelementspubI_ =  std::make_shared <VisualElementsPubI>(worker);
+			auto visualelementspub = VisualElementsPub_adapter->addWithUUID(visualelementspubI_)->ice_oneway();
+			if(!visualelementspub_topic)
+			{
+				try {
+					visualelementspub_topic = topicManager->create("VisualElementsPub");
+				}
+				catch (const IceStorm::TopicExists&) {
+					//Another client created the topic
+					try{
+						cout << "[" << PROGRAM_NAME << "]: Probably other client already opened the topic. Trying to connect.\n";
+						visualelementspub_topic = topicManager->retrieve("VisualElementsPub");
+					}
+					catch(const IceStorm::NoSuchTopic&)
+					{
+						cout << "[" << PROGRAM_NAME << "]: Topic doesn't exists and couldn't be created.\n";
+						//Error. Topic does not exist
+					}
+				}
+				catch(const IceUtil::NullHandleException&)
+				{
+					cout << "[" << PROGRAM_NAME << "]: ERROR TopicManager is Null. Check that your configuration file contains an entry like:\n"<<
+					"\t\tTopicManager.Proxy=IceStorm/TopicManager:default -p <port>\n";
+					return EXIT_FAILURE;
+				}
+				IceStorm::QoS qos;
+				visualelementspub_topic->subscribeAndGetPublisher(qos, visualelementspub);
+			}
+			VisualElementsPub_adapter->activate();
+		}
+		catch(const IceStorm::NoSuchTopic&)
+		{
+			cout << "[" << PROGRAM_NAME << "]: Error creating VisualElementsPub topic.\n";
+			//Error. Topic does not exist
+		}
+
+
+		// Server adapter creation and publication
 		cout << SERVER_FULL_NAME " started" << endl;
 
 		// User defined QtGui elements ( main window, dialogs, etc )
@@ -237,6 +285,16 @@ int ::person_tracker::run(int argc, char* argv[])
 		#endif
 		// Run QT Application Event Loop
 		a.exec();
+
+		try
+		{
+			std::cout << "Unsubscribing topic: visualelementspub " <<std::endl;
+			visualelementspub_topic->unsubscribe( visualelementspub );
+		}
+		catch(const Ice::Exception& ex)
+		{
+			std::cout << "ERROR Unsubscribing topic: visualelementspub " << ex.what()<<std::endl;
+		}
 
 
 		status = EXIT_SUCCESS;

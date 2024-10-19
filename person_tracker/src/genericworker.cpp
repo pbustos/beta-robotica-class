@@ -26,7 +26,6 @@ GenericWorker::GenericWorker(TuplePrx tprx) : Ui_guiDlg()
 	
 	lidar3d_proxy = std::get<0>(tprx);
 	omnirobot_proxy = std::get<1>(tprx);
-	visualelements_proxy = std::get<2>(tprx);
 
 	states.resize(STATES::NumberOfStates);
 	states[STATES::Initialize] = new GRAFCETStep("Initialize", BASIC_PERIOD, nullptr, std::bind(&GenericWorker::initialize, this));
