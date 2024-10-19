@@ -27,7 +27,6 @@ SpecificWorker::SpecificWorker(TuplePrx tprx, bool startup_check) : GenericWorke
 	this->startup_check_flag = startup_check;
     //	QLoggingCategory::setFilterRules("*.debug=false\n");
 }
-
 /**
 * \brief Default destructor
 */
@@ -35,12 +34,10 @@ SpecificWorker::~SpecificWorker()
 {
 	std::cout << "Destroying SpecificWorker" << std::endl;
 }
-
 bool SpecificWorker::setParams(RoboCompCommonBehavior::ParameterList params)
 {
 	return true;
 }
-
 void SpecificWorker::initialize()
 {
 	std::cout << "Initialize worker" << std::endl;
@@ -83,7 +80,6 @@ void SpecificWorker::initialize()
 		this->setPeriod(STATES::Compute, 100);
 	}
 }
-
 void SpecificWorker::compute()
 {
     RoboCompLidar3D::TData ldata;
@@ -221,6 +217,17 @@ SpecificWorker::RetVal SpecificWorker::turn(auto &points)
     }
     return RetVal(STATE::TURN, 0.f, sign * params.MAX_ROT_SPEED);
 }
+/**
+ * @brief Determines the robot's behavior when following a wall.
+ *
+ * This method analyzes the filtered points to determine the robot's behavior when following a wall.
+ * It first checks if the robot is about to crash into an obstacle, in which case it stops and changes
+ * the state to TURN. If no obstacle is detected, it then calculates the distance to the wall on the
+ * robot's side and computes the necessary speed and rotation to maintain a safe distance from the wall.
+ *
+ * @param filtered_points A vector containing points with distance information used for making navigation decisions.
+ * @returns A tuple containing the next state (WALL), and speed values.
+ */
 SpecificWorker::RetVal SpecificWorker::wall(auto &filtered_points)
 {
     static bool first_time = true;
@@ -278,6 +285,8 @@ SpecificWorker::RetVal SpecificWorker::wall(auto &filtered_points)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+/// Your code here
+//////////////////////////////////////////////////////////////////////////////////////////////////
 /**
  * Draws LIDAR points onto a QGraphicsScene.
  *
@@ -373,7 +382,6 @@ void SpecificWorker::draw_lidar(auto &filtered_points, QGraphicsScene *scene)
     items.push_back(line1);
     items.push_back(line2);
 }
-
 /**
  * @brief Calculates the index of the closest lidar point to the given angle.
  *
@@ -398,6 +406,8 @@ std::expected<int, string> SpecificWorker::closest_lidar_index_to_given_angle(co
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+/// Auxiliary methods
+//////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::emergency()
 {
     std::cout << "Emergency worker" << std::endl;
@@ -420,7 +430,6 @@ int SpecificWorker::startup_check()
 	QTimer::singleShot(200, qApp, SLOT(quit()));
 	return 0;
 }
-
 
 /**************************************/
 // From the RoboCompLidar3D you can call this methods:

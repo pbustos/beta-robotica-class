@@ -78,19 +78,22 @@ class SpecificWorker : public GenericWorker
         // state machine
         enum class STATE {FORWARD, TURN, WALL};
         STATE state = STATE::FORWARD;
-
         using RetVal = std::tuple<STATE, float, float>;
         RetVal forward(auto &filtered_points);
         RetVal turn(auto &filtered_points);
         RetVal wall(auto &filtered_points);
+
+        // draw
         void draw_lidar(auto &filtered_points, QGraphicsScene *scene);
         QGraphicsPolygonItem* robot_draw;
+
+        // aux
         std::expected<int, string> closest_lidar_index_to_given_angle(const auto &points, float angle);
 
         // random number generator
         std::random_device rd;
 
-        // left-right handness
+        // WALL-FOLLOW left-right handness
         enum class HANDNESS {LEFT, RIGHT};
         HANDNESS handness = HANDNESS::RIGHT;
 };
