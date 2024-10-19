@@ -1,0 +1,14 @@
+import "VisualElements.idsl";
+import "Lidar3D.idsl";
+import "OmniRobot.idsl";
+
+Component person_tracker
+{
+    Communications
+    {
+        requires VisualElements, Lidar3D, OmniRobot;
+    };
+    language Cpp11;
+    gui Qt(QWidget);
+};
+

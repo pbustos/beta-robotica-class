@@ -1,0 +1,16 @@
+# Sources set
+LIST(APPEND SOURCES
+  specificworker.cpp
+  specificmonitor.cpp
+)
+
+# Headers set
+LIST(APPEND HEADERS
+  specificworker.h
+  specificmonitor.h
+)
+
+
+LIST(APPEND LIBS ${LIBS}  )
+
+

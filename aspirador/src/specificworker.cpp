@@ -56,7 +56,7 @@ void SpecificWorker::initialize(int period)
     robot_polygon = rp;
 
     // grid
-    fm.initialize(QRectF(-5000, -2500, 10000, 5000), 300, &viewer->scene, false);
+    fm.initialize(QRectF(-5000, -2500, 10000, 5000), 500, &viewer->scene, false);
     connect(pushButton, &QPushButton::clicked, this, &SpecificWorker::reset_time );
 
 	this->Period = period;
@@ -73,14 +73,14 @@ void SpecificWorker::compute()
         omnirobot_proxy->getBaseState(bState);
         bState.x *= 1000;
         bState.z *= 1000;
-        //bState.alpha -= M_PI/2;
+        bState.alpha += M_PI/2;
         //qInfo() << bState.x << bState.z << bState.alpha;
     }
     catch(const Ice::Exception &ex){std::cout << ex << std::endl; return;}
 
     static QPointF last_point(bState.x, bState.z);
 
-    robot_polygon->setRotation(qRadiansToDegrees(bState.alpha));
+    robot_polygon->setRotation(qRadiansToDegrees(-bState.alpha));
     robot_polygon->setPos(bState.x, bState.z);
     fm.setVisited(fm.pointToKey((long int)bState.x, (long int)bState.z), true);
     lcdNumber_percent->display(100.0 * fm.count_total_visited() / fm.count_total());
