@@ -4,7 +4,8 @@ CommonBehavior.Endpoints=tcp -p 10123
 VisualElementsPubTopic.Endpoints=tcp -p 13212
 
 # Proxies for required interfaces
-Lidar3DProxy = lidar3d:tcp -h localhost -p 11991
+Lidar3DProxy = lidar3d:tcp -h localhost -p 11990
+Lidar3D1Proxy = lidar3d:tcp -h localhost -p 11991
 OmniRobotProxy = omnirobot:tcp -h localhost -p 10004
 
 # This property is used by the clients to connect to IceStorm.

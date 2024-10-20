@@ -17,6 +17,8 @@
  *    along with RoboComp.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "specificworker.h"
+#include <cppitertools/enumerate.hpp>
+#include <cppitertools/range.hpp>
 
 /**
 * \brief Default constructor
@@ -71,12 +73,22 @@ void SpecificWorker::initialize()
 }
 void SpecificWorker::compute()
 {
-    // read lidar and draw
-    auto ldata = read_lidar("bpearl");
+    // read bpearl (lower) lidar and draw
+    auto ldata = read_lidar_bpearl();
     if(ldata.points.empty()) { qWarning() << "Empty lidar data"; return; };
-    draw_lidar(ldata.points, &viewer->scene);
+    //draw_lidar(ldata.points, &viewer->scene);
 
-    // check if there is YOLO data in buffer
+    auto ldata_helios = read_lidar_helios();
+    if(ldata_helios.points.empty()) { qWarning() << "Empty lidar data"; return; };
+    //draw_lidar(ldata.points, &viewer->scene);
+
+    // update room model
+    update_room_model(ldata_helios.points, &viewer->scene);
+
+    // get obstacles as polygons from lidar
+    auto obstacles = get_obstacles_as_polygons(ldata.points, room_model);
+
+    // check if there is new YOLO data in buffer
     RoboCompVisualElementsPub::TData data;
     auto [data_] = buffer.read_first();
     if(not data_.has_value())
@@ -84,18 +96,10 @@ void SpecificWorker::compute()
     else data = data_.value();
 
     // get person and draw on viewer
-    RoboCompVisualElementsPub::TObject person;
-    if(auto p_ = std::ranges::find_if(data.objects, [](auto &a){ return a.id == 0;}); p_ == std::end(data.objects))
-    { qWarning() << __FUNCTION__ << "No person detected"; return;}
-    else person = *p_;
-
-    // print person attributes
-    //for(const auto &[key, val]: person->attributes)
-        //std::cout << key << " " << val << std::endl;
-    draw_person(person, &viewer->scene);
+    auto person = find_person_in_data(data.objects);
 
     // call state machine to track person
-    const auto &[adv, rot] = state_machine(person, ldata.points);
+    const auto &[adv, rot] = state_machine(person, ldata.points, room_model);
 
     // move the robot
     try{ omnirobot_proxy->setSpeedBase(0.f, adv, rot); }
@@ -107,11 +111,11 @@ void SpecificWorker::compute()
 //////////////////////////////////////////////////////////////////
 /// YOUR CODE HERE
 //////////////////////////////////////////////////////////////////
-RoboCompLidar3D::TData SpecificWorker::read_lidar(const string &lidar_name)
+RoboCompLidar3D::TData SpecificWorker::read_lidar_bpearl()
 {
     try
     {
-        auto ldata =  lidar3d_proxy->getLidarData(lidar_name, 0, 2*M_PI, 1);
+        auto ldata =  lidar3d1_proxy->getLidarData("bpearl", 0, 2*M_PI, 1);
         // filter points according to height and distance
         RoboCompLidar3D::TPoints  p_filter;
         std::ranges::copy_if(ldata.points, std::back_inserter(p_filter),
@@ -121,21 +125,125 @@ RoboCompLidar3D::TData SpecificWorker::read_lidar(const string &lidar_name)
     catch(const Ice::Exception &e){std::cout << e << std::endl;}
     return {};
 }
+RoboCompLidar3D::TData SpecificWorker::read_lidar_helios()
+{
+    try
+    {
+        auto ldata =  lidar3d_proxy->getLidarData("helios", 0, 2*M_PI, 1);
+        // filter points according to height and distance
+        RoboCompLidar3D::TPoints  p_filter;
+        std::ranges::copy_if(ldata.points, std::back_inserter(p_filter),
+                             [](auto  &a){ return a.z > 1300 and a.distance2d > 200;});
+        return RoboCompLidar3D::TData{.points = p_filter, .period = ldata.period, .timestamp = ldata.timestamp};
+    }
+    catch(const Ice::Exception &e){std::cout << e << std::endl;}
+    return {};
+}
+void SpecificWorker::update_room_model(const auto &points, QGraphicsScene *scene)
+{
+    // transform points to a std::vector<Eigen::Vector2f>
+    std::vector<Eigen::Vector2f> points_eigen;
+    std::ranges::transform(points, std::back_inserter(points_eigen),
+                           [](auto &a){ return Eigen::Vector2f(a.x, a.y);});
 
+    // compute room features
+    const auto &[_, __, corners, triple_corners] = room_detector.compute_features(points_eigen, &viewer->scene);
+
+    // if triple_corners is empty, sitck with the previous room model
+    if(triple_corners.empty())
+        return;
+    // update current room model with new measures
+    const auto &[c1,c2,c3, c4] = triple_corners[0];
+
+    room_model.update(c1, c2, c3, c4);
+    room_model.draw_2D(room_model, "Red", scene);
+    room_model.set_valid(true);
+
+    //
+}
+std::vector<QPolygonF> SpecificWorker::get_obstacles_as_polygons(const auto &points, const rc::Room &room_model)
+{
+    if(room_model.is_valid())
+    {
+        RoboCompLidar3D::TPoints points_inside;
+        auto poly = room_model.get_qt_polygon();
+        poly = shrink_polygon(poly, params.ROBOT_WIDTH/2);
+        std::ranges::copy_if(points, std::back_inserter(points_inside), [poly](auto &a)
+        { return poly.containsPoint(QPointF(a.x, a.y), Qt::FillRule::OddEvenFill); });
+        if(points_inside.empty()) { qWarning() << "Empty points inside"; return {}; }
+
+        // cluster_points(points_inside, 100);
+        // Convert points to the format required by MLpack (arma::mat)
+        arma::mat arma_data(2, points_inside.size());
+        for (const auto &[i, p]: points_inside | iter::enumerate)
+        {
+            arma_data(0, i) = p.x;
+            arma_data(1, i) = p.y;
+        }
+        // Set DBSCAN parameters
+        double eps = params.ROBOT_WIDTH;
+        size_t minPts = 2;
+        // Perform clustering using DBSCAN
+        arma::Row<size_t> assignments;
+        mlpack::dbscan::DBSCAN<> dbscan(eps, minPts);
+        dbscan.Cluster(arma_data, assignments);
+        // Organize points by cluster
+        map<size_t, vector<cv::Point2f>> clustersMap;
+        for (const auto i: iter::range(assignments.n_elem))
+        {
+            size_t label = assignments[i];
+            if (label != (size_t) -1)
+                clustersMap[label].emplace_back(points_inside[i].x, points_inside[i].y);  // -1 indicates noise
+        }
+        std::vector<QPolygonF> list_poly;
+        std::vector<cv::Point2f> hull;
+        for (const auto &pair: clustersMap)
+        {
+            // Calculate the convex hull of the cluster
+            std::vector<cv::Point2f> hull;
+            cv::convexHull(pair.second, hull);
+            // Convert the convex hull to a QPolygonF
+            QPolygonF poly;
+            for (const auto &p: hull)
+                poly << QPointF(p.x, p.y);
+            list_poly.emplace_back(poly);
+            draw_lidar(points_inside, &viewer->scene);
+            draw_obstacles(list_poly, &viewer->scene);
+        }
+        return list_poly;
+    }
+    return {};
+}
+RoboCompVisualElementsPub::TObject SpecificWorker::find_person_in_data(const std::vector<RoboCompVisualElementsPub::TObject> &objects)
+{
+    if(objects.empty())
+        return {};
+    if(auto p_ = std::ranges::find_if(objects, [](auto &a)
+            { return a.id == 0 and std::stof(a.attributes.at("score")) > 0.6;}); p_ == std::end(objects))
+        return {};
+    else
+    {
+        const auto p = *p_;
+        draw_person(p, &viewer->scene);
+        return p;
+    }
+}
 //////////////////////////////////////////////////////////////////
 /// STATE  MACHINE
 //////////////////////////////////////////////////////////////////
-SpecificWorker::RobotSpeed SpecificWorker::state_machine(const RoboCompVisualElementsPub::TObject &person, const RoboCompLidar3D::TPoints &points)
+SpecificWorker::RobotSpeed SpecificWorker::state_machine(const RoboCompVisualElementsPub::TObject &person,
+                                                         const RoboCompLidar3D::TPoints &points,
+                                                         const rc::Room &room_model)
 {
     // call the appropriate state function
     RetVal res;
-    if(pushButton_stop->isChecked())
+    if(pushButton_stop->isChecked())    // stop if buttom is pressed
         state = STATE::STOP;
 
     switch(state)
     {
         case STATE::TRACK:
-            res = track(person, points);
+            res = track(person, points, room_model);
             label_state->setText("TRACK");
             break;
         case STATE::WAIT:
@@ -162,10 +270,12 @@ SpecificWorker::RobotSpeed SpecificWorker::state_machine(const RoboCompVisualEle
  * @param filtered_points A vector of filtered points representing the robot's perception of obstacles.
  * @return A `RetVal` tuple consisting of the state (`FORWARD` or `TURN`), speed, and rotation.
  */
-SpecificWorker::RetVal SpecificWorker::track(const RoboCompVisualElementsPub::TObject &person, auto &points)
+SpecificWorker::RetVal SpecificWorker::track(const RoboCompVisualElementsPub::TObject &person,
+                                             auto &points,
+                                             const rc::Room &room_model)
 {
-    //qDebug() << __FUNCTION__ ;
-
+    //qDebug() << __FUNCTION__;
+    // variance of the gaussian function is set by the user giving a point xset where the function must be yset, and solving for s
     auto gaussian_break = [](float x) -> float
     {
         // gaussian function where x is the rotation speed -1 to 1. Returns 1 for x = 0 and 0.4 for x = 0.5
@@ -182,10 +292,17 @@ SpecificWorker::RetVal SpecificWorker::track(const RoboCompVisualElementsPub::TO
     if(distance < params.PERSON_MIN_DIST)
         return RetVal(STATE::WAIT, 0.f, 0.f);
 
-    // TRACK
+    /// TRACK
+    // if line of sight to the person move forward
     float rot_angle = 1.2 * atan2(std::stof(person.attributes.at("x_pos")), std::stof(person.attributes.at("y_pos")));
     float adv = std::clamp(params.MAX_ADV_SPEED*gaussian_break(rot_angle), 0.f, params.MAX_ADV_SPEED);
     float rot = std::clamp(rot_angle, -params.MAX_ROT_SPEED, params.MAX_ROT_SPEED);
+
+    // else compute a path to the person avoiding the list of polygonal obstables using Visibility Graph
+    // Visibility Graph algorithm
+    //auto path = visibility_graph();
+
+
     return RetVal(STATE::TRACK, adv, rot);
 }
 /**
@@ -200,8 +317,7 @@ SpecificWorker::RetVal SpecificWorker::track(const RoboCompVisualElementsPub::TO
  */
 SpecificWorker::RetVal SpecificWorker::wait(const RoboCompVisualElementsPub::TObject &person)
 {
-    qDebug() << __FUNCTION__ ;
-
+    //qDebug() << __FUNCTION__ ;
     // check if the person is further than a threshold
     if(std::hypot(std::stof(person.attributes.at("x_pos")), std::stof(person.attributes.at("y_pos"))) > params.PERSON_MIN_DIST + 100)
         return RetVal(STATE::TRACK, 0.f, 0.f);
@@ -222,7 +338,7 @@ SpecificWorker::RetVal SpecificWorker::wait(const RoboCompVisualElementsPub::TOb
  */
 SpecificWorker::RetVal SpecificWorker::stop()
 {
-    qDebug() << __FUNCTION__ ;
+    //qDebug() << __FUNCTION__ ;
     // Check the status of the pushButton_stop
     if(not pushButton_stop->isChecked())
         return RetVal(STATE::TRACK, 0.f, 0.f);
@@ -337,7 +453,51 @@ std::expected<int, string> SpecificWorker::closest_lidar_index_to_given_angle(co
     else
         return std::unexpected("No closest value found in method <closest_lidar_index_to_given_angle>");
 }
+QPolygonF SpecificWorker::shrink_polygon(const QPolygonF &polygon, qreal amount)
+{
+    if (polygon.isEmpty())
+        return QPolygonF();
 
+    // Calculate the centroid of the polygon
+    QPointF centroid(0, 0);
+    for (const QPointF &point : polygon)
+        centroid += point;
+    centroid /= polygon.size();
+
+    // Move each point towards the centroid
+    QPolygonF shrunkPolygon;
+    for (const QPointF &point : polygon)
+    {
+        QPointF direction = centroid - point;
+        qreal length = std::sqrt(direction.x() * direction.x() + direction.y() * direction.y());
+        if (length > 0)
+        {
+            QPointF offset = direction / length * amount;
+            shrunkPolygon << (point + offset);
+        }
+        else
+            shrunkPolygon << point; // If the point is at the centroid, leave it unchanged
+
+    }
+    return shrunkPolygon;
+}
+void SpecificWorker::draw_obstacles(const vector<QPolygonF> &list_poly, QGraphicsScene *scene) const
+{
+    static std::vector<QGraphicsItem*> items;
+    // remove all items drawn in the previous iteration
+    for(auto i: items)
+    {
+        scene->removeItem(i);
+        delete i;
+    }
+    items.clear();
+
+    for(const auto &poly : list_poly)
+    {
+        auto item = scene->addPolygon(poly, QPen(Qt::red, 30));
+        items.push_back(item);
+    }
+}
 //////////////////////////////////////////////////////////////////
 /// SUBSCRIPTIONS (called in a different thread)
 //////////////////////////////////////////////////////////////////
@@ -377,6 +537,7 @@ int SpecificWorker::startup_check()
 	QTimer::singleShot(200, qApp, SLOT(quit()));
 	return 0;
 }
+
 
 /**************************************/
 // From the RoboCompLidar3D you can call this methods:

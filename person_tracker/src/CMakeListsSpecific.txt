@@ -2,16 +2,22 @@
 LIST(APPEND SOURCES
   specificworker.cpp
   specificmonitor.cpp
+  room_detector.cpp
+  room.cpp
 )
 
 # Headers set
 LIST(APPEND HEADERS
   specificworker.h
   specificmonitor.h
+  room_detector.h
+  room.h
 )
+INCLUDE( $ENV{ROBOCOMP}/cmake/modules/opencv4.cmake )
 
-add_definitions(-fmax-errors=1 -fno-char8_t)
+set(CMAKE_CXX_STANDARD 23)
+add_definitions(-fmax-errors=1 -fno-char8_t -fopenmp)
 
-LIST(APPEND LIBS ${LIBS}  )
+LIST(APPEND LIBS ${LIBS} gomp armadillo mlpack)
 
 

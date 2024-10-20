@@ -6,8 +6,8 @@ Component person_tracker
 {
     Communications
     {
-        requires Lidar3D, OmniRobot;
-        subscribesTo VisualElements;
+        requires Lidar3D, Lidar3D, OmniRobot;
+        subscribesTo VisualElementsPub;
     };
     language Cpp11;
     gui Qt(QWidget);

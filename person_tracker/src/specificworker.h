@@ -33,6 +33,11 @@
 #include <expected>
 #include <random>
 #include <doublebuffer_sync/doublebuffer_sync.h>
+#include "room.h"
+#include "room_detector.h"
+#include <mlpack/methods/dbscan/dbscan.hpp>
+#include <mlpack/core.hpp>
+#include <mlpack/core.hpp>
 
 class SpecificWorker : public GenericWorker
 {
@@ -79,19 +84,24 @@ class SpecificWorker : public GenericWorker
         STATE state = STATE::TRACK;
         using RetVal = std::tuple<STATE, float, float>;
         using RobotSpeed = std::tuple<float, float>;
-        RetVal track(const RoboCompVisualElementsPub::TObject &person, auto &filtered_points);
+        RetVal track(const RoboCompVisualElementsPub::TObject &person, auto &filtered_points, const rc::Room &room_model);
         RetVal wait(const RoboCompVisualElementsPub::TObject &person);
         RetVal stop();
-        RobotSpeed state_machine(const RoboCompVisualElementsPub::TObject &person, const RoboCompLidar3D::TPoints &points);
+        RobotSpeed state_machine(const RoboCompVisualElementsPub::TObject &person, const RoboCompLidar3D::TPoints &points, const rc::Room &room_model);
 
         // lidar
-        RoboCompLidar3D::TData read_lidar(const std::string &lidar_name);
+        RoboCompLidar3D::TData read_lidar_bpearl();
+        RoboCompLidar3D::TData read_lidar_helios();
 
         // draw
         AbstractGraphicViewer *viewer;
         void draw_lidar(auto &filtered_points, QGraphicsScene *scene);
         QGraphicsPolygonItem *robot_draw;
         void draw_person(RoboCompVisualElementsPub::TObject &person, QGraphicsScene *scene) const;
+        void draw_obstacles(const std::vector<QPolygonF> &list_poly, QGraphicsScene *scene) const;
+
+        // person
+        RoboCompVisualElementsPub::TObject find_person_in_data(const std::vector<RoboCompVisualElementsPub::TObject> &objects);
 
         // aux
         std::expected<int, string> closest_lidar_index_to_given_angle(const auto &points, float angle);
@@ -108,5 +118,13 @@ class SpecificWorker : public GenericWorker
 
         // DoubleBufferSync to syncronize the subscription thread with compute
         BufferSync<InOut<RoboCompVisualElementsPub::TData, RoboCompVisualElementsPub::TData>> buffer;
+
+        // room
+        rc::Room_Detector room_detector;
+        void update_room_model(const auto &points, QGraphicsScene *scene);
+        rc::Room room_model;
+        QPolygonF shrink_polygon(const QPolygonF &polygon, qreal amount);
+        vector<QPolygonF> get_obstacles_as_polygons(const auto &points, const rc::Room &room_model);
+
 };
 #endif

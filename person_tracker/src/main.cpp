@@ -134,6 +134,7 @@ int ::person_tracker::run(int argc, char* argv[])
 	int status=EXIT_SUCCESS;
 
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy;
+	RoboCompLidar3D::Lidar3DPrxPtr lidar3d1_proxy;
 	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
 
 	string proxy, tmp;
@@ -153,6 +154,22 @@ int ::person_tracker::run(int argc, char* argv[])
 		return EXIT_FAILURE;
 	}
 	rInfo("Lidar3DProxy initialized Ok!");
+
+
+	try
+	{
+		if (not GenericMonitor::configGetString(communicator(), prefix, "Lidar3D1Proxy", proxy, ""))
+		{
+			cout << "[" << PROGRAM_NAME << "]: Can't read configuration for proxy Lidar3DProxy\n";
+		}
+		lidar3d1_proxy = Ice::uncheckedCast<RoboCompLidar3D::Lidar3DPrx>( communicator()->stringToProxy( proxy ) );
+	}
+	catch(const Ice::Exception& ex)
+	{
+		cout << "[" << PROGRAM_NAME << "]: Exception creating proxy Lidar3D1: " << ex;
+		return EXIT_FAILURE;
+	}
+	rInfo("Lidar3DProxy1 initialized Ok!");
 
 
 	try
@@ -188,7 +205,7 @@ int ::person_tracker::run(int argc, char* argv[])
 		return EXIT_FAILURE;
 	}
 
-	tprx = std::make_tuple(lidar3d_proxy,omnirobot_proxy);
+	tprx = std::make_tuple(lidar3d_proxy,lidar3d1_proxy,omnirobot_proxy);
 	SpecificWorker *worker = new SpecificWorker(tprx, startup_check_flag);
 	//Monitor thread
 	SpecificMonitor *monitor = new SpecificMonitor(worker,communicator());

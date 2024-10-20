@@ -48,7 +48,7 @@
 #define BASIC_PERIOD 100
 
 
-using TuplePrx = std::tuple<RoboCompLidar3D::Lidar3DPrxPtr,RoboCompOmniRobot::OmniRobotPrxPtr>;
+using TuplePrx = std::tuple<RoboCompLidar3D::Lidar3DPrxPtr,RoboCompLidar3D::Lidar3DPrxPtr,RoboCompOmniRobot::OmniRobotPrxPtr>;
 
 
 class GenericWorker : public QWidget, public Ui_guiDlg
@@ -70,6 +70,7 @@ public:
 
 
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy;
+	RoboCompLidar3D::Lidar3DPrxPtr lidar3d1_proxy;
 	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
 
 	virtual void VisualElementsPub_setVisualObjects (RoboCompVisualElementsPub::TData data) = 0;
