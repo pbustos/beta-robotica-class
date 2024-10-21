@@ -95,6 +95,38 @@ namespace rc
             corners[i] = Eigen::Vector2f(pts[i].x, pts[i].y);
         return corners;
     }
+    float Room::get_minX() const
+    {
+        cv::Point2f corners[4];
+        rect.points(corners);
+        auto min_x_corner = std::ranges::min_element(corners, [](const cv::Point2f &a, const cv::Point2f &b)
+                                            { return a.x < b.x; });
+        return min_x_corner->x;
+    }
+    float Room::get_minY() const
+    {
+        cv::Point2f corners[4];
+        rect.points(corners);
+        auto min_x_corner = std::ranges::min_element(corners, [](const cv::Point2f &a, const cv::Point2f &b)
+        { return a.y < b.y; });
+        return min_x_corner->y;
+    }
+    float Room::get_maxX() const
+    {
+        cv::Point2f corners[4];
+        rect.points(corners);
+        auto max_x_corner = std::ranges::min_element(corners, [](const cv::Point2f &a, const cv::Point2f &b)
+        { return a.x > b.x; });
+        return max_x_corner->x;
+    }
+    float Room::get_maxY() const
+    {
+        cv::Point2f corners[4];
+        rect.points(corners);
+        auto max_x_corner = std::ranges::min_element(corners, [](const cv::Point2f &a, const cv::Point2f &b)
+        { return a.y > b.y; });
+        return max_x_corner->y;
+    }
     Eigen::Vector2f Room::get_closest_corner_in_robot_coor2(const Eigen::Vector2f &c) const
     {
         cv::Point2f pts[4];

@@ -45,8 +45,12 @@ namespace rc
             void draw_2D(const Room &room, const QString &color, QGraphicsScene *scene);
             bool is_valid() const { return is_initialized; };
             void set_valid(bool v) { is_initialized = v; };
+            float get_minX() const;           // returns the minimum x value of the room
+            float get_minY() const;
+            float get_maxX() const;
+            float get_maxY() const;
 
-        private:
+    private:
             cv::RotatedRect rect;
             Eigen::Vector2f center = {0.f, 0.f};    // mm
             float rot = 0.f; // radians

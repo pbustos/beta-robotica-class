@@ -35,9 +35,9 @@
 #include <doublebuffer_sync/doublebuffer_sync.h>
 #include "room.h"
 #include "room_detector.h"
-#include <mlpack/methods/dbscan/dbscan.hpp>
-#include <mlpack/core.hpp>
-#include <mlpack/core.hpp>
+#include "dbscan.h"
+#include "visibility_graph.h"
+#include <locale>
 
 class SpecificWorker : public GenericWorker
 {
@@ -84,10 +84,16 @@ class SpecificWorker : public GenericWorker
         STATE state = STATE::TRACK;
         using RetVal = std::tuple<STATE, float, float>;
         using RobotSpeed = std::tuple<float, float>;
-        RetVal track(const RoboCompVisualElementsPub::TObject &person, auto &filtered_points, const rc::Room &room_model);
+        RetVal track(const RoboCompVisualElementsPub::TObject &person,
+                     auto &filtered_points,
+                     const rc::Room &room_model,
+                     const std::vector<QPolygonF> &obstacles);
         RetVal wait(const RoboCompVisualElementsPub::TObject &person);
         RetVal stop();
-        RobotSpeed state_machine(const RoboCompVisualElementsPub::TObject &person, const RoboCompLidar3D::TPoints &points, const rc::Room &room_model);
+        RobotSpeed state_machine(const RoboCompVisualElementsPub::TObject &person,
+                                 const RoboCompLidar3D::TPoints &points,
+                                 const rc::Room &room_model,
+                                 const std::vector<QPolygonF> &obstacles);
 
         // lidar
         RoboCompLidar3D::TData read_lidar_bpearl();
@@ -99,9 +105,9 @@ class SpecificWorker : public GenericWorker
         QGraphicsPolygonItem *robot_draw;
         void draw_person(RoboCompVisualElementsPub::TObject &person, QGraphicsScene *scene) const;
         void draw_obstacles(const std::vector<QPolygonF> &list_poly, QGraphicsScene *scene) const;
-
+        void draw_path_to_person(const auto &points, QGraphicsScene *scene);
         // person
-        RoboCompVisualElementsPub::TObject find_person_in_data(const std::vector<RoboCompVisualElementsPub::TObject> &objects);
+        std::expected<RoboCompVisualElementsPub::TObject, std::string> find_person_in_data(const std::vector<RoboCompVisualElementsPub::TObject> &objects);
 
         // aux
         std::expected<int, string> closest_lidar_index_to_given_angle(const auto &points, float angle);
@@ -125,6 +131,7 @@ class SpecificWorker : public GenericWorker
         rc::Room room_model;
         QPolygonF shrink_polygon(const QPolygonF &polygon, qreal amount);
         vector<QPolygonF> get_obstacles_as_polygons(const auto &points, const rc::Room &room_model);
+
 
 };
 #endif
