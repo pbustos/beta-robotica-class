@@ -199,14 +199,15 @@ SpecificWorker::RetVal SpecificWorker::track(const RoboCompVisualElementsPub::TO
 {
     //qDebug() << __FUNCTION__;
     // variance of the gaussian function is set by the user giving a point xset where the function must be yset, and solving for s
-    auto gaussian_break = [](float x) -> float
-    {
-        // gaussian function where x is the rotation speed -1 to 1. Returns 1 for x = 0 and 0.4 for x = 0.5
-        const double xset = 0.5;
-        const double yset = 0.6;
-        const double s = -xset*xset/log(yset);
-        return (float)exp(-x*x/s);
-    };
+//    auto gaussian_break = [](float x) -> float
+//    {
+//        // gaussian function where x is the rotation speed -1 to 1. Returns 1 for x = 0 and 0.4 for x = 0.5
+//        const double xset = 0.5;
+//        const double yset = 0.6;
+          // compute the variance s so the function is yset for x = xset
+          // float s =
+//        return (float)exp(-x*x/s);
+//    };
 
     auto distance = std::hypot(std::stof(person.attributes.at("x_pos")), std::stof(person.attributes.at("y_pos")));
     lcdNumber_dist_to_person->display(distance);
@@ -217,11 +218,7 @@ SpecificWorker::RetVal SpecificWorker::track(const RoboCompVisualElementsPub::TO
 
     /// TRACK   PUT YOUR CODE HERE
 
-    float rot_angle = 1.5 * atan2(std::stof(person.attributes.at("x_pos")), std::stof(person.attributes.at("y_pos")));
-    float adv = std::clamp(params.MAX_ADV_SPEED*gaussian_break(rot_angle), 0.f, params.MAX_ADV_SPEED);
-    float rot = std::clamp(rot_angle, -params.MAX_ROT_SPEED, params.MAX_ROT_SPEED);
-
-    return RetVal(STATE::TRACK, adv, rot);
+    return RetVal(STATE::TRACK, 0, 0);
 }
 //
 SpecificWorker::RetVal SpecificWorker::wait(const RoboCompVisualElementsPub::TObject &person)
