@@ -36,7 +36,7 @@
 //#include "room.h"
 //#include "room_detector.h"
 //#include "dbscan.h"
-#include "visibility_graph.h"
+//#include "visibility_graph.h"
 #include <locale>
 
 class SpecificWorker : public GenericWorker
