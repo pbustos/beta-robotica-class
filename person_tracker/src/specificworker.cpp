@@ -19,6 +19,7 @@
 #include "specificworker.h"
 #include <cppitertools/enumerate.hpp>
 #include <cppitertools/range.hpp>
+#include <cppitertools/sliding_window.hpp>
 
 /**
 * \brief Default constructor
@@ -54,7 +55,19 @@ void SpecificWorker::initialize()
         auto [r, e] = viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 100, QColor("Blue"));
         robot_draw = r;
         viewer->setStyleSheet("background-color: lightGray;");
+        this->resize(800, 700);
 
+        // Initialize the plot
+        plot = new QCustomPlot(frame_dist);
+        plot->resize(frame_dist->size());
+        plot->addGraph();
+        plot->graph(0)->setPen(QPen(QColor(0, 0, 255)));
+        plot->xAxis->setLabel("Time");
+        plot->yAxis->setLabel("Error");
+        plot->xAxis->setRange(0, 50);
+        plot->yAxis->setRange(0, 1000);
+        plot->replot();
+        plot->show();
 
         // connect stop button un UI with a lambda function
         connect(pushButton_stop, &QPushButton::clicked, [this]()
@@ -92,17 +105,27 @@ void SpecificWorker::compute()
 
     // get person and draw on viewer
     auto person = find_person_in_data(data.objects);
-    if(not person.has_value())
-    { qWarning() << __FUNCTION__ << QString::fromStdString(person.error()); return; }   // STOP THE ROBOT
 
     // call state machine to track person
-    const auto &[adv, rot] = state_machine(person.value());
+    const auto &[adv, rot] = state_machine(person);
+
+    // plot on UI
+    if(person)
+    {
+        float d = std::hypot(std::stof(person.value().attributes.at("x_pos")),
+                                 std::stof(person.value().attributes.at("y_pos")));
+        plot_distance(d);
+        lcdNumber_dist_to_person->display(d);
+        lcdNumber_angle_to_person->display(atan2(std::stof(person.value().attributes.at("x_pos")),
+                                                 std::stof(person.value().attributes.at("y_pos"))));
+    }
+    lcdNumber_adv->display(adv);
+    lcdNumber_rot ->display(rot);
 
     // move the robot
     try{ omnirobot_proxy->setSpeedBase(0.f, adv, rot); }
     catch(const Ice::Exception &e){std::cout << e << std::endl;}
-    lcdNumber_adv->display(adv);
-    lcdNumber_rot ->display(rot);
+
 }
 
 //////////////////////////////////////////////////////////////////
@@ -157,7 +180,7 @@ SpecificWorker::find_person_in_data(const std::vector<RoboCompVisualElementsPub:
 /// STATE  MACHINE
 //////////////////////////////////////////////////////////////////
 // State machine to track a person
-SpecificWorker::RobotSpeed SpecificWorker::state_machine(const RoboCompVisualElementsPub::TObject &person)
+SpecificWorker::RobotSpeed SpecificWorker::state_machine(const TPerson &person)
 {
     // call the appropriate state function
     RetVal res;
@@ -174,10 +197,15 @@ SpecificWorker::RobotSpeed SpecificWorker::state_machine(const RoboCompVisualEle
             res = wait(person);
             label_state->setText("WAIT");
             break;
+        case STATE::SEARCH:
+            res = search(person);
+            label_state->setText("SEARCH");
+            break;
         case STATE::STOP:
             res = stop();
             label_state->setText("STOP");
             break;
+
     }
     auto &[st, speed, rot] = res;
     state = st;
@@ -195,54 +223,65 @@ SpecificWorker::RobotSpeed SpecificWorker::state_machine(const RoboCompVisualEle
  * @return A `RetVal` tuple consisting of the state (`FORWARD` or `TURN`), speed, and rotation.
  */
  // State function to track a person
-SpecificWorker::RetVal SpecificWorker::track(const RoboCompVisualElementsPub::TObject &person)
+SpecificWorker::RetVal SpecificWorker::track(const TPerson &person)
 {
+    static float ant_angle_error = 0.0;
     //qDebug() << __FUNCTION__;
     // variance of the gaussian function is set by the user giving a point xset where the function must be yset, and solving for s
-//    auto gaussian_break = [](float x) -> float
-//    {
-//        // gaussian function where x is the rotation speed -1 to 1. Returns 1 for x = 0 and 0.4 for x = 0.5
-//        const double xset = 0.5;
-//        const double yset = 0.6;
-          // compute the variance s so the function is yset for x = xset
-          // float s =
-//        return (float)exp(-x*x/s);
-//    };
+    auto gaussian_break = [](float x) -> float
+    {
+        // gaussian function where x is the rotation speed -1 to 1. Returns 1 for x = 0 and 0.4 for x = 0.5
+        const double xset = 0.5;
+        const double yset = 0.73;
+        //compute the variance s so the function is yset for x = xset
+        float s = -xset*xset/(log(yset));
+        return (float)exp(-x*x/s);
+    };
 
-    auto distance = std::hypot(std::stof(person.attributes.at("x_pos")), std::stof(person.attributes.at("y_pos")));
+    if(not person)
+    { /* qWarning() << __FUNCTION__ << "No person found"; */ return RetVal(STATE::SEARCH, 0.f, 0.f); }
+
+    auto distance = std::hypot(std::stof(person.value().attributes.at("x_pos")), std::stof(person.value().attributes.at("y_pos")));
     lcdNumber_dist_to_person->display(distance);
 
     // check if the distance to the person is lower than a threshold
     if(distance < params.PERSON_MIN_DIST)
-    {   qWarning() << __FUNCTION__ << "Distance to person lower than threshold"; return RetVal(STATE::WAIT, 0.f, 0.f);}
+    { qWarning() << __FUNCTION__ << "Distance to person lower than threshold"; return RetVal(STATE::WAIT, 0.f, 0.f);}
 
-    /// TRACK   PUT YOUR CODE HERE
-
-    return RetVal(STATE::TRACK, 0, 0);
+    // angle error is the angle between the robot and the person. It has to be brought to zero
+    float angle_error = atan2(stof(person.value().attributes.at("x_pos")), stof(person.value().attributes.at("y_pos")));
+    float rot_speed = params.k1 * angle_error + params.k2 * (angle_error-ant_angle_error);
+    ant_angle_error = angle_error;
+    // rot_brake is a value between 0 and 1 that decreases the speed when the robot is not facing the person
+    float rot_brake = gaussian_break(rot_speed);
+    // acc_distance is the distance given to the robot to reach again the maximum speed
+    float acc_distance = params.acc_distance_factor * params.ROBOT_WIDTH;
+    // advance brake is a value between 0 and 1 that decreases the speed when the robot is too close to the person
+    float adv_brake = std::clamp(distance * 1.f/acc_distance - (params.PERSON_MIN_DIST / acc_distance), 0.f, 1.f);
+    return RetVal(STATE::TRACK, params.MAX_ADV_SPEED * rot_brake * adv_brake, rot_speed);
 }
 //
-SpecificWorker::RetVal SpecificWorker::wait(const RoboCompVisualElementsPub::TObject &person)
+SpecificWorker::RetVal SpecificWorker::wait(const TPerson &person)
 {
-    //qDebug() << __FUNCTION__ ;
+    if(not person)
+    {  qWarning() << __FUNCTION__ << "No person found"; return RetVal(STATE::TRACK, 0.f, 0.f); }
+
     // check if the person is further than a threshold
-    if(std::hypot(std::stof(person.attributes.at("x_pos")), std::stof(person.attributes.at("y_pos"))) > params.PERSON_MIN_DIST + 100)
+    if(std::hypot(std::stof(person.value().attributes.at("x_pos")), std::stof(person.value().attributes.at("y_pos"))) > params.PERSON_MIN_DIST + 100)
         return RetVal(STATE::TRACK, 0.f, 0.f);
 
     return RetVal(STATE::WAIT, 0.f, 0.f);
 
 }
-/**
- * @brief Determines the robot's behavior when following a wall.
- *
- * This method analyzes the filtered points to determine the robot's behavior when following a wall.
- * It first checks if the robot is about to crash into an obstacle, in which case it stops and changes
- * the state to TURN. If no obstacle is detected, it then calculates the distance to the wall on the
- * robot's side and computes the necessary speed and rotation to maintain a safe distance from the wall.
- *
- * @param filtered_points A vector containing points with distance information used for making navigation decisions.
- * @returns A tuple containing the next state (WALL), and speed values.
- */
- //
+// Search when no person is found
+SpecificWorker::RetVal SpecificWorker::search(const TPerson &person)
+{
+    if(person)
+    {  qWarning() << __FUNCTION__ << "Person found, moving to TRACK"; return RetVal(STATE::TRACK, 0.f, 0.f); }
+
+    return RetVal(STATE::SEARCH, 0.f, params.SEARCH_ROT_SPEED);
+}
+// Stops the robot
 SpecificWorker::RetVal SpecificWorker::stop()
 {
     //qDebug() << __FUNCTION__ ;
@@ -365,7 +404,17 @@ void SpecificWorker::draw_path_to_person(const auto &points, QGraphicsScene *sce
        items.push_back(dot);
     }
 }
-
+void SpecificWorker::plot_distance(double distance)
+{
+    // add value to plot
+    static int key = 0;
+    plot->graph(0)->addData(key++, distance);
+    // Remove data points if there are more than X
+    if (plot->graph(0)->dataCount() > params.MAX_DIST_POINTS_TO_SHOW)
+        plot->graph(0)->data()->removeBefore(key - params.MAX_DIST_POINTS_TO_SHOW);
+    // plot
+    plot->rescaleAxes();  plot->replot();
+}
 //////////////////////////////////////////////////////////////////
 /// SUBSCRIPTIONS (runs in a different thread)
 //////////////////////////////////////////////////////////////////

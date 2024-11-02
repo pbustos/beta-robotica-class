@@ -33,11 +33,9 @@
 #include <expected>
 #include <random>
 #include <doublebuffer_sync/doublebuffer_sync.h>
-//#include "room.h"
-//#include "room_detector.h"
-//#include "dbscan.h"
-//#include "visibility_graph.h"
 #include <locale>
+#include <qcustomplot/qcustomplot.h>
+
 
 class SpecificWorker : public GenericWorker
 {
@@ -61,33 +59,40 @@ class SpecificWorker : public GenericWorker
         {
             float ROBOT_WIDTH = 460;  // mm
             float ROBOT_LENGTH = 480;  // mm
-            float MAX_ADV_SPEED = 1500; // mm/s
+            float MAX_ADV_SPEED = 1900; // mm/s
             float MAX_ROT_SPEED = 2; // rad/s
+            float SEARCH_ROT_SPEED = 0.9; // rad/s
             float STOP_THRESHOLD = 700; // mm
             float ADVANCE_THRESHOLD = ROBOT_WIDTH * 3; // mm
             float LIDAR_FRONT_SECTION = 0.2; // rads, aprox 12 degrees
             // person
             float PERSON_MIN_DIST = 800; // mm
-
+            int MAX_DIST_POINTS_TO_SHOW = 300; // points to show in plot
+            // lidar
             std::string LIDAR_NAME_LOW = "bpearl";
             std::string LIDAR_NAME_HIGH = "helios";
             QRectF GRID_MAX_DIM{-5000, 2500, 10000, -5000};
-
+            // control track
+            float acc_distance_factor = 2;
+            float k1 = 1.1;  // proportional gain for the angle error;
+            float k2 = 0.5; // proportional gain for derivative of the angle error;
         };
         Params params;
 
         // state machine
         enum class STATE
         {
-            TRACK, STOP, WAIT
+            TRACK, STOP, WAIT, SEARCH
         };
         STATE state = STATE::TRACK;
         using RetVal = std::tuple<STATE, float, float>;
         using RobotSpeed = std::tuple<float, float>;
-        RetVal track(const RoboCompVisualElementsPub::TObject &person);
-        RetVal wait(const RoboCompVisualElementsPub::TObject &person);
+        using TPerson = std::expected<RoboCompVisualElementsPub::TObject, std::string>;
+        RetVal track(const TPerson &person);
+        RetVal wait(const TPerson &person);
+        RetVal search(const TPerson &person);
         RetVal stop();
-        RobotSpeed state_machine(const RoboCompVisualElementsPub::TObject &person);
+        RobotSpeed state_machine(const TPerson &person);
 
         // lidar
         RoboCompLidar3D::TData read_lidar_bpearl();
@@ -99,6 +104,7 @@ class SpecificWorker : public GenericWorker
         QGraphicsPolygonItem *robot_draw;
         void draw_person(RoboCompVisualElementsPub::TObject &person, QGraphicsScene *scene) const;
         void draw_path_to_person(const auto &points, QGraphicsScene *scene);
+
         // person
         std::expected<RoboCompVisualElementsPub::TObject, std::string> find_person_in_data(const std::vector<RoboCompVisualElementsPub::TObject> &objects);
 
@@ -111,5 +117,8 @@ class SpecificWorker : public GenericWorker
         // DoubleBufferSync to syncronize the subscription thread with compute
         BufferSync<InOut<RoboCompVisualElementsPub::TData, RoboCompVisualElementsPub::TData>> buffer;
 
+        // QCustomPlot object
+        QCustomPlot *plot;
+        void plot_distance(double distance);
 };
 #endif
