@@ -189,6 +189,19 @@
           </layout>
          </item>
          <item>
+          <widget class="QPushButton" name="pushButton_adapt">
+           <property name="text">
+            <string>Adapt</string>
+           </property>
+           <property name="checkable">
+            <bool>true</bool>
+           </property>
+           <property name="checked">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
           <widget class="QPushButton" name="pushButton_stop">
            <property name="text">
             <string>Track</string>

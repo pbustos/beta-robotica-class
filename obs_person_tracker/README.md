@@ -5,9 +5,9 @@ Install the following dependencies:
 ```
 sudo apt-get install libopencv-dev
 sudo apt-get install libmlpack-dev
-sudo apt-get install libbarmadillo-dev
+sudo apt-get install libarmadillo-dev
 sudo apt-get install libboost-all-dev
-sudo apt-get install libgomp1-dev
+sudo apt-get install libgomp1
 ```
 
 

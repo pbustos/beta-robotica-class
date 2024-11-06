@@ -83,6 +83,9 @@ void SpecificWorker::compute()
     if(helios_points.empty()) { qWarning() << __FUNCTION__ << "Empty helios lidar data"; return; };
     //draw_lidar(ldata.points, &viewer->scene);
 
+    /// detect wall lines
+    auto lines = detect_wall_lines(helios_points);
+
     /// remove wall lines
     auto new_data = remove_wall_points(helios_points, bpearl_points);
     auto &[filtered_points, walls_polys] = new_data;
@@ -92,6 +95,7 @@ void SpecificWorker::compute()
 
     /// get obstacles as polygons using DBSCAN
     auto obs = rc::dbscan(filtered_points, params.ROBOT_WIDTH, 2, params.ROBOT_WIDTH);
+    // append to existing obstacles vector
     obstacles.insert(obstacles.end(), obs.begin(), obs.end());
     draw_lidar(filtered_points, &viewer->scene);
 
@@ -172,30 +176,6 @@ std::vector<Eigen::Vector2f> SpecificWorker::read_lidar_helios()
     }
     catch(const Ice::Exception &e){std::cout << e << std::endl;}
     return {};
-}
-void SpecificWorker::update_room_model(const auto &points, QGraphicsScene *scene)
-{
-    // transform points to a std::vector<Eigen::Vector2f>
-    std::vector<Eigen::Vector2f> points_eigen;
-    std::ranges::transform(points, std::back_inserter(points_eigen),
-                           [](auto &a){ return Eigen::Vector2f(a.x, a.y);});
-
-    // compute room features
-    const auto &[_, __, corners, triple_corners] = room_detector.compute_features(points_eigen, &viewer->scene);
-
-    // if triple_corners is empty, stick with the previous room model
-    if(triple_corners.empty())
-    {
-        qWarning() << __FUNCTION__ << "Empty triple corners";
-        return;
-    }
-
-    // update current room model with new measures
-    const auto &[c1,c2,c3, c4] = triple_corners[0];
-
-    room_model.update(c1, c2, c3, c4);
-    room_model.set_valid(true);
-
 }
  /* Removes points that are on the walls from the given set of points.
  *
@@ -278,7 +258,14 @@ std::vector<QPolygonF> SpecificWorker::get_walls_as_polygons(const vector<QLineF
     }
     return obstacles;
 }
+std::vector<QLineF> SpecificWorker::detect_wall_lines(const vector<Eigen::Vector2f> &points)
+{
+    std::vector<QLineF> lines;
 
+    // YOUR CODE
+
+    return lines;
+}
 //////////////////////////////////////////////////////////////////
 /// STATE  MACHINE
 //////////////////////////////////////////////////////////////////
@@ -482,34 +469,6 @@ std::expected<int, string> SpecificWorker::closest_lidar_index_to_given_angle(co
     else
         return std::unexpected("No closest value found in method <closest_lidar_index_to_given_angle>");
 }
-QPolygonF SpecificWorker::shrink_polygon(const QPolygonF &polygon, qreal amount)
-{
-    if (polygon.isEmpty())
-        return QPolygonF();
-
-    // Calculate the centroid of the polygon
-    QPointF centroid(0, 0);
-    for (const QPointF &point : polygon)
-        centroid += point;
-    centroid /= polygon.size();
-
-    // Move each point towards the centroid
-    QPolygonF shrunkPolygon;
-    for (const QPointF &point : polygon)
-    {
-        QPointF direction = centroid - point;
-        qreal length = std::sqrt(direction.x() * direction.x() + direction.y() * direction.y());
-        if (length > 0)
-        {
-            QPointF offset = direction / length * amount;
-            shrunkPolygon << (point + offset);
-        }
-        else
-            shrunkPolygon << point; // If the point is at the centroid, leave it unchanged
-
-    }
-    return shrunkPolygon;
-}
 void SpecificWorker::draw_obstacles(const vector<QPolygonF> &list_poly, QGraphicsScene *scene, const QColor &color) const
 {
     static std::vector<QGraphicsItem*> items;
@@ -613,11 +572,6 @@ int SpecificWorker::startup_check()
 	QTimer::singleShot(200, qApp, SLOT(quit()));
 	return 0;
 }
-
-
-
-
-
 
 /**************************************/
 // From the RoboCompLidar3D you can call this methods:
