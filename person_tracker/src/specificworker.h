@@ -35,7 +35,9 @@
 #include <doublebuffer_sync/doublebuffer_sync.h>
 #include <locale>
 #include <qcustomplot/qcustomplot.h>
-
+#include "room_detector.h"
+#include "dbscan.h"
+#include "visibility_graph.h"
 
 class SpecificWorker : public GenericWorker
 {
@@ -95,8 +97,8 @@ class SpecificWorker : public GenericWorker
         RobotSpeed state_machine(const TPerson &person);
 
         // lidar
-        RoboCompLidar3D::TData read_lidar_bpearl();
-        RoboCompLidar3D::TData read_lidar_helios();
+        std::vector<Eigen::Vector2f> read_lidar_bpearl();
+        std::vector<Eigen::Vector2f> read_lidar_helios();
 
         // draw
         AbstractGraphicViewer *viewer;
@@ -104,9 +106,18 @@ class SpecificWorker : public GenericWorker
         QGraphicsPolygonItem *robot_draw;
         void draw_person(RoboCompVisualElementsPub::TObject &person, QGraphicsScene *scene) const;
         void draw_path_to_person(const auto &points, QGraphicsScene *scene);
+        void draw_obstacles(const vector<QPolygonF> &list_poly, QGraphicsScene *scene, const QColor &color) const;
+
+        // room
+        rc::Room_Detector room_detector;
+        std::vector<QLineF> detect_wall_lines(const vector<Eigen::Vector2f> &points, QGraphicsScene *scene);
+        std::vector<Eigen::Vector2f> remove_wall_points(const std::vector<QLineF> &lines, const auto &bpearl);
+        std::vector<QPolygonF> get_walls_as_polygons(const std::vector<QLineF> &lines, float robot_width);
+        std::vector<QPolygonF> enlarge_polygons(const std::vector<QPolygonF> &polygons, float amount);
 
         // person
         std::expected<RoboCompVisualElementsPub::TObject, std::string> find_person_in_data(const std::vector<RoboCompVisualElementsPub::TObject> &objects);
+        std::vector<QPolygonF> find_person_polygon_and_remove(const RoboCompVisualElementsPub::TObject &person, const std::vector<QPolygonF> &obstacles);
 
         // aux
         std::expected<int, string> closest_lidar_index_to_given_angle(const auto &points, float angle);
@@ -120,5 +131,7 @@ class SpecificWorker : public GenericWorker
         // QCustomPlot object
         QCustomPlot *plot;
         void plot_distance(double distance);
+
+    float running_average(float dist);
 };
 #endif

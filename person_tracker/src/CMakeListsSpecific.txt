@@ -3,6 +3,10 @@ LIST(APPEND SOURCES
   specificworker.cpp
   specificmonitor.cpp
   $ENV{ROBOCOMP}/classes/qcustomplot/qcustomplot.cpp
+  dbscan.cpp
+  visibility_graph.cpp
+  room_detector.cpp
+
 )
 
 # Headers set
@@ -10,6 +14,7 @@ LIST(APPEND HEADERS
   specificworker.h
   specificmonitor.h
   $ENV{ROBOCOMP}/classes/qcustomplot/qcustomplot.h
+  room_detector.h
 )
 INCLUDE( $ENV{ROBOCOMP}/cmake/modules/opencv4.cmake )
 #find_package(MLPACK REQUIRED)
@@ -17,7 +22,7 @@ INCLUDE( $ENV{ROBOCOMP}/cmake/modules/opencv4.cmake )
 set(CMAKE_CXX_STANDARD 23)
 add_definitions(-fmax-errors=1 -fno-char8_t -fopenmp)
 
-#LIST(APPEND LIBS ${LIBS} gomp armadillo mlpack gmp)
+LIST(APPEND LIBS ${LIBS} gomp armadillo mlpack gmp mpfr)
 LIST(APPEND LIBS ${LIBS} Qt6PrintSupport)
 
 

@@ -6,27 +6,18 @@
 #include <algorithm>
 #include <Eigen/Dense>
 #include <Eigen/src/Core/Matrix.h>
+#include <cppitertools/range.hpp>
+#include <QLineF>
 
 namespace rc
 {
     std::vector<Eigen::Vector2f>
     VisibilityGraph::generate_path(const Eigen::Vector2f &start, const Eigen::Vector2f &goal,
-                                   const std::vector<QPolygonF> &obstacles, std::vector<float> boundary)
+                                   const std::vector<QPolygonF> &obstacles,
+                                   float step_size, QGraphicsScene *scene)
     {
-        // Convert the input data to the format required by the visibility graph algorithm
-        if (boundary.size() != 4)
-        {
-            std::cout << __FUNCTION__ << " Boundary must have 4 elements" << std::endl;
-            return {};
-        }  //TODO: check also reasonable values
-        Boundary boundary_ = {.minX=boundary[0], .minY=boundary[1], .maxX=boundary[2], .maxY=boundary[3]};
+        static std::vector<Point> ant_path;
 
-        // start and end must be within the boundary
-        if (!boundary_.contains({start.x(), start.y()}) || !boundary_.contains({goal.x(), goal.y()}))
-        {
-            std::cout << __FUNCTION__ << " Start or goal is outside the boundary" << std::endl;
-            return {};
-        }
         Point start_ = {start.x(), start.y()};
         Point goal_ = {goal.x(), goal.y()};
 
@@ -36,20 +27,56 @@ namespace rc
                 obs[i].emplace_back(rc::VisibilityGraph::Point{q.x(), q.y()});
 
         // Build the Voronoi graph
-        auto graph = buildVoronoiGraph(start_, goal_, obs, boundary_);
+        const auto &[graph, delaunay] = buildVoronoiGraph(start_, goal_, obs, {});
 
         // Find the shortest path using Dijkstra's algorithm
         auto path = dijkstra(graph, start_, goal_);
 
-        // smooth the path
-        auto smoothPath = generate_smooth_path(path, obs, boundary_);
+        std::vector<Eigen::Vector2f> smooth_path;
+        for (const auto &p: path)
+            smooth_path.emplace_back(p.x, p.y);
+        smooth_path = path_spacer(smooth_path, step_size);
 
-        // Convert the path to the format required by the caller
-        std::vector<Eigen::Vector2f> result;
-        for (const auto &point: smoothPath)
-            result.emplace_back(point.x, point.y);
+        if(scene != nullptr)
+            draw_delaunay(delaunay, scene);
 
-        return result;
+        return smooth_path;
+    }
+
+    void VisibilityGraph::draw_delaunay(const Delaunay &delaunay, QGraphicsScene *pScene)
+    {
+        static std::vector<QGraphicsItem*> items;
+        // remove all items drawn in the previous iteration
+        for(auto i: items)
+        {
+            pScene->removeItem(i);
+            delete i;
+        }
+        items.clear();
+        QPen pen = QPen(Qt::cyan, 20);
+        for (auto face = delaunay.finite_faces_begin(); face != delaunay.finite_faces_end(); ++face)
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                auto neighbor = face->neighbor(i);
+                if (!delaunay.is_infinite(neighbor))
+                {
+                    // get all three vertices of the face
+                    auto v0 = face->vertex((i + 1) % 3)->point();
+                    auto v1 = face->vertex((i + 2) % 3)->point();
+                    auto v2 = face->vertex(i)->point();
+                    auto l1 = pScene->addLine(QLineF(CGAL::to_double(v0.x()), CGAL::to_double(v0.y()),
+                                                     CGAL::to_double(v1.x()), CGAL::to_double(v1.y())), pen);
+                    items.push_back(l1);
+                    auto l2 = pScene->addLine(QLineF(CGAL::to_double(v1.x()), CGAL::to_double(v1.y()),
+                                                     CGAL::to_double(v2.x()), CGAL::to_double(v2.y())), pen);
+                    items.push_back(l2);
+                    auto l3 = pScene->addLine(QLineF(CGAL::to_double(v2.x()), CGAL::to_double(v2.y()),
+                                                     CGAL::to_double(v0.x()), CGAL::to_double(v0.y())), pen);
+                    items.push_back(l3);
+                }
+            }
+        }
     }
 
     double VisibilityGraph::distance(const Point &p1, const Point &p2)
@@ -66,30 +93,26 @@ namespace rc
     }
 
     // Check if an edge is valid (not intersecting obstacles and within the boundary)
-    bool VisibilityGraph::is_edge_valid(const VisibilityGraph::Point &p1,
-                                        const VisibilityGraph::Point &p2,
-                                        const std::vector<std::vector<VisibilityGraph::Point>> &obstacles,
-                                        const VisibilityGraph::Boundary &boundary)
+    bool VisibilityGraph::is_edge_valid(const Point &p1,
+                                        const Point &p2,
+                                        const std::vector<std::vector<Point>> &obstacles,
+                                        const Boundary &boundary)
     {
         // Check if both points are within the boundary
-        if (!boundary.contains(p1) || !boundary.contains(p2))
-        {
-            return false;
-        }
+//        if (not boundary.contains(p1) or not boundary.contains(p2))
+//        {
+//            return false;
+//        }
 
         // Check if the edge intersects any obstacles
         for (const auto &obstacle: obstacles)
-        {
             for (size_t i = 0; i < obstacle.size(); ++i)
             {
                 Point p3 = obstacle[i];
                 Point p4 = obstacle[(i + 1) % obstacle.size()];
                 if (edges_intersect(p1, p2, p3, p4))
-                {
                     return false;
-                }
             }
-        }
         return true;
     }
 
@@ -148,7 +171,7 @@ namespace rc
     }
 
     // Build the Voronoi graph based on the Delaunay triangulation
-    std::map<VisibilityGraph::Point, std::vector<std::pair<VisibilityGraph::Point, double>>>
+    std::tuple<VisibilityGraph::VGraph, VisibilityGraph::Delaunay>
     VisibilityGraph::buildVoronoiGraph(const Point &start, const Point &goal,
                                        const std::vector<std::vector<Point>> &obstacles,
                                        const Boundary &boundary)
@@ -156,12 +179,8 @@ namespace rc
         // Convert obstacles to a set of points for Delaunay triangulation
         std::vector<Point_2> delaunayPoints;
         for (const auto &obstacle: obstacles)
-        {
             for (const auto &vertex: obstacle)
-            {
                 delaunayPoints.emplace_back(vertex.x, vertex.y);
-            }
-        }
 
         // Add start and goal points
         delaunayPoints.emplace_back(start.x, start.y);
@@ -177,7 +196,7 @@ namespace rc
         for (auto face = delaunay.finite_faces_begin(); face != delaunay.finite_faces_end(); ++face)
         {
             auto circumcenter = delaunay.circumcenter(face);
-            Point center = {circumcenter.x(), circumcenter.y()};
+            Point center = {CGAL::to_double(circumcenter.x()), CGAL::to_double(circumcenter.y())};
 
             // Iterate through neighboring faces to connect circumcenters
             for (int i = 0; i < 3; ++i)
@@ -185,8 +204,13 @@ namespace rc
                 auto neighbor = face->neighbor(i);
                 if (!delaunay.is_infinite(neighbor))
                 {
+                    // get all three vertices of the face
+//                    auto v0 = face->vertex((i + 1) % 3)->point();
+//                    auto v1 = face->vertex((i + 2) % 3)->point();
+//                    auto v2 = face->vertex(i)->point();
+
                     auto neighborCircumcenter = delaunay.circumcenter(neighbor);
-                    Point neighborCenter = {neighborCircumcenter.x(), neighborCircumcenter.y()};
+                    Point neighborCenter = {CGAL::to_double(neighborCircumcenter.x()), CGAL::to_double(neighborCircumcenter.y())};
 
                     if (is_edge_valid(center, neighborCenter, obstacles, boundary))
                     {
@@ -200,13 +224,9 @@ namespace rc
 
         // Ensure start and goal are added to the graph
         if (graph.find(start) == graph.end())
-        {
             graph[start] = {};
-        }
         if (graph.find(goal) == graph.end())
-        {
             graph[goal] = {};
-        }
 
         // Connect start and goal to their nearest Voronoi nodes
         for (const auto &node: graph)
@@ -227,95 +247,44 @@ namespace rc
                 graph[voronoiNode].emplace_back(goal, goalDist);
             }
         }
-
-        return graph;
+        return std::make_tuple(graph, delaunay);
     }
 
-    // Generate a smooth path by interpolating between the points
-    std::vector<VisibilityGraph::Point> VisibilityGraph::generate_smooth_path(const std::vector<Point> &path,
-                                                                              const std::vector<std::vector<Point>> &obstacles,
-                                                                              const Boundary &boundary,
-                                                                              double spacing)
+    std::vector<Eigen::Vector2f> VisibilityGraph::path_spacer(const std::vector<Eigen::Vector2f> &path, float spacing)
     {
-        if (path.size() < 2) {
-            return path; // Not enough points to interpolate
-        }
+        std::vector<Eigen::Vector2f> spaced_path;
+        if (path.size() < 2)
+        { return spaced_path; }// Not enough points to interpolate
 
-        // Generate evenly spaced points along the path segments
-        std::vector<Point> smoothPath;
-        smoothPath.push_back(path.front()); // Add the start point
+        // Step 1: Compute cumulative distances between rough points
+        std::vector<float> cumulative_distances(path.size(), 0.0);
+        for (auto i: iter::range(1UL, path.size()))
+            cumulative_distances[i] = cumulative_distances[i - 1] + (path[i - 1] - path[i]).norm();
 
-        for (size_t i = 0; i < path.size() - 1; ++i) {
-            Point p1 = path[i];
-            Point p2 = path[i + 1];
-            double segmentLength = distance(p1, p2);
-            int numPoints = static_cast<int>(segmentLength / spacing);
+        // Step 2: Generate N evenly spaced points along the cumulative distance
+        double total_distance = cumulative_distances.back();
+        auto num_spaced_points = static_cast<size_t>(std::ceil(total_distance / spacing));
 
-            for (int j = 1; j <= numPoints; ++j) {
-                double t = j * spacing / segmentLength;
-                Point newPoint;
-                newPoint.x = (1 - t) * p1.x + t * p2.x;
-                newPoint.y = (1 - t) * p1.y + t * p2.y;
-                smoothPath.push_back(newPoint);
-            }
-        }
-
-        smoothPath.push_back(path.back()); // Add the goal point
-
-        // Fit a cubic spline using Eigen's Least Squares to the smooth path
-        size_t n = smoothPath.size();
-        if (n < 4) {
-            return smoothPath; // Not enough points for cubic fitting
-        }
-
-        Eigen::VectorXd x(n), y(n);
-        for (size_t i = 0; i < n; ++i) {
-            x(i) = smoothPath[i].x;
-            y(i) = smoothPath[i].y;
-        }
-
-        // Set up the Vandermonde matrix for cubic fitting
-        Eigen::MatrixXd A(n, 4);
-        for (size_t i = 0; i < n; ++i) {
-            A(i, 0) = 1;
-            A(i, 1) = x(i);
-            A(i, 2) = x(i) * x(i);
-            A(i, 3) = x(i) * x(i) * x(i);
-        }
-
-        // Use the normal equation to solve for the polynomial coefficients
-        Eigen::MatrixXd AtA = A.transpose() * A;
-        Eigen::VectorXd Aty = A.transpose() * y;
-
-        // Solve using LDLT decomposition for numerical stability
-        Eigen::VectorXd coeffs = AtA.ldlt().solve(Aty);
-        static Eigen::VectorXd previousCoeffs;
-        float alpha = 0.3;
-
-        // Blend the coefficients with the previous coefficients for stability
-        if (previousCoeffs.size() == coeffs.size())
-            coeffs = alpha * coeffs + (1 - alpha) * previousCoeffs;
-        previousCoeffs = coeffs;
-
-        // Generate the final smooth path with blended cubic polynomial fitting
-        std::vector<Point> finalSmoothPath;
-        double totalLength = 0.0;
-        for (size_t i = 1; i < n; ++i)
-            totalLength += distance(smoothPath[i - 1], smoothPath[i]);
-
-        double currentLength = 0.0;
-        while (currentLength <= totalLength)
+        // Interpolate points at intervals of 'spacing' along the path
+        double current_distance = 0.0;
+        size_t j = 0; // Index for rough_path
+        for (auto i: iter::range(0UL, num_spaced_points))
         {
-            double t = currentLength / totalLength;
-            double interpX = (1 - t) * x(0) + t * x(n - 1);
+            // Interpolate new point at distance `current_distance`
+            while (j < cumulative_distances.size() - 1 and current_distance > cumulative_distances[j + 1])
+                ++j; // Move to the next segment
+            if (j >= cumulative_distances.size() - 1)
+                break;
 
-            double interpY = coeffs(0) + coeffs(1) * interpX + coeffs(2) * interpX * interpX + coeffs(3) * interpX * interpX * interpX;
-            finalSmoothPath.push_back({interpX, interpY});
-            currentLength += spacing;
+            // Linear interpolation between rough_path[j] and rough_path[j+1]
+            float t = (current_distance - cumulative_distances[j]) /
+                      (cumulative_distances[j + 1] - cumulative_distances[j]);
+            Eigen::Vector2f new_point = path[j] + t * (path[j + 1] - path[j]);
+            spaced_path.push_back(new_point);
+            current_distance += spacing; // Move to the next evenly spaced point
         }
-
-        finalSmoothPath.push_back(smoothPath.back()); // Add the goal point
-        return finalSmoothPath;
+        // Ensure the last point is exactly the target
+        spaced_path.push_back(path.back());
+        return spaced_path;
     }
 }
-
