@@ -11,33 +11,52 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>chocachoca</string>
+   <string>Person Tracker</string>
   </property>
-  <layout class="QVBoxLayout" name="verticalLayout_3">
+  <layout class="QVBoxLayout" name="verticalLayout_2">
    <item>
-    <widget class="QSplitter" name="splitter">
+    <widget class="QSplitter" name="splitter_2">
      <property name="orientation">
       <enum>Qt::Horizontal</enum>
      </property>
-     <widget class="QFrame" name="frame">
-      <property name="sizePolicy">
-       <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-        <horstretch>0</horstretch>
-        <verstretch>0</verstretch>
-       </sizepolicy>
+     <widget class="QSplitter" name="splitter">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
       </property>
-      <property name="minimumSize">
-       <size>
-        <width>600</width>
-        <height>0</height>
-       </size>
-      </property>
-      <property name="frameShape">
-       <enum>QFrame::StyledPanel</enum>
-      </property>
-      <property name="frameShadow">
-       <enum>QFrame::Raised</enum>
-      </property>
+      <widget class="QFrame" name="frame">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="minimumSize">
+        <size>
+         <width>600</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="frameShape">
+        <enum>QFrame::StyledPanel</enum>
+       </property>
+       <property name="frameShadow">
+        <enum>QFrame::Raised</enum>
+       </property>
+      </widget>
+      <widget class="QFrame" name="frame_dist">
+       <property name="maximumSize">
+        <size>
+         <width>16777215</width>
+         <height>150</height>
+        </size>
+       </property>
+       <property name="frameShape">
+        <enum>QFrame::StyledPanel</enum>
+       </property>
+       <property name="frameShadow">
+        <enum>QFrame::Raised</enum>
+       </property>
+      </widget>
      </widget>
      <widget class="QFrame" name="frame_2">
       <property name="sizePolicy">
@@ -52,20 +71,23 @@
       <property name="frameShadow">
        <enum>QFrame::Raised</enum>
       </property>
-      <layout class="QVBoxLayout" name="verticalLayout_5">
+      <layout class="QVBoxLayout" name="verticalLayout_3">
        <item>
         <layout class="QVBoxLayout" name="verticalLayout_4">
+         <property name="sizeConstraint">
+          <enum>QLayout::SetMinimumSize</enum>
+         </property>
          <item>
           <layout class="QHBoxLayout" name="horizontalLayout_2">
            <item>
             <widget class="QLabel" name="label">
              <property name="text">
-              <string>min  dist</string>
+              <string>distance to person</string>
              </property>
             </widget>
            </item>
            <item>
-            <widget class="QLCDNumber" name="lcdNumber_mindist">
+            <widget class="QLCDNumber" name="lcdNumber_dist_to_person">
              <property name="font">
               <font>
                <weight>75</weight>
@@ -81,12 +103,12 @@
            <item>
             <widget class="QLabel" name="label_2">
              <property name="text">
-              <string>min  angle</string>
+              <string>angle to person</string>
              </property>
             </widget>
            </item>
            <item>
-            <widget class="QLCDNumber" name="lcdNumber_minangle">
+            <widget class="QLCDNumber" name="lcdNumber_angle_to_person">
              <property name="font">
               <font>
                <weight>75</weight>
@@ -102,7 +124,7 @@
            <item>
             <widget class="QLabel" name="label_4">
              <property name="text">
-              <string>adv</string>
+              <string>adv speed</string>
              </property>
             </widget>
            </item>
@@ -116,26 +138,12 @@
            <item>
             <widget class="QLabel" name="label_5">
              <property name="text">
-              <string>rot</string>
+              <string>rot speed</string>
              </property>
             </widget>
            </item>
            <item>
             <widget class="QLCDNumber" name="lcdNumber_rot"/>
-           </item>
-          </layout>
-         </item>
-         <item>
-          <layout class="QHBoxLayout" name="horizontalLayout_6">
-           <item>
-            <widget class="QLabel" name="label_3">
-             <property name="text">
-              <string>dist to person</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLCDNumber" name="lcdNumber_dist_to_person"/>
            </item>
           </layout>
          </item>
@@ -179,6 +187,19 @@
             <layout class="QHBoxLayout" name="horizontalLayout_7"/>
            </item>
           </layout>
+         </item>
+         <item>
+          <widget class="QPushButton" name="pushButton_adapt">
+           <property name="text">
+            <string>Adapt</string>
+           </property>
+           <property name="checkable">
+            <bool>true</bool>
+           </property>
+           <property name="checked">
+            <bool>true</bool>
+           </property>
+          </widget>
          </item>
          <item>
           <widget class="QPushButton" name="pushButton_stop">

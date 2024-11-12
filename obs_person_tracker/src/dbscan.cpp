@@ -14,36 +14,8 @@
 
 namespace rc
 {
-    QPolygonF enlarge_polygon(const QPolygonF &polygon, qreal amount)
-    {
-        if (polygon.isEmpty())
-            return QPolygonF();
-
-        // Calculate the centroid of the polygon
-        QPointF centroid(0, 0);
-        for (const QPointF &point : polygon)
-            centroid += point;
-        centroid /= polygon.size();
-
-        // Move each point away from the centroid
-        QPolygonF enlargedPolygon;
-        for (const QPointF &point : polygon)
-        {
-            QPointF direction = point - centroid; // Reverse the direction to move away from the centroid
-            qreal length = std::sqrt(direction.x() * direction.x() + direction.y() * direction.y());
-            if (length > 0)
-            {
-                QPointF offset = direction / length * amount;
-                enlargedPolygon << (point + offset);
-            }
-            else
-                enlargedPolygon << point; // If the point is at the centroid, leave it unchanged
-        }
-        return enlargedPolygon;
-    }
     std::vector<QPolygonF> dbscan(const std::vector<Eigen::Vector2f> &points,
-                                  float eps, int min_points,
-                                  float robot_width)
+                                  float eps, int min_points)
     {
         if(points.empty()) {std::cout << __FUNCTION__ << " No points" << std::endl; return {};}
         arma::mat arma_data(2, points.size());
@@ -76,24 +48,10 @@ namespace rc
             QPolygonF poly;
             for (const auto &p: hull)
                 poly << QPointF(p.x, p.y);
-
-            // enlarge the polygon to account for the robot size
-            QPolygonF exp_poly;
-            for(int i = 0; i < poly.size(); ++i)
-            {
-                const QPointF p1 = poly[i];
-                const QPointF p2 = poly[(i + 1) % poly.size()]; // Handle the last point
-
-                // Calculate the angle of the line segment
-                const float angle = std::atan2(p2.y() - p1.y(), p2.x() - p1.x());
-
-                // Calculate the new points by translating and rotating the line segment
-                QPointF newP1(p1.x() + robot_width * std::cos(angle),p1.y() + robot_width * std::sin(angle));
-                QPointF newP2(p2.x() + robot_width * std::cos(angle),p2.y() + robot_width * std::sin(angle));
-                exp_poly << newP1 << newP2;
-            }
-            list_poly.emplace_back(exp_poly);
+            list_poly.emplace_back(poly);
         }
         return list_poly;
     };
 }
+
+
