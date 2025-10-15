@@ -1,4 +1,4 @@
-cmake_minimum_required( VERSION 4.0)
+cmake_minimum_required( VERSION 3.28)
 PROJECT( aspirador )
 
 SET(RC_COMPONENT_PATH ${CMAKE_CURRENT_SOURCE_DIR} CACHE STRING "component base path" FORCE)
