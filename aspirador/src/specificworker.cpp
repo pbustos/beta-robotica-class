@@ -56,7 +56,7 @@ void SpecificWorker::initialize(int period)
     robot_polygon = rp;
 
     // grid
-    fm.initialize(QRectF(-5000, -2500, 10000, 5000), 250, &viewer->scene, false);
+    fm.initialize(QRectF(-5000, -2500, 10000, 5000), 500, &viewer->scene, false);
     connect(pushButton, &QPushButton::clicked, this, &SpecificWorker::reset_time );
 
 	this->Period = period;
