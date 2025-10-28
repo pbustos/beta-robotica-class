@@ -106,6 +106,9 @@ void SpecificWorker::compute()
     /// find obstacles
     auto obstacles = rc::dbscan(bpearl, params.ROBOT_WIDTH, 2);
 
+    /// enlarge obstacles
+    obstacles = enlarge_polygons(obstacles, params.ROBOT_WIDTH);
+
     /// check if there is new YOLO data in buffer
     std::expected<RoboCompVisualElementsPub::TObject, std::string> tp_person = std::unexpected("No person found");
     auto [data_] = buffer.read_first();
@@ -116,8 +119,6 @@ void SpecificWorker::compute()
     if(tp_person)
         obstacles = find_person_polygon_and_remove(tp_person.value(), obstacles);
 
-    /// enlarge obstacles
-    obstacles = enlarge_polygons(obstacles, params.ROBOT_WIDTH);
     draw_obstacles(obstacles, &viewer->scene, Qt::darkMagenta);
 
     /// get walls as polygons
@@ -125,19 +126,20 @@ void SpecificWorker::compute()
     obstacles.insert(obstacles.end(), wall_obs.begin(), wall_obs.end());
 
     /// compute an obstacle free path
+    std::vector<Eigen::Vector2f> path;
     if(tp_person)
     {
         Eigen::Vector2f goal{std::stof(tp_person.value().attributes.at("x_pos")), std::stof(tp_person.value().attributes.at("y_pos"))};
-        std::vector<Eigen::Vector2f> path = rc::VisibilityGraph().generate_path(Eigen::Vector2f::Zero(),
-                                                                                goal,
-                                                                                obstacles,
-                                                                                params.ROBOT_WIDTH / 2,
-                                                                                nullptr);
+        path = rc::VisibilityGraph().generate_path(Eigen::Vector2f::Zero(),
+                                                        goal,
+                                                        obstacles,
+                                                       params.ROBOT_WIDTH / 2,
+                                                       nullptr);
         draw_path_to_person(path, &viewer->scene);
     }
 
     // call state machine to track person
-    const auto &[adv, rot] = state_machine(tp_person);
+    const auto &[adv, rot] = state_machine(path);
 
     // plot on UI
     if(tp_person)
@@ -292,7 +294,7 @@ std::vector<QPolygonF> SpecificWorker::find_person_polygon_and_remove(const Robo
     // compute 8 point around pp in circular configuration
     std::vector<QPointF> ppoly;
     for (auto i: iter::range(0.0, 2 * M_PI, M_PI / 2))
-        ppoly.push_back(pp + QPointF(80 * cos(i), 80 * sin(i)));
+        ppoly.push_back(pp + QPointF(params.PERSON_RADIUS * cos(i), params.PERSON_RADIUS * sin(i)));
     // check if any polygon contains the person and remove it
     for(const auto &poly: obstacles)
     {
@@ -312,7 +314,7 @@ std::vector<QPolygonF> SpecificWorker::find_person_polygon_and_remove(const Robo
 /// STATE  MACHINE
 //////////////////////////////////////////////////////////////////
 // State machine to track a person
-SpecificWorker::RobotSpeed SpecificWorker::state_machine(const TPerson &person)
+SpecificWorker::RobotSpeed SpecificWorker::state_machine(const Path &path)
 {
     // call the appropriate state function
     RetVal res;
@@ -322,15 +324,15 @@ SpecificWorker::RobotSpeed SpecificWorker::state_machine(const TPerson &person)
     switch(state)
     {
         case STATE::TRACK:
-            res = track(person);
+            res = track(path);
             label_state->setText("TRACK");
             break;
         case STATE::WAIT:
-            res = wait(person);
+            res = wait(path);
             label_state->setText("WAIT");
             break;
         case STATE::SEARCH:
-            res = search(person);
+            res = search(path);
             label_state->setText("SEARCH");
             break;
         case STATE::STOP:
@@ -355,7 +357,7 @@ SpecificWorker::RobotSpeed SpecificWorker::state_machine(const TPerson &person)
  * @return A `RetVal` tuple consisting of the state (`FORWARD` or `TURN`), speed, and rotation.
  */
  // State function to track a person
-SpecificWorker::RetVal SpecificWorker::track(const TPerson &person)
+SpecificWorker::RetVal SpecificWorker::track(const Path &path)
 {
     static float ant_angle_error = 0.0;
     //qDebug() << __FUNCTION__;
@@ -370,10 +372,10 @@ SpecificWorker::RetVal SpecificWorker::track(const TPerson &person)
         return (float)exp(-x*x/s);
     };
 
-    if(not person)
+    if(path.empty())
     { /* qWarning() << __FUNCTION__ << "No person found"; */ return RetVal(STATE::SEARCH, 0.f, 0.f); }
 
-    auto distance = std::hypot(std::stof(person.value().attributes.at("x_pos")), std::stof(person.value().attributes.at("y_pos")));
+    auto distance = distance_to_person_through_path(path);
     lcdNumber_dist_to_person->display(distance);
 
     // check if the distance to the person is lower than a threshold
@@ -381,7 +383,7 @@ SpecificWorker::RetVal SpecificWorker::track(const TPerson &person)
     { qWarning() << __FUNCTION__ << "Distance to person lower than threshold"; return RetVal(STATE::WAIT, 0.f, 0.f);}
 
     // angle error is the angle between the robot and the person. It has to be brought to zero
-    float angle_error = atan2(stof(person.value().attributes.at("x_pos")), stof(person.value().attributes.at("y_pos")));
+    float angle_error = atan2(path[1].x(), path[1].y());
     float rot_speed = params.k1 * angle_error + params.k2 * (angle_error-ant_angle_error);
     ant_angle_error = angle_error;
     // rot_brake is a value between 0 and 1 that decreases the speed when the robot is not facing the person
@@ -393,22 +395,27 @@ SpecificWorker::RetVal SpecificWorker::track(const TPerson &person)
     return RetVal(STATE::TRACK, params.MAX_ADV_SPEED * rot_brake * adv_brake, rot_speed);
 }
 //
-SpecificWorker::RetVal SpecificWorker::wait(const TPerson &person)
+SpecificWorker::RetVal SpecificWorker::wait(const Path &path)
 {
-    if(not person)
+    if(path.empty())
     {  qWarning() << __FUNCTION__ << "No person found"; return RetVal(STATE::TRACK, 0.f, 0.f); }
 
     // check if the person is further than a threshold
-    if(std::hypot(std::stof(person.value().attributes.at("x_pos")), std::stof(person.value().attributes.at("y_pos"))) > params.PERSON_MIN_DIST + 100)
+    auto distance = std::accumulate(std::begin(path), std::end(path), 0.f, [](auto acc, auto &p)
+    {   static Eigen::Vector2f ant_p = Eigen::Vector2f::Zero();
+        return acc + (p-ant_p).norm();
+        ant_p = p;
+    });
+    if(distance > params.PERSON_MIN_DIST + 100)
         return RetVal(STATE::TRACK, 0.f, 0.f);
 
     return RetVal(STATE::WAIT, 0.f, 0.f);
 
 }
 // Search when no person is found
-SpecificWorker::RetVal SpecificWorker::search(const TPerson &person)
+SpecificWorker::RetVal SpecificWorker::search(const Path &path)
 {
-    if(person)
+    if(not path.empty())
     {  qWarning() << __FUNCTION__ << "Person found, moving to TRACK"; return RetVal(STATE::TRACK, 0.f, 0.f); }
 
     return RetVal(STATE::SEARCH, 0.f, params.SEARCH_ROT_SPEED);
@@ -422,6 +429,14 @@ SpecificWorker::RetVal SpecificWorker::stop()
         return RetVal(STATE::TRACK, 0.f, 0.f);
 
     return RetVal (STATE::STOP, 0.f, 0.f);
+}
+float SpecificWorker::distance_to_person_through_path(const Path &path)
+{
+    return std::accumulate(std::begin(path), std::end(path), 0.f, [](auto acc, auto &p)
+                {   static Eigen::Vector2f ant_p = Eigen::Vector2f::Zero();
+                    return acc + (p-ant_p).norm();
+                    ant_p = p;
+                });
 }
 /**
  * Draws LIDAR points onto a QGraphicsScene.

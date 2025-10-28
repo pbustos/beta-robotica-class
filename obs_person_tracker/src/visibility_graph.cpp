@@ -4,250 +4,386 @@
 
 #include "visibility_graph.h"
 #include <algorithm>
+#include <QGraphicsItem>
 #include <Eigen/Dense>
 #include <Eigen/src/Core/Matrix.h>
 #include <cppitertools/range.hpp>
+#include <cppitertools/enumerate.hpp>
 #include <QLineF>
+#include <QPainter>
+#include <cppitertools/sliding_window.hpp>
+#include <functional>
 
 namespace rc
 {
+    // Overload the << operator for QDebug and Point
+    QDebug operator<<(QDebug dbg, const Point &point) {
+        dbg.nospace() << "(" << point.x << ", " << point.y << ")";
+        return dbg.space();
+    }
+
     std::vector<Eigen::Vector2f>
     VisibilityGraph::generate_path(const Eigen::Vector2f &start, const Eigen::Vector2f &goal,
                                    const std::vector<QPolygonF> &obstacles,
-                                   float step_size, QGraphicsScene *scene)
+                                   const std::vector<QPointF> &boundary,
+                                   const float step_size, QGraphicsScene *scene)
     {
-        static std::vector<Point> ant_path;
+        QPointF start_ = {start.x(), start.y()};
+        QPointF goal_ = {goal.x(), goal.y()};
 
-        Point start_ = {start.x(), start.y()};
-        Point goal_ = {goal.x(), goal.y()};
+        // simplify polygons
+        std::vector<QPolygonF> obstacles_;
+        for (const auto &poly: obstacles)
+            obstacles_.emplace_back(simplifyPolygon(poly, 200));
 
-        std::vector<std::vector<Point>> obs(obstacles.size());
-        for (const auto &[i, p]: obstacles | iter::enumerate)
-            for (const auto &q: p)
-                obs[i].emplace_back(rc::VisibilityGraph::Point{q.x(), q.y()});
+        // copy the obstacles to a vector of vectors of QPointF
+        std::vector<std::vector<QPointF>> obs(obstacles_.size());
+        for (const auto &[i, poly]: obstacles_ | iter::enumerate)
+            for (const auto &p: poly)
+                obs[i].emplace_back(p);
 
-        // Build the Voronoi graph
-        const auto &[graph, delaunay] = buildVoronoiGraph(start_, goal_, obs, {});
+        // check if there is free path from the robot to the goal in a straight line
+        if (free_path(start_, goal_, obs))
+        {
+            draw_graph({}, scene, true);
+            return {start, goal};
+        }
+
+        // If not FREE PATH build the Delaunay triangulation with CDT lib
+        const auto &cdt = build_dealunay_graph_CDT(start_, goal_, obs, boundary);
+
+        // Build de Voronoi diagram
+        auto [vcentres, vedges, graph] = compute_voronoi_from_Delaunay(cdt, Point(start_), Point(goal_));
 
         // Find the shortest path using Dijkstra's algorithm
-        auto path = dijkstra(graph, start_, goal_);
+        const auto paths = dijkstra_paths(graph,start_, goal_, 1);
+        if (paths.empty()){ qDebug() << __FUNCTION__ << "Empty path";}
 
         std::vector<Eigen::Vector2f> smooth_path;
-        for (const auto &p: path)
-            smooth_path.emplace_back(p.x, p.y);
+        for (const auto &p: paths)
+             smooth_path.emplace_back(p.x, p.y);
         smooth_path = path_spacer(smooth_path, step_size);
 
         if(scene != nullptr)
-            draw_delaunay(delaunay, scene);
-
+        {
+            //draw_delaunay(cdt, scene);
+            //draw_voronoi(vcentres, vedges, scene);
+            draw_graph(graph, scene);
+        }
         return smooth_path;
     }
 
-    void VisibilityGraph::draw_delaunay(const Delaunay &delaunay, QGraphicsScene *pScene)
+    /////////////////////////////////////////////////////////////////////////////////
+    void VisibilityGraph::draw_voronoi(const std::vector<QPointF> &vcentres,
+                                       const std::vector<std::pair<QPointF, QPointF>> &vedges,
+                                       QGraphicsScene *scene)
     {
         static std::vector<QGraphicsItem*> items;
-        // remove all items drawn in the previous iteration
-        for(auto i: items)
+        for(const auto i: items)
+        {
+            scene->removeItem(i);
+            delete i;
+        }
+        items.clear();
+
+        const auto pen = QPen(Qt::magenta, 20);
+        const auto brush = QBrush(Qt::magenta);
+        for (const auto &v: vcentres)
+        {
+            const auto p = scene->addEllipse(-100, -100, 200, 200, pen);
+            p->setPos(v);
+            items.push_back(p);
+        }
+
+        for (const auto &[p1, p2]: vedges)
+        {
+            const auto line = scene->addLine(QLineF(p1, p2), pen);
+            items.push_back(line);
+        }
+    }
+    void VisibilityGraph::draw_delaunay(const CDT::Triangulation<double> &cdt, QGraphicsScene *pScene)
+    {
+        static std::vector<QGraphicsItem*> items;
+        for(const auto i: items)
         {
             pScene->removeItem(i);
             delete i;
         }
         items.clear();
-        QPen pen = QPen(Qt::cyan, 20);
-        for (auto face = delaunay.finite_faces_begin(); face != delaunay.finite_faces_end(); ++face)
+
+        const auto pen = QPen(Qt::cyan, 20);
+
+        for (const auto &[vertices, neighbors]: cdt.triangles)
         {
-            for (int i = 0; i < 3; ++i)
-            {
-                auto neighbor = face->neighbor(i);
-                if (!delaunay.is_infinite(neighbor))
-                {
-                    // get all three vertices of the face
-                    auto v0 = face->vertex((i + 1) % 3)->point();
-                    auto v1 = face->vertex((i + 2) % 3)->point();
-                    auto v2 = face->vertex(i)->point();
-                    auto l1 = pScene->addLine(QLineF(CGAL::to_double(v0.x()), CGAL::to_double(v0.y()),
-                                                     CGAL::to_double(v1.x()), CGAL::to_double(v1.y())), pen);
-                    items.push_back(l1);
-                    auto l2 = pScene->addLine(QLineF(CGAL::to_double(v1.x()), CGAL::to_double(v1.y()),
-                                                     CGAL::to_double(v2.x()), CGAL::to_double(v2.y())), pen);
-                    items.push_back(l2);
-                    auto l3 = pScene->addLine(QLineF(CGAL::to_double(v2.x()), CGAL::to_double(v2.y()),
-                                                     CGAL::to_double(v0.x()), CGAL::to_double(v0.y())), pen);
-                    items.push_back(l3);
-                }
-            }
+            const CDT::V2d<double> &v1 = cdt.vertices[vertices[0]];
+            const CDT::V2d<double> &v2 = cdt.vertices[vertices[1]];
+            const CDT::V2d<double> &v3 = cdt.vertices[vertices[2]];
+
+            QGraphicsLineItem* line = pScene->addLine(QLineF(v1.x, v1.y, v2.x, v2.y), pen);
+            items.push_back(line);
+            QGraphicsLineItem* line2 = pScene->addLine(QLineF(v2.x, v2.y, v3.x, v3.y), pen);
+            items.push_back(line2);
+            QGraphicsLineItem* line3 = pScene->addLine(QLineF(v3.x, v3.y, v1.x, v1.y), pen);
+            items.push_back(line3);
         }
     }
-
-    double VisibilityGraph::distance(const Point &p1, const Point &p2)
+    void VisibilityGraph::draw_graph(const VGraph &graph, QGraphicsScene *pScene, bool erase_only)
     {
-        return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2));
+        static std::vector<QGraphicsItem*> items;
+        for(const auto i: items)
+        {
+            pScene->removeItem(i);
+            delete i;
+        }
+        items.clear();
+
+        if (not erase_only)
+            for (const auto &[p1, neighbors]: graph)
+                for (const auto &[p2, weight]: neighbors)
+                {
+                    const auto line = pScene->addLine(QLineF(p1.to_qpointf(), p2.to_qpointf()), QPen(Qt::green, 20));
+                    items.push_back(line);
+                }
     }
-
-    // Check if two edges intersect
-    bool VisibilityGraph::edges_intersect(const Point &a, const Point &b, const Point &c, const Point &d)
+    double VisibilityGraph::distance(const QPointF &p1, const QPointF &p2) const
     {
-        auto ccw = [](const Point &p1, const Point &p2, const Point &p3)
-        { return (p3.y - p1.y) * (p2.x - p1.x) > (p2.y - p1.y) * (p3.x - p1.x); };
-        return (ccw(a, c, d) != ccw(b, c, d)) && (ccw(a, b, c) != ccw(a, b, d));
-    }
-
-    // Check if an edge is valid (not intersecting obstacles and within the boundary)
-    bool VisibilityGraph::is_edge_valid(const Point &p1,
-                                        const Point &p2,
-                                        const std::vector<std::vector<Point>> &obstacles,
-                                        const Boundary &boundary)
-    {
-        // Check if both points are within the boundary
-//        if (not boundary.contains(p1) or not boundary.contains(p2))
-//        {
-//            return false;
-//        }
-
-        // Check if the edge intersects any obstacles
-        for (const auto &obstacle: obstacles)
-            for (size_t i = 0; i < obstacle.size(); ++i)
-            {
-                Point p3 = obstacle[i];
-                Point p4 = obstacle[(i + 1) % obstacle.size()];
-                if (edges_intersect(p1, p2, p3, p4))
-                    return false;
-            }
-        return true;
+        return std::hypot(p1.x() - p2.x(), p1.y() - p2.y());
     }
 
     // Dijkstra's algorithm to find the shortest path in the graph
-    std::vector<VisibilityGraph::Point>
-    VisibilityGraph::dijkstra(const std::map<Point, std::vector<std::pair<Point, double>>> &graph,
-                              const Point &start,
-                              const Point &goal)
+    /*std::vector<QPointF>
+    VisibilityGraph::dijkstra(const VGraph &graph, const Point &start, const Point &goal)
     {
-        if (graph.find(start) == graph.end() || graph.find(goal) == graph.end())
-            // If start or goal is not in the graph, return an empty path
-            return {};
+        // if ( not graph.contains(start) ||  not graph.contains(goal))
+        // {
+        //     qDebug() << "Start or goal point is not in the graph.";
+        //     return {};
+        // }
 
         std::map<Point, double> distances;
         std::map<Point, Point> previous;
-        auto compare = [](const std::pair<double, Point> &a, const std::pair<double, Point> &b)
-        { return a.first > b.first; };
+        auto compare = [](const std::pair<double, Point>& a, const std::pair<double, Point>& b)
+            { return a.first > b.first;}; // Min-heap for priority queue
         std::priority_queue<std::pair<double, Point>, std::vector<std::pair<double, Point>>, decltype(compare)> pq(compare);
 
-        for (const auto &node: graph)
-            distances[node.first] = std::numeric_limits<double>::infinity();
+        for (const auto &[node, _]: graph)
+            distances[Point(node)] = std::numeric_limits<double>::infinity();
 
         distances[start] = 0;
         pq.emplace(0, start);
 
-        while (!pq.empty())
+        while (not pq.empty())
         {
             Point current = pq.top().second;
-            double currentDist = pq.top().first;
+            const double currentDist = pq.top().first;
             pq.pop();
-            if (current.x == goal.x && current.y == goal.y)
+
+            // Use approximate comparison for floating-point values
+            if (currentDist > distances[current] + 1e-6)
+                continue;
+
+            //if (current.x() == goal.x() and current.y() == goal.y())
+            if (qFuzzyCompare(current.x, goal.x) and qFuzzyCompare(current.y, goal.y))
             {
                 std::vector<Point> path;
                 for (Point at = goal; at.x != start.x || at.y != start.y; at = previous[at])
                     path.push_back(at);
                 path.push_back(start);
-                std::reverse(path.begin(), path.end());
-                return path;
+                std::ranges::reverse(path);
+                std::vector<QPointF> path_;
+                for (const auto &p: path)
+                    path_.emplace_back(p.x, p.y);
+                return path_;
             }
-            if (currentDist > distances[current])
-                continue;
-            for (const auto &neighbor: graph.at(current))
-            {
-                Point next = neighbor.first;
-                double weight = neighbor.second;
-                double newDist = currentDist + weight;
-                if (newDist < distances[next])
+            for (const auto &[next, weight]: graph.at(current.to_qpointf()))
+                if (double newDist = currentDist + weight; newDist < distances[Point(next)])
                 {
-                    distances[next] = newDist;
-                    previous[next] = current;
+                    distances[Point(next)] = newDist;
+                    previous[Point(next)] = current;
                     pq.emplace(newDist, next);
                 }
-            }
         }
         return {}; // Return an empty path if there is no solution
     }
+    */
 
-    // Build the Voronoi graph based on the Delaunay triangulation
-    std::tuple<VisibilityGraph::VGraph, VisibilityGraph::Delaunay>
-    VisibilityGraph::buildVoronoiGraph(const Point &start, const Point &goal,
-                                       const std::vector<std::vector<Point>> &obstacles,
-                                       const Boundary &boundary)
+    // Dijkstra algorithm to find the first N optimal paths
+    VisibilityGraph::Path VisibilityGraph::dijkstra_paths(const VGraph& graph, const QPointF& start,
+                                                          const QPointF& goal, const int N)
     {
-        // Convert obstacles to a set of points for Delaunay triangulation
-        std::vector<Point_2> delaunayPoints;
-        for (const auto &obstacle: obstacles)
-            for (const auto &vertex: obstacle)
-                delaunayPoints.emplace_back(vertex.x, vertex.y);
+        auto pstart = Point(start);
+        auto pgoal = Point(goal);
 
-        // Add start and goal points
-        delaunayPoints.emplace_back(start.x, start.y);
-        delaunayPoints.emplace_back(goal.x, goal.y);
+        PathQueue pq;
+        std::unordered_map<Point, double, PointHash> costs;
+        std::unordered_map<Point, Point, PointHash> predecessors;
+        std::unordered_map<Point, bool, PointHash> visited;
+        pq.push({0.0, {pstart}});
+        costs[pstart] = 0.0;
 
-        // Construct Delaunay triangulation
-        Delaunay delaunay;
-        delaunay.insert(delaunayPoints.begin(), delaunayPoints.end());
-
-        // Build the graph based on Voronoi vertices (circumcenters of Delaunay triangles)
-        std::map<Point, std::vector<std::pair<Point, double>>> graph;
-
-        for (auto face = delaunay.finite_faces_begin(); face != delaunay.finite_faces_end(); ++face)
+        while (!pq.empty())
         {
-            auto circumcenter = delaunay.circumcenter(face);
-            Point center = {CGAL::to_double(circumcenter.x()), CGAL::to_double(circumcenter.y())};
+            auto [currentCost, currentNode] = pq.top();
+            pq.pop();
 
-            // Iterate through neighboring faces to connect circumcenters
-            for (int i = 0; i < 3; ++i)
+            if (visited.contains(currentNode))
+                continue;
+            visited[currentNode] = true;
+
+            // If the current node is the goal, reconstruct the path
+            if (currentNode == pgoal)
             {
-                auto neighbor = face->neighbor(i);
-                if (!delaunay.is_infinite(neighbor))
+                Path path;
+                for (Point at = pgoal; at != pstart; at = predecessors[at])
+                    path.push_back(at);
+
+                path.push_back(pstart);
+                std::ranges::reverse(path);
+                return path;
+            }
+
+            // Explore neighbors of the current node
+            if (graph.contains(currentNode))
+            {
+                for (const auto& [neighbor, cost] : graph.at(currentNode))
                 {
-                    // get all three vertices of the face
-//                    auto v0 = face->vertex((i + 1) % 3)->point();
-//                    auto v1 = face->vertex((i + 2) % 3)->point();
-//                    auto v2 = face->vertex(i)->point();
-
-                    auto neighborCircumcenter = delaunay.circumcenter(neighbor);
-                    Point neighborCenter = {CGAL::to_double(neighborCircumcenter.x()), CGAL::to_double(neighborCircumcenter.y())};
-
-                    if (is_edge_valid(center, neighborCenter, obstacles, boundary))
+                    const double newCost = currentCost + cost;
+                    // If the neighbor hasn't been visited, or we found a cheaper path
+                    if (!costs.contains(neighbor) || newCost < costs[neighbor])
                     {
-                        double dist = distance(center, neighborCenter);
-                        graph[center].emplace_back(neighborCenter, dist);
-                        graph[neighborCenter].emplace_back(center, dist);
+                        costs[neighbor] = newCost;
+                        pq.push({newCost, neighbor});
+                        predecessors[neighbor] = currentNode;
                     }
                 }
             }
         }
+        // Return an empty path if no path is found
+        return {};
+    }
 
-        // Ensure start and goal are added to the graph
-        if (graph.find(start) == graph.end())
-            graph[start] = {};
-        if (graph.find(goal) == graph.end())
-            graph[goal] = {};
+    CDT::Triangulation<double>
+    VisibilityGraph::build_dealunay_graph_CDT(const QPointF &start, const QPointF &goal,
+                                              const std::vector<std::vector<QPointF>> &obstacles,
+                                              const std::vector<QPointF> &boundary)
+    {
+        // Initialize Constrained Delaunay Triangulation
+        auto cdt =  CDT::Triangulation( CDT::VertexInsertionOrder::Enum::Auto,
+                                                        CDT::IntersectingConstraintEdges::Enum::TryResolve,
+                                                        1e-6);
 
-        // Connect start and goal to their nearest Voronoi nodes
-        for (const auto &node: graph)
+        std::vector<CDT::V2d<double>> points;
+        std::vector<CDT::Edge> edges;
+
+        CDT::VertInd i=0;
+        for (const auto &p : boundary)
         {
-            Point voronoiNode = node.first;
-            double startDist = distance(start, voronoiNode);
-            double goalDist = distance(goal, voronoiNode);
+            points.emplace_back(CDT::V2d<double>(p.x(), p.y()));
+            edges.emplace_back(i, (i+1)%boundary.size());
+            i++;
+        }
 
-            if (is_edge_valid(start, voronoiNode, obstacles, boundary))
+        for (const auto &obs : obstacles)
+        {
+            CDT::VertInd startIdx = i;
+            for (const auto &p : obs)
             {
-                graph[start].emplace_back(voronoiNode, startDist);
-                graph[voronoiNode].emplace_back(start, startDist);
-            }
-
-            if (is_edge_valid(goal, voronoiNode, obstacles, boundary))
-            {
-                graph[goal].emplace_back(voronoiNode, goalDist);
-                graph[voronoiNode].emplace_back(goal, goalDist);
+                points.emplace_back(CDT::V2d<double>(p.x(), p.y()));
+                edges.emplace_back(i, (i + 1 - startIdx) % obs.size() + startIdx);  // Correct loop for the hole
+                i++;
             }
         }
-        return std::make_tuple(graph, delaunay);
+
+        points.emplace_back(CDT::V2d<double>(start.x(), start.y()));
+        points.emplace_back(CDT::V2d<double>(goal.x(), goal.y()));
+
+        cdt.insertVertices(points);
+        cdt.insertEdges(edges);
+        //cdt.conformToEdges(edges);
+
+        cdt.eraseOuterTrianglesAndHoles();
+
+        // Check if start and goal are inside any obstacle
+        // Point_2 start_p(start.x, start.y);
+        // Point_2 goal_p(goal.x, goal.y);
+        //
+        // if (is_point_inside_obstacles(start_p, obstacles) ||
+        //     is_point_inside_obstacles(goal_p, obstacles)) {
+        //     throw std::invalid_argument("Start or goal point is inside an obstacle.");
+        // }
+
+        return cdt;
+    }
+
+    /// Function to compute the circumcenter of a triangle
+    std::optional<QPointF> VisibilityGraph::compute_triangle_center(const  CDT::V2d<double>& A, const  CDT::V2d<double>& B, const  CDT::V2d<double>& C) const
+    {
+        const Eigen::Vector2d p1{A.x, A.y};
+        const Eigen::Vector2d p2{B.x, B.y};
+        const Eigen::Vector2d p3{C.x, C.y};
+        Eigen::Vector2d center = (p1 + p2 + p3) / 3.0;
+        return QPointF(center.x(), center.y());
+    }
+
+    // Example function to generate the Voronoi diagram
+    std::tuple<std::vector<QPointF>, std::vector<std::pair<QPointF, QPointF>>, VisibilityGraph::VGraph>
+    VisibilityGraph::compute_voronoi_from_Delaunay(const CDT::Triangulation<double> &cdt, const Point &start, const Point &goal) const
+    {
+        std::vector<QPointF> voronoiVertices;
+        std::vector<std::pair<QPointF, QPointF>> voronoiEdges;
+        VGraph graph;
+
+        // Iterate over Delaunay triangles to form Voronoi centers and edges
+        for (const auto& [vertices, neighbors] : cdt.triangles)
+        {
+            const auto &v1 = cdt.vertices[vertices[0]];
+            const auto &v2 = cdt.vertices[vertices[1]];
+            const auto &v3 = cdt.vertices[vertices[2]];
+            auto center = compute_triangle_center(v1, v2, v3);
+            if (not center) continue;
+            voronoiVertices.push_back(center.value());
+            for (const auto &neigh : neighbors)  // triangles sharing edges
+            {
+                 if (neigh > cdt.triangles.size()) continue;
+                 auto [vertices, neighbors] = cdt.triangles[neigh];
+                 const auto &s1 = cdt.vertices[vertices[0]];
+                 const auto &s2 = cdt.vertices[vertices[1]];
+                 const auto &s3 = cdt.vertices[vertices[2]];
+                 auto s_center = compute_triangle_center(s1,s2, s3);
+                 if (not s_center) continue;
+                 voronoiEdges.emplace_back(center.value(), s_center.value());
+                 auto dist = distance(center.value(), s_center.value());
+                 graph[Point(center.value())].emplace_back(s_center.value(), dist);
+                 graph[Point(s_center.value())].emplace_back(center.value(), dist);
+            }
+        }
+
+        // We need to connect the start point to neighbouring centers in Voronoi diagram such that the path is not blocked by obstacles
+        const CDT::V2d<double> vstart{start.x, start.y}, vgoal{goal.x, goal.y};
+        for (const auto &tri: cdt.triangles)
+        {
+            for (const auto &[vertices, _] = tri; const auto &v: vertices)
+            {
+                const auto &v1 = cdt.vertices[tri.vertices[0]];
+                const auto &v2 = cdt.vertices[tri.vertices[1]];
+                const auto &v3 = cdt.vertices[tri.vertices[2]];
+                const auto center = compute_triangle_center(v1, v2, v3);
+
+                if (cdt.vertices[v] == vstart)
+                {
+                    voronoiEdges.emplace_back(start.to_qpointf(), center.value());
+                    graph[start].emplace_back(center.value(), distance(start.to_qpointf(), center.value()));
+                    graph[Point(center.value())].emplace_back(start, distance(start.to_qpointf(), center.value()));
+                }
+                if (cdt.vertices[v] == vgoal)
+                {
+                    voronoiEdges.emplace_back(goal.to_qpointf(), center.value());
+                    graph[goal].emplace_back(center.value(), distance(goal.to_qpointf(), center.value()));
+                    graph[Point(center.value())].emplace_back(goal, distance(goal.to_qpointf(), center.value()));
+                }
+            }
+        }
+        return {voronoiVertices, voronoiEdges, graph};
     }
 
     std::vector<Eigen::Vector2f> VisibilityGraph::path_spacer(const std::vector<Eigen::Vector2f> &path, float spacing)
@@ -268,7 +404,7 @@ namespace rc
         // Interpolate points at intervals of 'spacing' along the path
         double current_distance = 0.0;
         size_t j = 0; // Index for rough_path
-        for (auto i: iter::range(0UL, num_spaced_points))
+        for (auto _: iter::range(0UL, num_spaced_points))
         {
             // Interpolate new point at distance `current_distance`
             while (j < cumulative_distances.size() - 1 and current_distance > cumulative_distances[j + 1])
@@ -287,4 +423,309 @@ namespace rc
         spaced_path.push_back(path.back());
         return spaced_path;
     }
+
+    // Function to check if two line segments intersect. Returns true if they intersect, false otherwise
+    bool VisibilityGraph::do_line_segments_intersect(const QPointF& p1, const QPointF& q1, const QPointF& p2, const QPointF& q2) const
+    {
+        // Helper to calculate the orientation of ordered triplet (a, b, c)
+        auto orientation = [](const QPointF& a, const QPointF& b, const QPointF& c)
+        {
+            const double val = (b.y() - a.y()) * (c.x() - b.x()) - (b.x() - a.x()) * (c.y() - b.y());
+            return (std::abs(val) < 1e-6) ? 0 : (val > 0 ? 1 : 2);
+        };
+
+        const int o1 = orientation(p1, q1, p2);
+        const int o2 = orientation(p1, q1, q2);
+        const int o3 = orientation(p2, q2, p1);
+        const int o4 = orientation(p2, q2, q1);
+
+        if (o1 != o2 && o3 != o4) return true;  // General case
+
+        // Special cases where points are collinear and one lies on the other segment
+        auto onSegment = [](const QPointF& a, const QPointF& b, const QPointF& c) {
+            return b.x() <= std::max(a.x(), c.x()) && b.x() >= std::min(a.x(), c.x()) &&
+                   b.y() <= std::max(a.y(), c.y()) && b.y() >= std::min(a.y(), c.y());
+        };
+
+        return (o1 == 0 && onSegment(p1, p2, q1)) ||
+               (o2 == 0 && onSegment(p1, q2, q1)) ||
+               (o3 == 0 && onSegment(p2, p1, q2)) ||
+               (o4 == 0 && onSegment(p2, q1, q2));
+    }
+
+    // Function to check if there is a free path between two points
+    bool VisibilityGraph::free_path(const QPointF &start, const QPointF &goal, const std::vector<std::vector<QPointF>> &obstacles) const
+    {
+        bool free_path = true;
+        for (auto points: obstacles)  // make a copy
+        {
+            points.emplace_back(points.front());    // to close the polygon
+            for (const auto &pp: iter::sliding_window(points, 2))
+                if (do_line_segments_intersect(start, goal, pp[0], pp[1]))
+                {
+                    free_path = false;
+                    break;
+                }
+            if (not free_path) break;
+        }
+        return free_path;
+    }
+
+    // Function to simplify a QPolygonF using the Ramer-Douglas-Peucker algorithm
+    QPolygonF VisibilityGraph::simplifyPolygon(const QPolygonF& polygon, const double epsilon)
+    {
+        if (polygon.size() < 3) return polygon;  // Not enough points to simplify
+
+        // recursive lambda function to simplify the polygon
+        std::function<void(const QPolygonF&, int, qsizetype, const double&, QPolygonF&)> rdp =
+                    [&](const QPolygonF& poly, int start, int end, double eps, QPolygonF& result) -> void
+        {
+            double maxDistance = 0.0;
+            int index = start;
+            for (int i = start + 1; i < end; ++i)
+            {
+                const double distance = std::abs((poly[end].y() - poly[start].y()) * poly[i].x() -
+                                                   (poly[end].x() - poly[start].x()) * poly[i].y() +
+                                                    poly[end].x() * poly[start].y() - poly[end].y() * poly[start].x()) /
+                                                    std::hypot(poly[end].x() - poly[start].x(), poly[end].y() - poly[start].y());
+                if (distance > maxDistance)
+                {
+                    index = i;
+                    maxDistance = distance;
+                }
+            }
+
+            if (maxDistance > eps)
+            {
+                rdp(poly, start, index, eps, result);
+                result.push_back(poly[index]);
+                rdp(poly, index, end, eps, result);
+            }
+        };
+
+        QPolygonF result;
+        result.push_back(polygon.first());
+        rdp(polygon, 0, polygon.size() - 1, epsilon, result);
+        result.push_back(polygon.last());
+        return result;
+    }
 }
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////7777
+ // Function to check if a point is inside any obstacle polygon
+//     bool VisibilityGraph::is_point_inside_obstacles(const Point_2 &p, const std::vector<std::vector<Point>> &obstacles)
+//     {
+//     for (const auto &obstacle : obstacles) {
+//         if (obstacle.size() < 3) continue; // Not a valid polygon
+//
+//         CGAL::Polygon_2<Kernel> polygon;
+//         for (const auto &vertex : obstacle)
+//             polygon.push_back(Point_2(vertex.x, vertex.y));
+//
+//         if (polygon.bounded_side(p) != CGAL::ON_UNBOUNDED_SIDE)
+//             return true; // Point is inside or on the boundary
+//     }
+//     return false;
+// }
+//
+//     void VisibilityGraph::ensure_correct_orientation(CGAL::Polygon_2<Kernel> &polygon, bool is_hole)
+//     {
+//         if (is_hole && polygon.orientation() != CGAL::CLOCKWISE)
+//             polygon.reverse_orientation();
+//         else if (!is_hole && polygon.orientation() != CGAL::COUNTERCLOCKWISE)
+//             polygon.reverse_orientation();
+//     }
+
+    //Function to build the Voronoi graph using Constrained Delaunay Triangulation
+    // std::tuple<std::map<VisibilityGraph::Point, std::vector<std::pair<VisibilityGraph::Point, double>>>, VisibilityGraph::CDTPlus>
+    // VisibilityGraph::buildVoronoiGraph(const Point &start, const Point &goal, const std::vector<std::vector<Point>> &obstacles,
+    //                                    const std::vector<QPointF> &boundary)
+    // {
+    //     // Initialize Constrained Delaunay Triangulation
+    //     CDTPlus cdt;
+    //
+    //     // Lambda to insert polygon constraints
+    //     auto insert_polygon = [&](const std::vector<Point> &polygon, bool is_hole = false)
+    //     {
+    //         if (polygon.size() < 3) return; // Not a valid polygon
+    //
+    //         // Convert to CGAL Polygon_2
+    //         CGAL::Polygon_2<Kernel> cgal_polygon;
+    //         for (const auto &[x, y] : polygon)
+    //             cgal_polygon.push_back(Point_2(x, y));
+    //
+    //         // Ensure correct orientation
+    //         ensure_correct_orientation(cgal_polygon, is_hole);
+    //
+    //         // Insert edges as constraints
+    //         for (size_t i = 0; i < cgal_polygon.size(); ++i)
+    //         {
+    //             size_t next = (i + 1) % cgal_polygon.size();
+    //             cdt.insert_constraint(cgal_polygon[i], cgal_polygon[next]);
+    //         }
+    //     };
+    //
+    //     // Insert the outer boundary (assuming it's not a hole)
+    //     std::vector<Point> boundary_2;
+    //     std::ranges::transform(boundary, std::back_inserter(boundary_2), [](const QPointF &p)
+    //     { return Point(p.x(), p.y()); });
+    //     insert_polygon(boundary_2, false);
+    //
+    //     // Insert obstacle polygons as constraints
+    //     for (const auto &obstacle : obstacles)
+    //         insert_polygon(obstacle, true);
+    //
+    //     // Check if start and goal are inside any obstacle
+    //     Point_2 start_p(start.x, start.y);
+    //     Point_2 goal_p(goal.x, goal.y);
+    //
+    //     if (is_point_inside_obstacles(start_p, obstacles) ||
+    //         is_point_inside_obstacles(goal_p, obstacles)) {
+    //         throw std::invalid_argument("Start or goal point is inside an obstacle.");
+    //     }
+    //
+    //     // Insert start and goal points
+    //     cdt.insert(start_p);
+    //     cdt.insert(goal_p);
+    //
+    //     // Build the Voronoi graph
+    //     std::map<Point, std::vector<std::pair<Point, double>>> graph;
+    //
+    //     for (auto face = cdt.finite_faces_begin(); face != cdt.finite_faces_end(); ++face) {
+    //         // Compute circumcenter
+    //         Point_2 cc = cdt.circumcenter(face);
+    //
+    //         // Skip if circumcenter is inside any obstacle
+    //         if (is_point_inside_obstacles(cc, obstacles))
+    //             continue;
+    //
+    //         Point center = {CGAL::to_double(cc.x()), CGAL::to_double(cc.y())};
+    //
+    //         // Iterate through the three edges of the face
+    //         for (int i = 0; i < 3; ++i) {
+    //             Face_handle neighbor = face->neighbor(i);
+    //             if (cdt.is_infinite(neighbor))
+    //                 continue;
+    //
+    //             // Compute neighbor's circumcenter
+    //             Point_2 nc = cdt.circumcenter(neighbor);
+    //
+    //             // Skip if neighbor's circumcenter is inside any obstacle
+    //             if (is_point_inside_obstacles(nc, obstacles))
+    //                 continue;
+    //
+    //             Point neighbor_center = {CGAL::to_double(nc.x()), CGAL::to_double(nc.y())};
+    //
+    //             // Validate the edge between centers
+    //             if (is_edge_valid(center, neighbor_center, obstacles, {})) {
+    //                 double dist = distance(center, neighbor_center);
+    //                 graph[center].emplace_back(neighbor_center, dist);
+    //                 graph[neighbor_center].emplace_back(center, dist);
+    //             }
+    //         }
+    //     }
+    //
+    //     // Ensure start and goal are present in the graph
+    //     Point start_pt = {start.x, start.y};
+    //     Point goal_pt = {goal.x, goal.y};
+    //     if (graph.find(start_pt) == graph.end())
+    //         graph[start_pt] = {};
+    //     if (graph.find(goal_pt) == graph.end())
+    //         graph[goal_pt] = {};
+    //
+    //     // Connect start and goal to nearest Voronoi nodes
+    //     for (const auto &node : graph)
+    //     {
+    //         Point voronoiNode = node.first;
+    //         double startDist = distance(start_pt, voronoiNode);
+    //         double goalDist = distance(goal_pt, voronoiNode);
+    //
+    //         if (is_edge_valid(start_pt, voronoiNode, obstacles, {}))
+    //         {
+    //             graph[start_pt].emplace_back(voronoiNode, startDist);
+    //             graph[voronoiNode].emplace_back(start_pt, startDist);
+    //         }
+    //
+    //         if (is_edge_valid(goal_pt, voronoiNode, obstacles, {}))
+    //         {
+    //             graph[goal_pt].emplace_back(voronoiNode, goalDist);
+    //             graph[voronoiNode].emplace_back(goal_pt, goalDist);
+    //         }
+    //     }
+    //     return std::make_tuple(graph, cdt);
+    // }
+
+  // void VisibilityGraph::draw_delaunay(const CDTPlus &delaunay, QGraphicsScene *pScene)
+   // {
+   //     static std::vector<QGraphicsItem*> items;
+   //     // remove all items drawn in the previous iteration
+   //     for(const auto i: items)
+   //     {
+   //         pScene->removeItem(i);
+   //         delete i;
+   //     }
+   //     items.clear();
+   //     const auto pen = QPen(Qt::cyan, 20);
+   //     // Extract triangles
+   //
+   //     // Draw triangles
+   //     for (const auto tri: delaunay.finite_face_handles())
+   //     {
+   //         const auto& p0 = tri->vertex(0)->point();
+   //         const auto& p1 = tri->vertex(1)->point();
+   //         const auto& p2 = tri->vertex(2)->point();
+   //
+   //         // Create a line from v1 to v2
+   //         QGraphicsLineItem* line = pScene->addLine(QLineF(CGAL::to_double(p0.x()), CGAL::to_double(p0.y()),
+   //                                                          CGAL::to_double(p1.x()), CGAL::to_double(p1.y())), pen);
+   //         items.push_back(line);
+   //         QGraphicsLineItem* line2 = pScene->addLine(QLineF(CGAL::to_double(p1.x()), CGAL::to_double(p1.y()),
+   //                                                          CGAL::to_double(p2.x()), CGAL::to_double(p2.y())), pen);
+   //         items.push_back(line2);
+   //         QGraphicsLineItem* line3 = pScene->addLine(QLineF(CGAL::to_double(p0.x()), CGAL::to_double(p0.y()),
+   //                                                          CGAL::to_double(p2.x()), CGAL::to_double(p2.y())), pen);
+   //         items.push_back(line3);
+   //     }
+   // }
+
+
+// std::optional<QPointF> VisibilityGraph::computeCircumcenter(const CDT::V2d<double>& A, const CDT::V2d<double>& B, const CDT::V2d<double>& C) const
+// {
+//     // Convert to Eigen vectors for computation
+//     Eigen::Vector2d p1{A.x, A.y};
+//     Eigen::Vector2d p2{B.x, B.y};
+//     Eigen::Vector2d p3{C.x, C.y};
+//
+//     // Compute midpoints of two sides
+//     const Eigen::Vector2d mid1 = (p1 + p2) / 2.0;
+//     const Eigen::Vector2d mid2 = (p2 + p3) / 2.0;
+//
+//     // Compute vectors parallel to sides
+//     Eigen::Vector2d vec1 = p2 - p1;
+//     Eigen::Vector2d vec2 = p3 - p2;
+//
+//     // Compute perpendicular vectors (rotate by 90 degrees)
+//     const Eigen::Vector2d perp1(-vec1.y(), vec1.x());
+//     const Eigen::Vector2d perp2(-vec2.y(), vec2.x());
+//
+//     // Set up system of equations
+//     // mid1 + t*perp1 = mid2 + s*perp2
+//     Eigen::Matrix2d SA;
+//     SA.col(0) = perp1;
+//     SA.col(1) = -perp2;
+//
+//     const Eigen::Vector2d b = mid2 - mid1;
+//
+//     // Solve system
+//     // Check if matrix is invertible (non-degenerate triangle)
+//     if (std::abs(SA.determinant()) < 1e-10)
+//         return {};  // Return empty optional for degenerate case
+//
+//     Eigen::Vector2d ts = SA.colPivHouseholderQr().solve(b);
+//     const double t = ts(0);
+//
+//     // Compute circumcenter
+//     Eigen::Vector2d circumcenter = mid1 + t * perp1;
+//
+//     return QPointF(circumcenter.x(), circumcenter.y());
+// }

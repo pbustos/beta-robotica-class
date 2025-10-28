@@ -69,6 +69,7 @@ class SpecificWorker : public GenericWorker
             float LIDAR_FRONT_SECTION = 0.2; // rads, aprox 12 degrees
             // person
             float PERSON_MIN_DIST = 800; // mm
+            float PERSON_RADIUS = 200; // mm  to sample around the person and remove her polygon
             int MAX_DIST_POINTS_TO_SHOW = 300; // points to show in plot
             // lidar
             std::string LIDAR_NAME_LOW = "bpearl";
@@ -90,11 +91,12 @@ class SpecificWorker : public GenericWorker
         using RetVal = std::tuple<STATE, float, float>;
         using RobotSpeed = std::tuple<float, float>;
         using TPerson = std::expected<RoboCompVisualElementsPub::TObject, std::string>;
-        RetVal track(const TPerson &person);
-        RetVal wait(const TPerson &person);
-        RetVal search(const TPerson &person);
+        using Path = std::vector<Eigen::Vector2f>;
+        RetVal track(const Path &path);
+        RetVal wait(const Path &path);
+        RetVal search(const Path &path);
         RetVal stop();
-        RobotSpeed state_machine(const TPerson &person);
+        RobotSpeed state_machine(const Path &path);
 
         // lidar
         std::vector<Eigen::Vector2f> read_lidar_bpearl();
@@ -132,6 +134,7 @@ class SpecificWorker : public GenericWorker
         QCustomPlot *plot;
         void plot_distance(double distance);
 
-    float running_average(float dist);
+        float running_average(float dist);
+        float distance_to_person_through_path(const Path &path);
 };
 #endif

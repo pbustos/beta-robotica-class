@@ -6,21 +6,37 @@
 #define PERSON_TRACKER_VISIBILITY_GRAPH_H
 
 #include <vector>
-#include <map>
+#include <unordered_map>
+#include <Eigen/Dense>
 #include <queue>
-#include <cmath>
-#include <CGAL/Simple_cartesian.h>
-#include <CGAL/Exact_predicates_exact_constructions_kernel.h>
-#include <CGAL/Voronoi_diagram_2.h>
-#include <CGAL/Delaunay_triangulation_2.h>
-#include <QPolygonF>
+// #include <CGAL/Exact_predicates_exact_constructions_kernel.h>
+// #include <CGAL/Voronoi_diagram_2.h>
+// #include <CGAL/Delaunay_triangulation_2.h>
+// #include <CGAL/Constrained_Delaunay_triangulation_2.h>
+// #include <CGAL/Constrained_triangulation_plus_2.h>
 #include <cppitertools/enumerate.hpp>
 #include <QGraphicsScene>
-#include <QGraphicsLineItem>
-#include <QGraphicsEllipseItem>
+#include <CDT.h>
+#include <QDebug>
+
 
 namespace rc
 {
+    struct Point
+    {
+        double x=0.0, y=0.0;
+        bool operator<(const Point &other) const
+        { return (x < other.x) || (x == other.x && y < other.y); }
+        bool operator==(const Point &other) const
+        { return x == other.x && y == other.y; }
+        explicit Point(const QPointF &p) { x = p.x(); y = p.y();}
+        Point() = default;
+        QPointF to_qpointf() const { return QPointF(x, y);
+        };
+    };
+    // Declaration of the << operator for QDebug and Point
+    QDebug operator<<(QDebug dbg, const Point &point);
+
     /**
      * @class VisibilityGraph
      * @brief Generates a path between two points while avoiding obstacles using a visibility graph approach.
@@ -29,40 +45,40 @@ namespace rc
      */
     class VisibilityGraph
     {
-        using Kernel = CGAL::Exact_predicates_exact_constructions_kernel;
-        using Point_2 = Kernel::Point_2;
-        using Delaunay = CGAL::Delaunay_triangulation_2<Kernel>;
-        using VD = CGAL::Voronoi_diagram_2<Delaunay, CGAL::Default, CGAL::Default>;
+        // using Kernel = CGAL::Exact_predicates_exact_constructions_kernel;
+        // using Point_2 = Kernel::Point_2;
+        // using Delaunay = CGAL::Delaunay_triangulation_2<Kernel>;
+        // using VD = CGAL::Voronoi_diagram_2<Delaunay, CGAL::Default, CGAL::Default>;
+        //
+        // // Define a constrained Delaunay triangulation with support for inserting constraints
+        // typedef CGAL::Constrained_Delaunay_triangulation_2<Kernel> CDT;
+        // typedef CGAL::Constrained_triangulation_plus_2<CDT> CDTPlus;
+        // // To handle Voronoi vertices, you can use the dual or compute circumcenters manually
+        // typedef CDTPlus::Face_handle Face_handle;
 
-        /**
-         * @struct Point
-         * @brief Represents a point in 2D space with x and y coordinates.
-         *
-         * Overloads the < operator for use as a key in std::map.
-         */
-        struct Point
-        {
-            double x, y;
-            bool operator<(const Point &other) const
-            { return (x < other.x) || (x == other.x && y < other.y); }
-            bool operator==(const Point &other) const
-            { return x == other.x && y == other.y; }
+
+        // Hash function for Point
+        struct PointHash {
+            std::size_t operator()(const Point& point) const {
+                const auto h1 = std::hash<double>{}(point.x);
+                const auto h2 = std::hash<double>{}(point.y);
+                return h1 ^ (h2 << 1); // Combine the two hash values
+            }
         };
 
-        /**
-         * @struct Boundary
-         * @brief Represents a rectangular boundary with minimum and maximum x and y coordinates.
-         *
-         * Provides a method to check if a point is within the boundary.
-         */
-        struct Boundary
-        {
-            float minX, minY, maxX, maxY;
-            bool contains(const Point& p) const
-            { return p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY; }
+        // Data structures and typedefs for clarity
+        using VGraph = std::unordered_map<Point, std::vector<std::pair<Point, double>>, PointHash>;
+        using Path = std::vector<Point>;
+
+        // Comparator for the priority queue to create a min-heap
+        struct PathCostComparator {
+            bool operator()(const std::pair<double, Path>& lhs, const std::pair<double, Path>& rhs) const {
+                return lhs.first > rhs.first;
+            }
         };
 
-        using VGraph = std::map<VisibilityGraph::Point, std::vector<std::pair<VisibilityGraph::Point, double>>>;
+        //using PathQueue = std::priority_queue<std::pair<double, Path>, std::vector<std::pair<double, Path>>, PathCostComparator>;
+        using PathQueue = std::priority_queue<std::pair<double, Point>, std::vector<std::pair<double, Point>>, std::greater<>>;
 
     public:
         /**
@@ -78,6 +94,7 @@ namespace rc
         std::vector<Eigen::Vector2f> generate_path(const Eigen::Vector2f &start,
                                                    const Eigen::Vector2f &goal,
                                                    const std::vector<QPolygonF> &obstacles,
+                                                   const std::vector<QPointF> &boundary,
                                                    float step_size, QGraphicsScene *scene);
 
     private:
@@ -88,45 +105,9 @@ namespace rc
          * @param p2 The second point.
          * @return The Euclidean distance between p1 and p2.
          */
-        double distance(const Point &p1, const Point &p2);
+        double distance(const QPointF &p1, const QPointF &p2) const;
 
-        /**
-         * @brief Checks if the line segment between points a and b intersects with the line segment between points c and d.
-         *
-         * @param a The first point of the first line segment.
-         * @param b The second point of the first line segment.
-         * @param c The first point of the second line segment.
-         * @param d The second point of the second line segment.
-         * @return True if the line segments intersect, false otherwise.
-         */
-        bool edges_intersect(const Point &a, const Point &b, const Point &c, const Point &d);
-
-        /**
-         * @brief Determines if the edge between points p1 and p2 is valid.
-         *
-         * An edge is valid if it does not intersect any obstacles and lies within the boundary.
-         *
-         * @param p1 The first point of the edge.
-         * @param p2 The second point of the edge.
-         * @param obstacles A vector of vectors of points representing the obstacles.
-         * @param boundary The boundary of the area.
-         * @return True if the edge is valid, false otherwise.
-         */
-        bool is_edge_valid(const VisibilityGraph::Point& p1,
-                           const VisibilityGraph::Point& p2,
-                           const std::vector<std::vector<VisibilityGraph::Point>>& obstacles,
-                           const VisibilityGraph::Boundary& boundary);
-
-        /**
-         * @brief Implements Dijkstra's algorithm to find the shortest path from start to goal in the given graph.
-         *
-         * @param graph The graph represented as a map of points to vectors of pairs of points and distances.
-         * @param start The starting point of the path.
-         * @param goal The goal point of the path.
-         * @return A vector of points representing the shortest path.
-         */
-        std::vector<Point> dijkstra(const std::map<Point, std::vector<std::pair<Point, double>>> &graph,
-                                    const Point &start, const Point &goal);
+        Path dijkstra_paths(const VGraph &graph, const QPointF &start, const QPointF &goal, int N=1);
 
         /**
          * @brief Builds a Voronoi graph based on the Delaunay triangulation of the given obstacles and boundary.
@@ -139,8 +120,18 @@ namespace rc
          * @param boundary The boundary of the area.
          * @return The Voronoi graph represented as a map of points to vectors of pairs of points and distances.
          */
-        std::tuple<VGraph, Delaunay> buildVoronoiGraph(const Point &start, const Point &goal,
-                                                       const std::vector<std::vector<Point>> &obstacles, const Boundary& boundary);
+        // std::tuple<std::map<Point, std::vector<std::pair<Point, double>>>, CDTPlus>
+        // buildVoronoiGraph(const Point &start, const Point &goal, const std::vector<std::vector<Point>> &obstacles,
+        //                   const std::vector<QPointF> &boundary);
+
+        CDT::Triangulation<double>
+        build_dealunay_graph_CDT(const QPointF &start, const QPointF &goal, const std::vector<std::vector<QPointF>> &obstacles,
+                               const std::vector<QPointF> &boundary);
+
+        std::optional<QPointF> computeCircumcenter(const CDT::V2d<double> &A, const CDT::V2d<double> &B, const CDT::V2d<double> &C) const;
+        std::optional<QPointF> compute_triangle_center(const CDT::V2d<double> &A, const CDT::V2d<double> &B, const CDT::V2d<double> &C) const;
+        std::tuple<std::vector<QPointF>, std::vector<std::pair<QPointF, QPointF>>, VGraph>
+            compute_voronoi_from_Delaunay(const CDT::Triangulation<double> &cdt, const Point &start, const Point &goal) const;
 
         /**
          * @brief Generates a new path with evenly spaced points based on the given path and spacing.
@@ -150,9 +141,16 @@ namespace rc
          * @return A vector of points representing the new path with evenly spaced points.
          */
         std::vector<Eigen::Vector2f> path_spacer(const std::vector<Eigen::Vector2f> &path, float spacing);
+        bool do_line_segments_intersect(const QPointF &p1, const QPointF &q1, const QPointF &p2, const QPointF &q2) const;
+        bool free_path(const QPointF &start, const QPointF &goal, const std::vector<std::vector<QPointF>> &obstacles) const;
 
-        void draw_delaunay(const Delaunay &delaunay, QGraphicsScene *pScene);
+        QPolygonF simplifyPolygon(const QPolygonF &polygon, double epsilon);
 
+        //void draw_delaunay(const CDTPlus &delaunay, QGraphicsScene *pScene);
+        void draw_delaunay(const CDT::Triangulation<double> &cdt, QGraphicsScene *pScene);
+        void draw_graph(const VGraph &graph, QGraphicsScene *pScene, bool erase_only=false);
+        void draw_voronoi(const std::vector<QPointF> &vcentres, const std::vector<std::pair<QPointF, QPointF>> &vedges,
+                          QGraphicsScene *scene);
     };
 }
 

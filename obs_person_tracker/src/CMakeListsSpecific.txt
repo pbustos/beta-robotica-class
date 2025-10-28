@@ -20,9 +20,9 @@ INCLUDE( $ENV{ROBOCOMP}/cmake/modules/opencv4.cmake )
 #find_package(MLPACK REQUIRED)
 
 set(CMAKE_CXX_STANDARD 23)
-add_definitions(-fmax-errors=1 -fno-char8_t -fopenmp)
+add_definitions(-O3 -fmax-errors=1 -fno-char8_t -fopenmp)
 
-LIST(APPEND LIBS ${LIBS} gomp armadillo mlpack gmp mpfr)
+LIST(APPEND LIBS ${LIBS} gomp armadillo mlpack gmp mpfr )
 LIST(APPEND LIBS ${LIBS} Qt6PrintSupport)
 
 

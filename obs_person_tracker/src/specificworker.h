@@ -61,23 +61,24 @@ class SpecificWorker : public GenericWorker
         {
             float ROBOT_WIDTH = 460;  // mm
             float ROBOT_LENGTH = 480;  // mm
-            float MAX_ADV_SPEED = 1900; // mm/s
-            float MAX_ROT_SPEED = 2; // rad/s
+            float MAX_ADV_SPEED = 1500; // mm/s
+            float MAX_ROT_SPEED = 1.5; // rad/s
             float SEARCH_ROT_SPEED = 0.9; // rad/s
             float STOP_THRESHOLD = 700; // mm
             float ADVANCE_THRESHOLD = ROBOT_WIDTH * 3; // mm
             float LIDAR_FRONT_SECTION = 0.2; // rads, aprox 12 degrees
             // person
-            float PERSON_MIN_DIST = 800; // mm
+            float PERSON_MIN_DIST = 1000; // mm
             int MAX_DIST_POINTS_TO_SHOW = 300; // points to show in plot
+            float PERSON_RADIUS = 200; // mm  to sample around the person and remove her polygon
             // lidar
             std::string LIDAR_NAME_LOW = "bpearl";
             std::string LIDAR_NAME_HIGH = "helios";
             QRectF GRID_MAX_DIM{-5000, 2500, 10000, -5000};
             // control track
-            float acc_distance_factor = 2;
-            float k1 = 1.1;  // proportional gain for the angle error;
-            float k2 = 0.5; // proportional gain for derivative of the angle error;
+            float acc_distance_factor = 3;
+            float k1 = 1.0;  // proportional gain for the angle error;
+            float k2 = 0.3; // proportional gain for derivative of the angle error;
         };
         Params params;
 
@@ -90,11 +91,12 @@ class SpecificWorker : public GenericWorker
         using RetVal = std::tuple<STATE, float, float>;
         using RobotSpeed = std::tuple<float, float>;
         using TPerson = std::expected<RoboCompVisualElementsPub::TObject, std::string>;
-        RetVal track(const TPerson &person);
-        RetVal wait(const TPerson &person);
-        RetVal search(const TPerson &person);
+        using Path = std::vector<Eigen::Vector2f>;
+        RetVal track(const Path &path);
+        RetVal wait(const Path &path);
+        RetVal search(const Path &path);
         RetVal stop();
-        RobotSpeed state_machine(const TPerson &person);
+        RobotSpeed state_machine(const Path &path);
 
         // lidar
         std::vector<Eigen::Vector2f> read_lidar_bpearl();
@@ -108,9 +110,11 @@ class SpecificWorker : public GenericWorker
         void draw_path_to_person(const auto &points, QGraphicsScene *scene);
         void draw_obstacles(const vector<QPolygonF> &list_poly, QGraphicsScene *scene, const QColor &color) const;
 
+        void draw_boundary(const std::vector<QPointF> &boundary, QGraphicsScene *scene) const;
+
         // room
         rc::Room_Detector room_detector;
-        std::vector<QLineF> detect_wall_lines(const vector<Eigen::Vector2f> &points, QGraphicsScene *scene);
+        std::tuple<std::vector<QLineF>, rc::Room_Detector::All_Corners> detect_wall_lines(const vector<Eigen::Vector2f> &points, QGraphicsScene *scene);
         std::vector<Eigen::Vector2f> remove_wall_points(const std::vector<QLineF> &lines, const auto &bpearl);
         std::vector<QPolygonF> get_walls_as_polygons(const std::vector<QLineF> &lines, float robot_width);
         std::vector<QPolygonF> enlarge_polygons(const std::vector<QPolygonF> &polygons, float amount);
@@ -132,6 +136,8 @@ class SpecificWorker : public GenericWorker
         QCustomPlot *plot;
         void plot_distance(double distance);
 
-    float running_average(float dist);
+        float running_average(float dist);
+        float distance_to_person_through_path(const Path &path);
+
 };
 #endif

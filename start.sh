@@ -78,3 +78,12 @@ qdbus org.kde.yakuake /yakuake/sessions runCommandInTerminal $session_id "cmake 
 qdbus org.kde.yakuake /yakuake/sessions runCommandInTerminal $session_id "src/environment_object_perception.py etc/config_wb"
 qdbus org.kde.yakuake /yakuake/sessions org.kde.yakuake.raiseSession $session_id
 
+# lidar odometry
+TAB_NAME="odom"
+DIRECTORY_PATH="~/robocomp/components/robocomp-shadow/insect/lidar_odometry"
+session_id=$(qdbus org.kde.yakuake /yakuake/sessions org.kde.yakuake.addSession)
+qdbus org.kde.yakuake /yakuake/tabs org.kde.yakuake.setTabTitle "$session_id" "$TAB_NAME"
+qdbus org.kde.yakuake /yakuake/sessions runCommandInTerminal $session_id "cd $DIRECTORY_PATH"
+qdbus org.kde.yakuake /yakuake/sessions runCommandInTerminal $session_id "cmake . && make -j32"
+qdbus org.kde.yakuake /yakuake/sessions runCommandInTerminal $session_id "bin/lidar_odometry etc/config_wb"
+qdbus org.kde.yakuake /yakuake/sessions org.kde.yakuake.raiseSession $session_id

@@ -18,6 +18,7 @@
 #include <QGraphicsScene>
 #include <QGraphicsLineItem>
 #include <QGraphicsEllipseItem>
+#include <CDT.h>
 
 namespace rc
 {

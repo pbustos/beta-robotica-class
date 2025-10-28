@@ -29,14 +29,14 @@ namespace rc   // aka RoboComp
 {
     class Room_Detector
     {
-        // types for the features
-        using Lines = std::vector<std::pair<int, QLineF>>;
-        using Par_lines = std::vector<std::pair<QLineF, QLineF>>;
-        using Corners =  std::vector<std::tuple<int, QPointF>>;
-        using All_Corners = std::vector<std::tuple<QPointF, QPointF, QPointF, QPointF>>;
-        using Features = std::tuple<Lines, Par_lines, Corners, All_Corners>;
-
         public:
+            // types for the features
+            using Lines = std::vector<std::pair<int, QLineF>>;
+            using Par_lines = std::vector<std::pair<QLineF, QLineF>>;
+            using Corners =  std::vector<std::tuple<int, QPointF>>;
+            using All_Corners = std::vector<std::tuple<QPointF, QPointF, QPointF, QPointF>>;
+            using Features = std::tuple<Lines, Par_lines, Corners, All_Corners>;
+
             Room detect(const std::vector<Eigen::Vector2f> &line, QGraphicsScene *scene=nullptr, bool draw_lines=false);
             Features compute_features(const std::vector<Eigen::Vector2f> &line, QGraphicsScene *scene= nullptr);
 
