@@ -26,7 +26,7 @@ namespace rc
                 if (!used[i]) available.push_back(i);
             }
 
-            if (available.size() < params.min_points_per_line) break;
+            if (available.size() < static_cast<size_t>(params.min_points_per_line)) break;
 
             // RANSAC for one line
             LineSegment best_line;

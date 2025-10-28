@@ -13,14 +13,13 @@
 namespace rc
 {
     // par lines and rooms are commented. Lines have to be at least of half-room size
-    Corners Room_Detector::compute_corners(const std::vector<Eigen::Vector2d> &line, double max_dist_, QGraphicsScene *scene)
+    Corners Room_Detector::compute_corners(const std::vector<Eigen::Vector2d> &line, QGraphicsScene *scene)
     {
-        max_dist = max_dist_;
-        std::vector<Eigen::Vector2d> floor_line_cart = line;
+        const std::vector<Eigen::Vector2d> floor_line_cart = line;
 
         // compute mean point
-        Eigen::Vector2d room_center = Eigen::Vector2d::Zero();
-        room_center = accumulate(floor_line_cart.begin(), floor_line_cart.end(), room_center) / (double)floor_line_cart.size();
+        //Eigen::Vector2d room_center = Eigen::Vector2d::Zero();
+        //room_center = accumulate(floor_line_cart.begin(), floor_line_cart.end(), room_center) / (double)floor_line_cart.size();
         // std::cout << "Center " << room_center << std::endl;
 
         // estimate size
@@ -31,27 +30,24 @@ namespace rc
         auto  lines = RansacLineDetector::detect_lines(floor_line_cart);
         if (scene != nullptr) draw_lines_on_2D_tab(lines, scene);
 
-        // Filter lines smaller that half estimated size
         //lines = filter_lines_by_length(lines, static_cast<float>(estimated_size.head(2).minCoeff()/2.f));
 
         // compute corners
         const Corners corners = get_corners(lines);
-        qInfo() << "Detected corners: " << corners.size();
         if (scene != nullptr) draw_corners_on_2D_tab(corners, {Eigen::Vector2d{0,0}}, scene);
-
         return {};
     }
-    Corners Room_Detector::compute_corners(const std::vector<Eigen::Vector3d> &line, double max_dist_, QGraphicsScene *scene)
+    Corners Room_Detector::compute_corners(const std::vector<Eigen::Vector3d> &line, QGraphicsScene *scene)
     {
         std::vector<Eigen::Vector2d> line2d;
         std::ranges::transform(line, std::back_inserter(line2d), [](const auto &p){return p.head(2);});
-        return compute_corners(line2d, max_dist_, scene);
+        return compute_corners(line2d, scene);
     }
-    Corners Room_Detector::compute_corners(const RoboCompLidar3D::TPoints &points, double max_dist_, QGraphicsScene *scene)
+    Corners Room_Detector::compute_corners(const RoboCompLidar3D::TPoints &points,  QGraphicsScene *scene)
     {
         std::vector<Eigen::Vector2d> line2d;
         std::ranges::transform(points, std::back_inserter(line2d), [](const auto &p){return Eigen::Vector2d{p.x, p.y};});
-        return compute_corners(line2d, max_dist_, scene);
+        return compute_corners(line2d,  scene);
     }
 
      ////////////////////////////////////////////////
@@ -79,15 +75,14 @@ namespace rc
             const auto& line1 = comb[0];
             const auto& line2 = comb[1];
             double angle = fabs(qDegreesToRadians(line1.toQLineF().angleTo(line2.toQLineF())));
-            if (angle > M_PI) angle -= 2 * M_PI;
-            if (angle < -M_PI) angle += 2 * M_PI;
+            if (angle > M_PI / 2) angle = M_PI - angle;
+            if (angle < -M_PI / 2) angle = -M_PI - angle;
             constexpr double delta = 0.2;
             QPointF intersection;
-            const bool angle_condition = (angle < -M_PI/2+delta and angle > -M_PI/2-delta) or (angle < M_PI/2+delta and angle > M_PI/2-delta);
-            //qInfo() << angle << (angle < -M_PI/2+delta and angle > -M_PI/2-delta) << (line1.toQLineF().intersects(line2.toQLineF(), &intersection) == QLineF::UnboundedIntersection);
+            const bool angle_condition = (angle < M_PI/2+delta and angle > M_PI/2-delta) or (angle < -M_PI/2+delta and angle > -M_PI/2-delta );
             long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-            if( angle_condition  and line1.toQLineF().intersects(line2.toQLineF(), &intersection) == QLineF::UnboundedIntersection)
-                corners.emplace_back(Corner{intersection, 0.0, now });
+            if(angle_condition and line1.toQLineF().intersects(line2.toQLineF(), &intersection) == QLineF::UnboundedIntersection)
+                corners.emplace_back(intersection, 0.0, now );
         }
 
         // NM suppression
@@ -145,7 +140,7 @@ namespace rc
         const QColor color("darkMagenta");
         for(const auto &[p, _, __] : corners)
         {
-            const auto i = scene->addEllipse(-200, -200, 400, 400, QPen(color), QBrush(color));
+            const auto i = scene->addEllipse(-100, -100, 200, 200, QPen(color), QBrush(color));
             i->setPos(p.x(), p.y());
             items.push_back(i);
         }
