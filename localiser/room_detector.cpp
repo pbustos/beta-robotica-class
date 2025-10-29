@@ -75,8 +75,11 @@ namespace rc
             const auto& line1 = comb[0];
             const auto& line2 = comb[1];
             double angle = fabs(qDegreesToRadians(line1.toQLineF().angleTo(line2.toQLineF())));
-            if (angle > M_PI / 2) angle = M_PI - angle;
-            if (angle < -M_PI / 2) angle = -M_PI - angle;
+            angle = fmod(angle + M_PI, 2 * M_PI);
+            if (angle < 0) angle += 2 * M_PI;
+            angle -= M_PI;
+            //if (angle > M_PI / 2) angle = M_PI - angle;
+            //if (angle < -M_PI / 2) angle = -M_PI - angle;
             constexpr double delta = 0.2;
             QPointF intersection;
             const bool angle_condition = (angle < M_PI/2+delta and angle > M_PI/2-delta) or (angle < -M_PI/2+delta and angle > -M_PI/2-delta );
