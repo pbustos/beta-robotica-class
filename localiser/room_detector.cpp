@@ -35,7 +35,7 @@ namespace rc
         // compute corners
         const Corners corners = get_corners(lines);
         if (scene != nullptr) draw_corners_on_2D_tab(corners, {Eigen::Vector2d{0,0}}, scene);
-        return {};
+        return corners;
     }
     Corners Room_Detector::compute_corners(const std::vector<Eigen::Vector3d> &line, QGraphicsScene *scene)
     {

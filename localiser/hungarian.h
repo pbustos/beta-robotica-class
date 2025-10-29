@@ -22,8 +22,7 @@ namespace rc
           * @param max_corner_diff
           * @return Match
           */
-            Match match(const Corners &measurement_corners_in_robot, const Corners &nominal_corners_in_robot,
-                        double max_corner_diff = std::numeric_limits<double>::max());
+            Match match(const Corners &measurement_corners, const Corners &nominal_corners, double max_corner_diff = std::numeric_limits<double>::max());
 
             // aux methods
             double euclidean_distance(const QPointF &p1, const QPointF &p2);

@@ -8,16 +8,7 @@ namespace rc
 {
     Match Hungarian::match(const Corners &measurement_corners, const Corners &nominal_corners, double max_corner_diff)
     {
-        std::vector<Eigen::Vector3d> m_corners;
-        std::ranges::transform(measurement_corners, std::back_inserter(m_corners), [](const auto &c)
-                { const auto &[p, _, __] = c; return Eigen::Vector3d{p.x(), p.y(), 1.0f};});
-        std::vector<Eigen::Vector3d> n_corners;
-        std::ranges::transform(nominal_corners, std::back_inserter(n_corners), [](const auto &c)
-                { const auto &[p, _, __] = c; return Eigen::Vector3d{p.x(), p.y(), 1.0f};});
-
         // create cost matrix for Hungarian //
-        Match match;   //  measurement - nominal
-
         std::vector<double> costs;
         for (const auto &[c, _, __]: measurement_corners)    // rows
             for (const auto &[rc, _, __]: nominal_corners)   // cols
@@ -29,7 +20,13 @@ namespace rc
         if (costs.empty())
             return {};
 
+        // print costs for debugging
+        // for (auto c : costs)
+        //     std::cout << c << std::endl;
+        // std::cout << "-------------------" << std::endl;
+
         // lambda to access the costs matrix
+        Match match;   //  measurement - nominal
         auto cost = [costs, cols](const unsigned r, const unsigned c) { return costs[r * cols + c]; };
         const auto matching = munkres_algorithm<double>(rows, cols, cost);
         for (const auto &[r, c]: matching)
