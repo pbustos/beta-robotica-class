@@ -38,6 +38,20 @@ struct LineSegment
     double score;
     [[nodiscard]] QLineF toQLineF() const { return QLineF{QPointF{start.x(), start.y()}, QPointF{end.x(), end.y()}};}
     [[nodiscard]] Eigen::ParametrizedLine<double, 2> toEigenLine() const { return Eigen::ParametrizedLine<double, 2>(start, direction);};
+    [[nodiscard]] Eigen::Vector2d midpoint() const { return (start + end) / 2.0; }
+    [[nodiscard]] double length() const { return (end - start).norm(); }
+    [[nodiscard]] Eigen::Vector3d to_general_form() const
+    {
+        const auto line = toQLineF();
+        // A = y1 - y2
+        auto A = line.p1().y() - line.p2().y();
+        // B = x2 - x1
+        auto B = line.p2().x() - line.p1().x();
+        // C = -Ax1 - By1
+        // Using p1 to solve for C. You could also use p2.
+        auto C = -A * line.p1().x() - B * line.p1().y();
+        return{ A, B, C };
+    };
 };
 using Lines = std::vector<LineSegment>;
 using Par_lines = std::vector<std::pair<LineSegment, LineSegment>>;
@@ -46,7 +60,6 @@ using Corners =  std::vector<Corner>;
 using All_Corners = std::vector<std::tuple<QPointF, QPointF, QPointF, QPointF>>;
 using Features = std::tuple<Lines, Par_lines, Corners, All_Corners>;
 using Center = std::pair<QPointF, int>;  // center of a polygon and number of votes
-
 using Match = std::vector<std::tuple<Corner, Corner, double>>;  //  measurement - nominal - error Both must be in the same reference system
-
+using Peaks = std::vector<Eigen::Vector2d>; // 2D points representing peaks (e.g., door locations)
 #endif //COMMON_TYPES_H
