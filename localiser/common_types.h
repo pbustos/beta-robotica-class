@@ -12,20 +12,6 @@
 #include <QLineF>
 #include <Eigen/src/Geometry/ParametrizedLine.h>
 
-enum class STATE
-{
-    START_SEARCH, MOVE_TO_CENTER, AT_CENTER, MOVE_ODOM_FRAME_TO_TARGET, MOVE_PHANTOMS_TO_TARGET,
-    SELECT_NEW_TARGET, INITIAL_ACCUMULATION, MOVE_AROUND_AFFORDANCE, IDLE, INITIALIZE, SAMPLE_ROOMS, PROCESS_ROOMS
-};
-
-using RetVal = std::tuple<STATE, double, double>;
-using RobotSpeed = std::tuple<double, double>;
-using Boost_Circular_Buffer = boost::circular_buffer<Eigen::Matrix<double, 3, Eigen::Dynamic>>;
-using LidarPoints = std::vector<Eigen::Vector3d>;   // 3D points with projective coordinates
-
-// nominal_corners, measurement_corners_in_room, norm of measurement_corner_in_robot, angle of measurement_corner_in_robot, error
-
-using Target = Eigen::Vector3d;
 
 // types for the features
 struct LineSegment
@@ -61,5 +47,58 @@ using All_Corners = std::vector<std::tuple<QPointF, QPointF, QPointF, QPointF>>;
 using Features = std::tuple<Lines, Par_lines, Corners, All_Corners>;
 using Center = std::pair<QPointF, int>;  // center of a polygon and number of votes
 using Match = std::vector<std::tuple<Corner, Corner, double>>;  //  measurement - nominal - error Both must be in the same reference system
-using Peaks = std::vector<Eigen::Vector2d>; // 2D points representing peaks (e.g., door locations)
+using Peaks = std::vector<std::tuple<Eigen::Vector2f, float>>; // 2D points representing peaks with angle wrt robot frame
+struct Door
+{
+    Eigen::Vector2f p1;
+    float p1_angle;
+    Eigen::Vector2f p2;
+    float p2_angle;
+    [[nodiscard]] float width() const { return (p2 - p1).norm(); }
+    [[nodiscard]] Eigen::Vector2f center() const { return 0.5f * (p1 + p2); }
+    [[nodiscard]] Eigen::Vector2f center_before(const Eigen::Vector2d &robot_pos, float offset = 500.f) const   // a point 500mm before the center along the door direction
+    {
+        // computer the normal to the door direction pointing towards the robot
+        Eigen::Vector2f dir = p2 - p1;
+        const float dir_norm = dir.norm();
+        if (dir_norm == 0.f)
+            return center(); // degenerate door, return center
+        dir /= dir_norm;
+        // perpendicular (normal) to door direction
+        Eigen::Vector2f normal(-dir.y(), dir.x());
+        // choose the normal that points toward the robot
+        const Eigen::Vector2f to_robot = robot_pos.cast<float>() - center();
+        if (to_robot.dot(normal) < 0.f)
+            normal = -normal;
+        Eigen::Vector2f before = center() + offset * normal;
+        return before;
+    }
+    [[nodiscard]] float direction() const
+    {
+        Eigen::Vector2f dir = p2 - p1;
+        return std::atan2(dir.y(), dir.x());
+    }
+    Door(Eigen::Vector2f point1, const float angle1, Eigen::Vector2f point2, const float angle2)
+    {
+        // Calculate angular difference both ways
+        float diff_forward = angle2 - angle1;
+        float diff_backward = angle1 - angle2;
+
+        // Normalize differences to [0, 2π)
+        if (diff_forward < 0) diff_forward += 2 * M_PI;
+        if (diff_backward < 0) diff_backward += 2 * M_PI;
+
+        // Choose ordering that gives smaller angular span
+        if (diff_forward <= diff_backward)
+        {
+            p1 = point1; p1_angle = angle1;
+            p2 = point2; p2_angle = angle2;
+        } else
+        {
+            p1 = point2; p1_angle = angle2;
+            p2 = point1; p2_angle = angle1;
+        }
+    }
+};
+using Doors = std::vector<Door>;
 #endif //COMMON_TYPES_H

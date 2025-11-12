@@ -28,6 +28,7 @@ template<typename T> struct MunkresData
    std::vector<MunkresState> marks;
    std::vector<bool> row_mask;
    std::vector<bool> col_mask;
+   std::function<T(unsigned r, unsigned c)> edge_cost_;
 
    // ------------------------------------------------------------- Construction
    //
@@ -41,25 +42,31 @@ template<typename T> struct MunkresData
        , marks(side_ * side_)
        , row_mask(side_)
        , col_mask(side_)
+       , edge_cost_{edge_cost}
+   {};
+   bool init() noexcept
    {
-      assert(n_rows_ > 0);
-      assert(n_cols_ > 0);
+      if ( n_rows_ <= 0 or n_cols_ <= 0)
+      {
+         std::cerr << "MunkresData::init() num cols or rows <=0" << std::endl;
+         return false;
+      }
 
       // Populate weight matrix... keep track of maximum for next step
       T max_val = std::numeric_limits<T>::lowest();
-      for(auto r = 0u; r < n_rows; ++r)
-         for(auto c = 0u; c < n_cols; ++c) {
-            auto val = edge_cost(r, c);
+      for(auto r = 0u; r < n_rows_; ++r)
+         for(auto c = 0u; c < n_cols_; ++c) {
+            auto val = edge_cost_(r, c);
             C(r, c)  = val;
             if(max_val < val) max_val = val;
          }
 
       // The weight matrix is always square... fill in the empty
       // spots with 'max-val'
-      for(auto r = n_rows; r < side(); ++r)
-         for(auto c = n_cols; c < side(); ++c) C(r, c) = max_val;
-      for(auto c = n_cols; c < side(); ++c)
-         for(auto r = n_rows; r < side(); ++r) C(r, c) = max_val;
+      for(auto r = n_rows_; r < side(); ++r)
+         for(auto c = n_cols_; c < side(); ++c) C(r, c) = max_val;
+      for(auto c = n_cols_; c < side(); ++c)
+         for(auto r = n_rows_; r < side(); ++r) C(r, c) = max_val;
 
       // Subtract the minimum from every row and column, which
       // ensures that every row and column has a '0'
@@ -70,14 +77,19 @@ template<typename T> struct MunkresData
       std::fill(begin(row_mask), end(row_mask), false);
       std::fill(begin(col_mask), end(col_mask), false);
 
+      // print data for debugging
+      // for (auto &d: data)
+      //    std::cout << d << std::endl;
+
       { // ensure evey element is finite
          auto ii = std::find_if(
              cbegin(data), cend(data), [](auto x) { return !std::isfinite(x); });
          if(ii != cend(data)) {
-            std::cerr << "precondition failed: non-finite edge cost" << std::endl;
-            assert(false);
+            //std::cerr << "MunkresData::init() precondition failed: non-finite edge cost" << std::endl;
+            return false;
          }
       }
+      return true;
    }
 
    // ---------------------------------------------------------- Getters/Setters
@@ -359,7 +371,10 @@ std::vector<std::pair<unsigned, unsigned>> inline munkres_algorithm(
     std::function<T(unsigned l, unsigned r)> cost) noexcept
 {
    detail::MunkresData<T> m_dat{n_lhs_verts, n_rhs_verts, cost};
-   return m_dat.solve();
+   if (m_dat.init())
+      return m_dat.solve();
+   else
+      return {};
 }
 
 template<typename T>

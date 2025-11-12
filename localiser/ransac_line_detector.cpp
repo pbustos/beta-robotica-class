@@ -18,13 +18,14 @@ namespace rc
         std::random_device rd;
         std::mt19937 gen(rd());
 
-        for (int line_idx = 0; line_idx < params.max_lines; ++line_idx) {
+        for (int line_idx = 0; line_idx < params.max_lines; ++line_idx)
+        {
             // Get unused points
-            std::vector<int> available;
+            std::vector<size_t> available;
             available.reserve(points.size());
-            for (size_t i = 0; i < points.size(); ++i) {
+            for (size_t i = 0; i < points.size(); ++i)
                 if (!used[i]) available.push_back(i);
-            }
+        
 
             if (available.size() < static_cast<size_t>(params.min_points_per_line)) break;
 
