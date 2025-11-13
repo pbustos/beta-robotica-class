@@ -59,8 +59,9 @@ namespace rc   // aka RoboComp
              std::optional<Eigen::Vector2d>
              estimate_center_from_walls(const Lines &lines) const;
 
-            std::optional<Eigen::Vector2d> estimate_center_from_walls() const;
-
+            [[nodiscard]] std::optional<Eigen::Vector2d> estimate_center_from_walls() const;
+            [[nodiscard]] std::optional<Eigen::Vector2d> estimate_center_from_walls_simple(const Lines &lines) const;
+            [[nodiscard]] std::optional<Eigen::Vector2d> estimate_center_from_walls_opencv(const Lines &lines) const;
              Corners select_minimal_rectangle(const Corners &corners);
 
              /// Normalize a line so that sqrt(a^2 + b^2) = 1 and choose a consistent sign.

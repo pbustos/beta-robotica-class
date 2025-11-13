@@ -23,7 +23,10 @@ namespace rc
         // - min_nonzero: minimum number of red pixels required to consider detection valid
         // Returns: (detected, left_right) where left_right = -1 (left) or 1 (right)
 
-        static std::tuple<bool, int> check_red_patch_in_image(RoboCompCamera360RGB::Camera360RGBPrxPtr proxy, QLabel *label_img = nullptr, int min_nonzero = 1000)
+        static std::tuple<bool, int> check_colour_patch_in_image(RoboCompCamera360RGB::Camera360RGBPrxPtr proxy,
+                                                                 QColor colour,
+                                                                 QLabel *label_img = nullptr,
+                                                                 int min_nonzero = 1000)
         {
             RoboCompCamera360RGB::TImage img;
             try{ img = proxy->getROI(-1, -1, -1, -1, -1, -1);}
@@ -43,15 +46,25 @@ namespace rc
             cv::Mat display_img;
             cv::cvtColor(cv_img, display_img, cv::COLOR_BGR2RGB);
 
-            // Convert RGB -> HSV for color thresholding
+            // Convert BGR -> HSV for color thresholding
             cv::Mat hsv_img;
-            cv::cvtColor(display_img, hsv_img, cv::COLOR_RGB2HSV);
+            cv::cvtColor(cv_img, hsv_img, cv::COLOR_BGR2HSV);
 
-            // Red ranges (two intervals)
-            cv::Mat mask1, mask2;
-            cv::inRange(hsv_img, cv::Scalar(0, 100, 100), cv::Scalar(10, 255, 255), mask1);
-            cv::inRange(hsv_img, cv::Scalar(160, 100, 100), cv::Scalar(179, 255, 255), mask2);
+            // Set ranges depending on color
+            cv::Mat mask1, mask2 = cv::Mat::zeros(hsv_img.size(), CV_8UC1);
+            if (colour == QColor("green"))
+                cv::inRange(hsv_img, cv::Scalar(35, 50, 50), cv::Scalar(85, 255, 255), mask1);
+
+            if (colour == QColor("red"))
+            {
+                cv::inRange(hsv_img, cv::Scalar(0, 100, 100), cv::Scalar(10, 255, 255), mask1);
+                cv::inRange(hsv_img, cv::Scalar(160, 100, 100), cv::Scalar(179, 255, 255), mask2);
+            }
+            // combine masks
             cv::Mat mask = mask1 | mask2;
+
+            // remove small noise
+            cv::morphologyEx(mask, mask, cv::MORPH_OPEN, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3,3)));
 
             const int nonZeroCount = cv::countNonZero(mask);
             if (nonZeroCount < min_nonzero)

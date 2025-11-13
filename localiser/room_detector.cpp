@@ -21,15 +21,14 @@ namespace rc
         auto  lines = RansacLineDetector::detect_lines(floor_line_cart);
         if (scene != nullptr) draw_lines_on_2D_tab(lines, scene);
 
-        //lines = filter_lines_by_length(lines, static_cast<float>(estimated_size.head(2).minCoeff()/2.f));
-
         // compute corners
         Corners corners = get_corners(lines);
 
         // select the set of corners that complies with a rectangle and is minimal
         corners = select_minimal_rectangle(corners);
 
-        if (scene != nullptr) draw_corners_on_2D_tab(corners, {Eigen::Vector2d{0,0}}, scene);
+        if (scene != nullptr)
+            draw_corners_on_2D_tab(corners, {Eigen::Vector2d{0,0}}, scene);
         current_walls = lines;  // update cached walls
         return {corners, lines};  // TODO return only lines that form corners
     }
@@ -74,7 +73,7 @@ namespace rc
             angle = fmod(angle + M_PI, 2 * M_PI);
             if (angle < 0) angle += 2 * M_PI;
             angle -= M_PI;
-            constexpr double delta = 0.2;
+            constexpr double delta = 0.3;
             QPointF intersection;
             const bool angle_condition = (angle < M_PI/2+delta and angle > M_PI/2-delta) or (angle < -M_PI/2+delta and angle > -M_PI/2-delta );
             long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -225,12 +224,13 @@ namespace rc
         return A.colPivHouseholderQr().solve(c);
     }
 
-    std::optional<Eigen::Vector2d>
-
-    Room_Detector::estimate_center_from_walls(const Lines &lines) const
+    std::optional<Eigen::Vector2d> Room_Detector::estimate_center_from_walls(const Lines &lines) const
     {
         if (lines.size() < 3)
-            return std::nullopt;
+        {
+            qWarning() << __FUNCTION__ << "Not enough wall lines to estimate room center.";
+            return {};
+        }
 
         // 1) Normalize lines and cluster into two orthogonal groups (~0° vs ~90°)
         std::vector<Eigen::Vector3d> grp0;
@@ -252,13 +252,19 @@ namespace rc
         }
 
         if (grp0.empty() || grp90.empty())
+        {
+            qWarning() << __FUNCTION__ << "Missing one direction of wall lines; cannot estimate room center.";
             return std::nullopt;
+        }
 
         // 2) In each group, pick the two outermost parallel lines (by c)
         auto pair0  = pickOuterParallelPairByC_(grp0);
         auto pair90 = pickOuterParallelPairByC_(grp90);
         if (!pair0 || !pair90)
+        {
+            qWarning() << __FUNCTION__ << "Could not find outer parallel line pairs; cannot estimate room center.";
             return std::nullopt;
+        }
 
         // 3) Compute midlines and intersect them
         const Eigen::Vector3d mid0  = midline_(pair0->first,  pair0->second);
@@ -266,19 +272,69 @@ namespace rc
 
         const double det = std::fabs(mid0.x() * mid90.y() - mid0.y() * mid90.x());
         if (det < 1e-6)
-            return std::nullopt; // nearly parallel; unexpected in rectangles
+        {
+            qWarning() << __FUNCTION__ << "Midlines nearly parallel; cannot estimate room center.";
+            return {}; // nearly parallel; unexpected in rectangles
+        }
 
-        const Eigen::Vector2d center = intersect_(mid0, mid90);
+        Eigen::Vector2d center = intersect_(mid0, mid90);
         return center;
     }
     std::optional<Eigen::Vector2d> Room_Detector::estimate_center_from_walls() const
     {
-        if (current_walls.empty())
-            return {};
+        // if (current_walls.empty())
+        //     return {};
         return estimate_center_from_walls(current_walls);
     }
 
-/* c++ */
+    std::optional<Eigen::Vector2d> Room_Detector::estimate_center_from_walls_opencv(const Lines &lines) const
+    {
+        const double parallel_eps = 1e-6;
+        const double area_eps = 1e-9;
+
+        // 1) collect intersections of all non-parallel line pairs
+        std::vector<Eigen::Vector2d> pts;
+        pts.reserve(lines.size() * 2);
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            const Eigen::Vector3d L1 = lines[i].to_general_form(); // (a,b,c)
+            for (size_t j = i + 1; j < lines.size(); ++j)
+            {
+                const Eigen::Vector3d L2 = lines[j].to_general_form();
+                const double det = std::fabs(L1.x() * L2.y() - L1.y() * L2.x());
+                if (det < parallel_eps) continue; // nearly parallel
+
+                // solve A * p = -c
+                Eigen::Matrix2d A;
+                A << L1.x(), L1.y(),
+                     L2.x(), L2.y();
+                Eigen::Vector2d c(-L1.z(), -L2.z());
+                Eigen::Vector2d p = A.colPivHouseholderQr().solve(c);
+                if (std::isfinite(p.x()) && std::isfinite(p.y()))
+                    pts.push_back(p);
+            }
+        }
+
+        if (pts.size() < 3) return std::nullopt;
+
+        // convert to OpenCV points
+        std::vector<cv::Point2f> cvpts;
+        cvpts.reserve(pts.size());
+        for (const auto &p : pts) cvpts.emplace_back(static_cast<float>(p.x()), static_cast<float>(p.y()));
+
+        // 2) convex hull (return points)
+        std::vector<cv::Point2f> hull_pts;
+        cv::convexHull(cvpts, hull_pts, /*clockwise=*/false, /*returnPoints=*/true);
+        if (hull_pts.size() < 3) return std::nullopt;
+
+        // 3) compute centroid via moments (area-weighted polygon centroid)
+        cv::Moments m = cv::moments(hull_pts, /*binaryImage=*/false);
+        if (std::fabs(m.m00) < area_eps) return std::nullopt;
+
+        Eigen::Vector2d centroid(m.m10 / m.m00, m.m01 / m.m00);
+        return centroid;
+    }
+
 Corners Room_Detector::select_minimal_rectangle(const Corners &corners)
 {
     if (corners.size() < 4)
