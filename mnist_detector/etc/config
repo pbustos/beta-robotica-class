@@ -1,0 +1,15 @@
+
+
+# Proxies for required interfaces
+Proxies.Camera360RGB = "camera360rgb:tcp -h localhost -p 10098"
+
+# Endpoints for implements interfaces
+Endpoints.MNIST = "tcp -p 10111"
+
+Period.Compute = 50
+Period.Emergency = 500
+
+Ice.Warn.Connections = "0"
+Ice.Trace.Network = "0"
+Ice.Trace.Protocol = "0"
+Ice.MessageSizeMax = "20004800"

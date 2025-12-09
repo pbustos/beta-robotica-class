@@ -1,0 +1,13 @@
+import "Camera360RGB.idsl";
+import "MNIST.idsl";
+
+Component MNIST
+{
+    Communications
+    {
+        implements MNIST;
+        requires Camera360RGB;
+    };
+    language python;
+};
+
