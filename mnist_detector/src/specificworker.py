@@ -21,6 +21,7 @@
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
+from matplotlib.bezier import inside_circle
 from rich.console import Console
 from genericworker import *
 import interfaces as ifaces
@@ -73,9 +74,84 @@ class SpecificWorker(GenericWorker):
 
         image = self.camera360rgb_proxy.getROI(-1, -1, -1, -1, -1, -1)
         color = np.frombuffer(image.image, dtype=np.uint8).reshape(image.height, image.width, 3)
-        cv2.imshow("Camera360RGB", color)
+        rect = self.detect_frame(color)
+        color_copy = color.copy()
+        if rect is not None:
+            x1, y1, x2, y2 = rect
+            cv2.rectangle(color_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            roi = color[y1:y2, x1:x2]
+            #cv2.imshow("Detected ROI", roi)
+        cv2.imshow("Camera360RGB", color_copy)
         cv2.waitKey(1)
 
+    ################################################################
+
+    def detect_frame(self, color):
+        color_copy = color.copy()
+        gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, edges = cv2.threshold(
+            gray, 0, 255,
+            cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+
+        # Find contours
+        contours, _ = cv2.findContours( edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE )
+
+        if not contours:
+            print("No contours found")
+            return None
+
+        best_cnt = None
+        best_score = -1
+
+        h, w = gray.shape
+
+        candidates = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 0.01 * w * h:  # skip tiny contours
+                continue
+
+            # Approximate contour to polygon
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.05 * peri, True)
+
+            # Get bounding box
+            x, y, bw, bh = cv2.boundingRect(approx)
+            aspect_ratio = bw / float(bh)
+
+            # Check "squareness"
+            if 0.5 <= aspect_ratio <= 2.0:
+                candidates.append((area,x, y, bw, bh))
+
+        for c in candidates:
+            _, x, y, bw, bh = c
+
+            # Score candidates based on the amount of white pixels inside
+            roi = edges[y:y+bh, x:x+bw]
+            white_pixels = cv2.countNonZero(roi)
+            total_pixels = bw * bh
+            white_ratio = white_pixels / total_pixels
+            score = white_ratio
+            if score > best_score:
+                best_score = score
+                best_cnt = c
+
+        if best_cnt is not None:
+            # Crop inside the frame to get the white area + digit only
+            margin = int(min(bw, bh) * 5 / 100)  # 5% margin
+            x1 = max(0, x + margin)
+            y1 = max(0, y + margin)
+            x2 = min(w, x + bw - margin)
+            y2 = min(h, y + bh - margin)
+
+            if x2 <= x1 or y2 <= y1:
+                return None
+
+            return [x1, y1, x2, y2]
+        else:
+            return None
 
     ####################################################################
     def startup_check(self):
