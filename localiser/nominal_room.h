@@ -12,7 +12,9 @@
   {
       float width; //  mm
       float length;
+      std::string name = "unknown";
       Doors doors;
+      bool visited = false;
 
       explicit NominalRoom(const float width_=10000.f, const float length_=5000.f, Corners  corners_ = {}) :
           width(width_), length(length_)
@@ -68,4 +70,20 @@
           const auto wall = get_closest_wall_to_point(p);
           return std::get<0>(wall).projection(p);
       };
+      void print() const
+      {
+          qInfo() << "NominalRoom: name= "<< QString::fromStdString(name) << "width=" << width << " length=" << length;
+          qInfo() << "    Corners:";
+          for (const auto &[p, _, __] : corners())
+          {
+              qInfo() << "      (" << p.x() << ", " << p.y() << ")";
+          }
+          qInfo() << "    Doors:";
+          for (const auto &[i, d] : doors | iter::enumerate)
+          {
+              qInfo() << "        Door index " << i << ": p1_global=(" << d.p1_global.x() << ", " <<
+                  d.p1_global.y() << "), p2=(" << d.p2_global.x() << ", " << d.p2_global.y() << ")";
+              qInfo() << "        Visited: " << d.visited << ", connects_to_room: " << d.connects_to_room << ", connects_to_door: " << d.connects_to_door;
+          }
+      }
   };

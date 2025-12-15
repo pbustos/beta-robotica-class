@@ -55,6 +55,10 @@ struct Door
     Eigen::Vector2f p2;
     float p2_angle;
     Eigen::Vector2f p1_global, p2_global;
+    bool visited = false;
+    int connects_to_room = -1; // index of the room this door connects to
+    int connects_to_door = -1; // index of the door in the connected room
+    Eigen::Affine2f door_pose_in_room; // door pose in the room frame Y+ points into the room
 
     Door() = default;
     Door(Eigen::Vector2f point1, const float angle1, Eigen::Vector2f point2, const float angle2)
@@ -78,7 +82,6 @@ struct Door
             p2 = point1; p2_angle = angle1;
         }
     }
-
     [[nodiscard]] float width() const { return (p2 - p1).norm(); }
     [[nodiscard]] Eigen::Vector2f center() const { return 0.5f * (p1 + p2); }
     [[nodiscard]] float center_angle() const { const auto c=center(); return atan2(c.x(),c.y()); }

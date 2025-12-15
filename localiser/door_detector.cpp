@@ -25,7 +25,7 @@ Doors DoorDetector::detect(const RoboCompLidar3D::TPoints &points,
     {
         const auto &p1 = p[0]; const auto &p2 = p[1];
         const float d1 = p1.distance2d; const float d2 = p2.distance2d;
-        if (const float dd_da1 = abs(d2 - d1); dd_da1 > 500.f)
+        if (const float dd_da1 = abs(d2 - d1); dd_da1 >min_peak_distance)
         {
             const auto m = std::ranges::min_element(p, [](auto &pa, auto &pb){return pa.distance2d < pb.distance2d;});
             peaks.emplace_back(Eigen::Vector2f(m->x, m->y), m->phi);
@@ -46,7 +46,7 @@ Doors DoorDetector::detect(const RoboCompLidar3D::TPoints &points,
         const auto &[p0,a0] = p[0]; const auto &[p1, a1] = p[1];
         const float gap = (p1-p0).norm();
         //qInfo() << "Gap: " << gap;
-        if(gap < 1300.f and gap > 700.f)
+        if(gap < max_door_width and gap > min_door_width)
             doors.emplace_back(p0, a0, p1, a1);
     }
     //qInfo() << __FUNCTION__ << "Peaks found: " << peaks.size() << "Doors found: " << doors.size();

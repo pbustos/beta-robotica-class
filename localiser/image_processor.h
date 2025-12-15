@@ -104,5 +104,16 @@ namespace rc
 
             return {true, room_index, left_right};
         }
+        static std::string room_name_from_index(int index)
+        {
+            switch(index)
+            {
+                case 0: return "RED";
+                case 1: return "GREEN";
+                case 2: return "BLUE";
+                case 3: return "YELLOW";
+                default: return "UNKNOWN";
+            }
+        }
     };
 }

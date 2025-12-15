@@ -27,6 +27,9 @@ class DoorDetector
 
     private:
         Doors doors_cache;
+        float min_door_width = 600.f;  // mm
+        float max_door_width = 1200.f;
+        float min_peak_distance = 500.f;
 };
 
 #endif //DOORDETECTOR_H
