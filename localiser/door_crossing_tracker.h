@@ -42,6 +42,7 @@
                 const auto closest_door = std::ranges::min_element(nominal_doors, [this](const auto &a, const auto &b)
                 { return (a.center_global() - leaving_door_center).norm() < (b.center_global() - leaving_door_center).norm(); });
                 entering_door_index = static_cast<int>(std::distance(nominal_doors.begin(), closest_door));
+                valid = true;
             }
         };
 #endif //LOCALISER_DOOR_CROSSING_TRACKER_H

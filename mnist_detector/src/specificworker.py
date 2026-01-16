@@ -85,66 +85,74 @@ class SpecificWorker(GenericWorker):
         cv2.waitKey(1)
 
     ################################################################
-
     def detect_frame(self, color):
         color_copy = color.copy()
-        gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, edges = cv2.threshold(
-            gray, 0, 255,
-            cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
+        h_img, w_img = color.shape[:2]
 
-        # Find contours
-        contours, _ = cv2.findContours( edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE )
+        # Convertir a HSV
+        hsv = cv2.cvtColor(color, cv2.COLOR_BGR2HSV)
 
+        # Definir rangos de rojo (hay dos rangos en HSV)
+        # Rangos de rojo puro
+        lower_red1 = np.array([0, 150, 100])
+        upper_red1 = np.array([10, 255, 255])
+        lower_red2 = np.array([170, 150, 100])
+        upper_red2 = np.array([180, 255, 255])
+
+        # Crear máscara combinando ambos rangos
+        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+        mask = cv2.bitwise_or(mask1, mask2)
+
+        # Suavizar la máscara para eliminar ruido
+        mask = cv2.medianBlur(mask, 5)
+
+        # Encontrar contornos
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
-            print("No contours found")
+            print("No red contours found")
             return None
 
         best_cnt = None
         best_score = -1
-
-        h, w = gray.shape
-
         candidates = []
+
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 0.01 * w * h:  # skip tiny contours
+            if area < 0.001 * w_img * h_img:  # descartar muy pequeños
                 continue
 
-            # Approximate contour to polygon
+            # Aproximar contorno a polígono
             peri = cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, 0.05 * peri, True)
 
-            # Get bounding box
+            # Bounding box
             x, y, bw, bh = cv2.boundingRect(approx)
             aspect_ratio = bw / float(bh)
 
-            # Check "squareness"
+            # Comprobar "casi cuadrado"
             if 0.5 <= aspect_ratio <= 2.0:
-                candidates.append((area,x, y, bw, bh))
+                candidates.append((area, x, y, bw, bh))
 
+        # Score basado en cantidad de pixeles rojos en la máscara
         for c in candidates:
             _, x, y, bw, bh = c
-
-            # Score candidates based on the amount of white pixels inside
-            roi = edges[y:y+bh, x:x+bw]
-            white_pixels = cv2.countNonZero(roi)
+            roi = mask[y:y + bh, x:x + bw]
+            red_pixels = cv2.countNonZero(roi)
             total_pixels = bw * bh
-            white_ratio = white_pixels / total_pixels
-            score = white_ratio
+            red_ratio = red_pixels / total_pixels
+            score = red_ratio
             if score > best_score:
                 best_score = score
                 best_cnt = c
 
         if best_cnt is not None:
-            # Crop inside the frame to get the white area + digit only
-            margin = int(min(bw, bh) * 5 / 100)  # 5% margin
+            _, x, y, bw, bh = best_cnt
+            margin = int(min(bw, bh) * 5 / 100)  # 5% margen
             x1 = max(0, x + margin)
             y1 = max(0, y + margin)
-            x2 = min(w, x + bw - margin)
-            y2 = min(h, y + bh - margin)
+            x2 = min(w_img, x + bw - margin)
+            y2 = min(h_img, y + bh - margin)
 
             if x2 <= x1 or y2 <= y1:
                 return None
