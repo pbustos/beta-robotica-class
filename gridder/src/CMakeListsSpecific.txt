@@ -1,0 +1,30 @@
+# Sources set
+SET ( SOURCES
+  specificworker.cpp
+  specificmonitor.cpp
+  grid.cpp
+)
+
+# Headers set
+SET ( HEADERS
+  specificworker.h
+  specificmonitor.h
+  grid.h
+  /home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.h
+)
+
+add_definitions(-O3  -fmax-errors=1 -fno-char8_t -I/usr/include/x86_64-linux-gnu/qt6/QtOpenGLWidgets/)
+
+SET (LIBS ${LIBS}  )
+
+option(USE_QT6 "Use Qt6" ON) # OFF por defecto, puedes cambiarlo a ON si deseas usar Qt6
+
+if( USE_QT6)
+    LIST(APPEND SOURCES "/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp")
+    LIST(APPEND HEADERS "/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.h")
+    LIST(APPEND LIBS QGLViewer-qt6 Qt6OpenGLWidgets)
+  else()
+    list(APPEND SOURCES "/home/robocomp/robocomp/classes/abstract_graphic_viewer_qt5/abstract_graphic_viewer.cpp")
+    list(APPEND HEADERS "/home/robocomp/robocomp/classes/abstract_graphic_viewer_qt5/abstract_graphic_viewer.h")
+    LIST(APPEND LIBS QGLViewer-qt5)
+endif()

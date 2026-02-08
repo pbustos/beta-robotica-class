@@ -1,0 +1,14 @@
+import "Lidar3D.idsl";
+import "Gridder.idsl";
+
+Component gridder
+{
+    Communications
+    {
+        implements Gridder;
+        requires Lidar3D, Lidar3D;
+    };
+    language Cpp11;
+    gui Qt(QWidget);
+};
+
