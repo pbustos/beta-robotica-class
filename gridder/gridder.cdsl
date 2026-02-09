@@ -1,12 +1,13 @@
 import "Lidar3D.idsl";
 import "Gridder.idsl";
+import "Webots2Robocomp.idsl";
 
 Component gridder
 {
     Communications
     {
         implements Gridder;
-        requires Lidar3D, Lidar3D;
+        requires Lidar3D, Lidar3D, Webots2Robocomp;
     };
     language Cpp11;
     gui Qt(QWidget);

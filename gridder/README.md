@@ -1,7 +1,9 @@
 # gridder
 A brief introduction to the component. Describe its purpose, functionality, and any specific features here.
-```
-<YOUR BRIEFING>
+
+Connects to both LiDARs and provides a grid representation of the environment, which can be used for navigation, obstacle avoidance, or other purposes.
+Builds a 2D grid and updates it with the data from the LiDARs. 
+Provides methods to plan a paths between two points
 ```
 
 ## Dependencies

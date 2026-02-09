@@ -157,6 +157,9 @@ class SpecificWorker : public GenericWorker
 	    //Graphics
 	    AbstractGraphicViewer *viewer;
 
+		//Robot
+		Eigen::Affine2f robot_pose;
+
 	    struct Params
 	    {
 	        float ROBOT_WIDTH = 460;  // mm
@@ -172,7 +175,7 @@ class SpecificWorker : public GenericWorker
 	        float MAX_LIDAR_RANGE = MAX_LIDAR_LOW_RANGE;  // mm used in the grid
 	        int LIDAR_LOW_DECIMATION_FACTOR = 1;
 	        int LIDAR_HIGH_DECIMATION_FACTOR = 1;
-	        QRectF GRID_MAX_DIM{-5000, -5000, 10000, 10000};
+	        QRectF GRID_MAX_DIM{-500, -500, 1000, 1000};
 	        long PERIOD_HYSTERESIS = 2; // to avoid oscillations in the adjustment of the lidar thread period
 	        int PERIOD = 100;    // ms (20 Hz) for compute timer
 	        unsigned int ELAPSED_TIME_BETWEEN_PATH_UPDATES = 3000;
@@ -203,6 +206,8 @@ class SpecificWorker : public GenericWorker
 
 	    // mutex
 	    std::mutex mutex_path;
+
+		//Eigen::Affine2f get_robot_pose();
 
 	    // Do some work
 	    //RoboCompGridPlanner::TPlan compute_line_of_sight_target(const Target &target);

@@ -68,6 +68,9 @@ public:
                         QPointF grid_center = QPointF(0,0),
                         float grid_angle = 0.f);
 
+        void check_and_resize(const std::vector<Eigen::Vector3f> &points);
+        void resize_grid(QRectF new_dim);
+
         // paths
         std::vector<Eigen::Vector2f> compute_path_line_of_sight(const Key &source_key, const Key &target_key, const int distance);
         std::vector<std::vector<Eigen::Vector2f>> compute_k_paths(const Key &source_,
@@ -163,6 +166,10 @@ public:
         double updated=0.0, flipped=0.0;
         std::vector<Key> keys;  // vector of keys to compute closest matches
         Dimensions dim = QRectF();
+        QGraphicsRectItem *bounding_box = nullptr;
+        QPointF grid_center;
+        float grid_angle;
+        std::uint32_t last_id = 0;
 
         float frechet_distance(const std::vector<Eigen::Vector2f> &A, const std::vector<Eigen::Vector2f> &B);
         float max_distance(const std::vector<Eigen::Vector2f> &pathA, const std::vector<Eigen::Vector2f> &pathB);

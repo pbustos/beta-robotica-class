@@ -7,16 +7,108 @@
 #include <cppitertools/filterfalse.hpp>
 #include <cppitertools/count.hpp>
 #include <set>
+#include <queue>
+
+void Grid::resize_grid(QRectF new_dim)
+{
+    // Expand to include new_dim
+    QRectF final_dim = dim.united(new_dim);
+
+    // Align to tile size
+    double left = floor(final_dim.left() / params.tile_size) * params.tile_size;
+    double top = floor(final_dim.top() / params.tile_size) * params.tile_size;
+    double right = ceil(final_dim.right() / params.tile_size) * params.tile_size;
+    double bottom = ceil(final_dim.bottom() / params.tile_size) * params.tile_size;
+
+    final_dim = QRectF(left, top, right - left, bottom - top);
+
+    if (final_dim == dim) return;
+
+    // qInfo() << "Resizing grid from" << dim << "to" << final_dim;
+
+    auto my_color = QColor("White");
+    Eigen::Matrix2f matrix;
+    matrix << std::cos(this->grid_angle) , -std::sin(this->grid_angle) , std::sin(this->grid_angle) , std::cos(this->grid_angle);
+
+    for(const auto &i: iter::range(final_dim.left(), final_dim.right() + params.tile_size/2.0, static_cast<double>(params.tile_size)))
+        for(const auto &j: iter::range(final_dim.top(), final_dim.bottom() + params.tile_size/2.0, static_cast<double>(params.tile_size)))
+        {
+             // Use tile center convention or corner?
+             // In initialize: range(dim.left(), dim.right()+params.tile_size, ...
+             // i is the coordinate.
+
+             Key k(static_cast<long>(i), static_cast<long>(j));
+             if(fmap.find(k) == fmap.end())
+             {
+                 T aux;
+                 aux.id = last_id++;
+                 aux.free = true;
+                 aux.visited = false;
+                 aux.cost = params.unknown_cost;
+                 QGraphicsRectItem *tile = scene->addRect(-params.tile_size / 2.f, -params.tile_size / 2.f, params.tile_size, params.tile_size,
+                                                      QPen(my_color), QBrush(my_color));
+                 Eigen::Vector2f res = matrix * Eigen::Vector2f(i, j) + Eigen::Vector2f(grid_center.x(), grid_center.y());
+                 tile->setPos(res.x(), res.y());
+                 tile->setRotation(qRadiansToDegrees(grid_angle));
+                 aux.tile = tile;
+                 insert(k, aux);
+                 keys.emplace_back(i, j);
+             }
+        }
+
+    dim = final_dim;
+    if(bounding_box)
+        bounding_box->setRect(dim);
+}
+
+void Grid::check_and_resize(const std::vector<Eigen::Vector3f> &points)
+{
+    if(points.empty()) return;
+
+    // Cache dim values for fast comparison
+    const float dim_left = static_cast<float>(dim.left());
+    const float dim_right = static_cast<float>(dim.right());
+    const float dim_top = static_cast<float>(dim.top());
+    const float dim_bottom = static_cast<float>(dim.bottom());
+
+    float min_x = dim_left;
+    float max_x = dim_right;
+    float min_y = dim_top;
+    float max_y = dim_bottom;
+    bool needs_resize = false;
+
+    for(const auto &p : points)
+    {
+        const float px = p.x();
+        const float py = p.y();
+
+        if(px < min_x) { min_x = px; needs_resize = true; }
+        else if(px > max_x) { max_x = px; needs_resize = true; }
+
+        if(py < min_y) { min_y = py; needs_resize = true; }
+        else if(py > max_y) { max_y = py; needs_resize = true; }
+    }
+
+    if (needs_resize)
+    {
+         const float margin = params.tile_size * 5;
+         resize_grid(QRectF(QPointF(min_x - margin, min_y - margin),
+                           QPointF(max_x + margin, max_y + margin)));
+    }
+}
 
 void Grid::initialize(  QRectF dim_,
                         int tile_size,
                         QGraphicsScene *scene_,
-                        QPointF grid_center,
-                        float grid_angle)
+                        QPointF grid_center_,
+                        float grid_angle_)
 {
-    static QGraphicsRectItem *bounding_box = nullptr;
+    // static QGraphicsRectItem *bounding_box = nullptr;
     dim = dim_;
-qInfo() << "dim" << dim.left() << dim.right() << dim.top() << dim.bottom();
+    this->grid_center = grid_center_;
+    this->grid_angle = grid_angle_;
+
+    qInfo() << "dim" << dim.left() << dim.right() << dim.top() << dim.bottom();
     params.tile_size = tile_size;
     scene = scene_;
     for (const auto &[key, value]: fmap)
@@ -24,18 +116,18 @@ qInfo() << "dim" << dim.left() << dim.right() << dim.top() << dim.bottom();
         scene->removeItem(value.tile);
         delete value.tile;
     }
-    if(bounding_box != nullptr) scene->removeItem(bounding_box);
+    if(this->bounding_box != nullptr) scene->removeItem(this->bounding_box);
     fmap.clear();
 
     auto my_color = QColor("White");
-    std::uint32_t id=0;
+    last_id=0;
     Eigen::Matrix2f matrix;
     matrix << std::cos(grid_angle) , -std::sin(grid_angle) , std::sin(grid_angle) , std::cos(grid_angle);
     for(const auto &i: iter::range(dim.left(), dim.right()+params.tile_size, static_cast<double>(params.tile_size)))
         for(const auto &j: iter::range(dim.top(), dim.bottom()+params.tile_size, static_cast<double>(params.tile_size)))
         {
             T aux;
-            aux.id = id++;
+            aux.id = last_id++;
             aux.free = true;
             aux.visited = false;
             aux.cost = params.unknown_cost;
@@ -50,10 +142,10 @@ qInfo() << "dim" << dim.left() << dim.right() << dim.top() << dim.bottom();
         }
 
     // draw bounding box
-    bounding_box = scene->addRect(dim, QPen(QColor("Grey"), 40));
-    bounding_box->setPos(grid_center);
-    bounding_box->setZValue(12);
-    bounding_box->setRotation(qRadiansToDegrees(grid_angle));
+    this->bounding_box = scene->addRect(dim, QPen(QColor("Grey"), 40));
+    this->bounding_box->setPos(grid_center);
+    this->bounding_box->setZValue(12);
+    this->bounding_box->setRotation(qRadiansToDegrees(grid_angle));
 
     qInfo() << __FUNCTION__ <<  "Grid parameters: ";
     qInfo() << "    " << "Dim left corner:" << dim.left();
@@ -71,45 +163,39 @@ inline void Grid::insert(const Key &key, const T &value)
 }
 inline std::tuple<bool, Grid::T&> Grid::get_cell(const Key &k)
 {
-    if (fmap.contains(k))
-        return std::forward_as_tuple(true, fmap.at(k));
+    static T dummy_cell;  // static dummy for failed lookups
+    auto it = fmap.find(k);
+    if (it != fmap.end())
+        return std::forward_as_tuple(true, it->second);
     else
-        return std::forward_as_tuple(false, T());
+        return std::forward_as_tuple(false, dummy_cell);
 }
 Grid::Key Grid::point_to_key(long int x, long int z) const
 {
-    //if (not dim.contains(QPointF{static_cast<double>(x), static_cast<double>(z)}))
-    //{
-    //    qWarning() << __FUNCTION__ << "Long not found in grid: (" << x << z << ")";
-    //    return Key{};
-    //}
-    double kx = rint((static_cast<double>(x) - dim.left()) / params.tile_size);
-    double kz = rint((static_cast<double>(z) - dim.top()) / params.tile_size);
-    auto k = Key{ static_cast<long>(dim.left() + kx * params.tile_size), static_cast<long>(dim.top() + kz * params.tile_size)};
-    return k;
+    const int ts = params.tile_size;
+    const long left = static_cast<long>(dim.left());
+    const long top = static_cast<long>(dim.top());
+    long kx = std::lround(static_cast<double>(x - left) / ts);
+    long kz = std::lround(static_cast<double>(z - top) / ts);
+    return Key{ static_cast<int>(left + kx * ts), static_cast<int>(top + kz * ts)};
 };
 Grid::Key Grid::point_to_key(const QPointF &p) const
 {
-//    if (not dim.contains(QPointF{p.x(), p.y()}))
-//    {
-//        qWarning() << __FUNCTION__ << "QPoint not found in grid: (" << p.x() << p.y() << ")";
-//        return Key{};
-//    }
-    double kx = rint((p.x() - dim.left()) / params.tile_size);
-    double kz = rint((p.y() - dim.top()) / params.tile_size);
-    auto k = Key{ static_cast<long>(dim.left() + kx * params.tile_size), static_cast<long>(dim.top() + kz * params.tile_size)};
-    return k;
+    const int ts = params.tile_size;
+    const double left = dim.left();
+    const double top = dim.top();
+    long kx = std::lround((p.x() - left) / ts);
+    long kz = std::lround((p.y() - top) / ts);
+    return Key{ static_cast<int>(left + kx * ts), static_cast<int>(top + kz * ts)};
 };
 Grid::Key Grid::point_to_key(const Eigen::Vector2f &p) const
 {
-//    if (not dim.contains(QPointF{p.x(), p.y()}))
-//    {
-//        //qWarning() << __FUNCTION__ << "Eigen Vector not found in grid: (" << p.x() << p.y() << ")";
-//        return Key{};
-//    }
-    double kx = ceil((p.x() - dim.left()) / params.tile_size);
-    double kz = ceil((p.y() - dim.top()) / params.tile_size);
-    return Key{ static_cast<long>(dim.left() + kx * params.tile_size), static_cast<long>(dim.top() + kz * params.tile_size)};
+    const int ts = params.tile_size;
+    const float left = static_cast<float>(dim.left());
+    const float top = static_cast<float>(dim.top());
+    int kx = static_cast<int>(std::ceil((p.x() - left) / ts));
+    int kz = static_cast<int>(std::ceil((p.y() - top) / ts));
+    return Key{ static_cast<int>(left) + kx * ts, static_cast<int>(top) + kz * ts};
 };
 Eigen::Vector2f Grid::point_to_grid(const Eigen::Vector2f &p) const
 {
@@ -195,38 +281,38 @@ void Grid::set_occupied(const QPointF &p)
 }
 inline void Grid::add_miss(const Eigen::Vector2f &p)
 {
-    auto &&[success, v] = get_cell(point_to_key(p));
-    if(success)
+    static const QBrush free_brush(QColor(params.free_color));
+    auto it = fmap.find(point_to_key(p));
+    if(it != fmap.end())
     {
+        auto &v = it->second;
         v.misses++;
-//        v.tile->setBrush(QBrush(QColor(params.free_color)));
-        if(v.hits/(v.hits+v.misses) < params.occupancy_threshold)
+        float total = v.hits + v.misses;
+        if(v.hits / total < params.occupancy_threshold)
         {
             v.free = true;
             v.cost = params.free_cost;
-            v.tile->setBrush(QBrush(QColor(params.free_color)));
+            v.tile->setBrush(free_brush);
         }
-        v.misses = std::clamp(v.misses, 0.f, 20.f);
-    }
-    else
-    {
-        //Print kety not found and point if point is inside grid dimmensions
-        if(dim.contains(QPointF{p.x(), p.y()}))
-        qWarning() << __FUNCTION__ << "Key not found in grid: (" << p.x() << p.y() << ")";
+        if(v.misses > 20.f) v.misses = 20.f;
     }
 }
 inline void Grid::add_hit(const Eigen::Vector2f &p)
 {
-    auto &&[success, v] = get_cell(point_to_key(p));
-    if(success)
+    static const QBrush occ_brush(QColor(params.occupied_color));
+    auto it = fmap.find(point_to_key(p));
+    if(it != fmap.end())
     {
+        auto &v = it->second;
         v.hits++;
-        if((float)v.hits/(v.hits+v.misses) >= params.occupancy_threshold )
+        float total = v.hits + v.misses;
+        if(v.hits / total >= params.occupancy_threshold)
         {
             v.free = false;
-            v.tile->setBrush(QBrush(QColor(params.occupied_color)));
+            v.cost = params.occupied_cost;  // Also set cost to occupied
+            v.tile->setBrush(occ_brush);
         }
-        v.hits = std::clamp(v.hits, 0.f, 20.f);
+        if(v.hits > 20.f) v.hits = 20.f;
     }
 }
 double Grid::log_odds(double prob)
@@ -380,52 +466,62 @@ void Grid::restore_source_target(const Grid::Key &source_key, const Grid::Key &t
 
 std::vector<Eigen::Vector2f > Grid::compute_path_key(const Key &source_key, const Key &target_key)
 {
-    //const auto &[succ_trg, target_cell] = get_cell(target_key);
     const auto &[succ_src, source_cell] = get_cell(source_key);
+    if(!succ_src) return {};
+
     // Dijkstra algorithm
-    // initial distances vector
-    std::vector<uint32_t> min_distance(fmap.size(), std::numeric_limits<uint32_t>::max());
-    // initialize source position to 0
+    const size_t map_size = fmap.size();
+    std::vector<uint32_t> min_distance(map_size, std::numeric_limits<uint32_t>::max());
+    std::vector<std::pair<std::uint32_t, Key>> previous(map_size, std::make_pair(-1, Key()));
+
     min_distance[source_cell.id] = 0;
-    // vector de pares<std::uint32_t, Key> initialized to (-1, Key())
-    std::vector<std::pair<std::uint32_t, Key>> previous(fmap.size(), std::make_pair(-1, Key()));
-    // lambda to compare two vertices: a < b if a.id<b.id or
-    auto comp = [this](std::pair<std::uint32_t, Key> x, std::pair<std::uint32_t, Key> y){ return x.first <= y.first; };
-    // Open List
-    std::set<std::pair<std::uint32_t, Key>, decltype(comp)> active_vertices(comp);
-    active_vertices.insert({0, source_key});
-    while (not active_vertices.empty())
+
+    // Use set for Dijkstra (ordered by distance)
+    auto comp = [](const std::pair<uint32_t, Key>& a, const std::pair<uint32_t, Key>& b)
     {
-        Key where = active_vertices.begin()->second;
-        if (where == target_key)  // target found
+        if(a.first != b.first) return a.first < b.first;
+        return a.second < b.second;  // tie-breaker for deterministic ordering
+    };
+    std::set<std::pair<uint32_t, Key>, decltype(comp)> active_vertices(comp);
+    active_vertices.insert({0, source_key});
+
+    while (!active_vertices.empty())
+    {
+        auto [dist, where] = *active_vertices.begin();
+        active_vertices.erase(active_vertices.begin());
+
+        if (where == target_key)
         {
             auto p = recover_path(previous, source_key, target_key);
-            p = decimate_path(p);  // reduce size of path to half
-            // TODO: reduce path steps to a multiple of the robot's size
-            return p;
+            return decimate_path(p);
         }
-        active_vertices.erase(active_vertices.begin());
-        for (auto ed : neighboors_8(where))
+
+        auto it = fmap.find(where);
+        if(it == fmap.end()) continue;
+        const auto& where_cell = it->second;
+
+        // Skip if we've already processed this node with a better distance
+        if(dist > min_distance[where_cell.id]) continue;
+
+        for (auto& [neighbor_key, neighbor_cell] : neighboors_8(where))
         {
-            //qInfo() << __FUNCTION__ << min_distance[ed.second.id] << ">" << min_distance[fmap.at(where).id] << "+" << ed.second.cost;
-            const auto &[succ, where_cell] = get_cell(where);
-            if (min_distance[ed.second.id] > min_distance[where_cell.id] + static_cast<uint32_t>(ed.second.cost))
+            uint32_t tentative_dist = min_distance[where_cell.id] + static_cast<uint32_t>(neighbor_cell.cost);
+
+            if (tentative_dist < min_distance[neighbor_cell.id])
             {
-                active_vertices.erase({min_distance[ed.second.id], ed.first});
-                min_distance[ed.second.id] = min_distance[where_cell.id] + static_cast<uint32_t>(ed.second.cost);
-                min_distance[ed.second.id] = min_distance[where_cell.id] + static_cast<uint32_t>(ed.second.cost);
-                previous[ed.second.id] = std::make_pair(where_cell.id, where);
-                active_vertices.insert({min_distance[ed.second.id], ed.first}); // Djikstra
-                //active_vertices.insert( { min_distance[ed.second.id] + heuristicL2(ed.first, target_key), ed.first } ); //A*
+                // Remove old entry if exists
+                active_vertices.erase({min_distance[neighbor_cell.id], neighbor_key});
+                min_distance[neighbor_cell.id] = tentative_dist;
+                previous[neighbor_cell.id] = std::make_pair(where_cell.id, where);
+                active_vertices.insert({tentative_dist, neighbor_key});
             }
         }
     }
-    //qInfo() << __FUNCTION__ << "Path from (" << source_key.first << "," << source_key.second << ") to (" <<  target_key.first << "," << target_key.second << ") not  found. Returning empty path";
     return {};
 };
 std::vector<Eigen::Vector2f > Grid::compute_path(const Eigen::Vector2f &source_, const Eigen::Vector2f &target_)
 {
-    // computes a path from source to target using the Dijkstra algorithm
+    // computes a path from source to target using Dijkstra algorithm
 
     // Admission rules
     if (not dim.contains(QPointF(target_.x(), target_.y())))
@@ -469,40 +565,47 @@ std::vector<Eigen::Vector2f > Grid::compute_path(const Eigen::Vector2f &source_,
     }
 
     // Dijkstra algorithm
-    // initial distances vector
-    std::vector<uint32_t> min_distance(fmap.size(), std::numeric_limits<uint32_t>::max());
-    // initialize source position to 0
+    const size_t map_size = fmap.size();
+    std::vector<uint32_t> min_distance(map_size, std::numeric_limits<uint32_t>::max());
+    std::vector<std::pair<std::uint32_t, Key>> previous(map_size, std::make_pair(-1, Key()));
+
     min_distance[source_cell.id] = 0;
-    // vector de pares<std::uint32_t, Key> initialized to (-1, Key())
-    std::vector<std::pair<std::uint32_t, Key>> previous(fmap.size(), std::make_pair(-1, Key()));
-    // lambda to compare two vertices: a < b if a.id<b.id or
-    auto comp = [this](std::pair<std::uint32_t, Key> x, std::pair<std::uint32_t, Key> y){ return x.first <= y.first; };
-    // Open List
-    std::set<std::pair<std::uint32_t, Key>, decltype(comp)> active_vertices(comp);
-    active_vertices.insert({0, source_key});
-    while (not active_vertices.empty())
+
+    auto comp = [](const std::pair<uint32_t, Key>& a, const std::pair<uint32_t, Key>& b)
     {
-        Key where = active_vertices.begin()->second;
-        if (where == target_key)  // target found
+        if(a.first != b.first) return a.first < b.first;
+        return a.second < b.second;
+    };
+    std::set<std::pair<uint32_t, Key>, decltype(comp)> active_vertices(comp);
+    active_vertices.insert({0, source_key});
+
+    while (!active_vertices.empty())
+    {
+        auto [dist, where] = *active_vertices.begin();
+        active_vertices.erase(active_vertices.begin());
+
+        if (where == target_key)
         {
             auto p = recover_path(previous, source_key, target_key);
-            p = decimate_path(p);  // reduce size of path to half
-            // TODO: reduce path steps to a multiple of the robot's size
-            return p;
+            return decimate_path(p);
         }
-        active_vertices.erase(active_vertices.begin());
-        for (auto ed : neighboors_8(where))
+
+        auto it = fmap.find(where);
+        if(it == fmap.end()) continue;
+        const auto& where_cell = it->second;
+
+        if(dist > min_distance[where_cell.id]) continue;
+
+        for (auto& [neighbor_key, neighbor_cell] : neighboors_8(where))
         {
-            //qInfo() << __FUNCTION__ << min_distance[ed.second.id] << ">" << min_distance[fmap.at(where).id] << "+" << ed.second.cost;
-            const auto &[succ, where_cell] = get_cell(where);
-            if (min_distance[ed.second.id] > min_distance[where_cell.id] + static_cast<uint32_t>(ed.second.cost))
+            uint32_t tentative_dist = min_distance[where_cell.id] + static_cast<uint32_t>(neighbor_cell.cost);
+
+            if (tentative_dist < min_distance[neighbor_cell.id])
             {
-                active_vertices.erase({min_distance[ed.second.id], ed.first});
-                min_distance[ed.second.id] = min_distance[where_cell.id] + static_cast<uint32_t>(ed.second.cost);
-                min_distance[ed.second.id] = min_distance[where_cell.id] + static_cast<uint32_t>(ed.second.cost);
-                previous[ed.second.id] = std::make_pair(where_cell.id, where);
-                active_vertices.insert({min_distance[ed.second.id], ed.first}); // Djikstra
-                //active_vertices.insert( { min_distance[ed.second.id] + heuristicL2(ed.first, target_key), ed.first } ); //A*
+                active_vertices.erase({min_distance[neighbor_cell.id], neighbor_key});
+                min_distance[neighbor_cell.id] = tentative_dist;
+                previous[neighbor_cell.id] = std::make_pair(where_cell.id, where);
+                active_vertices.insert({tentative_dist, neighbor_key});
             }
         }
     }
@@ -609,17 +712,46 @@ std::vector<std::pair<Grid::Key, Grid::T&>> Grid::neighboors(const Grid::Key &k,
 }
 std::vector<std::pair<Grid::Key, Grid::T&>> Grid::neighboors_8(const Grid::Key &k, bool all)
 {
-    const int &I = params.tile_size;
-    static const std::vector<int> xincs = {I, I, I, 0, -I, -I, -I, 0};
-    static const std::vector<int> zincs = {I, 0, -I, -I, -I, 0, I, I};
-    return this->neighboors(k, xincs, zincs, all);
+    const int I = params.tile_size;
+    std::vector<std::pair<Key, T&>> neigh;
+    neigh.reserve(8);
+
+    // Unrolled loop for 8 neighbors - avoid vector creation
+    static constexpr int xincs[8] = {1, 1, 1, 0, -1, -1, -1, 0};
+    static constexpr int zincs[8] = {1, 0, -1, -1, -1, 0, 1, 1};
+
+    for(int i = 0; i < 8; ++i)
+    {
+        Key lk{k.first + xincs[i] * I, k.second + zincs[i] * I};
+        auto it = fmap.find(lk);
+        if(it != fmap.end())
+        {
+            if(all || it->second.free)
+                neigh.emplace_back(lk, it->second);
+        }
+    }
+    return neigh;
 }
 std::vector<std::pair<Grid::Key, Grid::T&>> Grid::neighboors_16(const Grid::Key &k, bool all)
 {
-    const int &I = params.tile_size;
-    static const std::vector<int> xincs = {0,   I,   2*I,  2*I, 2*I, 2*I, 2*I, I, 0, -I, -2*I, -2*I,-2*I,-2*I,-2*I, -I};
-    static const std::vector<int> zincs = {2*I, 2*I, 2*I,  I,   0 , -I , -2*I, -2*I,-2*I,-2*I,-2*I, -I, 0,I, 2*I, 2*I};
-    return this->neighboors(k, xincs, zincs, all);
+    const int I = params.tile_size;
+    std::vector<std::pair<Key, T&>> neigh;
+    neigh.reserve(16);
+
+    static constexpr int xincs[16] = {0, 1, 2, 2, 2, 2, 2, 1, 0, -1, -2, -2, -2, -2, -2, -1};
+    static constexpr int zincs[16] = {2, 2, 2, 1, 0, -1, -2, -2, -2, -2, -2, -1, 0, 1, 2, 2};
+
+    for(int i = 0; i < 16; ++i)
+    {
+        Key lk{k.first + xincs[i] * I, k.second + zincs[i] * I};
+        auto it = fmap.find(lk);
+        if(it != fmap.end())
+        {
+            if(all || it->second.free)
+                neigh.emplace_back(lk, it->second);
+        }
+    }
+    return neigh;
 }
 std::vector<Eigen::Vector2f> Grid::recover_path(const std::vector<std::pair<std::uint32_t, Key>> &previous, const Key &source, const Key &target)
 {
@@ -690,12 +822,16 @@ void Grid::update_costs(float robot_semi_width, bool color_all_cells)
 
     const auto final_ranges = color_all_cells ? wall_ranges : wall_ranges_no_color;
     for(auto &[upper, lower, brush, neigh] : final_ranges)
+    {
         // get all cells with cost == upper
-        for (auto &&[k, v]: iter::filter([upper, lower](auto &v) { return std::get<1>(v).cost == upper; }, fmap))
+        for (auto &&[k, v]: iter::filter([upper](auto &v) { return std::get<1>(v).cost == upper; }, fmap))
+        {
             // get all neighboors of these cells whose cost is lower than upper and are free
-            for (auto neighs = neigh(this, k, false); auto &&[kk, vv]: neighs | iter::filter([upper](auto &ve)
-                                                                                       { return std::get<1>(ve).cost < upper and std::get<1>(ve).free; }))
+            auto neighs = neigh(this, k, false);
+            for (auto &[kk, vv]: neighs)
             {
+                if (vv.cost >= upper || !vv.free)
+                    continue;
                 const auto &[ok, cell] = get_cell(kk);
                 cell.cost = lower;
                 if(upper == 100)    // set firts expansion to occupied
@@ -704,28 +840,40 @@ void Grid::update_costs(float robot_semi_width, bool color_all_cells)
                     cell.free = true;
                 cell.tile->setBrush(brush);
             }
+        }
+    }
 }
 void Grid::update_map( const std::vector<Eigen::Vector3f> &points,
                        const Eigen::Vector2f &robot_in_grid,
                        float max_laser_range)
 {
+    const float tile_size_f = static_cast<float>(params.tile_size);
+    const float inv_tile_size = 1.0f / tile_size_f;
 
-    // now, update the map with the new points
     for(const auto &point : points)
     {
-        double length = (point.head(2)-robot_in_grid).norm();
-        int num_steps = ceil(length/(static_cast<float>(params.tile_size)));
-        Eigen::Vector2f p;
-        for(const auto &&step : iter::range(0.0, 1.0-(1.0/num_steps), 1.0/num_steps))
+        const Eigen::Vector2f endpoint = point.head(2);
+        const Eigen::Vector2f diff = endpoint - robot_in_grid;
+        const float length = diff.norm();
+
+        if(length < tile_size_f) continue;  // Skip very short rays
+
+        // Use integer steps based on tile size for better cache locality
+        const int num_steps = static_cast<int>(length * inv_tile_size);
+        if(num_steps <= 0) continue;
+
+        const float inv_steps = 1.0f / static_cast<float>(num_steps);
+        const Eigen::Vector2f step_vec = diff * inv_steps;
+
+        Eigen::Vector2f p = robot_in_grid;
+        for(int i = 0; i < num_steps - 1; ++i)
         {
-            p = robot_in_grid * (1-step) + point.head(2)*step;
+            p += step_vec;
             add_miss(p);
         }
-        if(length <= max_laser_range)
-            add_hit(point.head(2));
 
-        if((p-point.head(2)).norm() < static_cast<float>(params.tile_size))  // in case last miss overlaps tip
-            add_hit(point.head(2));
+        if(length <= max_laser_range)
+            add_hit(endpoint);
     }
 }
 
@@ -733,13 +881,16 @@ void Grid::update_map( const std::vector<Eigen::Vector3f> &points,
 
 void Grid::clear()
 {
+    static const QBrush unknown_brush(QColor(params.unknown_color));
+    const float unknown_cost = params.unknown_cost;
+
     for (auto &[key, value]: fmap)
     {
-        value.tile->setBrush(QBrush(QColor(params.unknown_color)));
+        value.tile->setBrush(unknown_brush);
         value.free = true;
-        value.hits = 0;
-        value.misses = 0;
-        value.cost = params.unknown_cost;
+        value.hits = 0.f;
+        value.misses = 0.f;
+        value.cost = unknown_cost;
         value.visited = false;
     }
 }
@@ -960,16 +1111,21 @@ std::vector<std::tuple<Grid::Key,Grid::T>> Grid::copy_submap(const Grid::Key &ce
     }
     //Get all occupied cost cells in cells
     for(auto &[upper, lower, brush, neigh] : wall_ranges)
+    {
         // get all cells with cost == upper
-        for (auto &&[k, v]: iter::filter([upper, lower](auto &v) { return std::get<1>(v).cost == upper; }, submap)){
+        for (auto &&[k, v]: iter::filter([upper](auto &v) { return std::get<1>(v).cost == upper; }, submap))
+        {
             // get all neighboors of these cells whose cost is lower than upper and are free
-            for (auto neighs = neigh(this, k, false); auto &&[kk, vv]: neighs | iter::filter([upper](auto &ve)
-                                                                                             { return std::get<1>(ve).cost < upper and std::get<1>(ve).free; }))
+            auto neighs = neigh(this, k, false);
+            for (auto &[kk, vv]: neighs)
             {
+                if (vv.cost >= upper || !vv.free)
+                    continue;
                 const auto &[ok, cell] = get_cell(kk);
                 regrown_cells.emplace_back(kk, cell);
             }
         }
+    }
     //emplace back all regrown_cells in submap
     for (auto &&[k, v]: regrown_cells)
     {

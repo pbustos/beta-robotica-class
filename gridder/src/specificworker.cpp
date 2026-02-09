@@ -40,23 +40,6 @@ SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, 
 			hibernationChecker.start(500);
 		#endif
 
-
-		// Example statemachine:
-		/***
-		//Your definition for the statesmachine (if you dont want use a execute function, use nullptr)
-		states["CustomState"] = std::make_unique<GRAFCETStep>("CustomState", period,
-															std::bind(&SpecificWorker::customLoop, this),  // Cyclic function
-															std::bind(&SpecificWorker::customEnter, this), // On-enter function
-															std::bind(&SpecificWorker::customExit, this)); // On-exit function
-
-		//Add your definition of transitions (addTransition(originOfSignal, signal, dstState))
-		states["CustomState"]->addTransition(states["CustomState"].get(), SIGNAL(entered()), states["OtherState"].get());
-		states["Compute"]->addTransition(this, SIGNAL(customSignal()), states["CustomState"].get()); //Define your signal in the .h file under the "Signals" section.
-
-		//Add your custom state
-		statemachine.addState(states["CustomState"].get());
-		***/
-
 		statemachine.setChildMode(QState::ExclusiveStates);
 		statemachine.start();
 
@@ -148,13 +131,17 @@ void SpecificWorker::initialize()
 }
 void SpecificWorker::compute()
 {
-    /// read LiDAR
+    // Get robot pose from Webots and return transform
+    // robot_pose = get_robot_pose();  // TODO: implement get_robot_pose()
+
+    // read LiDAR
     auto res_ = buffer_lidar_data.try_get();
     if (not res_.has_value())  {   /*qWarning() << "No data Lidar";*/ return; }
     auto points = res_.value();
 
     /// clear grid and update it
     mutex_path.lock();
+        grid.check_and_resize(points);
         grid.clear();  // sets all cells to initial values
         grid.update_map(points, Eigen::Vector2f{0.0, 0.0}, params.MAX_LIDAR_RANGE);
         grid.update_costs( params.ROBOT_SEMI_WIDTH, true);     // not color all cells
@@ -164,26 +151,23 @@ void SpecificWorker::compute()
     this->lcdNumber_hz->display(this->hz);
 }
 
-
-void SpecificWorker::emergency()
-{
-    std::cout << "Emergency worker" << std::endl;
-    //emergencyCODE
-    //
-    //if (SUCCESSFUL) //The componet is safe for continue
-    //  emmit goToRestore()
-}
-
-//Execute one when exiting to emergencyState
-void SpecificWorker::restore()
-{
-    std::cout << "Restore worker" << std::endl;
-    //restoreCODE
-    //Restore emergency component
-
-}
-
 ///////////////////////////////////////////////////////////////////////////////////////////////
+// Eigen::Affine2f SpecificWorker::get_robot_pose()
+// {
+//     RoboCompWebots2Robocomp::ObjectPose pose;
+//     Eigen::Affine2f robot_pose;
+//     try
+//     {
+//         pose = webots2robocomp_proxy->getObjectPose("shadow");
+//         //qInfo() << "Robot pose from Webots: x=" << pose.position.x << " y=" << pose.position.y << " z=" << pose.position.z;
+//         robot_pose.translation() = Eigen::Vector2f(-pose.position.y, pose.position.x);
+//         const auto yaw = yawFromQuaternion(pose.orientation);
+//         robot_pose.linear() = Eigen::Rotation2Df(yaw).toRotationMatrix();
+//     }
+//     catch (const Ice::Exception &e){ std::cout<<e.what()<<std::endl; return {};}
+//     return robot_pose;
+// }
+
 void SpecificWorker::read_lidar()
 {
     auto wait_period = std::chrono::milliseconds (getPeriod("Compute"));
@@ -426,4 +410,21 @@ int SpecificWorker::startup_check()
     std::cout << "Startup check" << std::endl;
     QTimer::singleShot(200, qApp, SLOT(quit()));
     return 0;
+}
+void SpecificWorker::emergency()
+{
+    std::cout << "Emergency worker" << std::endl;
+    //emergencyCODE
+    //
+    //if (SUCCESSFUL) //The componet is safe for continue
+    //  emmit goToRestore()
+}
+
+//Execute one when exiting to emergencyState
+void SpecificWorker::restore()
+{
+    std::cout << "Restore worker" << std::endl;
+    //restoreCODE
+    //Restore emergency component
+
 }
