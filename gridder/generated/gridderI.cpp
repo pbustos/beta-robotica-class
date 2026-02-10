@@ -36,8 +36,12 @@ GridderI::GridderI(GenericWorker *_worker, const size_t id): worker(_worker), id
 		[this]() { return worker->Gridder_getDimensions(); }
 	};
 
+	getMapHandlers = {
+		[this]() { return worker->Gridder_getMap(); }
+	};
+
 	getPathsHandlers = {
-		[this](auto a, auto b, auto c, auto d, auto e) { return worker->Gridder_getPaths(a, b, c, d, e); }
+		[this](auto a, auto b, auto c, auto d, auto e, auto f) { return worker->Gridder_getPaths(a, b, c, d, e, f); }
 	};
 
 	setGridDimensionsHandlers = {
@@ -112,7 +116,21 @@ RoboCompGridder::TDimensions GridderI::getDimensions(const Ice::Current&)
 
 }
 
-RoboCompGridder::Result GridderI::getPaths(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const Ice::Current&)
+RoboCompGridder::Map GridderI::getMap(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < getMapHandlers.size())
+		return  getMapHandlers[id]();
+	else
+		throw std::out_of_range("Invalid getMap id: " + std::to_string(id));
+
+}
+
+RoboCompGridder::Result GridderI::getPaths(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor, const Ice::Current&)
 {
 
     #ifdef HIBERNATION_ENABLED
@@ -120,7 +138,7 @@ RoboCompGridder::Result GridderI::getPaths(RoboCompGridder::TPoint source, RoboC
 	#endif
     
 	if (id < getPathsHandlers.size())
-		return  getPathsHandlers[id](source, target, maxPaths, tryClosestFreePoint, targetIsHuman);
+		return  getPathsHandlers[id](source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor);
 	else
 		throw std::out_of_range("Invalid getPaths id: " + std::to_string(id));
 

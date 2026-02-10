@@ -86,6 +86,10 @@ void SpecificWorker::initialize()
         // viewer->setSceneRect(params.GRID_MAX_DIM);
         viewer->show();
 
+        // Fit the view to show the initial grid area centered on robot
+        QRectF initial_view(-3000, -3000, 6000, 6000);  // 6m x 6m area centered on origin
+        viewer->fitToScene(initial_view);
+
         // Initialize grids (both available, selection via params.GRID_MODE)
         grid.initialize(params.GRID_MAX_DIM, static_cast<int>(params.TILE_SIZE), &viewer->scene);
         grid_esdf.initialize(static_cast<int>(params.TILE_SIZE), &viewer->scene);
@@ -315,7 +319,10 @@ void SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &point
     static constexpr float s = 20.f;
 
     for (auto *p : lidar_points)
+    {
         viewer->scene.removeItem(p);
+        delete p;  // Fix memory leak
+    }
     lidar_points.clear();
 
     const int stride = std::max(1, static_cast<int>(points_world.size() / params.MAX_LIDAR_DRAW_POINTS));
@@ -511,7 +518,10 @@ void SpecificWorker::draw_clusters(const std::vector<Cluster> &clusters, QGraphi
 
     // Limpiar items anteriores
     for (auto *item : cluster_items)
+    {
         scene->removeItem(item);
+        delete item;  // Fix memory leak
+    }
     cluster_items.clear();
 
     if (erase_only) return;
@@ -621,7 +631,10 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f> &path, QGraphi
     static constexpr float s = 100;
 
     for(auto p : points)
+    {
         scene->removeItem(p);
+        delete p;  // Fix memory leak
+    }
     points.clear();
 
     if(erase_only) return;
@@ -641,7 +654,10 @@ void SpecificWorker::draw_paths(const std::vector<std::vector<Eigen::Vector2f>> 
     static std::vector<QGraphicsEllipseItem*> points;
     static QColor colors[] = {QColor("cyan"), QColor("blue"), QColor("red"), QColor("orange"), QColor("magenta"), QColor("cyan")};
     for(auto p : points)
+    {
         scene->removeItem(p);
+        delete p;  // Fix memory leak
+    }
     points.clear();
 
     if(erase_only) return;
@@ -666,7 +682,8 @@ RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint
                                                          RoboCompGridder::TPoint target,
                                                          int max_paths,
                                                          bool tryClosestFreePoint,
-                                                         bool targetIsHuman)
+                                                         bool targetIsHuman,
+                                                         float safetyFactor)
 {
     //TODO: improve this method to try to find a path even if the target is not free by using the closest free point
     //TODO: if target is human, set safe area around as free
@@ -675,7 +692,7 @@ RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint
 
     auto begin = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     qInfo() << __FUNCTION__ << " New plan request: source [" << source.x << source.y << "], target [" << target.x << target.y << "]"
-            << " max_paths: " << max_paths;
+            << " max_paths: " << max_paths << " safety: " << safetyFactor;
 
     std::lock_guard<std::mutex> lock(mutex_path);
     std::string msg;
@@ -708,8 +725,8 @@ RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint
             }
             else
             {
-                // Use A* with ESDF cost and safety factor
-                auto path = grid_esdf.compute_path(src, tgt, params.ROBOT_SEMI_WIDTH, params.SAFETY_FACTOR);
+                // Use A* with ESDF cost and safety factor from parameter
+                auto path = grid_esdf.compute_path(src, tgt, params.ROBOT_SEMI_WIDTH, safetyFactor);
                 if (!path.empty())
                 {
                     paths.push_back(path);
@@ -862,14 +879,9 @@ RoboCompGridder::TDimensions SpecificWorker::Gridder_getDimensions()
             static_cast<float>(params.GRID_MAX_DIM.height())};
 }
 
-// NOTE: Uncomment when Map type is added to Gridder.idsl
-// Add these structs to Gridder.idsl:
-//   struct TCell { int x; int y; byte cost; };
-//   sequence <TCell> TCellVector;
-//   struct Map { int tileSize; TCellVector cells; };
-/*
 RoboCompGridder::Map SpecificWorker::Gridder_getMap()
 {
+    //qInfo() << __FUNCTION__ << " Requesting map. Current grid mode: " << (params.GRID_MODE == Params::GridMode::SPARSE_ESDF ? "SPARSE_ESDF" : (params.GRID_MODE == Params::GridMode::DENSE_ESDF ? "DENSE_ESDF" : "DENSE"));
     std::lock_guard<std::mutex> lock(mutex_path);
     RoboCompGridder::Map result;
 
@@ -914,7 +926,6 @@ RoboCompGridder::Map SpecificWorker::Gridder_getMap()
 
     return result;
 }
-*/
 
 bool SpecificWorker::Gridder_setGridDimensions(RoboCompGridder::TDimensions dimensions)
 {
@@ -964,8 +975,8 @@ RoboCompGridder::Result SpecificWorker::Gridder_setLocationAndGetPath(RoboCompGr
     }
 
     //get paths
-    auto result = Gridder_getPaths(source, target, 1, true, true);
-    
+    auto result = Gridder_getPaths(source, target, 1, true, true, params.SAFETY_FACTOR);
+
     //restore submap
     grid.paste_submap(submap_copy);
     mutex_path.unlock();

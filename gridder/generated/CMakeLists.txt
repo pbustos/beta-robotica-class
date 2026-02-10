@@ -36,15 +36,13 @@ SET (SOURCES
   main.cpp
   genericworker.cpp
   gridderI.cpp
-        ../src/grid_esdf.h
-        ../src/grid_esdf.cpp
 )
 
 
 #ROBOCOMP
 ROBOCOMP_INITIALIZE( $ENV{ROBOCOMP}/ )
-ROBOCOMP_IDSL_TO_ICE(Gridder Lidar3D Webots2Robocomp)
-ROBOCOMP_ICE_TO_SRC(Gridder Lidar3D Webots2Robocomp)
+ROBOCOMP_IDSL_TO_ICE(Lidar3D Webots2Robocomp Gridder)
+ROBOCOMP_ICE_TO_SRC(Lidar3D Webots2Robocomp Gridder)
 SET (EXECUTABLE_OUTPUT_PATH ${RC_COMPONENT_DEVEL_PATH}/bin)
 set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 

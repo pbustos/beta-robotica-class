@@ -115,6 +115,39 @@ struct Result
     }
 };
 
+struct TCell
+{
+    int x;
+    int y;
+    ::Ice::Byte cost;
+
+    /**
+     * Obtains a tuple containing all of the struct's data members.
+     * @return The data members in a tuple.
+     */
+    std::tuple<const int&, const int&, const ::Ice::Byte&> ice_tuple() const
+    {
+        return std::tie(x, y, cost);
+    }
+};
+
+using TCellVector = ::std::vector<TCell>;
+
+struct Map
+{
+    int tileSize;
+    ::RoboCompGridder::TCellVector cells;
+
+    /**
+     * Obtains a tuple containing all of the struct's data members.
+     * @return The data members in a tuple.
+     */
+    std::tuple<const int&, const ::RoboCompGridder::TCellVector&> ice_tuple() const
+    {
+        return std::tie(tileSize, cells);
+    }
+};
+
 using Ice::operator<;
 using Ice::operator<=;
 using Ice::operator>;
@@ -181,7 +214,12 @@ public:
     bool _iceD_getDimensions(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
-    virtual Result getPaths(TPoint source, TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::Ice::Current& current) = 0;
+    virtual Map getMap(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getMap(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual Result getPaths(TPoint source, TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor, const ::Ice::Current& current) = 0;
     /// \cond INTERNAL
     bool _iceD_getPaths(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
@@ -313,30 +351,55 @@ public:
     void _iceI_getDimensions(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::TDimensions>>&, const ::Ice::Context&);
     /// \endcond
 
-    Result getPaths(const TPoint& source, const TPoint& target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    Map getMap(const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
-        return _makePromiseOutgoing<::RoboCompGridder::Result>(true, this, &GridderPrx::_iceI_getPaths, source, target, maxPaths, tryClosestFreePoint, targetIsHuman, context).get();
+        return _makePromiseOutgoing<::RoboCompGridder::Map>(true, this, &GridderPrx::_iceI_getMap, context).get();
     }
 
     template<template<typename> class P = ::std::promise>
-    auto getPathsAsync(const TPoint& source, const TPoint& target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::Ice::Context& context = ::Ice::noExplicitContext)
-        -> decltype(::std::declval<P<::RoboCompGridder::Result>>().get_future())
+    auto getMapAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<::RoboCompGridder::Map>>().get_future())
     {
-        return _makePromiseOutgoing<::RoboCompGridder::Result, P>(false, this, &GridderPrx::_iceI_getPaths, source, target, maxPaths, tryClosestFreePoint, targetIsHuman, context);
+        return _makePromiseOutgoing<::RoboCompGridder::Map, P>(false, this, &GridderPrx::_iceI_getMap, context);
     }
 
     ::std::function<void()>
-    getPathsAsync(const TPoint& source, const TPoint& target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman,
+    getMapAsync(::std::function<void(::RoboCompGridder::Map)> response,
+                ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                ::std::function<void(bool)> sent = nullptr,
+                const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<::RoboCompGridder::Map>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_getMap, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_getMap(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Map>>&, const ::Ice::Context&);
+    /// \endcond
+
+    Result getPaths(const TPoint& source, const TPoint& target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::Result>(true, this, &GridderPrx::_iceI_getPaths, source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto getPathsAsync(const TPoint& source, const TPoint& target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor, const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<::RoboCompGridder::Result>>().get_future())
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::Result, P>(false, this, &GridderPrx::_iceI_getPaths, source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor, context);
+    }
+
+    ::std::function<void()>
+    getPathsAsync(const TPoint& source, const TPoint& target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor,
                   ::std::function<void(::RoboCompGridder::Result)> response,
                   ::std::function<void(::std::exception_ptr)> ex = nullptr,
                   ::std::function<void(bool)> sent = nullptr,
                   const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
-        return _makeLamdaOutgoing<::RoboCompGridder::Result>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_getPaths, source, target, maxPaths, tryClosestFreePoint, targetIsHuman, context);
+        return _makeLamdaOutgoing<::RoboCompGridder::Result>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_getPaths, source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor, context);
     }
 
     /// \cond INTERNAL
-    void _iceI_getPaths(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Result>>&, const TPoint&, const TPoint&, int, bool, bool, const ::Ice::Context&);
+    void _iceI_getPaths(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Result>>&, const TPoint&, const TPoint&, int, bool, bool, float, const ::Ice::Context&);
     /// \endcond
 
     bool setGridDimensions(const TDimensions& dimensions, const ::Ice::Context& context = ::Ice::noExplicitContext)
@@ -464,6 +527,40 @@ struct StreamReader<::RoboCompGridder::Result, S>
     }
 };
 
+template<>
+struct StreamableTraits<::RoboCompGridder::TCell>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 9;
+    static const bool fixedLength = true;
+};
+
+template<typename S>
+struct StreamReader<::RoboCompGridder::TCell, S>
+{
+    static void read(S* istr, ::RoboCompGridder::TCell& v)
+    {
+        istr->readAll(v.x, v.y, v.cost);
+    }
+};
+
+template<>
+struct StreamableTraits<::RoboCompGridder::Map>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 5;
+    static const bool fixedLength = false;
+};
+
+template<typename S>
+struct StreamReader<::RoboCompGridder::Map, S>
+{
+    static void read(S* istr, ::RoboCompGridder::Map& v)
+    {
+        istr->readAll(v.tileSize, v.cells);
+    }
+};
+
 }
 /// \endcond
 
@@ -543,6 +640,92 @@ struct Result
     bool valid;
 };
 
+struct TCell
+{
+    ::Ice::Int x;
+    ::Ice::Int y;
+    ::Ice::Byte cost;
+
+    bool operator==(const TCell& rhs_) const
+    {
+        if(this == &rhs_)
+        {
+            return true;
+        }
+        if(x != rhs_.x)
+        {
+            return false;
+        }
+        if(y != rhs_.y)
+        {
+            return false;
+        }
+        if(cost != rhs_.cost)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    bool operator<(const TCell& rhs_) const
+    {
+        if(this == &rhs_)
+        {
+            return false;
+        }
+        if(x < rhs_.x)
+        {
+            return true;
+        }
+        else if(rhs_.x < x)
+        {
+            return false;
+        }
+        if(y < rhs_.y)
+        {
+            return true;
+        }
+        else if(rhs_.y < y)
+        {
+            return false;
+        }
+        if(cost < rhs_.cost)
+        {
+            return true;
+        }
+        else if(rhs_.cost < cost)
+        {
+            return false;
+        }
+        return false;
+    }
+
+    bool operator!=(const TCell& rhs_) const
+    {
+        return !operator==(rhs_);
+    }
+    bool operator<=(const TCell& rhs_) const
+    {
+        return operator<(rhs_) || operator==(rhs_);
+    }
+    bool operator>(const TCell& rhs_) const
+    {
+        return !operator<(rhs_) && !operator==(rhs_);
+    }
+    bool operator>=(const TCell& rhs_) const
+    {
+        return !operator<(rhs_);
+    }
+};
+
+typedef ::std::vector<TCell> TCellVector;
+
+struct Map
+{
+    ::Ice::Int tileSize;
+    ::RoboCompGridder::TCellVector cells;
+};
+
 }
 
 namespace RoboCompGridder
@@ -579,6 +762,14 @@ typedef ::IceUtil::Handle< Callback_Gridder_getClosestFreePoint_Base> Callback_G
  */
 class Callback_Gridder_getDimensions_Base : public virtual ::IceInternal::CallbackBase { };
 typedef ::IceUtil::Handle< Callback_Gridder_getDimensions_Base> Callback_Gridder_getDimensionsPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getMap.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getMap.
+ */
+class Callback_Gridder_getMap_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_getMap_Base> Callback_Gridder_getMapPtr;
 
 /**
  * Base class for asynchronous callback wrapper classes used for calls to
@@ -768,41 +959,79 @@ private:
 
 public:
 
-    ::RoboCompGridder::Result getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    ::RoboCompGridder::Map getMap(const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
-        return end_getPaths(_iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, context, ::IceInternal::dummyCallback, 0, true));
+        return end_getMap(_iceI_begin_getMap(context, ::IceInternal::dummyCallback, 0, true));
     }
 
-    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    ::Ice::AsyncResultPtr begin_getMap(const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
-        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, context, ::IceInternal::dummyCallback, 0);
+        return _iceI_begin_getMap(context, ::IceInternal::dummyCallback, 0);
     }
 
-    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    ::Ice::AsyncResultPtr begin_getMap(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
     {
-        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, ::Ice::noExplicitContext, cb, cookie);
+        return _iceI_begin_getMap(::Ice::noExplicitContext, cb, cookie);
     }
 
-    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    ::Ice::AsyncResultPtr begin_getMap(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
     {
-        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, context, cb, cookie);
+        return _iceI_begin_getMap(context, cb, cookie);
     }
 
-    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::RoboCompGridder::Callback_Gridder_getPathsPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    ::Ice::AsyncResultPtr begin_getMap(const ::RoboCompGridder::Callback_Gridder_getMapPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
     {
-        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, ::Ice::noExplicitContext, cb, cookie);
+        return _iceI_begin_getMap(::Ice::noExplicitContext, cb, cookie);
     }
 
-    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_getPathsPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    ::Ice::AsyncResultPtr begin_getMap(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_getMapPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
     {
-        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, context, cb, cookie);
+        return _iceI_begin_getMap(context, cb, cookie);
+    }
+
+    ::RoboCompGridder::Map end_getMap(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_getMap(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    ::RoboCompGridder::Result getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, ::Ice::Float safetyFactor, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_getPaths(_iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor, context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, ::Ice::Float safetyFactor, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor, context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, ::Ice::Float safetyFactor, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor, ::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, ::Ice::Float safetyFactor, const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor, context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, ::Ice::Float safetyFactor, const ::RoboCompGridder::Callback_Gridder_getPathsPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor, ::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getPaths(const ::RoboCompGridder::TPoint& source, const ::RoboCompGridder::TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, ::Ice::Float safetyFactor, const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_getPathsPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor, context, cb, cookie);
     }
 
     ::RoboCompGridder::Result end_getPaths(const ::Ice::AsyncResultPtr& result);
 
 private:
 
-    ::Ice::AsyncResultPtr _iceI_begin_getPaths(const ::RoboCompGridder::TPoint&, const ::RoboCompGridder::TPoint&, ::Ice::Int, bool, bool, const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+    ::Ice::AsyncResultPtr _iceI_begin_getPaths(const ::RoboCompGridder::TPoint&, const ::RoboCompGridder::TPoint&, ::Ice::Int, bool, bool, ::Ice::Float, const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
 
 public:
 
@@ -965,7 +1194,12 @@ public:
     bool _iceD_getDimensions(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
-    virtual Result getPaths(const TPoint& source, const TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    virtual Map getMap(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getMap(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual Result getPaths(const TPoint& source, const TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, ::Ice::Float safetyFactor, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
     /// \cond INTERNAL
     bool _iceD_getPaths(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
@@ -1101,6 +1335,64 @@ struct StreamReader< ::RoboCompGridder::Result, S>
         istr->read(v.timestamp);
         istr->read(v.errorMsg);
         istr->read(v.valid);
+    }
+};
+
+template<>
+struct StreamableTraits< ::RoboCompGridder::TCell>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 9;
+    static const bool fixedLength = true;
+};
+
+template<typename S>
+struct StreamWriter< ::RoboCompGridder::TCell, S>
+{
+    static void write(S* ostr, const ::RoboCompGridder::TCell& v)
+    {
+        ostr->write(v.x);
+        ostr->write(v.y);
+        ostr->write(v.cost);
+    }
+};
+
+template<typename S>
+struct StreamReader< ::RoboCompGridder::TCell, S>
+{
+    static void read(S* istr, ::RoboCompGridder::TCell& v)
+    {
+        istr->read(v.x);
+        istr->read(v.y);
+        istr->read(v.cost);
+    }
+};
+
+template<>
+struct StreamableTraits< ::RoboCompGridder::Map>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 5;
+    static const bool fixedLength = false;
+};
+
+template<typename S>
+struct StreamWriter< ::RoboCompGridder::Map, S>
+{
+    static void write(S* ostr, const ::RoboCompGridder::Map& v)
+    {
+        ostr->write(v.tileSize);
+        ostr->write(v.cells);
+    }
+};
+
+template<typename S>
+struct StreamReader< ::RoboCompGridder::Map, S>
+{
+    static void read(S* istr, ::RoboCompGridder::Map& v)
+    {
+        istr->read(v.tileSize);
+        istr->read(v.cells);
     }
 };
 
@@ -1716,6 +2008,158 @@ template<class T, typename CT> Callback_Gridder_getDimensionsPtr
 newCallback_Gridder_getDimensions(T* instance, void (T::*cb)(const TDimensions&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
 {
     return new Callback_Gridder_getDimensions<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getMap.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getMap.
+ */
+template<class T>
+class CallbackNC_Gridder_getMap : public Callback_Gridder_getMap_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(const Map&);
+
+    CallbackNC_Gridder_getMap(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        Map ret;
+        try
+        {
+            ret = proxy->end_getMap(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getMap.
+ */
+template<class T> Callback_Gridder_getMapPtr
+newCallback_Gridder_getMap(const IceUtil::Handle<T>& instance, void (T::*cb)(const Map&), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getMap<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getMap.
+ */
+template<class T> Callback_Gridder_getMapPtr
+newCallback_Gridder_getMap(T* instance, void (T::*cb)(const Map&), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getMap<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getMap.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getMap.
+ */
+template<class T, typename CT>
+class Callback_Gridder_getMap : public Callback_Gridder_getMap_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(const Map&, const CT&);
+
+    Callback_Gridder_getMap(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        Map ret;
+        try
+        {
+            ret = proxy->end_getMap(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getMap.
+ */
+template<class T, typename CT> Callback_Gridder_getMapPtr
+newCallback_Gridder_getMap(const IceUtil::Handle<T>& instance, void (T::*cb)(const Map&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getMap<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getMap.
+ */
+template<class T, typename CT> Callback_Gridder_getMapPtr
+newCallback_Gridder_getMap(T* instance, void (T::*cb)(const Map&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getMap<T, CT>(instance, cb, excb, sentcb);
 }
 
 /**

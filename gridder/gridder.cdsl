@@ -1,3 +1,27 @@
+/*
+ * Gridder Component
+ * =================
+ *
+ * A RoboComp component that creates and maintains a 2D occupancy grid from
+ * LiDAR sensor data, providing efficient path planning capabilities using
+ * Euclidean Signed Distance Fields (ESDF).
+ *
+ * Features:
+ *   - Sparse ESDF grid (VoxBlox-style, memory efficient)
+ *   - Real-time LiDAR integration with log-odds updates
+ *   - A* path planning with configurable safety factor
+ *   - World coordinate system with robot pose tracking
+ *   - ICE interface for remote path planning queries
+ *
+ * Documentation:
+ *   - README.md              : Component overview and usage
+ *   - GRIDDER_MATH.md        : Mathematical derivation of log-odds occupancy
+ *   - ESDF_IMPLEMENTATION.md : ESDF algorithm and implementation details
+ *
+ * Author: RoboLab - University of Extremadura
+ * Date: 2024-2025
+ */
+
 import "Lidar3D.idsl";
 import "Gridder.idsl";
 import "Webots2Robocomp.idsl";
@@ -12,4 +36,3 @@ Component gridder
     language Cpp11;
     gui Qt(QWidget);
 };
-

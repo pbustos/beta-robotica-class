@@ -58,6 +58,7 @@ const ::std::string iceC_RoboCompGridder_Gridder_ops[] =
     "LineOfSightToTarget",
     "getClosestFreePoint",
     "getDimensions",
+    "getMap",
     "getPaths",
     "ice_id",
     "ice_ids",
@@ -70,6 +71,7 @@ const ::std::string iceC_RoboCompGridder_Gridder_IsPathBlocked_name = "IsPathBlo
 const ::std::string iceC_RoboCompGridder_Gridder_LineOfSightToTarget_name = "LineOfSightToTarget";
 const ::std::string iceC_RoboCompGridder_Gridder_getClosestFreePoint_name = "getClosestFreePoint";
 const ::std::string iceC_RoboCompGridder_Gridder_getDimensions_name = "getDimensions";
+const ::std::string iceC_RoboCompGridder_Gridder_getMap_name = "getMap";
 const ::std::string iceC_RoboCompGridder_Gridder_getPaths_name = "getPaths";
 const ::std::string iceC_RoboCompGridder_Gridder_setGridDimensions_name = "setGridDimensions";
 const ::std::string iceC_RoboCompGridder_Gridder_setLocationAndGetPath_name = "setLocationAndGetPath";
@@ -170,6 +172,20 @@ RoboCompGridder::Gridder::_iceD_getDimensions(::IceInternal::Incoming& inS, cons
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_getMap(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    Map ret = this->getMap(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceD_getPaths(::IceInternal::Incoming& inS, const ::Ice::Current& current)
 {
     _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
@@ -179,9 +195,10 @@ RoboCompGridder::Gridder::_iceD_getPaths(::IceInternal::Incoming& inS, const ::I
     int iceP_maxPaths;
     bool iceP_tryClosestFreePoint;
     bool iceP_targetIsHuman;
-    istr->readAll(iceP_source, iceP_target, iceP_maxPaths, iceP_tryClosestFreePoint, iceP_targetIsHuman);
+    float iceP_safetyFactor;
+    istr->readAll(iceP_source, iceP_target, iceP_maxPaths, iceP_tryClosestFreePoint, iceP_targetIsHuman, iceP_safetyFactor);
     inS.endReadParams();
-    Result ret = this->getPaths(::std::move(iceP_source), ::std::move(iceP_target), iceP_maxPaths, iceP_tryClosestFreePoint, iceP_targetIsHuman, current);
+    Result ret = this->getPaths(::std::move(iceP_source), ::std::move(iceP_target), iceP_maxPaths, iceP_tryClosestFreePoint, iceP_targetIsHuman, iceP_safetyFactor, current);
     auto ostr = inS.startWriteParams();
     ostr->writeAll(ret);
     inS.endWriteParams();
@@ -230,7 +247,7 @@ RoboCompGridder::Gridder::_iceD_setLocationAndGetPath(::IceInternal::Incoming& i
 bool
 RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice::Current& current)
 {
-    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_ops, iceC_RoboCompGridder_Gridder_ops + 11, current.operation);
+    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_ops, iceC_RoboCompGridder_Gridder_ops + 12, current.operation);
     if(r.first == r.second)
     {
         throw ::Ice::OperationNotExistException(__FILE__, __LINE__, current.id, current.facet, current.operation);
@@ -256,29 +273,33 @@ RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice:
         }
         case 4:
         {
-            return _iceD_getPaths(in, current);
+            return _iceD_getMap(in, current);
         }
         case 5:
         {
-            return _iceD_ice_id(in, current);
+            return _iceD_getPaths(in, current);
         }
         case 6:
         {
-            return _iceD_ice_ids(in, current);
+            return _iceD_ice_id(in, current);
         }
         case 7:
         {
-            return _iceD_ice_isA(in, current);
+            return _iceD_ice_ids(in, current);
         }
         case 8:
         {
-            return _iceD_ice_ping(in, current);
+            return _iceD_ice_isA(in, current);
         }
         case 9:
         {
-            return _iceD_setGridDimensions(in, current);
+            return _iceD_ice_ping(in, current);
         }
         case 10:
+        {
+            return _iceD_setGridDimensions(in, current);
+        }
+        case 11:
         {
             return _iceD_setLocationAndGetPath(in, current);
         }
@@ -346,13 +367,24 @@ RoboCompGridder::GridderPrx::_iceI_getDimensions(const ::std::shared_ptr<::IceIn
 
 /// \cond INTERNAL
 void
-RoboCompGridder::GridderPrx::_iceI_getPaths(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Result>>& outAsync, const TPoint& iceP_source, const TPoint& iceP_target, int iceP_maxPaths, bool iceP_tryClosestFreePoint, bool iceP_targetIsHuman, const ::Ice::Context& context)
+RoboCompGridder::GridderPrx::_iceI_getMap(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Map>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getMap_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_getMap_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_getPaths(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Result>>& outAsync, const TPoint& iceP_source, const TPoint& iceP_target, int iceP_maxPaths, bool iceP_tryClosestFreePoint, bool iceP_targetIsHuman, float iceP_safetyFactor, const ::Ice::Context& context)
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getPaths_name);
     outAsync->invoke(iceC_RoboCompGridder_Gridder_getPaths_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
         [&](::Ice::OutputStream* ostr)
         {
-            ostr->writeAll(iceP_source, iceP_target, iceP_maxPaths, iceP_tryClosestFreePoint, iceP_targetIsHuman);
+            ostr->writeAll(iceP_source, iceP_target, iceP_maxPaths, iceP_tryClosestFreePoint, iceP_targetIsHuman, iceP_safetyFactor);
         },
         nullptr);
 }
@@ -416,6 +448,8 @@ const ::std::string iceC_RoboCompGridder_Gridder_LineOfSightToTarget_name = "Lin
 const ::std::string iceC_RoboCompGridder_Gridder_getClosestFreePoint_name = "getClosestFreePoint";
 
 const ::std::string iceC_RoboCompGridder_Gridder_getDimensions_name = "getDimensions";
+
+const ::std::string iceC_RoboCompGridder_Gridder_getMap_name = "getMap";
 
 const ::std::string iceC_RoboCompGridder_Gridder_getPaths_name = "getPaths";
 
@@ -614,7 +648,47 @@ IceProxy::RoboCompGridder::Gridder::end_getDimensions(const ::Ice::AsyncResultPt
 }
 
 ::Ice::AsyncResultPtr
-IceProxy::RoboCompGridder::Gridder::_iceI_begin_getPaths(const ::RoboCompGridder::TPoint& iceP_source, const ::RoboCompGridder::TPoint& iceP_target, ::Ice::Int iceP_maxPaths, bool iceP_tryClosestFreePoint, bool iceP_targetIsHuman, const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_getMap(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getMap_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_getMap_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_getMap_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_getMap_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+::RoboCompGridder::Map
+IceProxy::RoboCompGridder::Gridder::end_getMap(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_getMap_name);
+    ::RoboCompGridder::Map ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_getPaths(const ::RoboCompGridder::TPoint& iceP_source, const ::RoboCompGridder::TPoint& iceP_target, ::Ice::Int iceP_maxPaths, bool iceP_tryClosestFreePoint, bool iceP_targetIsHuman, ::Ice::Float iceP_safetyFactor, const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getPaths_name, sync);
     ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_getPaths_name, del, cookie, sync);
@@ -627,6 +701,7 @@ IceProxy::RoboCompGridder::Gridder::_iceI_begin_getPaths(const ::RoboCompGridder
         ostr->write(iceP_maxPaths);
         ostr->write(iceP_tryClosestFreePoint);
         ostr->write(iceP_targetIsHuman);
+        ostr->write(iceP_safetyFactor);
         result->endWriteParams();
         result->invoke(iceC_RoboCompGridder_Gridder_getPaths_name);
     }
@@ -879,6 +954,20 @@ RoboCompGridder::Gridder::_iceD_getDimensions(::IceInternal::Incoming& inS, cons
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_getMap(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    Map ret = this->getMap(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceD_getPaths(::IceInternal::Incoming& inS, const ::Ice::Current& current)
 {
     _iceCheckMode(::Ice::Normal, current.mode);
@@ -888,13 +977,15 @@ RoboCompGridder::Gridder::_iceD_getPaths(::IceInternal::Incoming& inS, const ::I
     ::Ice::Int iceP_maxPaths;
     bool iceP_tryClosestFreePoint;
     bool iceP_targetIsHuman;
+    ::Ice::Float iceP_safetyFactor;
     istr->read(iceP_source);
     istr->read(iceP_target);
     istr->read(iceP_maxPaths);
     istr->read(iceP_tryClosestFreePoint);
     istr->read(iceP_targetIsHuman);
+    istr->read(iceP_safetyFactor);
     inS.endReadParams();
-    Result ret = this->getPaths(iceP_source, iceP_target, iceP_maxPaths, iceP_tryClosestFreePoint, iceP_targetIsHuman, current);
+    Result ret = this->getPaths(iceP_source, iceP_target, iceP_maxPaths, iceP_tryClosestFreePoint, iceP_targetIsHuman, iceP_safetyFactor, current);
     ::Ice::OutputStream* ostr = inS.startWriteParams();
     ostr->write(ret);
     inS.endWriteParams();
@@ -950,6 +1041,7 @@ const ::std::string iceC_RoboCompGridder_Gridder_all[] =
     "LineOfSightToTarget",
     "getClosestFreePoint",
     "getDimensions",
+    "getMap",
     "getPaths",
     "ice_id",
     "ice_ids",
@@ -965,7 +1057,7 @@ const ::std::string iceC_RoboCompGridder_Gridder_all[] =
 bool
 RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice::Current& current)
 {
-    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_all, iceC_RoboCompGridder_Gridder_all + 11, current.operation);
+    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_all, iceC_RoboCompGridder_Gridder_all + 12, current.operation);
     if(r.first == r.second)
     {
         throw ::Ice::OperationNotExistException(__FILE__, __LINE__, current.id, current.facet, current.operation);
@@ -991,29 +1083,33 @@ RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice:
         }
         case 4:
         {
-            return _iceD_getPaths(in, current);
+            return _iceD_getMap(in, current);
         }
         case 5:
         {
-            return _iceD_ice_id(in, current);
+            return _iceD_getPaths(in, current);
         }
         case 6:
         {
-            return _iceD_ice_ids(in, current);
+            return _iceD_ice_id(in, current);
         }
         case 7:
         {
-            return _iceD_ice_isA(in, current);
+            return _iceD_ice_ids(in, current);
         }
         case 8:
         {
-            return _iceD_ice_ping(in, current);
+            return _iceD_ice_isA(in, current);
         }
         case 9:
         {
-            return _iceD_setGridDimensions(in, current);
+            return _iceD_ice_ping(in, current);
         }
         case 10:
+        {
+            return _iceD_setGridDimensions(in, current);
+        }
+        case 11:
         {
             return _iceD_setLocationAndGetPath(in, current);
         }

@@ -36,7 +36,8 @@ public:
 	bool LineOfSightToTarget(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, float robotRadius, const Ice::Current&);
 	RoboCompGridder::TPoint getClosestFreePoint(RoboCompGridder::TPoint source, const Ice::Current&);
 	RoboCompGridder::TDimensions getDimensions(const Ice::Current&);
-	RoboCompGridder::Result getPaths(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, const Ice::Current&);
+	RoboCompGridder::Map getMap(const Ice::Current&);
+	RoboCompGridder::Result getPaths(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor, const Ice::Current&);
 	bool setGridDimensions(RoboCompGridder::TDimensions dimensions, const Ice::Current&);
 	RoboCompGridder::Result setLocationAndGetPath(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, RoboCompGridder::TPointVector freePoints, RoboCompGridder::TPointVector obstaclePoints, const Ice::Current&);
 
@@ -50,7 +51,8 @@ private:
 	std::array<std::function<bool(RoboCompGridder::TPoint, RoboCompGridder::TPoint, float)>, 1> LineOfSightToTargetHandlers;
 	std::array<std::function<RoboCompGridder::TPoint(RoboCompGridder::TPoint)>, 1> getClosestFreePointHandlers;
 	std::array<std::function<RoboCompGridder::TDimensions(void)>, 1> getDimensionsHandlers;
-	std::array<std::function<RoboCompGridder::Result(RoboCompGridder::TPoint, RoboCompGridder::TPoint, int, bool, bool)>, 1> getPathsHandlers;
+	std::array<std::function<RoboCompGridder::Map(void)>, 1> getMapHandlers;
+	std::array<std::function<RoboCompGridder::Result(RoboCompGridder::TPoint, RoboCompGridder::TPoint, int, bool, bool, float)>, 1> getPathsHandlers;
 	std::array<std::function<bool(RoboCompGridder::TDimensions)>, 1> setGridDimensionsHandlers;
 	std::array<std::function<RoboCompGridder::Result(RoboCompGridder::TPoint, RoboCompGridder::TPoint, RoboCompGridder::TPointVector, RoboCompGridder::TPointVector)>, 1> setLocationAndGetPathHandlers;
 

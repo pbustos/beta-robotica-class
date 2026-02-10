@@ -24,6 +24,27 @@ gridder_autogen/timestamp: \
 	/home/pbustos/robocomp/robocomp_core/classes/grafcetStep/GRAFCETStep.h \
 	/home/pbustos/robocomp/robocomp_core/classes/threadpool/threadpool.h \
 	/home/pbustos/robocomp/robocomp_core/classes/timer/timer.h \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CMakeFindDependencyMacro.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CheckCSourceCompiles.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CheckCXXCompilerFlag.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CheckCXXSourceCompiles.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CheckIncludeFile.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CheckLibraryExists.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/FeatureSummary.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/FindIce.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/FindOpenGL.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/FindPackageHandleStandardArgs.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/FindPackageMessage.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/FindPkgConfig.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/FindThreads.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/FindVulkan.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/GNUInstallDirs.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/Internal/CheckCompilerFlag.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/Internal/CheckFlagCommonConfig.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/Internal/CheckSourceCompiles.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/MacroAddFileDependencies.cmake \
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/SelectLibraryConfigurations.cmake \
 	/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp \
 	/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.h \
 	/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp \
@@ -1477,26 +1498,5 @@ gridder_autogen/timestamp: \
 	/usr/local/include/toml++/impl/yaml_formatter.inl \
 	/usr/local/include/toml++/toml.h \
 	/usr/local/include/toml++/toml.hpp \
-	/usr/share/cmake-3.28/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake \
-	/usr/share/cmake-3.28/Modules/CMakeFindDependencyMacro.cmake \
-	/usr/share/cmake-3.28/Modules/CheckCSourceCompiles.cmake \
-	/usr/share/cmake-3.28/Modules/CheckCXXCompilerFlag.cmake \
-	/usr/share/cmake-3.28/Modules/CheckCXXSourceCompiles.cmake \
-	/usr/share/cmake-3.28/Modules/CheckIncludeFile.cmake \
-	/usr/share/cmake-3.28/Modules/CheckLibraryExists.cmake \
-	/usr/share/cmake-3.28/Modules/FeatureSummary.cmake \
-	/usr/share/cmake-3.28/Modules/FindIce.cmake \
-	/usr/share/cmake-3.28/Modules/FindOpenGL.cmake \
-	/usr/share/cmake-3.28/Modules/FindPackageHandleStandardArgs.cmake \
-	/usr/share/cmake-3.28/Modules/FindPackageMessage.cmake \
-	/usr/share/cmake-3.28/Modules/FindPkgConfig.cmake \
-	/usr/share/cmake-3.28/Modules/FindThreads.cmake \
-	/usr/share/cmake-3.28/Modules/FindVulkan.cmake \
-	/usr/share/cmake-3.28/Modules/GNUInstallDirs.cmake \
-	/usr/share/cmake-3.28/Modules/Internal/CheckCompilerFlag.cmake \
-	/usr/share/cmake-3.28/Modules/Internal/CheckFlagCommonConfig.cmake \
-	/usr/share/cmake-3.28/Modules/Internal/CheckSourceCompiles.cmake \
-	/usr/share/cmake-3.28/Modules/MacroAddFileDependencies.cmake \
-	/usr/share/cmake-3.28/Modules/SelectLibraryConfigurations.cmake \
 	/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mainUI.ui \
-	/usr/bin/cmake
+	/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/bin/cmake

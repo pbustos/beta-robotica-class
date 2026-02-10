@@ -1,148 +1,245 @@
-# gridder
-A brief introduction to the component. Describe its purpose, functionality, and any specific features here.
+# Gridder - 2D Occupancy Grid with ESDF-based Path Planning
 
-Connects to both LiDARs and provides a grid representation of the environment, which can be used for navigation, obstacle avoidance, or other purposes.
-Builds a 2D grid and updates it with the data from the LiDARs. 
-Provides methods to plan a paths between two points
+A RoboComp component that creates and maintains a 2D occupancy grid from LiDAR sensor data, providing efficient path planning capabilities using Euclidean Signed Distance Fields (ESDF).
+
+## Features
+
+- **Sparse ESDF Grid**: VoxBlox-style implementation that only stores obstacle cells, making it memory-efficient for large environments
+- **Real-time LiDAR Integration**: Processes point clouds from multiple LiDAR sensors
+- **A* Path Planning**: With ESDF-based cost function for smooth, collision-free paths
+- **Safety Factor**: Configurable parameter (0-1) to control how close paths get to obstacles
+- **World Coordinates**: Grid operates in absolute world coordinates with robot pose tracking
+- **Dynamic Resizing**: Grid automatically expands to accommodate new obstacles
+- **Network Interface**: ICE-based interface for remote path planning queries
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Gridder                               │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
+│  │ LiDAR Thread│───▶│  Grid ESDF  │───▶│  Visualizer │     │
+│  └─────────────┘    └─────────────┘    └─────────────┘     │
+│         │                  │                                 │
+│         ▼                  ▼                                 │
+│  ┌─────────────┐    ┌─────────────┐                         │
+│  │ Robot Pose  │    │ Path Planner│                         │
+│  │   Buffer    │    │    (A*)     │                         │
+│  └─────────────┘    └─────────────┘                         │
+├─────────────────────────────────────────────────────────────┤
+│                    ICE Interface                             │
+│  getPaths() | getMap() | LineOfSightToTarget() | ...        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Grid Modes
+
+The component supports three grid modes:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `SPARSE_ESDF` | Only stores obstacles (VoxBlox-style) | Large environments, memory-constrained |
+| `DENSE_ESDF` | Full grid with ESDF optimization | Medium environments, fast queries |
+| `DENSE` | Original ray-casting approach | Small environments, high accuracy |
+
+## Path Planning
+
+### Safety Factor
+
+The `safety_factor` parameter (0.0 - 1.0) controls path behavior:
+
+- **0.0**: Shortest path, may touch obstacle boundaries (green cells)
+- **0.5**: Balanced between distance and safety
+- **1.0**: Maximum safety, strongly prefers center of free space
+
+```
+safety_factor = 0.0          safety_factor = 1.0
+                             
+    ████████                     ████████
+    █      █                     █      █
+  ──█──────█──  (short path)     █  ──  █  (safe path)
+    █      █                     █ /  \ █
+    ████████                     ████/──\████
+```
+
+### Cost Function
+
+The A* planner uses an ESDF-based cost:
+
+```
+cost = move_cost + esdf_cost × safety_factor × safety_scale
+
+where:
+  - move_cost = tile_size (or tile_size × √2 for diagonal)
+  - esdf_cost = distance-based penalty near obstacles
+  - safety_scale = 1 + safety_factor² × 10  (range 1-11x)
+```
+
+## Obstacle Detection
+
+Obstacles are confirmed using a log-odds approach:
+
+1. **Hit**: `log_odds += 1.0` (LiDAR hit on cell)
+2. **Miss**: `log_odds -= 0.4` (LiDAR ray passes through)
+3. **Threshold**: Cell becomes obstacle when `log_odds >= 2.0` AND `hits >= 3` AND has neighbor support
+
+### Inflation Layers
+
+```
+┌───┬───┬───┬───┬───┐
+│   │ G │ G │ G │   │   G = Green (cost: 100)
+├───┼───┼───┼───┼───┤   O = Orange (cost: 200)  
+│ G │ O │ O │ O │ G │   R = Red (cost: 255, obstacle)
+├───┼───┼───┼───┼───┤
+│ G │ O │ R │ O │ G │
+├───┼───┼───┼───┼───┤
+│ G │ O │ O │ O │ G │
+├───┼───┼───┼───┼───┤
+│   │ G │ G │ G │   │
+└───┴───┴───┴───┴───┘
+```
+
+## ICE Interface
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor)` | Compute paths between two points |
+| `getMap()` | Get serialized map (obstacles + inflation) |
+| `LineOfSightToTarget(source, target, robotRadius)` | Check if direct path is free |
+| `IsPathBlocked(path)` | Check if existing path is blocked |
+| `getClosestFreePoint(source)` | Find nearest free cell to a point |
+| `getDimensions()` | Get grid dimensions |
+| `setGridDimensions(dimensions)` | Set grid dimensions |
+
+### Map Serialization
+
+The `getMap()` method returns a compact representation:
+
+```idsl
+struct TCell {
+    int x;      // mm - cell x position
+    int y;      // mm - cell y position  
+    byte cost;  // 0=free, 255=obstacle, intermediate=inflation
+};
+
+struct Map {
+    int tileSize;       // mm - size of each cell (default: 100)
+    TCellVector cells;  // only cells with cost > 0
+};
+```
+
+**Transmission size**: ~9 bytes per cell (only non-free cells transmitted)
+
+## Configuration
+
+Key parameters in `specificworker.h`:
+
+```cpp
+struct Params {
+    float TILE_SIZE = 100;           // mm - grid resolution
+    float ROBOT_WIDTH = 460;         // mm
+    float ROBOT_LENGTH = 480;        // mm
+    float MAX_LIDAR_RANGE = 15000;   // mm
+    float SAFETY_FACTOR = 0.5f;      // 0=fast, 1=safe
+    GridMode GRID_MODE = GridMode::SPARSE_ESDF;
+};
 ```
 
 ## Dependencies
-The following dependencies are required to build and run gridder. Ensure they are installed and properly configured on your system before proceeding:
-```
-<YOUR DEPENDENCIES>
-```
 
-## Configuration parameters
-Like any other component, gridder requires a configuration file to start. In etc/config or etc/config.toml, you can find an example of the configuration file.
+- Qt6 (Widgets, OpenGL)
+- Eigen3
+- OpenCV
+- Ice (ZeroC)
+- RoboComp core libraries
 
-## Starting the component
-To avoid modifying the config file directly in the repository, you can copy it to the component's home directory. This prevents changes from being overridden by future `git pull` commands:
+## Building
 
 ```bash
-cd <gridder's path> 
-cp etc/config etc/yourConfig
+cd gridder
+cmake -B build
+make -C build -j$(nproc)
 ```
 
-After editing the new config file we can run the component:
+## Running
 
 ```bash
-cmake -B build && make -C build -j12 # Compile the component
-bin/gridder etc/yourConfig # Execute the component
+# Copy and edit config
+cp etc/config etc/myconfig
+# Edit myconfig with your LiDAR and robot proxy endpoints
+
+# Run
+bin/gridder etc/myconfig
 ```
------
------
+
+## UI Controls
+
+- **Left Click**: Set path target
+- **Right Click**: Cancel current path
+- **Mouse Wheel**: Zoom
+- **Right Drag**: Pan view
+
+## Performance
+
+| Metric | SPARSE_ESDF | DENSE |
+|--------|-------------|-------|
+| Memory (10m×10m) | ~50KB | ~1MB |
+| Update rate | 10-15 Hz | 5-10 Hz |
+| Path planning | 1-5 ms | 5-20 ms |
+
+## References
+
+- [VoxBlox: Incremental 3D Euclidean Signed Distance Fields](https://github.com/ethz-asl/voxblox)
+- [Log-odds Occupancy Grids](https://en.wikipedia.org/wiki/Occupancy_grid_mapping)
+
+### Documentation Files
+
+| File | Description |
+|------|-------------|
+| [GRIDDER_MATH.md](GRIDDER_MATH.md) | Mathematical derivation of log-odds occupancy grid update formula |
+| [ESDF_IMPLEMENTATION.md](ESDF_IMPLEMENTATION.md) | VoxBlox-style ESDF implementation details and algorithms |
+| [slam10-gridmaps.md](slam10-gridmaps.md) | Reference material on probabilistic grid mapping (based on Thrun's SLAM course) |
+| [slam10-gridmaps.pdf](slam10-gridmaps.pdf) | Original PDF slides on grid mapping |
+
+---
+
 # Developer Notes
-This section explains how to work with the generated code of gridder, including what can be modified and how to use key features.
+
 ## Editable Files
-You can freely edit the following files:
-- etc/* – Configuration files
-- src/* – Component logic and implementation
-- README.md – Documentation
 
-The `generated` folder contains autogenerated files. **Do not edit these files directly**, as they will be overwritten every time the component is regenerated with RoboComp.
+- `src/*` – Component logic and implementation
+- `etc/*` – Configuration files
+- `README.md` – This documentation
 
-## ConfigLoader
-The `ConfigLoader` simplifies fetching configuration parameters. Use the `get<>()` method to retrieve parameters from the configuration file.
-```C++
-// Syntax
-type variable = this->configLoader.get<type>("ParameterName");
+**Do not edit** files in `generated/` - they are auto-generated.
 
-// Example
-int computePeriod = this->configLoader.get<int>("Period.Compute");
+## State Machine
+
+The component uses RoboComp's state machine:
+
+1. **Initialize**: Setup grids, viewer, LiDAR thread
+2. **Compute**: Main loop - read LiDAR, update grid, handle requests
+3. **Emergency**: Handle error conditions
+4. **Restore**: Recovery from emergency
+
+## Adding New Features
+
+1. Grid operations: Edit `src/grid_esdf.cpp`
+2. Path planning: Edit `compute_path()` in `grid_esdf.cpp`
+3. Interface methods: Edit `src/specificworker.cpp`
+4. Visualization: Edit `update_visualization()` in `grid_esdf.cpp`
+
+## Debugging
+
+Enable debug output in `compute_path()`:
+```cpp
+qDebug() << "[A*] Computing path..." << "safety:" << safety_factor;
 ```
 
-## StateMachine
-RoboComp components utilize a state machine to manage the main execution flow. The default states are:
-
-1. **Initialize**:
-    - Executes once after the constructor.
-    - May use for parameter initialization, opening devices, and calculating constants.
-2. **Compute**:
-    - Executes cyclically after Initialize.
-    - Place your functional logic here. If an emergency is detected, call goToEmergency() to transition to the Emergency state.
-3. **Emergency**:
-    - Executes cyclically during emergencies.
-    - Once resolved, call goToRestore() to transition to the Restore state.
-4. **Restore**:
-    - Executes once to restore the component after an emergency.
-    - Transitions automatically back to the Compute state.
-
-### Setting and Getting State Periods
-You can get the period of some state with de function `getPeriod` and set with `setPeriod`
-```C++
-int currentPeriod = getPeriod("Compute");   // Get the current Compute period
-setPeriod("Compute", currentPeriod * 0.5); // Set Compute period to half
-```
-
-### Creating Custom States
-To add a custom state, follow these steps in the constructor:
-1. **Define Your State** Use `GRAFCETStep` to create your state. If any function is not required, use `nullptr`.
-
-```C++
-states["CustomState"] = std::make_unique<GRAFCETStep>("CustomState", period, 
-                                                      std::bind(&SpecificWorker::customLoop, this),  // Cyclic function
-                                                      std::bind(&SpecificWorker::customEnter, this), // On-enter function
-                                                      std::bind(&SpecificWorker::customExit, this)); // On-exit function
-
-```
-2. **Define Transitions** Add transitions between states using `addTransition`. You can trigger transitions using Qt signals such as `entered()` and `exited()` or custom signals in .h.
-```C++
-// Syntax
-states[srcState]->addTransition(originOfSignal, signal, dstState)
-
-// Example
-states["CustomState"]->addTransition(states["CustomState"].get(), SIGNAL(entered()), states["OtherState"].get());
-states["Compute"]->addTransition(this, SIGNAL(customSignal()), states["CustomState"].get());
-
-```
-3. **Add State to the StateMachine** Include your state in the state machine:
-```C++
-statemachine.addState(states["CustomState"].get());
-
-```
-
-## Hibernation Flag
-The `#define HIBERNATION_ENABLED` flag in `specificworker.h` activates hibernation mode. When enabled, the component reduces its state execution frequency to 500ms if no method calls are received within 5 seconds. Once a method call is received, the period is restored to its original value.
-
-Default hibernation monitoring runs every 500ms.
-
-## Changes Introduced in the New Code Generator
-If you’re regenerating or adapting old components, here’s what has changed:
-
-- Deprecated classes removed: `CommonBehavior`, `InnerModel`, `AGM`, `Monitors`, and `src/config.h`.
-- Configuration parsing replaced with the new `ConfigLoader`, supporting both .`toml` and legacy configuration formats.
-- Skeleton code split: `generated` (non-editable) and `src` (editable).
-- Component period is now configurable in the configuration file.
-- State machine integrated with predefined states: `Initialize`, `Compute`, `Emergency`, and `Restore`.
-- With the `dsr` option, you generate `G` in the GenericWorker, making the viewer independent. If you want to use the `dsrviewer`, you will need the `Qt GUI (QMainWindow)` and the `dsr` option enabled in the **CDSL**.
-- Strings in the legacy config now need to be enclosed in quotes (`""`).
-
-## Adapting Old Components
-To adapt older components to the new structure:
-
-1. **Add** `Period.Compute` and `Period.Emergency` and swap Endpoints and Proxies with their names in the `etc/config` file.
-2. **Merge** the new `src/CMakeLists.txt` and the old `CMakeListsSpecific` files.
-3. **Modify** `specificworker.h`:
-    - Add the `HIBERNATION_ENABLED` flag.
-    - Update the constructor signature.
-    - Replace `setParams` with state definitions (`Initialize`, `Compute`, etc.).
-4. **Modify** `specificworker.cpp`:
-    - Refactor the constructor entirely.
-    - Move `setParams` logic to the `initialize` state using `ConfigLoader.get<>()`.
-    - Remove the old timer and period logic and replace it with `getPeriod()` and `setPeriod()`.
-    - Add the new function state `Emergency`, and `Restore`.
-    - Add the following code to the implements and publish functions:
-        ```C++
-        #ifdef HIBERNATION_ENABLED
-            hibernation = true;
-        #endif
-        ```
-5. **Update Configuration Strings**, ensure all strings in the `config` under legacy are enclosed in quotes (`""`), as required by the new structure.
-6. **Using DSR**, if you use the DSR option, note that `G` is generated in `GenericWorker`, making the viewer independent. However, to use the `dsrviewer`, you must integrate a `Qt GUI (QMainWindow)` and enable the `dsr` option in the **CDSL**. 
-7. **Installing toml++**, to use the new .toml configuration format, install the toml++ library:
-```bash
-mkdir ~/software 2> /dev/null; git clone https://github.com/marzer/tomlplusplus.git ~/software/tomlplusplus
-cd ~/software/tomlplusplus && cmake -B build && sudo make install -C build -j12 && cd -
-```
-bin/gridder config
+View LiDAR points:
+```cpp
+params.DRAW_LIDAR_POINTS = true;
 ```

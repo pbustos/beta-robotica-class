@@ -2,6 +2,7 @@
 
 [Proxies]
 # Proxies for required interfaces
+Gridder = "gridder:tcp -h localhost -p 0"
 Lidar3D = "lidar3d:tcp -h localhost -p 0"
 Lidar3D1 = "lidar3d:tcp -h localhost -p 0"
 Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 0"

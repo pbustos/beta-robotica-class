@@ -1,19 +1,19 @@
 
-# Endpoints for implemented interfaces
-Endpoints.Gridder = "tcp -p 13541"
+# Endpoints for implements interfaces
+Endpoints.Gridder = "tcp -p 10100"
 
 # Proxies for required interfaces
 Proxies.Lidar3D = "lidar3d:tcp -h localhost -p 11990"
 Proxies.Lidar3D1 = "lidar3d:tcp -h localhost -p 11989"   # bpearl
+Proxies.Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 10020"
 
-
+# Execution periods (ms)
 Period.Compute = 100
 Period.Emergency = 500
 
+# Ice configuration
 Ice.Warn.Connections = "0"
 Ice.Trace.Network = "0"
 Ice.Trace.Protocol = "0"
 Ice.MessageSizeMax = "20004800"
 
-Period.Compute = 100
-Period.Emergency = 500

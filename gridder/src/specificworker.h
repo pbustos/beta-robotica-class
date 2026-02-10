@@ -98,22 +98,21 @@ class SpecificWorker : public GenericWorker
          * @param max_paths Maximum number of alternative paths to compute
          * @param tryClosestFreePoint If true, finds closest free point when target is blocked
          * @param targetIsHuman Whether the target is a human (affects pathfinding behavior)
+         * @param safetyFactor 0.0=shortest path, 1.0=safest path (prefer center of free space)
          * @return Result containing computed paths and status information
          */
         RoboCompGridder::Result Gridder_getPaths(RoboCompGridder::TPoint source,
                                                  RoboCompGridder::TPoint target,
                                                  int max_paths,
                                                  bool tryClosestFreePoint,
-                                                 bool targetIsHuman);
-        //RoboCompGridder::Result Gridder_getPaths_unlocked(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, int max_paths,
-        //bool tryClosestFreePoint, bool targetIsHuman);
+                                                 bool targetIsHuman,
+                                                 float safetyFactor);
 
     /**
          * @brief Returns the current map with obstacle cells and their costs
          * @return Map structure containing cells with cost > 0
-         * NOTE: Uncomment when Map type is added to Gridder.idsl
          */
-        // RoboCompGridder::Map Gridder_getMap();
+        RoboCompGridder::Map Gridder_getMap();
 
     /**
 		 * @brief Sets the dimensions of the grid
@@ -122,7 +121,7 @@ class SpecificWorker : public GenericWorker
 		 */
 		bool Gridder_setGridDimensions(RoboCompGridder::TDimensions dimensions);
 
-	/**
+		/**
 		 * @brieg Sets the location of the robot and the target, updates the grid with the free and obstacle points, computes paths from source to target and returns them
 		 * @param source
 		 * @param target
@@ -131,6 +130,7 @@ class SpecificWorker : public GenericWorker
 		 * @return
 		 */
 		RoboCompGridder::Result Gridder_setLocationAndGetPath(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, RoboCompGridder::TPointVector freePoints, RoboCompGridder::TPointVector obstaclePoints);
+
 
 		/**
 		 * \brief Initializes the worker one time.
@@ -237,8 +237,8 @@ class SpecificWorker : public GenericWorker
 	    struct Cluster
 	    {
 	        std::vector<Eigen::Vector2f> points;
-	        Eigen::Vector2f centroid;
-	        float min_dist_to_robot;
+	        Eigen::Vector2f centroid = Eigen::Vector2f::Zero();
+	        float min_dist_to_robot = 0.f;
 	        std::vector<Eigen::Vector2f> convex_hull;  // optional convex hull
 	    };
 	    std::vector<Cluster> cluster_lidar_points(const std::vector<Eigen::Vector2f> &points,
@@ -254,11 +254,6 @@ class SpecificWorker : public GenericWorker
 		Eigen::Affine2f get_robot_pose();
 
 	float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
-
-	    // Do some work
-	    //RoboCompGridPlanner::TPlan compute_line_of_sight_target(const Target &target);
-	    //RoboCompGridPlanner::TPlan compute_plan_from_grid(const Target &target);
-	    //void adapt_grid_size(const Target &target,  const RoboCompGridPlanner::Points &path);   // EXPERIMENTAL
 
 };
 
