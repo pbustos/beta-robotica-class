@@ -33,6 +33,7 @@
 
 #include <genericworker.h>
 #include "grid.h"
+#include "grid_esdf.h"
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include <Eigen/Eigen>
 #include "abstract_graphic_viewer/abstract_graphic_viewer.h"
@@ -184,6 +185,18 @@ class SpecificWorker : public GenericWorker
 	        bool DISPLAY = true ; //TODO: config file
 	        bool DRAW_LIDAR_POINTS = true;  // debug: draw LiDAR points
 	        int MAX_LIDAR_DRAW_POINTS = 1500; // debug: limit number of points drawn
+	        // Clustering parameters
+	        bool DRAW_CLUSTERS = false;  // draw detected obstacle clusters
+	        float CLUSTER_DISTANCE_THRESHOLD = 300.f;  // mm - base distance threshold for clustering
+	        int CLUSTER_MIN_POINTS = 3;  // minimum points to form a valid cluster
+	        // Grid mode selection
+	        enum class GridMode { DENSE, DENSE_ESDF, SPARSE_ESDF };
+	        GridMode GRID_MODE = GridMode::SPARSE_ESDF;  // Options:
+	            // DENSE: original ray casting (accurate, slow for large maps)
+	            // DENSE_ESDF: dense grid with ESDF optimization
+	            // SPARSE_ESDF: sparse grid, only obstacles stored (fastest, most memory efficient)
+	        // Deprecated: USE_ESDF_MODE (use GRID_MODE instead)
+	        bool USE_ESDF_MODE = false;  // kept for backward compatibility
 	    };
 	    Params params;
 
@@ -199,8 +212,9 @@ class SpecificWorker : public GenericWorker
 	    std::atomic<bool> stop_lidar_thread{false};
 	    void read_lidar();
 
-	    // grid
-	    Grid grid;
+	    // Grids (two implementations available)
+	    Grid grid;              // Dense grid (original)
+	    GridESDF grid_esdf;     // Sparse ESDF grid (VoxBlox-style)
 
 	    // FPS
 	    FPSCounter fps;
@@ -210,6 +224,21 @@ class SpecificWorker : public GenericWorker
 	    void draw_paths(const std::vector<std::vector<Eigen::Vector2f>> &paths, QGraphicsScene *scene, bool erase_only=false);
 	    void draw_path(const std::vector<Eigen::Vector2f> &path, QGraphicsScene *scene, bool erase_only=false);
 	    void draw_lidar_points(const std::vector<Eigen::Vector2f> &points_world);
+
+	    // Clustering for obstacle detection
+	    struct Cluster
+	    {
+	        std::vector<Eigen::Vector2f> points;
+	        Eigen::Vector2f centroid;
+	        float min_dist_to_robot;
+	        std::vector<Eigen::Vector2f> convex_hull;  // optional convex hull
+	    };
+	    std::vector<Cluster> cluster_lidar_points(const std::vector<Eigen::Vector2f> &points,
+	                                              const Eigen::Vector2f &robot_pos,
+	                                              float distance_threshold = 300.f,
+	                                              int min_points = 3);
+	    std::vector<Eigen::Vector2f> compute_convex_hull(const std::vector<Eigen::Vector2f> &points);
+	    void draw_clusters(const std::vector<Cluster> &clusters, QGraphicsScene *scene, bool erase_only = false);
 
 	    // mutex
 	    std::mutex mutex_path;

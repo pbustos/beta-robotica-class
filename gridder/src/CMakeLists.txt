@@ -2,11 +2,13 @@
 LIST(APPEND SOURCES
   ../src/specificworker.cpp
   ../src/grid.cpp
+  ../src/grid_esdf.cpp
 )
 # Headers set
 LIST(APPEND HEADERS
   ../src/specificworker.h
   ../src/grid.h
+  ../src/grid_esdf.h
   ${ROBOCOMP}/abstract_graphic_viewer/abstract_graphic_viewer.h
 )
 

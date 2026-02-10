@@ -52,6 +52,11 @@ public:
             float hits = 0;
             float misses = 0;
             float log_odds = 0.0f;  // Log-odds representation for occupancy probability
+            // ESDF fields (VoxBlox style)
+            float tsdf = 0.0f;      // Truncated Signed Distance (accumulated)
+            float tsdf_weight = 0.0f;  // Weight for TSDF accumulation
+            float esdf = std::numeric_limits<float>::max();  // Euclidean Signed Distance
+            bool esdf_fixed = false;  // True if this cell is a seed (obstacle boundary)
             QGraphicsRectItem *tile;
             // methods to save and read values to disk
             void save(std::ostream &os) const
@@ -85,7 +90,13 @@ public:
         void update_map(const std::vector<Eigen::Vector2f> &points,
                         const Eigen::Affine2f &robot_in_grid,
                         float max_laser_range);
+        // ESDF-based map update (VoxBlox style) - more efficient for large maps
+        void update_map_esdf(const std::vector<Eigen::Vector2f> &points,
+                             const Eigen::Affine2f &robot_in_grid,
+                             float max_laser_range);
         void update_costs(float robot_semi_width, bool color_all_cells=true);
+        // ESDF-based cost update - uses pre-computed ESDF for inflation
+        void update_costs_esdf(float robot_radius, bool color_all_cells=true);
         inline std::tuple<bool, T &> get_cell(const Key &k);
         Key point_to_key(long int x, long int z) const;
         Key point_to_key(const QPointF &p) const;
@@ -182,6 +193,10 @@ public:
         std::vector<Eigen::Vector2f> decimate_path(const std::vector<Eigen::Vector2f> &path, unsigned int step=2);
         std::optional<QPointF> closestMatching_spiralMove(const QPointF &p, const std::function<bool(std::pair<Grid::Key, Grid::T>)> &pred);
         void set_all_costs(float value);
+
+        // ESDF propagation helpers
+        void propagate_esdf_lower(std::vector<Key> &seeds);  // Dijkstra multi-source
+        void propagate_esdf_raise(std::vector<Key> &invalidated);  // Invalidation wave
 
 
         struct Params

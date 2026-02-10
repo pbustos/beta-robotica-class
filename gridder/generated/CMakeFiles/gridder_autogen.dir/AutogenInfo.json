@@ -238,6 +238,12 @@
 			null
 		],
 		[
+			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.h",
+			"MU",
+			"VNU7RW3YIC/moc_grid_esdf.cpp",
+			null
+		],
+		[
 			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/specificworker.h",
 			"MU",
 			"VNU7RW3YIC/moc_specificworker.cpp",
@@ -282,7 +288,6 @@
 		"ICE_CPP11_MAPPING",
 		"QT_CORE_LIB",
 		"QT_GUI_LIB",
-		"QT_NO_DEBUG",
 		"QT_OPENGL_LIB",
 		"QT_STATEMACHINE_LIB",
 		"QT_WIDGETS_LIB",
@@ -376,6 +381,11 @@
 		],
 		[
 			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid.cpp",
+			"MU",
+			null
+		],
+		[
+			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.cpp",
 			"MU",
 			null
 		],

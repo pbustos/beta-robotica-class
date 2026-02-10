@@ -72,7 +72,7 @@ generated/gridder_autogen/timestamp: /usr/lib/qt6/libexec/moc
 generated/gridder_autogen/timestamp: /usr/lib/qt6/libexec/uic
 generated/gridder_autogen/timestamp: generated/CMakeFiles/gridder_autogen.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Automatic MOC and UIC for target gridder"
-	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/cmake -E cmake_autogen /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/CMakeFiles/gridder_autogen.dir/AutogenInfo.json ""
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/cmake -E cmake_autogen /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/CMakeFiles/gridder_autogen.dir/AutogenInfo.json Debug
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/cmake -E touch /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/timestamp
 
 gridder_autogen: generated/CMakeFiles/gridder_autogen

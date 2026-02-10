@@ -8,6 +8,7 @@
 #include <cppitertools/count.hpp>
 #include <set>
 #include <queue>
+#include <algorithm>
 
 void Grid::resize_grid(QRectF new_dim)
 {
@@ -291,19 +292,20 @@ inline void Grid::add_miss(const Eigen::Vector2f &p)
         auto &v = it->second;
         v.misses += 1.f;
         // Log-odds update for free space (miss)
-        // Increased l_free to -0.4 to clear cells faster when robot moves
-        // This still requires ~4 observations to counter one hit (1.4/0.4 ≈ 3.5:1)
-        constexpr float l_free = -0.4f;   // log-odds decrease for free observation
+        // Using moderate l_free for stability (like ROS2 obstacle_layer)
+        constexpr float l_free = -0.3f;   // log-odds decrease for free observation
         constexpr float l_min = -2.0f;    // minimum log-odds (high confidence free)
         constexpr float l_max = 4.0f;     // maximum log-odds (high confidence occupied)
 
         v.log_odds += l_free;
         v.log_odds = std::clamp(v.log_odds, l_min, l_max);
 
-        // Convert log-odds to probability for visualization
+        // Convert log-odds to probability
         float prob = 1.0f - 1.0f / (1.0f + std::exp(v.log_odds));
 
-        if(prob < params.occupancy_threshold_low)
+        // Hysteresis: only clear if well below threshold (reduces flickering)
+        // Cell must be more confident free before switching state
+        if(prob < params.occupancy_threshold_low && v.log_odds < -0.5f)
         {
             v.free = true;
             v.cost = params.free_cost;
@@ -320,18 +322,20 @@ inline void Grid::add_hit(const Eigen::Vector2f &p)
         auto &v = it->second;
         v.hits += 1.f;
         // Log-odds update for occupied space (hit)
-        // l_occ increased to 1.4 for faster obstacle detection (1 hit ≈ 80% probability)
-        constexpr float l_occ = 1.4f;    // log-odds increase for occupied observation
+        // Higher l_occ for faster obstacle detection but requires multiple hits for stability
+        constexpr float l_occ = 1.2f;    // log-odds increase for occupied observation
         constexpr float l_min = -2.0f;   // minimum log-odds (high confidence free)
         constexpr float l_max = 4.0f;    // maximum log-odds (high confidence occupied)
 
         v.log_odds += l_occ;
         v.log_odds = std::clamp(v.log_odds, l_min, l_max);
 
-        // Convert log-odds to probability for visualization
+        // Convert log-odds to probability
         float prob = 1.0f - 1.0f / (1.0f + std::exp(v.log_odds));
 
-        if(prob >= params.occupancy_threshold_high)
+        // Hysteresis: only mark occupied if well above threshold (reduces flickering)
+        // Requires at least 2 hits to mark as occupied (log_odds > 2.0 after 2 hits)
+        if(prob >= params.occupancy_threshold_high && v.log_odds > 1.5f)
         {
             v.free = false;
             v.cost = params.occupied_cost;
@@ -831,7 +835,34 @@ void Grid::update_costs(float robot_semi_width, bool color_all_cells)
     static QBrush orange_brush(QColor("Orange"));
     static QBrush green_brush(QColor("LightGreen"));
 
-    // First pass: normalize costs and colors for observed cells only
+    // === PASS 1: Denoise - Remove isolated occupied cells (like ROS2 DenoiseLayer) ===
+    // A cell needs at least 2 occupied neighbors to be considered a valid obstacle
+    std::vector<Key> isolated_to_clear;
+    for (auto &[k, v]: fmap)
+    {
+        if(v.free) continue;  // skip free cells
+
+        int occ_neighbors = 0;
+        for (const auto &[nk, nv] : neighboors_8(k, true))
+        {
+            if(!nv.free) occ_neighbors++;
+        }
+        // If less than 2 occupied neighbors, mark as isolated noise
+        if(occ_neighbors < 2)
+            isolated_to_clear.push_back(k);
+    }
+    // Clear isolated cells
+    for (const auto &k : isolated_to_clear)
+    {
+        auto &&[ok, cell] = get_cell(k);
+        if(!ok) continue;
+        cell.free = true;
+        cell.cost = params.free_cost;
+        // Don't reset log_odds completely - just reduce it
+        cell.log_odds = std::max(cell.log_odds - 0.5f, -2.0f);
+    }
+
+    // === PASS 2: Normalize costs and colors for all cells ===
     for (auto &[k, v]: fmap)
     {
         const bool is_unknown = (v.hits == 0.f && v.misses == 0.f);
@@ -855,7 +886,8 @@ void Grid::update_costs(float robot_semi_width, bool color_all_cells)
         }
     }
 
-    // Second pass: grow occupied into observed free cells with >=5/8 occupied neighbors
+    // === PASS 3: Grow occupied cells (fill small gaps) ===
+    // Only mark as occupied if >=5/8 neighbors are occupied
     std::vector<Key> to_occupy;
     to_occupy.reserve(fmap.size() / 8);
 
@@ -888,9 +920,10 @@ void Grid::update_costs(float robot_semi_width, bool color_all_cells)
             cell.tile->setBrush(occ_brush);
     }
 
-    // Third pass: add orange layer around occupied cells with half the weight
+    // === PASS 4: Inflation layer 1 - Orange (exponential decay like ROS2) ===
     std::vector<Key> to_orange;
     to_orange.reserve(fmap.size() / 8);
+    // ROS2 uses: cost = INSCRIBED * exp(-cost_scaling_factor * (distance - inscribed_radius))
     const float half_occ_cost = params.occupied_cost / 2.f;
 
     for (auto &[k, v]: fmap)
@@ -913,7 +946,7 @@ void Grid::update_costs(float robot_semi_width, bool color_all_cells)
             cell.tile->setBrush(orange_brush);
     }
 
-    // Fourth pass: add green layer (2 cells) around orange cells with quarter weight
+    // === PASS 5: Inflation layer 2 - Green (quarter weight) ===
     std::vector<Key> to_green;
     to_green.reserve(fmap.size() / 8);
     const float quarter_occ_cost = params.occupied_cost / 4.f;
@@ -936,7 +969,7 @@ void Grid::update_costs(float robot_semi_width, bool color_all_cells)
             cell.tile->setBrush(green_brush);
     }
 
-    // Fifth pass: second green layer around first green layer
+    // === PASS 6: Inflation layer 3 - Second green ring (eighth weight) ===
     std::vector<Key> to_green2;
     to_green2.reserve(fmap.size() / 8);
     const float eighth_occ_cost = params.occupied_cost / 8.f;
@@ -959,6 +992,299 @@ void Grid::update_costs(float robot_semi_width, bool color_all_cells)
             cell.tile->setBrush(green_brush);
     }
 }
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+/// ESDF-based map update (VoxBlox style)
+/// Much more efficient than ray casting for large maps
+//////////////////////////////////////////////////////////////////////////////////////////////
+
+void Grid::update_map_esdf(const std::vector<Eigen::Vector2f> &points,
+                           const Eigen::Affine2f &robot_in_grid,
+                           float max_laser_range)
+{
+    if (points.empty()) return;
+
+    const float tile_size_f = static_cast<float>(params.tile_size);
+    const float range_threshold = max_laser_range * 0.95f;  // Ignore max-range returns
+    const float step_size = tile_size_f * 2.0f;  // Sample every 2 cells for free space (fast)
+
+    const Eigen::Vector2f robot_pos = robot_in_grid.translation();
+
+    // Track modified cells for ESDF propagation
+    std::vector<Key> obstacle_seeds;
+    obstacle_seeds.reserve(points.size());
+
+    static QBrush free_brush(QColor(params.free_color));
+    static QBrush occ_brush(QColor(params.occupied_color));
+
+    for (const auto &point : points)
+    {
+        const Eigen::Vector2f delta = point - robot_pos;
+        const float range = delta.norm();
+
+        // Skip invalid ranges
+        if (range < tile_size_f) continue;
+
+        const bool is_max_range = (range >= range_threshold);
+
+        if (!is_max_range)
+        {
+            // === Mark obstacle cell (endpoint) ===
+            Key hit_key = point_to_key(point);
+            auto hit_it = fmap.find(hit_key);
+            if (hit_it != fmap.end())
+            {
+                auto &cell = hit_it->second;
+                cell.hits += 1.f;
+
+                // Log-odds update for occupied
+                constexpr float l_occ = 1.2f;
+                constexpr float l_max = 4.0f;
+                cell.log_odds = std::min(cell.log_odds + l_occ, l_max);
+
+                if (cell.log_odds > 1.5f)
+                {
+                    cell.free = false;
+                    cell.esdf = 0.0f;
+                    cell.esdf_fixed = true;
+                    cell.tile->setBrush(occ_brush);
+                    obstacle_seeds.push_back(hit_key);
+                }
+            }
+        }
+
+        // === Mark free cells along ray (sparse sampling for efficiency) ===
+        // Instead of Bresenham (visits every cell), we sample at step_size intervals
+        const Eigen::Vector2f dir = delta.normalized();
+        const float trace_range = is_max_range ? range : (range - tile_size_f);  // Don't clear the hit cell
+
+        for (float t = tile_size_f; t < trace_range; t += step_size)
+        {
+            Eigen::Vector2f sample = robot_pos + dir * t;
+            Key free_key = point_to_key(sample);
+
+            auto free_it = fmap.find(free_key);
+            if (free_it == fmap.end()) continue;
+
+            auto &cell = free_it->second;
+
+            // Only update if not already marked as obstacle
+            if (cell.free || cell.log_odds < 1.0f)
+            {
+                cell.misses += 1.f;
+
+                // Log-odds update for free
+                constexpr float l_free = -0.3f;
+                constexpr float l_min = -2.0f;
+                cell.log_odds = std::max(cell.log_odds + l_free, l_min);
+
+                if (cell.log_odds < -0.5f)
+                {
+                    cell.free = true;
+                    cell.esdf_fixed = false;
+                    cell.tile->setBrush(free_brush);
+                }
+            }
+        }
+    }
+
+    // Remove duplicates
+    std::sort(obstacle_seeds.begin(), obstacle_seeds.end());
+    obstacle_seeds.erase(std::unique(obstacle_seeds.begin(), obstacle_seeds.end()), obstacle_seeds.end());
+
+    // === PHASE 2: Propagate ESDF from obstacle cells (Dijkstra multi-source) ===
+    if (!obstacle_seeds.empty())
+    {
+        propagate_esdf_lower(obstacle_seeds);
+    }
+}
+
+/**
+ * @brief Propagate ESDF using Dijkstra multi-source algorithm
+ *
+ * This is the "lower wave" from VoxBlox - propagates distances outward from obstacles.
+ * Complexity: O(n log n) where n = number of cells affected
+ *
+ * @param seeds Cells where ESDF = 0 (obstacle boundaries)
+ */
+void Grid::propagate_esdf_lower(std::vector<Key> &seeds)
+{
+    const float tile_size_f = static_cast<float>(params.tile_size);
+
+    // Priority queue: (distance, key)
+    using QueueElement = std::pair<float, Key>;
+    std::priority_queue<QueueElement, std::vector<QueueElement>, std::greater<QueueElement>> pq;
+
+    // Initialize queue with seeds
+    for (const auto &k : seeds)
+    {
+        auto &&[ok, cell] = get_cell(k);
+        if (ok && !cell.free)
+        {
+            cell.esdf = 0.0f;
+            cell.esdf_fixed = true;
+            pq.push({0.0f, k});
+        }
+    }
+
+    // Dijkstra propagation
+    while (!pq.empty())
+    {
+        auto [dist, current] = pq.top();
+        pq.pop();
+
+        auto &&[ok, cell] = get_cell(current);
+        if (!ok) continue;
+
+        // Skip if we already found a better path
+        if (dist > cell.esdf) continue;
+
+        // Propagate to 4-connected neighbors (faster than 8-connected)
+        static const std::vector<std::pair<int, int>> neighbors_4 = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+
+        for (const auto &[dx, dy] : neighbors_4)
+        {
+            Key neighbor_key = {current.first + dx, current.second + dy};
+            auto it = fmap.find(neighbor_key);
+            if (it == fmap.end()) continue;
+
+            auto &neighbor = it->second;
+            const float new_dist = dist + tile_size_f;
+
+            // Update if we found a shorter path
+            if (new_dist < neighbor.esdf && !neighbor.esdf_fixed)
+            {
+                neighbor.esdf = new_dist;
+                pq.push({new_dist, neighbor_key});
+            }
+        }
+    }
+}
+
+/**
+ * @brief Invalidate ESDF values when obstacles are removed (raise wave)
+ *
+ * This is the "raise wave" from VoxBlox - invalidates distances that depended
+ * on a removed obstacle.
+ *
+ * @param invalidated Cells whose obstacle was removed
+ */
+void Grid::propagate_esdf_raise(std::vector<Key> &invalidated)
+{
+    const float tile_size_f = static_cast<float>(params.tile_size);
+
+    std::queue<Key> raise_queue;
+    for (const auto &k : invalidated)
+    {
+        auto &&[ok, cell] = get_cell(k);
+        if (ok)
+        {
+            cell.esdf = std::numeric_limits<float>::max();
+            cell.esdf_fixed = false;
+            raise_queue.push(k);
+        }
+    }
+
+    // BFS to invalidate dependent cells
+    while (!raise_queue.empty())
+    {
+        Key current = raise_queue.front();
+        raise_queue.pop();
+
+        auto &&[ok, cell] = get_cell(current);
+        if (!ok) continue;
+
+        static const std::vector<std::pair<int, int>> neighbors_4 = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+
+        for (const auto &[dx, dy] : neighbors_4)
+        {
+            Key neighbor_key = {current.first + dx, current.second + dy};
+            auto it = fmap.find(neighbor_key);
+            if (it == fmap.end()) continue;
+
+            auto &neighbor = it->second;
+
+            // If neighbor's ESDF depended on the invalidated cell
+            if (!neighbor.esdf_fixed && neighbor.esdf < std::numeric_limits<float>::max())
+            {
+                // Check if this neighbor could have come from current
+                if (std::abs(neighbor.esdf - cell.esdf - tile_size_f) < tile_size_f * 0.1f)
+                {
+                    neighbor.esdf = std::numeric_limits<float>::max();
+                    raise_queue.push(neighbor_key);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * @brief Update costs using pre-computed ESDF for efficient inflation
+ *
+ * Uses the ESDF to compute cost gradients around obstacles.
+ * Much more efficient than iterative neighbor expansion.
+ *
+ * @param robot_radius Robot radius for collision checking
+ * @param color_all_cells Whether to update visual colors
+ */
+void Grid::update_costs_esdf(float robot_radius, bool color_all_cells)
+{
+    static QBrush free_brush(QColor(params.free_color));
+    static QBrush occ_brush(QColor(params.occupied_color));
+    static QBrush unknown_brush(QColor(params.unknown_color));
+    static QBrush orange_brush(QColor("Orange"));
+    static QBrush green_brush(QColor("LightGreen"));
+
+    const float tile_size_f = static_cast<float>(params.tile_size);
+
+    // Inflation distances (in mm)
+    const float inflation_radius_1 = tile_size_f * 1.5f;  // Orange zone
+    const float inflation_radius_2 = tile_size_f * 3.0f;  // Green zone
+
+    for (auto &[k, v] : fmap)
+    {
+        const bool is_unknown = (v.hits == 0.f && v.misses == 0.f);
+
+        if (is_unknown)
+        {
+            v.cost = params.unknown_cost;
+            if (color_all_cells)
+                v.tile->setBrush(unknown_brush);
+        }
+        else if (!v.free || v.esdf <= 0.0f)
+        {
+            // Obstacle cell
+            v.cost = params.occupied_cost;
+            if (color_all_cells)
+                v.tile->setBrush(occ_brush);
+        }
+        else if (v.esdf < inflation_radius_1)
+        {
+            // Close to obstacle - orange zone
+            // Exponential decay: cost = occ_cost * exp(-alpha * (esdf - 0))
+            const float alpha = 2.0f / inflation_radius_1;
+            v.cost = params.occupied_cost * std::exp(-alpha * v.esdf);
+            if (color_all_cells)
+                v.tile->setBrush(orange_brush);
+        }
+        else if (v.esdf < inflation_radius_2)
+        {
+            // Medium distance - green zone
+            const float alpha = 1.0f / inflation_radius_2;
+            v.cost = params.occupied_cost * 0.25f * std::exp(-alpha * (v.esdf - inflation_radius_1));
+            if (color_all_cells)
+                v.tile->setBrush(green_brush);
+        }
+        else
+        {
+            // Far from obstacle - free
+            v.cost = params.free_cost;
+            if (color_all_cells)
+                v.tile->setBrush(free_brush);
+        }
+    }
+}
+
 void Grid::update_map(const std::vector<Eigen::Vector2f> &points,
                       const Eigen::Affine2f &robot_in_grid,
                       float max_laser_range)

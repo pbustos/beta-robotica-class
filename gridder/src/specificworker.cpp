@@ -86,8 +86,9 @@ void SpecificWorker::initialize()
         // viewer->setSceneRect(params.GRID_MAX_DIM);
         viewer->show();
 
-        // Grid
+        // Initialize grids (both available, selection via params.GRID_MODE)
         grid.initialize(params.GRID_MAX_DIM, static_cast<int>(params.TILE_SIZE), &viewer->scene);
+        grid_esdf.initialize(static_cast<int>(params.TILE_SIZE), &viewer->scene);
 
         // Lidar thread is created
         read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
@@ -171,16 +172,50 @@ void SpecificWorker::compute()
         first_center = false;
     }
 
-    /// Update grid with world coordinates - only mark obstacle hits
+    /// Update grid with world coordinates
+    const auto timestamp_ms = static_cast<uint64_t>(timestamp);
     mutex_path.lock();
-        grid.check_and_resize(points_world);
-        grid.update_map(points_world, robot_pos, params.MAX_LIDAR_RANGE);
-        grid.update_costs(params.ROBOT_SEMI_WIDTH, true);
+    switch (params.GRID_MODE)
+    {
+        case Params::GridMode::SPARSE_ESDF:
+        {
+            // Sparse ESDF mode: VoxBlox-style, only stores obstacles
+            grid_esdf.update(points_world, robot_pos.translation(), params.MAX_LIDAR_RANGE, timestamp_ms);
+            grid_esdf.update_visualization(true);
+            break;
+        }
+        case Params::GridMode::DENSE_ESDF:
+        {
+            // Dense ESDF mode: full grid with ESDF optimization
+            grid.check_and_resize(points_world);
+            grid.update_map_esdf(points_world, robot_pos, params.MAX_LIDAR_RANGE);
+            grid.update_costs_esdf(params.ROBOT_SEMI_WIDTH, true);
+            break;
+        }
+        case Params::GridMode::DENSE:
+        default:
+        {
+            // Dense ray casting mode: original, accurate but slower
+            grid.check_and_resize(points_world);
+            grid.update_map(points_world, robot_pos, params.MAX_LIDAR_RANGE);
+            grid.update_costs(params.ROBOT_SEMI_WIDTH, true);
+            break;
+        }
+    }
     mutex_path.unlock();
 
     // Debug: draw lidar points to inspect noise
     if(params.DRAW_LIDAR_POINTS)
         draw_lidar_points(points_world);
+
+    // Debug: draw detected obstacle clusters
+    if(params.DRAW_CLUSTERS)
+    {
+        auto clusters = cluster_lidar_points(points_world, robot_pos.translation(),
+                                             params.CLUSTER_DISTANCE_THRESHOLD,
+                                             params.CLUSTER_MIN_POINTS);
+        draw_clusters(clusters, &viewer->scene);
+    }
 
     // Update robot visualization in the viewer (world coordinates)
     const auto robot_rot = robot_pos.linear();
@@ -212,6 +247,220 @@ void SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &point
         item->setPos(p.x(), p.y());
         item->setZValue(5);
         lidar_points.push_back(item);
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+/// Clustering de puntos LiDAR para detección de obstáculos convexos
+//////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * @brief Agrupa puntos LiDAR en clusters usando Adaptive Breakpoint Detection
+ *
+ * El algoritmo funciona así:
+ * 1. Los puntos del LiDAR vienen ordenados angularmente
+ * 2. Dos puntos consecutivos pertenecen al mismo cluster si:
+ *    - La distancia entre ellos < umbral adaptativo
+ *    - El umbral crece con la distancia al robot (puntos lejanos están más espaciados)
+ *
+ * @param points Puntos LiDAR en coordenadas mundo
+ * @param robot_pos Posición del robot en mundo
+ * @param distance_threshold Umbral base de distancia (mm)
+ * @param min_points Mínimo de puntos para considerar un cluster válido
+ * @return Vector de clusters detectados
+ */
+std::vector<SpecificWorker::Cluster> SpecificWorker::cluster_lidar_points(
+    const std::vector<Eigen::Vector2f> &points,
+    const Eigen::Vector2f &robot_pos,
+    float distance_threshold,
+    int min_points)
+{
+    std::vector<Cluster> clusters;
+    if (points.size() < static_cast<size_t>(min_points))
+        return clusters;
+
+    // Constantes para Adaptive Breakpoint Detection
+    constexpr float ANGULAR_RESOLUTION = 0.004f;  // ~0.25 grados en radianes (típico para LiDAR)
+    constexpr float LAMBDA = 10.0f;  // Factor de adaptación: threshold = base + lambda * sin(angular_res) * distance
+
+    Cluster current_cluster;
+    current_cluster.points.push_back(points[0]);
+
+    for (size_t i = 1; i < points.size(); ++i)
+    {
+        const auto &p_prev = points[i - 1];
+        const auto &p_curr = points[i];
+
+        // Distancia entre puntos consecutivos
+        const float dist_between = (p_curr - p_prev).norm();
+
+        // Distancia adaptativa: puntos más lejanos tienen umbral mayor
+        // Fórmula ABD: D_threshold = D_base + lambda * sin(delta_phi) * range
+        const float range = (p_prev - robot_pos).norm();
+        const float adaptive_threshold = distance_threshold + LAMBDA * std::sin(ANGULAR_RESOLUTION) * range;
+
+        if (dist_between < adaptive_threshold)
+        {
+            // Mismo cluster
+            current_cluster.points.push_back(p_curr);
+        }
+        else
+        {
+            // Nuevo cluster - guardar el anterior si tiene suficientes puntos
+            if (current_cluster.points.size() >= static_cast<size_t>(min_points))
+            {
+                // Calcular centroide
+                Eigen::Vector2f sum = Eigen::Vector2f::Zero();
+                float min_dist = std::numeric_limits<float>::max();
+                for (const auto &p : current_cluster.points)
+                {
+                    sum += p;
+                    float d = (p - robot_pos).norm();
+                    if (d < min_dist) min_dist = d;
+                }
+                current_cluster.centroid = sum / static_cast<float>(current_cluster.points.size());
+                current_cluster.min_dist_to_robot = min_dist;
+
+                // Calcular convex hull si hay suficientes puntos
+                if (current_cluster.points.size() >= 3)
+                    current_cluster.convex_hull = compute_convex_hull(current_cluster.points);
+
+                clusters.push_back(std::move(current_cluster));
+            }
+
+            // Iniciar nuevo cluster
+            current_cluster = Cluster();
+            current_cluster.points.push_back(p_curr);
+        }
+    }
+
+    // No olvidar el último cluster
+    if (current_cluster.points.size() >= static_cast<size_t>(min_points))
+    {
+        Eigen::Vector2f sum = Eigen::Vector2f::Zero();
+        float min_dist = std::numeric_limits<float>::max();
+        for (const auto &p : current_cluster.points)
+        {
+            sum += p;
+            float d = (p - robot_pos).norm();
+            if (d < min_dist) min_dist = d;
+        }
+        current_cluster.centroid = sum / static_cast<float>(current_cluster.points.size());
+        current_cluster.min_dist_to_robot = min_dist;
+
+        if (current_cluster.points.size() >= 3)
+            current_cluster.convex_hull = compute_convex_hull(current_cluster.points);
+
+        clusters.push_back(std::move(current_cluster));
+    }
+
+    return clusters;
+}
+
+/**
+ * @brief Calcula la envolvente convexa de un conjunto de puntos usando el algoritmo de Graham Scan
+ * @param points Puntos de entrada
+ * @return Puntos de la envolvente convexa en orden antihorario
+ */
+std::vector<Eigen::Vector2f> SpecificWorker::compute_convex_hull(const std::vector<Eigen::Vector2f> &points)
+{
+    if (points.size() < 3)
+        return points;
+
+    // Encontrar el punto más bajo (y menor, luego x menor)
+    size_t min_idx = 0;
+    for (size_t i = 1; i < points.size(); ++i)
+    {
+        if (points[i].y() < points[min_idx].y() ||
+            (points[i].y() == points[min_idx].y() && points[i].x() < points[min_idx].x()))
+        {
+            min_idx = i;
+        }
+    }
+
+    // Copiar puntos y poner el mínimo al principio
+    std::vector<Eigen::Vector2f> sorted_points = points;
+    std::swap(sorted_points[0], sorted_points[min_idx]);
+    const Eigen::Vector2f pivot = sorted_points[0];
+
+    // Ordenar por ángulo polar respecto al pivot
+    std::sort(sorted_points.begin() + 1, sorted_points.end(),
+              [&pivot](const Eigen::Vector2f &a, const Eigen::Vector2f &b)
+              {
+                  float angle_a = std::atan2(a.y() - pivot.y(), a.x() - pivot.x());
+                  float angle_b = std::atan2(b.y() - pivot.y(), b.x() - pivot.x());
+                  if (std::abs(angle_a - angle_b) < 1e-6f)
+                  {
+                      // Mismo ángulo: el más cercano primero
+                      return (a - pivot).squaredNorm() < (b - pivot).squaredNorm();
+                  }
+                  return angle_a < angle_b;
+              });
+
+    // Graham scan
+    std::vector<Eigen::Vector2f> hull;
+    hull.push_back(sorted_points[0]);
+    hull.push_back(sorted_points[1]);
+
+    // Función para calcular el producto cruz (determina giro)
+    auto cross = [](const Eigen::Vector2f &o, const Eigen::Vector2f &a, const Eigen::Vector2f &b) -> float
+    {
+        return (a.x() - o.x()) * (b.y() - o.y()) - (a.y() - o.y()) * (b.x() - o.x());
+    };
+
+    for (size_t i = 2; i < sorted_points.size(); ++i)
+    {
+        while (hull.size() > 1 && cross(hull[hull.size() - 2], hull[hull.size() - 1], sorted_points[i]) <= 0)
+        {
+            hull.pop_back();
+        }
+        hull.push_back(sorted_points[i]);
+    }
+
+    return hull;
+}
+
+/**
+ * @brief Dibuja los clusters detectados en la escena
+ */
+void SpecificWorker::draw_clusters(const std::vector<Cluster> &clusters, QGraphicsScene *scene, bool erase_only)
+{
+    static std::vector<QGraphicsItem*> cluster_items;
+    static QColor colors[] = {QColor("cyan"), QColor("magenta"), QColor("yellow"),
+                              QColor("lime"), QColor("orange"), QColor("pink")};
+
+    // Limpiar items anteriores
+    for (auto *item : cluster_items)
+        scene->removeItem(item);
+    cluster_items.clear();
+
+    if (erase_only) return;
+
+    int color_idx = 0;
+    for (const auto &cluster : clusters)
+    {
+        QColor color = colors[color_idx % 6];
+        color_idx++;
+
+        // Dibujar convex hull si existe
+        if (cluster.convex_hull.size() >= 3)
+        {
+            QPolygonF polygon;
+            for (const auto &p : cluster.convex_hull)
+                polygon << QPointF(p.x(), p.y());
+            polygon << QPointF(cluster.convex_hull[0].x(), cluster.convex_hull[0].y());  // cerrar
+
+            auto *poly_item = scene->addPolygon(polygon, QPen(color, 30), QBrush(color, Qt::Dense4Pattern));
+            poly_item->setZValue(3);
+            cluster_items.push_back(poly_item);
+        }
+
+        // Dibujar centroide
+        constexpr float cs = 80.f;
+        auto *centroid_item = scene->addEllipse(-cs/2, -cs/2, cs, cs, QPen(Qt::black, 20), QBrush(color));
+        centroid_item->setPos(cluster.centroid.x(), cluster.centroid.y());
+        centroid_item->setZValue(4);
+        cluster_items.push_back(centroid_item);
     }
 }
 

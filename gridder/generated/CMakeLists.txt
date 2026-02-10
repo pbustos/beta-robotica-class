@@ -36,6 +36,8 @@ SET (SOURCES
   main.cpp
   genericworker.cpp
   gridderI.cpp
+        ../src/grid_esdf.h
+        ../src/grid_esdf.cpp
 )
 
 

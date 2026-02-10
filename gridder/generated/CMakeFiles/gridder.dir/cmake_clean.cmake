@@ -12,6 +12,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o.d"
   "CMakeFiles/gridder.dir/__/src/grid.cpp.o"
   "CMakeFiles/gridder.dir/__/src/grid.cpp.o.d"
+  "CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o"
+  "CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o.d"
   "CMakeFiles/gridder.dir/__/src/specificworker.cpp.o"
   "CMakeFiles/gridder.dir/__/src/specificworker.cpp.o.d"
   "CMakeFiles/gridder.dir/genericworker.cpp.o"

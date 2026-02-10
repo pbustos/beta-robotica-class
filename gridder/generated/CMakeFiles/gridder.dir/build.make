@@ -94,7 +94,7 @@ generated/gridder_autogen/timestamp: /usr/lib/qt6/libexec/moc
 generated/gridder_autogen/timestamp: /usr/lib/qt6/libexec/uic
 generated/gridder_autogen/timestamp: generated/CMakeFiles/gridder.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Automatic MOC and UIC for target gridder"
-	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/cmake -E cmake_autogen /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/CMakeFiles/gridder_autogen.dir/AutogenInfo.json ""
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/cmake -E cmake_autogen /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/CMakeFiles/gridder_autogen.dir/AutogenInfo.json Debug
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/cmake -E touch /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/timestamp
 
 generated/CMakeFiles/gridder.dir/gridder_autogen/mocs_compilation.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
@@ -153,10 +153,24 @@ generated/CMakeFiles/gridder.dir/__/src/grid.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/gridder.dir/__/src/grid.cpp.s"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid.cpp -o CMakeFiles/gridder.dir/__/src/grid.cpp.s
 
+generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
+generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o: src/grid_esdf.cpp
+generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Building CXX object generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o"
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o -MF CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o.d -o CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o -c /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.cpp
+
+generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.i"
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.cpp > CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.i
+
+generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.s"
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.cpp -o CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.s
+
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o: /home/robocomp/robocomp/classes/rapplication/rapplication.cpp
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Building CXX object generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_10) "Building CXX object generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o -MF CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o.d -o CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o -c /home/robocomp/robocomp/classes/rapplication/rapplication.cpp
 
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i: cmake_force
@@ -170,7 +184,7 @@ generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rap
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o: /home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_10) "Building CXX object generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_11) "Building CXX object generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o -MF CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o.d -o CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o -c /home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp
 
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i: cmake_force
@@ -184,7 +198,7 @@ generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatc
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o: /home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_11) "Building CXX object generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_12) "Building CXX object generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o -MF CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o.d -o CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o -c /home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp
 
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i: cmake_force
@@ -198,7 +212,7 @@ generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAF
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o: /home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_12) "Building CXX object generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_13) "Building CXX object generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o -MF CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o.d -o CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o -c /home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp
 
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i: cmake_force
@@ -212,7 +226,7 @@ generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/Con
 generated/CMakeFiles/gridder.dir/main.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/main.cpp.o: generated/main.cpp
 generated/CMakeFiles/gridder.dir/main.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_13) "Building CXX object generated/CMakeFiles/gridder.dir/main.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_14) "Building CXX object generated/CMakeFiles/gridder.dir/main.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/main.cpp.o -MF CMakeFiles/gridder.dir/main.cpp.o.d -o CMakeFiles/gridder.dir/main.cpp.o -c /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/main.cpp
 
 generated/CMakeFiles/gridder.dir/main.cpp.i: cmake_force
@@ -226,7 +240,7 @@ generated/CMakeFiles/gridder.dir/main.cpp.s: cmake_force
 generated/CMakeFiles/gridder.dir/genericworker.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/genericworker.cpp.o: generated/genericworker.cpp
 generated/CMakeFiles/gridder.dir/genericworker.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_14) "Building CXX object generated/CMakeFiles/gridder.dir/genericworker.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Building CXX object generated/CMakeFiles/gridder.dir/genericworker.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/genericworker.cpp.o -MF CMakeFiles/gridder.dir/genericworker.cpp.o.d -o CMakeFiles/gridder.dir/genericworker.cpp.o -c /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/genericworker.cpp
 
 generated/CMakeFiles/gridder.dir/genericworker.cpp.i: cmake_force
@@ -240,7 +254,7 @@ generated/CMakeFiles/gridder.dir/genericworker.cpp.s: cmake_force
 generated/CMakeFiles/gridder.dir/gridderI.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/gridderI.cpp.o: generated/gridderI.cpp
 generated/CMakeFiles/gridder.dir/gridderI.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Building CXX object generated/CMakeFiles/gridder.dir/gridderI.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_16) "Building CXX object generated/CMakeFiles/gridder.dir/gridderI.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/gridderI.cpp.o -MF CMakeFiles/gridder.dir/gridderI.cpp.o.d -o CMakeFiles/gridder.dir/gridderI.cpp.o -c /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridderI.cpp
 
 generated/CMakeFiles/gridder.dir/gridderI.cpp.i: cmake_force
@@ -254,7 +268,7 @@ generated/CMakeFiles/gridder.dir/gridderI.cpp.s: cmake_force
 generated/CMakeFiles/gridder.dir/Gridder.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/Gridder.cpp.o: generated/Gridder.cpp
 generated/CMakeFiles/gridder.dir/Gridder.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_16) "Building CXX object generated/CMakeFiles/gridder.dir/Gridder.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_17) "Building CXX object generated/CMakeFiles/gridder.dir/Gridder.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/Gridder.cpp.o -MF CMakeFiles/gridder.dir/Gridder.cpp.o.d -o CMakeFiles/gridder.dir/Gridder.cpp.o -c /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Gridder.cpp
 
 generated/CMakeFiles/gridder.dir/Gridder.cpp.i: cmake_force
@@ -268,7 +282,7 @@ generated/CMakeFiles/gridder.dir/Gridder.cpp.s: cmake_force
 generated/CMakeFiles/gridder.dir/Lidar3D.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/Lidar3D.cpp.o: generated/Lidar3D.cpp
 generated/CMakeFiles/gridder.dir/Lidar3D.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_17) "Building CXX object generated/CMakeFiles/gridder.dir/Lidar3D.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_18) "Building CXX object generated/CMakeFiles/gridder.dir/Lidar3D.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/Lidar3D.cpp.o -MF CMakeFiles/gridder.dir/Lidar3D.cpp.o.d -o CMakeFiles/gridder.dir/Lidar3D.cpp.o -c /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Lidar3D.cpp
 
 generated/CMakeFiles/gridder.dir/Lidar3D.cpp.i: cmake_force
@@ -282,7 +296,7 @@ generated/CMakeFiles/gridder.dir/Lidar3D.cpp.s: cmake_force
 generated/CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o: generated/CMakeFiles/gridder.dir/flags.make
 generated/CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o: generated/Webots2Robocomp.cpp
 generated/CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o: generated/CMakeFiles/gridder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_18) "Building CXX object generated/CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_19) "Building CXX object generated/CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT generated/CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o -MF CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o.d -o CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o -c /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Webots2Robocomp.cpp
 
 generated/CMakeFiles/gridder.dir/Webots2Robocomp.cpp.i: cmake_force
@@ -299,6 +313,7 @@ gridder_OBJECTS = \
 "CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o" \
 "CMakeFiles/gridder.dir/__/src/specificworker.cpp.o" \
 "CMakeFiles/gridder.dir/__/src/grid.cpp.o" \
+"CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o" \
 "CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o" \
 "CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o" \
 "CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o" \
@@ -317,6 +332,7 @@ bin/gridder: generated/CMakeFiles/gridder.dir/gridder_autogen/mocs_compilation.c
 bin/gridder: generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
 bin/gridder: generated/CMakeFiles/gridder.dir/__/src/specificworker.cpp.o
 bin/gridder: generated/CMakeFiles/gridder.dir/__/src/grid.cpp.o
+bin/gridder: generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o
 bin/gridder: generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o
 bin/gridder: generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o
 bin/gridder: generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
@@ -341,7 +357,7 @@ bin/gridder: /usr/lib/x86_64-linux-gnu/libQt6Core.so.6.4.2
 bin/gridder: /usr/lib/x86_64-linux-gnu/libGLX.so
 bin/gridder: /usr/lib/x86_64-linux-gnu/libOpenGL.so
 bin/gridder: generated/CMakeFiles/gridder.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_19) "Linking CXX executable ../bin/gridder"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/pbustos/robocomp/components/beta-robotica-class/gridder/CMakeFiles --progress-num=$(CMAKE_PROGRESS_20) "Linking CXX executable ../bin/gridder"
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated && $(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/gridder.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

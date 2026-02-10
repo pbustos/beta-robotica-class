@@ -355,6 +355,30 @@ __/src/grid.cpp.s:
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/grid.cpp.s
 .PHONY : __/src/grid.cpp.s
 
+__/src/grid_esdf.o: __/src/grid_esdf.cpp.o
+.PHONY : __/src/grid_esdf.o
+
+# target to build an object file
+__/src/grid_esdf.cpp.o:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o
+.PHONY : __/src/grid_esdf.cpp.o
+
+__/src/grid_esdf.i: __/src/grid_esdf.cpp.i
+.PHONY : __/src/grid_esdf.i
+
+# target to preprocess a source file
+__/src/grid_esdf.cpp.i:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.i
+.PHONY : __/src/grid_esdf.cpp.i
+
+__/src/grid_esdf.s: __/src/grid_esdf.cpp.s
+.PHONY : __/src/grid_esdf.s
+
+# target to generate assembly for a file
+__/src/grid_esdf.cpp.s:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.s
+.PHONY : __/src/grid_esdf.cpp.s
+
 __/src/specificworker.o: __/src/specificworker.cpp.o
 .PHONY : __/src/specificworker.o
 
@@ -626,6 +650,9 @@ help:
 	@echo "... __/src/grid.o"
 	@echo "... __/src/grid.i"
 	@echo "... __/src/grid.s"
+	@echo "... __/src/grid_esdf.o"
+	@echo "... __/src/grid_esdf.i"
+	@echo "... __/src/grid_esdf.s"
 	@echo "... __/src/specificworker.o"
 	@echo "... __/src/specificworker.i"
 	@echo "... __/src/specificworker.s"
