@@ -82,9 +82,40 @@ bool GridESDF::is_obstacle(const Key &k) const
     auto it = obstacles_.find(k);
     if (it == obstacles_.end())
         return false;
-    // Only consider confirmed obstacles (enough hits and confidence)
-    return it->second.hits >= params_.min_hits_to_confirm &&
-           it->second.log_odds >= params_.occupancy_threshold;
+    // Consider obstacle if:
+    // 1. Has visual tile (confirmed with neighbors), OR
+    // 2. Has enough hits and confidence (for planning safety even without visual)
+    return it->second.tile != nullptr ||
+           (it->second.hits >= 2.0f && it->second.log_odds >= params_.occupancy_threshold * 0.5f);
+}
+
+// Check if a cell should be avoided for path planning (obstacle + inflation zone)
+bool GridESDF::is_occupied_for_planning(const Key &k, float robot_radius) const
+{
+    // First check if it's a direct obstacle
+    if (is_obstacle(k))
+        return true;
+
+    // Then check if any neighbor within robot_radius is an obstacle
+    const float tile_size_f = static_cast<float>(params_.tile_size);
+    const int cells_to_check = static_cast<int>(std::ceil(robot_radius / tile_size_f));
+
+    for (int dx = -cells_to_check; dx <= cells_to_check; ++dx)
+    {
+        for (int dy = -cells_to_check; dy <= cells_to_check; ++dy)
+        {
+            if (dx == 0 && dy == 0) continue;
+
+            Key neighbor{k.first + dx * params_.tile_size,
+                        k.second + dy * params_.tile_size};
+
+            // Check distance
+            float dist = std::hypot(static_cast<float>(dx), static_cast<float>(dy)) * tile_size_f;
+            if (dist <= robot_radius && is_obstacle(neighbor))
+                return true;
+        }
+    }
+    return false;
 }
 
 bool GridESDF::is_free(const Key &k) const
@@ -103,19 +134,34 @@ void GridESDF::add_obstacle(const Key &k, uint64_t timestamp)
         cell.log_odds = std::min(cell.log_odds + params_.log_odds_hit, params_.log_odds_max);
         cell.last_seen = timestamp;
 
-        // Create visual tile only when confidence is high enough
+        // Create visual tile only when confidence is high enough AND has neighbor support
         if (cell.tile == nullptr &&
             cell.hits >= params_.min_hits_to_confirm &&
             cell.log_odds >= params_.occupancy_threshold &&
             scene_)
         {
-            const float ts = params_.tile_size;
-            cell.tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
-                                        QPen(Qt::NoPen),
-                                        QBrush(QColor(params_.obstacle_color)));
-            cell.tile->setPos(k.first + ts/2, k.second + ts/2);
-            cell.tile->setZValue(1);
-            visualization_dirty_ = true;  // Mark for inflation update
+            // Check if at least one neighbor also has hits (avoid isolated noise)
+            bool has_neighbor_support = false;
+            for (const auto &neighbor : get_neighbors_8(k))
+            {
+                auto nit = obstacles_.find(neighbor);
+                if (nit != obstacles_.end() && nit->second.hits >= 2.0f)
+                {
+                    has_neighbor_support = true;
+                    break;
+                }
+            }
+
+            if (has_neighbor_support)
+            {
+                const float ts = params_.tile_size;
+                cell.tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
+                                            QPen(Qt::NoPen),
+                                            QBrush(QColor(params_.obstacle_color)));
+                cell.tile->setPos(k.first + ts/2, k.second + ts/2);
+                cell.tile->setZValue(1);
+                visualization_dirty_ = true;  // Mark for inflation update
+            }
         }
     }
     else
@@ -377,17 +423,46 @@ std::vector<GridESDF::Key> GridESDF::get_neighbors_8(const Key &k) const
 //////////////////////////////////////////////////////////////////////////////
 
 std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &source,
-                                                     const Eigen::Vector2f &target)
+                                                     const Eigen::Vector2f &target,
+                                                     float robot_radius,
+                                                     float safety_factor)
 {
     const Key source_key = point_to_key(source);
     const Key target_key = point_to_key(target);
     const float tile_size_f = static_cast<float>(params_.tile_size);
+
+    // Clamp safety_factor to [0, 1]
+    safety_factor = std::clamp(safety_factor, 0.f, 1.f);
+
+    qDebug() << "[A*] Computing path from" << source_key.first << source_key.second
+             << "to" << target_key.first << target_key.second
+             << "robot_radius:" << robot_radius << "safety:" << safety_factor;
+    qDebug() << "[A*] Total obstacles in map:" << obstacles_.size();
+
+    // Count confirmed obstacles (with tiles)
+    int confirmed = 0;
+    for (const auto &[k, cell] : obstacles_)
+        if (cell.tile != nullptr) confirmed++;
+    qDebug() << "[A*] Confirmed obstacles (with tiles):" << confirmed;
+
+    // Check if source or target are in occupied zone (obstacle + inflation)
+    if (is_occupied_for_planning(source_key, robot_radius))
+    {
+        qDebug() << "[A*] Source is in occupied zone!";
+        return {};
+    }
+    if (is_occupied_for_planning(target_key, robot_radius))
+    {
+        qDebug() << "[A*] Target is in occupied zone!";
+        return {};
+    }
 
     // A* with ESDF-based cost
     using QElement = std::pair<float, Key>;  // (f_score, key)
     std::priority_queue<QElement, std::vector<QElement>, std::greater<>> open_set;
     std::unordered_map<Key, float, boost::hash<Key>> g_score;
     std::unordered_map<Key, Key, boost::hash<Key>> came_from;
+    std::unordered_set<Key, boost::hash<Key>> closed_set;  // Already processed nodes
 
     auto heuristic = [&](const Key &k) -> float {
         return std::hypot(static_cast<float>(k.first - target_key.first),
@@ -402,6 +477,11 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
         auto [f, current] = open_set.top();
         open_set.pop();
 
+        // Skip if already processed
+        if (closed_set.count(current) > 0)
+            continue;
+        closed_set.insert(current);
+
         if (current == target_key)
         {
             // Reconstruct path
@@ -414,13 +494,35 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
             }
             path.push_back(key_to_point(source_key));
             std::reverse(path.begin(), path.end());
+
+            // DEBUG: Check if path passes through any obstacles
+            int obstacles_in_path = 0;
+            for (const auto &pt : path)
+            {
+                Key pk = point_to_key(pt);
+                if (is_occupied_for_planning(pk, robot_radius))
+                {
+                    obstacles_in_path++;
+                    qDebug() << "[A*] WARNING: Path point" << pt.x() << pt.y()
+                             << "is in occupied zone at key" << pk.first << pk.second;
+                }
+            }
+            qDebug() << "[A*] Path computed with" << path.size() << "points,"
+                     << obstacles_in_path << "in occupied zones";
+
             return path;
         }
 
+        const float current_g = g_score[current];
+
         for (const auto &neighbor : get_neighbors_8(current))
         {
-            // Skip obstacles
-            if (is_obstacle(neighbor))
+            // Skip already processed nodes
+            if (closed_set.count(neighbor) > 0)
+                continue;
+
+            // Skip occupied zones (obstacles + inflation for robot radius)
+            if (is_occupied_for_planning(neighbor, robot_radius))
                 continue;
 
             // Diagonal cost
@@ -428,9 +530,14 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
                                      neighbor.second != current.second);
             const float move_cost = is_diagonal ? tile_size_f * 1.414f : tile_size_f;
 
-            // Add ESDF-based cost (prefer paths away from obstacles)
-            const float esdf_cost = get_cost(neighbor);
-            const float tentative_g = g_score[current] + move_cost + esdf_cost;
+            // Add ESDF-based cost scaled by safety_factor with aggressive scaling
+            // safety=0: no ESDF cost (shortest path, can touch green cells)
+            // safety=0.5: moderate ESDF cost
+            // safety=1: very high ESDF cost (strongly prefer center of free space)
+            // Using exponential scaling: scale = 1 + safety^2 * 10 (range 1-11x)
+            const float safety_scale = 1.0f + safety_factor * safety_factor * 10.0f;
+            const float esdf_cost = get_cost(neighbor) * safety_factor * safety_scale;
+            const float tentative_g = current_g + move_cost + esdf_cost;
 
             auto it = g_score.find(neighbor);
             if (it == g_score.end() || tentative_g < it->second)
@@ -442,6 +549,7 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
         }
     }
 
+    qDebug() << "[A*] No path found!";
     return {};  // No path found
 }
 
@@ -456,15 +564,110 @@ bool GridESDF::is_line_of_sight_free(const Eigen::Vector2f &source,
     const Eigen::Vector2f dir = delta.normalized();
     const float step = static_cast<float>(params_.tile_size) / 2.0f;
 
+    // Check along the ray for obstacles
     for (float t = 0; t < length; t += step)
     {
         const Eigen::Vector2f p = source + dir * t;
-        const float dist = get_distance(p);
-        if (dist < robot_radius)
+        const Key k = point_to_key(p);
+
+        // Check if this cell is an obstacle
+        if (is_obstacle(k))
             return false;
+
+        // Also check neighboring cells for robot_radius clearance
+        if (robot_radius > 0)
+        {
+            // Check perpendicular offset for robot width
+            const Eigen::Vector2f perp(-dir.y(), dir.x());
+            for (float offset = -robot_radius; offset <= robot_radius; offset += step)
+            {
+                const Eigen::Vector2f check_p = p + perp * offset;
+                if (is_obstacle(point_to_key(check_p)))
+                    return false;
+            }
+        }
     }
 
     return true;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Serialization
+//////////////////////////////////////////////////////////////////////////////
+
+GridESDF::SerializedMap GridESDF::serialize_map() const
+{
+    SerializedMap map;
+    map.tile_size = params_.tile_size;
+
+    // Collect all confirmed obstacle cells and their inflation layers
+    std::unordered_set<Key, boost::hash<Key>> processed;
+
+    // First pass: add all confirmed obstacles (with tiles)
+    for (const auto &[key, cell] : obstacles_)
+    {
+        if (cell.tile != nullptr)  // Confirmed obstacle
+        {
+            MapCell mc;
+            mc.x = key.first;
+            mc.y = key.second;
+            mc.cost = 255;  // Maximum cost for obstacles
+            map.cells.push_back(mc);
+            processed.insert(key);
+        }
+    }
+
+    // Second pass: add inflation layers (orange = layer1, green = layer2)
+    std::unordered_set<Key, boost::hash<Key>> layer1_set;
+    std::unordered_set<Key, boost::hash<Key>> layer2_set;
+
+    // Compute layer 1 (adjacent to obstacles)
+    for (const auto &[key, cell] : obstacles_)
+    {
+        if (cell.tile != nullptr)
+        {
+            for (const auto &n : get_neighbors_8(key))
+            {
+                if (processed.find(n) == processed.end())
+                    layer1_set.insert(n);
+            }
+        }
+    }
+
+    // Add layer 1 cells with high cost
+    for (const auto &key : layer1_set)
+    {
+        MapCell mc;
+        mc.x = key.first;
+        mc.y = key.second;
+        mc.cost = 200;  // High cost for immediate neighbors
+        map.cells.push_back(mc);
+        processed.insert(key);
+    }
+
+    // Compute layer 2 (adjacent to layer 1)
+    for (const auto &l1 : layer1_set)
+    {
+        for (const auto &n : get_neighbors_8(l1))
+        {
+            if (processed.find(n) == processed.end())
+                layer2_set.insert(n);
+        }
+    }
+
+    // Add layer 2 cells with medium cost
+    for (const auto &key : layer2_set)
+    {
+        MapCell mc;
+        mc.x = key.first;
+        mc.y = key.second;
+        mc.cost = 100;  // Medium cost for second layer
+        map.cells.push_back(mc);
+    }
+
+    map.num_cells = static_cast<int32_t>(map.cells.size());
+
+    return map;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -495,43 +698,59 @@ void GridESDF::update_visualization(bool show_inflation)
 
     const float ts = static_cast<float>(params_.tile_size);
 
-    // Draw inflation layers around confirmed obstacles only
-    std::unordered_set<Key, boost::hash<Key>> drawn;
-
+    // Collect all confirmed obstacle keys first
+    std::unordered_set<Key, boost::hash<Key>> obstacle_set;
     for (const auto &[ok, cell] : obstacles_)
     {
-        // Only process confirmed obstacles (those with visual tiles)
-        if (cell.tile == nullptr) continue;
+        if (cell.tile != nullptr)
+            obstacle_set.insert(ok);
+    }
 
-        // Layer 1: immediate neighbors (orange)
-        for (const auto &n1 : get_neighbors_8(ok))
+    // Layer 1 (orange): all cells adjacent to any obstacle
+    std::unordered_set<Key, boost::hash<Key>> layer1_set;
+    for (const auto &ok : obstacle_set)
+    {
+        for (const auto &n : get_neighbors_8(ok))
         {
-            if (!is_obstacle(n1) && drawn.find(n1) == drawn.end())
-            {
-                auto *tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
-                                             QPen(Qt::NoPen),
-                                             QBrush(QColor(params_.inflation_color_1)));
-                tile->setPos(n1.first + ts/2, n1.second + ts/2);
-                tile->setZValue(0);
-                inflation_tiles_.push_back(tile);
-                drawn.insert(n1);
-
-                // Layer 2: second ring (green)
-                for (const auto &n2 : get_neighbors_8(n1))
-                {
-                    if (!is_obstacle(n2) && drawn.find(n2) == drawn.end())
-                    {
-                        auto *tile2 = scene_->addRect(-ts/2, -ts/2, ts, ts,
-                                                      QPen(Qt::NoPen),
-                                                      QBrush(QColor(params_.inflation_color_2)));
-                        tile2->setPos(n2.first + ts/2, n2.second + ts/2);
-                        tile2->setZValue(0);
-                        inflation_tiles_.push_back(tile2);
-                        drawn.insert(n2);
-                    }
-                }
-            }
+            // Add to layer1 if not an obstacle
+            if (obstacle_set.find(n) == obstacle_set.end())
+                layer1_set.insert(n);
         }
+    }
+
+    // Layer 2 (green): all cells adjacent to layer1 but not obstacle or layer1
+    std::unordered_set<Key, boost::hash<Key>> layer2_set;
+    for (const auto &l1 : layer1_set)
+    {
+        for (const auto &n : get_neighbors_8(l1))
+        {
+            // Add to layer2 if not an obstacle and not in layer1
+            if (obstacle_set.find(n) == obstacle_set.end() &&
+                layer1_set.find(n) == layer1_set.end())
+                layer2_set.insert(n);
+        }
+    }
+
+    // Draw layer 2 first (green) - lower z-order
+    for (const auto &k : layer2_set)
+    {
+        auto *tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
+                                     QPen(Qt::NoPen),
+                                     QBrush(QColor(params_.inflation_color_2)));
+        tile->setPos(k.first + ts/2, k.second + ts/2);
+        tile->setZValue(0);
+        inflation_tiles_.push_back(tile);
+    }
+
+    // Draw layer 1 on top (orange) - higher z-order
+    for (const auto &k : layer1_set)
+    {
+        auto *tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
+                                     QPen(Qt::NoPen),
+                                     QBrush(QColor(params_.inflation_color_1)));
+        tile->setPos(k.first + ts/2, k.second + ts/2);
+        tile->setZValue(0.5);
+        inflation_tiles_.push_back(tile);
     }
 
     visualization_dirty_ = false;
@@ -546,4 +765,179 @@ size_t GridESDF::count_confirmed_obstacles() const
             ++count;
     }
     return count;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Morphological post-processing
+//////////////////////////////////////////////////////////////////////////////
+
+void GridESDF::morphological_close(int iterations)
+{
+    // Closing = Dilation followed by Erosion
+    // Effect: fills small holes and gaps in obstacles
+
+    for (int iter = 0; iter < iterations; ++iter)
+    {
+        // Dilation: add cells where at least N neighbors are obstacles
+        std::vector<Key> to_add;
+        std::unordered_set<Key, boost::hash<Key>> obstacle_set;
+
+        for (const auto &[k, cell] : obstacles_)
+        {
+            if (cell.tile != nullptr)
+                obstacle_set.insert(k);
+        }
+
+        // Find candidates for dilation (neighbors of obstacles)
+        std::unordered_set<Key, boost::hash<Key>> candidates;
+        for (const auto &ok : obstacle_set)
+        {
+            for (const auto &n : get_neighbors_8(ok))
+            {
+                if (obstacle_set.find(n) == obstacle_set.end())
+                    candidates.insert(n);
+            }
+        }
+
+        // Add candidate if it has >= 5 obstacle neighbors (fills gaps)
+        for (const auto &c : candidates)
+        {
+            int obstacle_neighbors = 0;
+            for (const auto &n : get_neighbors_8(c))
+            {
+                if (obstacle_set.find(n) != obstacle_set.end())
+                    ++obstacle_neighbors;
+            }
+            if (obstacle_neighbors >= 5)
+                to_add.push_back(c);
+        }
+
+        // Add the new obstacles
+        uint64_t timestamp = 0;  // Use 0 for morphological additions
+        for (const auto &k : to_add)
+        {
+            auto it = obstacles_.find(k);
+            if (it == obstacles_.end())
+            {
+                // Create new confirmed obstacle directly
+                ObstacleCell cell;
+                cell.log_odds = params_.log_odds_max;
+                cell.hits = params_.min_hits_to_confirm + 1;
+                cell.last_seen = timestamp;
+
+                if (scene_)
+                {
+                    const float ts = params_.tile_size;
+                    cell.tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
+                                                QPen(Qt::NoPen),
+                                                QBrush(QColor(params_.obstacle_color)));
+                    cell.tile->setPos(k.first + ts/2, k.second + ts/2);
+                    cell.tile->setZValue(1);
+                }
+                obstacles_[k] = cell;
+            }
+        }
+
+        if (!to_add.empty())
+            visualization_dirty_ = true;
+    }
+}
+
+void GridESDF::morphological_open(int iterations)
+{
+    // Opening = Erosion followed by Dilation
+    // Effect: removes isolated points and small protrusions
+
+    for (int iter = 0; iter < iterations; ++iter)
+    {
+        // Erosion: remove obstacles with few neighbors
+        std::vector<Key> to_remove;
+
+        std::unordered_set<Key, boost::hash<Key>> obstacle_set;
+        for (const auto &[k, cell] : obstacles_)
+        {
+            if (cell.tile != nullptr)
+                obstacle_set.insert(k);
+        }
+
+        for (const auto &ok : obstacle_set)
+        {
+            int obstacle_neighbors = 0;
+            for (const auto &n : get_neighbors_8(ok))
+            {
+                if (obstacle_set.find(n) != obstacle_set.end())
+                    ++obstacle_neighbors;
+            }
+            // Remove if isolated (< 2 neighbors)
+            if (obstacle_neighbors < 2)
+                to_remove.push_back(ok);
+        }
+
+        for (const auto &k : to_remove)
+            remove_obstacle(k);
+    }
+}
+
+void GridESDF::fill_obstacle_gaps()
+{
+    // Fill 1-cell gaps between obstacles (bridge close obstacles)
+
+    std::unordered_set<Key, boost::hash<Key>> obstacle_set;
+    for (const auto &[k, cell] : obstacles_)
+    {
+        if (cell.tile != nullptr)
+            obstacle_set.insert(k);
+    }
+
+    std::vector<Key> to_add;
+    const int ts = params_.tile_size;
+
+    // Check for horizontal gaps
+    for (const auto &ok : obstacle_set)
+    {
+        // Check right neighbor gap
+        Key right1 = {ok.first + ts, ok.second};
+        Key right2 = {ok.first + 2*ts, ok.second};
+        if (obstacle_set.find(right1) == obstacle_set.end() &&
+            obstacle_set.find(right2) != obstacle_set.end())
+        {
+            to_add.push_back(right1);
+        }
+
+        // Check bottom neighbor gap
+        Key down1 = {ok.first, ok.second + ts};
+        Key down2 = {ok.first, ok.second + 2*ts};
+        if (obstacle_set.find(down1) == obstacle_set.end() &&
+            obstacle_set.find(down2) != obstacle_set.end())
+        {
+            to_add.push_back(down1);
+        }
+    }
+
+    // Add the gap fillers
+    for (const auto &k : to_add)
+    {
+        auto it = obstacles_.find(k);
+        if (it == obstacles_.end())
+        {
+            ObstacleCell cell;
+            cell.log_odds = params_.log_odds_max;
+            cell.hits = params_.min_hits_to_confirm + 1;
+            cell.last_seen = 0;
+
+            if (scene_)
+            {
+                const float tsf = static_cast<float>(ts);
+                cell.tile = scene_->addRect(-tsf/2, -tsf/2, tsf, tsf,
+                                            QPen(Qt::NoPen),
+                                            QBrush(QColor(params_.obstacle_color)));
+                cell.tile->setPos(k.first + tsf/2, k.second + tsf/2);
+                cell.tile->setZValue(1);
+            }
+            obstacles_[k] = cell;
+        }
+    }
+
+    if (!to_add.empty())
+        visualization_dirty_ = true;
 }

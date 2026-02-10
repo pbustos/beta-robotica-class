@@ -52,14 +52,14 @@ public:
     struct Params
     {
         int tile_size = 100;  // mm
-        float log_odds_hit = 0.8f;   // Reduced from 1.2 - need more hits to confirm
+        float log_odds_hit = 1.0f;   // Increased - faster confirmation
         float log_odds_miss = -0.4f;
         float log_odds_min = -2.0f;
         float log_odds_max = 4.0f;
-        float occupancy_threshold = 2.5f;  // Increased - need more confidence to display
+        float occupancy_threshold = 2.0f;  // Reduced - need less confidence to be obstacle
         float free_threshold = -0.5f;      // log_odds < this → free
         float max_esdf_distance = 3000.f;  // mm - max distance to propagate ESDF
-        int min_hits_to_confirm = 4;       // Minimum hits before showing obstacle
+        int min_hits_to_confirm = 3;       // Reduced - fewer hits needed for visual
         // Visualization
         QString obstacle_color = "DarkRed";
         QString inflation_color_1 = "Orange";
@@ -87,6 +87,7 @@ public:
     void add_obstacle(const Key &k, uint64_t timestamp);
     void remove_obstacle(const Key &k);
     bool is_obstacle(const Key &k) const;
+    bool is_occupied_for_planning(const Key &k, float robot_radius) const;  // Obstacle + inflation
     bool is_free(const Key &k) const;  // Not obstacle = free (sparse assumption)
 
     // ESDF queries
@@ -102,7 +103,9 @@ public:
 
     // Path planning support
     std::vector<Eigen::Vector2f> compute_path(const Eigen::Vector2f &source,
-                                               const Eigen::Vector2f &target);
+                                               const Eigen::Vector2f &target,
+                                               float robot_radius = 0.f,
+                                               float safety_factor = 1.f);  // 0=touch walls, 1=prefer center
     bool is_line_of_sight_free(const Eigen::Vector2f &source,
                                 const Eigen::Vector2f &target,
                                 float robot_radius);
@@ -117,8 +120,29 @@ public:
     size_t num_obstacles() const { return obstacles_.size(); }
     size_t esdf_cache_size() const { return esdf_cache_.size(); }
 
+    // Serialization for network transmission
+    // Compact cell representation: x, y in mm, cost (0-255 normalized)
+    struct MapCell
+    {
+        int32_t x;          // mm
+        int32_t y;          // mm
+        uint8_t cost;       // 0=free, 255=obstacle, intermediate=inflation
+    };
+    struct SerializedMap
+    {
+        int32_t tile_size;              // mm
+        int32_t num_cells;              // number of cells
+        std::vector<MapCell> cells;     // only cells with cost > 0
+    };
+    SerializedMap serialize_map() const;  // Returns compact map for transmission
+
     // Visualization
     void update_visualization(bool show_inflation = true);
+
+    // Post-processing: morphological operations to smooth obstacles
+    void morphological_close(int iterations = 1);  // Fill small holes
+    void morphological_open(int iterations = 1);   // Remove isolated points
+    void fill_obstacle_gaps();                      // Fill 1-cell gaps between obstacles
 
     // Accessors
     const Params& params() const { return params_; }

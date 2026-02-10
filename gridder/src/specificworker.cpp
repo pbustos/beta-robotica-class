@@ -105,42 +105,122 @@ void SpecificWorker::initialize()
             const auto &[robot, lidar] = buffer_sync.read(timestamp);
             if (not robot.has_value()) return;
 
-            auto [success, msg, source_key, target_key] =
-                grid.validate_source_target(robot.value().translation(),
-                                            750,
-                                            Eigen::Vector2f{p.x(), p.y()},
-                                            750);
-            if (not success) return;
+            const Eigen::Vector2f source = robot.value().translation();
+            const Eigen::Vector2f target{p.x(), p.y()};
+            std::vector<Eigen::Vector2f> path;
 
-            std::vector<std::vector<Eigen::Vector2f>> paths;
+            auto start_time = std::chrono::high_resolution_clock::now();
 
-            // First check if there's line of sight to target
-            if (grid.is_line_of_sigth_to_target_free(source_key, target_key, params.ROBOT_SEMI_WIDTH))
+            // Use appropriate grid based on mode
+            if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
             {
-                // Direct path - line of sight is free
-                auto direct_path = grid.compute_path_line_of_sight(source_key, target_key, params.ROBOT_SEMI_LENGTH);
-                if (!direct_path.empty())
+                // Sparse ESDF mode: use grid_esdf for path planning
+                // First check if there's line of sight to target
+                bool los_free = grid_esdf.is_line_of_sight_free(source, target, params.ROBOT_SEMI_WIDTH);
+                qInfo() << "[PATH] Source:" << source.x() << source.y()
+                        << "Target:" << target.x() << target.y()
+                        << "LOS free:" << los_free
+                        << "Robot width:" << params.ROBOT_SEMI_WIDTH;
+
+                if (los_free)
                 {
-                    paths.push_back(direct_path);
-                    qInfo() << "Line of sight path found";
+                    // Direct path - line of sight is free
+                    // Interpolate points along the path for visibility
+                    const float step = params.TILE_SIZE;  // One point per tile
+                    const Eigen::Vector2f delta = target - source;
+                    const float length = delta.norm();
+                    const Eigen::Vector2f dir = delta.normalized();
+
+                    path.push_back(source);
+                    for (float t = step; t < length; t += step)
+                        path.push_back(source + dir * t);
+                    path.push_back(target);
+
+                    qInfo() << "Line of sight path found (ESDF), interpolated to" << path.size() << "points";
+                }
+                else
+                {
+                    // Use A* with ESDF cost, passing robot radius and safety factor
+                    path = grid_esdf.compute_path(source, target, params.ROBOT_SEMI_WIDTH, params.SAFETY_FACTOR);
+                    qInfo() << "A* path computed (ESDF), path size:" << path.size();
                 }
             }
-
-            // If no direct path, use Dijkstra/A*
-            if (paths.empty())
+            else
             {
-                paths = grid.compute_k_paths(source_key,
-                                             target_key,
-                                             std::clamp(3, 1, params.NUM_PATHS_TO_SEARCH),
-                                             params.MIN_DISTANCE_BETWEEN_PATHS,
-                                             true, true);
-                qInfo() << "Dijkstra path computed";
+                // Dense grid modes: use original grid for path planning
+                auto [success, msg, source_key, target_key] =
+                    grid.validate_source_target(source, 750, target, 750);
+                if (not success) return;
+
+                std::vector<std::vector<Eigen::Vector2f>> paths;
+
+                // First check if there's line of sight to target
+                if (grid.is_line_of_sigth_to_target_free(source_key, target_key, params.ROBOT_SEMI_WIDTH))
+                {
+                    // Direct path - line of sight is free
+                    auto direct_path = grid.compute_path_line_of_sight(source_key, target_key, params.ROBOT_SEMI_LENGTH);
+                    if (!direct_path.empty())
+                    {
+                        paths.push_back(direct_path);
+                        qInfo() << "Line of sight path found";
+                    }
+                }
+
+                // If no direct path, use Dijkstra/A*
+                if (paths.empty())
+                {
+                    paths = grid.compute_k_paths(source_key,
+                                                 target_key,
+                                                 std::clamp(3, 1, params.NUM_PATHS_TO_SEARCH),
+                                                 params.MIN_DISTANCE_BETWEEN_PATHS,
+                                                 true, true);
+                    qInfo() << "Dijkstra path computed";
+                }
+
+                if (!paths.empty())
+                    path = paths.front();
             }
 
-            if (not paths.empty())
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+            float elapsed_sec = static_cast<float>(elapsed_ms) / 1000.f;
+
+            if (!path.empty())
             {
-                qInfo() << paths.size() << "paths found";
-                draw_path(paths.front(), &viewer->scene);
+                // Calculate path length (sum of segment distances)
+                float path_length = 0.f;
+                for (size_t i = 1; i < path.size(); ++i)
+                    path_length += (path[i] - path[i-1]).norm();
+
+                // Calculate path cost (sum of costs along the path)
+                float path_cost = 0.f;
+                if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
+                {
+                    for (const auto &pt : path)
+                        path_cost += grid_esdf.get_cost(pt);
+                }
+                else
+                {
+                    for (const auto &pt : path)
+                        path_cost += grid.get_cost(pt);
+                }
+
+                // Update UI displays
+                lcdNumber_length->display(static_cast<double>(path_length / 1000.f));  // Show in meters
+                lcdNumber_cost->display(static_cast<int>(path_cost));
+                lcdNumber_elapsed->display(static_cast<double>(elapsed_sec));  // Show in seconds
+
+                qInfo() << "Path found with" << path.size() << "waypoints, length:"
+                        << path_length/1000.f << "m, cost:" << path_cost << ", time:" << elapsed_sec << "s";
+                draw_path(path, &viewer->scene);
+            }
+            else
+            {
+                // Clear UI on no path
+                lcdNumber_length->display(0);
+                lcdNumber_cost->display(0);
+                lcdNumber_elapsed->display(static_cast<double>(elapsed_sec));  // Show in seconds
+                qInfo() << "No path found!";
             }
         });
         connect(viewer, &AbstractGraphicViewer::right_click, [this](QPointF p)
@@ -551,6 +631,7 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f> &path, QGraphi
     {
         auto ptr = scene->addEllipse(-s/2, -s/2, s, s, pen, brush);
         ptr->setPos(p.x(), p.y());
+        ptr->setZValue(10);  // Draw on top of grid, obstacles, and robot
         points.push_back(ptr);
     }
 }
@@ -574,6 +655,7 @@ void SpecificWorker::draw_paths(const std::vector<std::vector<Eigen::Vector2f>> 
         {
             auto ptr = scene->addEllipse(-s/2.f, -s/2.f, s, s, QPen(color), QBrush(color));
             ptr->setPos(QPointF(p.x(), p.y()));
+            ptr->setZValue(10);  // Draw on top of grid, obstacles, and robot
             points.push_back(ptr);
         }
     }
@@ -594,39 +676,91 @@ RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint
     auto begin = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     qInfo() << __FUNCTION__ << " New plan request: source [" << source.x << source.y << "], target [" << target.x << target.y << "]"
             << " max_paths: " << max_paths;
-    mutex_path.lock();
-    auto [success, msg, source_key, target_key] =
-            grid.validate_source_target(Eigen::Vector2f{source.x, source.y},
-                                        source.radius,
-                                        Eigen::Vector2f{target.x, target.y},
-                                        source.radius);
-    if (success)
+
+    std::lock_guard<std::mutex> lock(mutex_path);
+    std::string msg;
+    bool success = true;
+
+    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
     {
-        //check if is line of sight to target free
-        if (grid.is_line_of_sigth_to_target_free(source_key,
-                                                 target_key,
-                                                 params.ROBOT_SEMI_WIDTH))
+        // Sparse ESDF mode: use grid_esdf for path planning
+        const Eigen::Vector2f src{source.x, source.y};
+        const Eigen::Vector2f tgt{target.x, target.y};
+
+        // Check if source or target are obstacles
+        if (grid_esdf.is_obstacle(grid_esdf.point_to_key(src)))
         {
-            paths.emplace_back(grid.compute_path_line_of_sight(source_key, target_key, params.ROBOT_SEMI_LENGTH));
-            if(paths.empty())
-                msg = "VLOS path not found";
-            else
-                msg = "VLOS path";
+            success = false;
+            msg = "Source is blocked";
+        }
+        else if (grid_esdf.is_obstacle(grid_esdf.point_to_key(tgt)))
+        {
+            success = false;
+            msg = "Target is blocked";
         }
         else
         {
-            paths = grid.compute_k_paths(source_key, target_key,
-                                         std::clamp(max_paths, 1, params.NUM_PATHS_TO_SEARCH),
-                                         params.MIN_DISTANCE_BETWEEN_PATHS,
-                                         tryClosestFreePoint,
-                                         targetIsHuman);
-            if(paths.empty())
-                msg = "Djikstra path not found";
+            // Check if line of sight is free
+            if (grid_esdf.is_line_of_sight_free(src, tgt, params.ROBOT_SEMI_WIDTH))
+            {
+                paths.push_back({src, tgt});
+                msg = "VLOS path (ESDF)";
+            }
             else
-                msg = "Djikstra path";
+            {
+                // Use A* with ESDF cost and safety factor
+                auto path = grid_esdf.compute_path(src, tgt, params.ROBOT_SEMI_WIDTH, params.SAFETY_FACTOR);
+                if (!path.empty())
+                {
+                    paths.push_back(path);
+                    msg = "A* path (ESDF)";
+                }
+                else
+                {
+                    msg = "A* path not found (ESDF)";
+                }
+            }
         }
     }
-    mutex_path.unlock();
+    else
+    {
+        // Dense grid modes
+        auto [val_success, val_msg, source_key, target_key] =
+                grid.validate_source_target(Eigen::Vector2f{source.x, source.y},
+                                            source.radius,
+                                            Eigen::Vector2f{target.x, target.y},
+                                            source.radius);
+        success = val_success;
+        msg = val_msg;
+
+        if (success)
+        {
+            //check if is line of sight to target free
+            if (grid.is_line_of_sigth_to_target_free(source_key,
+                                                     target_key,
+                                                     params.ROBOT_SEMI_WIDTH))
+            {
+                paths.emplace_back(grid.compute_path_line_of_sight(source_key, target_key, params.ROBOT_SEMI_LENGTH));
+                if(paths.empty())
+                    msg = "VLOS path not found";
+                else
+                    msg = "VLOS path";
+            }
+            else
+            {
+                paths = grid.compute_k_paths(source_key, target_key,
+                                             std::clamp(max_paths, 1, params.NUM_PATHS_TO_SEARCH),
+                                             params.MIN_DISTANCE_BETWEEN_PATHS,
+                                             tryClosestFreePoint,
+                                             targetIsHuman);
+                if(paths.empty())
+                    msg = "Djikstra path not found";
+                else
+                    msg = "Djikstra path";
+            }
+        }
+    }
+
     result.errorMsg = msg;
     result.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
@@ -655,22 +789,70 @@ RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint
 bool SpecificWorker::Gridder_LineOfSightToTarget(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, float robotRadius)
 {
     std::lock_guard<std::mutex> lock(mutex_path);
-    auto [success, msg, source_key, target_key] =
-            grid.validate_source_target(Eigen::Vector2f{source.x, source.y}, source.radius,
-                                        Eigen::Vector2f{target.x, target.y}, target.radius);
 
-    if(success)
-        return grid.is_line_of_sigth_to_target_free(source_key, target_key, robotRadius);
+    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
+    {
+        // Sparse ESDF mode: use grid_esdf for line of sight check
+        return grid_esdf.is_line_of_sight_free(
+            Eigen::Vector2f{source.x, source.y},
+            Eigen::Vector2f{target.x, target.y},
+            robotRadius);
+    }
     else
-        return false;
+    {
+        // Dense grid modes
+        auto [success, msg, source_key, target_key] =
+                grid.validate_source_target(Eigen::Vector2f{source.x, source.y}, source.radius,
+                                            Eigen::Vector2f{target.x, target.y}, target.radius);
+
+        if(success)
+            return grid.is_line_of_sigth_to_target_free(source_key, target_key, robotRadius);
+        else
+            return false;
+    }
 }
 RoboCompGridder::TPoint SpecificWorker::Gridder_getClosestFreePoint(RoboCompGridder::TPoint source)
 {
     std::lock_guard<std::mutex> lock(mutex_path);
-    if(const auto &p = grid.closest_free({source.x, source.y}); p.has_value())
-        return {static_cast<float>(p->x()), static_cast<float>(p->y())};
+
+    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
+    {
+        // Sparse ESDF mode: in sparse grid, non-obstacle = free
+        // If source is not an obstacle, return source itself
+        const auto key = grid_esdf.point_to_key(source.x, source.y);
+        if (!grid_esdf.is_obstacle(key))
+            return source;
+
+        // Otherwise, search neighbors for closest free cell
+        const float tile_size = static_cast<float>(grid_esdf.params().tile_size);
+        for (int radius = 1; radius <= 10; ++radius)
+        {
+            for (int dx = -radius; dx <= radius; ++dx)
+            {
+                for (int dy = -radius; dy <= radius; ++dy)
+                {
+                    if (std::abs(dx) != radius && std::abs(dy) != radius) continue;  // Only check perimeter
+                    const auto test_key = std::make_pair(
+                        static_cast<int>(key.first + dx * tile_size),
+                        static_cast<int>(key.second + dy * tile_size));
+                    if (!grid_esdf.is_obstacle(test_key))
+                    {
+                        const auto point = grid_esdf.key_to_point(test_key);
+                        return {point.x(), point.y()};
+                    }
+                }
+            }
+        }
+        return {0, 0};  // No free point found
+    }
     else
-        return {0, 0};  // non valid closest point  TODO: Change return type so failure to find can be signaled
+    {
+        // Dense grid modes
+        if(const auto &p = grid.closest_free({source.x, source.y}); p.has_value())
+            return {static_cast<float>(p->x()), static_cast<float>(p->y())};
+        else
+            return {0, 0};  // non valid closest point
+    }
 }
 RoboCompGridder::TDimensions SpecificWorker::Gridder_getDimensions()
 {
@@ -679,6 +861,61 @@ RoboCompGridder::TDimensions SpecificWorker::Gridder_getDimensions()
             static_cast<float>(params.GRID_MAX_DIM.width()),
             static_cast<float>(params.GRID_MAX_DIM.height())};
 }
+
+// NOTE: Uncomment when Map type is added to Gridder.idsl
+// Add these structs to Gridder.idsl:
+//   struct TCell { int x; int y; byte cost; };
+//   sequence <TCell> TCellVector;
+//   struct Map { int tileSize; TCellVector cells; };
+/*
+RoboCompGridder::Map SpecificWorker::Gridder_getMap()
+{
+    std::lock_guard<std::mutex> lock(mutex_path);
+    RoboCompGridder::Map result;
+
+    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
+    {
+        // Serialize sparse ESDF grid
+        auto serialized = grid_esdf.serialize_map();
+        result.tileSize = serialized.tile_size;
+        result.cells.reserve(serialized.num_cells);
+
+        for (const auto &cell : serialized.cells)
+        {
+            RoboCompGridder::TCell tc;
+            tc.x = cell.x;
+            tc.y = cell.y;
+            tc.cost = cell.cost;
+            result.cells.push_back(tc);
+        }
+
+        qInfo() << __FUNCTION__ << "Returning ESDF map with" << result.cells.size() << "cells";
+    }
+    else
+    {
+        // Serialize dense grid - only cells with cost > 0
+        result.tileSize = static_cast<int>(params.TILE_SIZE);
+
+        for (const auto &[key, cell] : grid)
+        {
+            if (cell.cost > 1.0f)  // Skip free cells (cost=1)
+            {
+                RoboCompGridder::TCell tc;
+                tc.x = key.first;
+                tc.y = key.second;
+                // Normalize cost to 0-255 range
+                tc.cost = static_cast<uint8_t>(std::min(255.f, cell.cost * 2.55f));
+                result.cells.push_back(tc);
+            }
+        }
+
+        qInfo() << __FUNCTION__ << "Returning dense map with" << result.cells.size() << "cells";
+    }
+
+    return result;
+}
+*/
+
 bool SpecificWorker::Gridder_setGridDimensions(RoboCompGridder::TDimensions dimensions)
 {
     qInfo() << __FUNCTION__ << " Setting grid dimensions to [" << dimensions.left << dimensions.top << dimensions.width << dimensions.height << "]";
@@ -738,10 +975,27 @@ RoboCompGridder::Result SpecificWorker::Gridder_setLocationAndGetPath(RoboCompGr
 bool SpecificWorker::Gridder_IsPathBlocked(RoboCompGridder::TPath path)
 {
     std::lock_guard<std::mutex> lock(mutex_path);
-    std::vector<Eigen::Vector2f> path_;
-    for(const auto &p: path)
-        path_.emplace_back(p.x, p.y);
-    return grid.is_path_blocked(path_);
+
+    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
+    {
+        // Sparse ESDF mode: check each segment of the path
+        for (size_t i = 0; i + 1 < path.size(); ++i)
+        {
+            const Eigen::Vector2f from{path[i].x, path[i].y};
+            const Eigen::Vector2f to{path[i + 1].x, path[i + 1].y};
+            if (!grid_esdf.is_line_of_sight_free(from, to, params.ROBOT_SEMI_WIDTH))
+                return true;  // Path is blocked
+        }
+        return false;  // Path is free
+    }
+    else
+    {
+        // Dense grid modes
+        std::vector<Eigen::Vector2f> path_;
+        for(const auto &p: path)
+            path_.emplace_back(p.x, p.y);
+        return grid.is_path_blocked(path_);
+    }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////
 int SpecificWorker::startup_check()

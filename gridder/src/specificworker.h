@@ -109,6 +109,13 @@ class SpecificWorker : public GenericWorker
         //bool tryClosestFreePoint, bool targetIsHuman);
 
     /**
+         * @brief Returns the current map with obstacle cells and their costs
+         * @return Map structure containing cells with cost > 0
+         * NOTE: Uncomment when Map type is added to Gridder.idsl
+         */
+        // RoboCompGridder::Map Gridder_getMap();
+
+    /**
 		 * @brief Sets the dimensions of the grid
 		 * @param dimensions
 		 * @return
@@ -192,11 +199,12 @@ class SpecificWorker : public GenericWorker
 	        // Grid mode selection
 	        enum class GridMode { DENSE, DENSE_ESDF, SPARSE_ESDF };
 	        GridMode GRID_MODE = GridMode::SPARSE_ESDF;  // Options:
-	            // DENSE: original ray casting (accurate, slow for large maps)
-	            // DENSE_ESDF: dense grid with ESDF optimization
-	            // SPARSE_ESDF: sparse grid, only obstacles stored (fastest, most memory efficient)
-	        // Deprecated: USE_ESDF_MODE (use GRID_MODE instead)
+            // DENSE: original ray casting (accurate, slow for large maps)
+            // DENSE_ESDF: dense grid with ESDF optimization
+            // SPARSE_ESDF: sparse grid, only obstacles stored (fastest, most memory efficient)
 	        bool USE_ESDF_MODE = false;  // kept for backward compatibility
+	        // Path planning safety factor: 0=shortest path (touch walls), 1=safest path (prefer center)
+	        float SAFETY_FACTOR = 1.0f;	// 0=touch walls, 1=prefer center
 	    };
 	    Params params;
 
