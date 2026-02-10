@@ -1085,6 +1085,7 @@ generated/CMakeFiles/gridder.dir/gridder_autogen/mocs_compilation.cpp.o: \
  /usr/include/c++/14/bits/deque.tcc /usr/include/Ice/FactoryTableInit.h \
  /usr/include/Ice/DefaultValueFactory.h \
  /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Lidar3D.h \
+ /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Webots2Robocomp.h \
  /usr/include/x86_64-linux-gnu/qt6/QtGui/QScreen \
  /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/VNU7RW3YIC/moc_specificworker.cpp \
  /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/VNU7RW3YIC/../../../src/specificworker.h \
@@ -1363,7 +1364,8 @@ generated/CMakeFiles/gridder.dir/gridder_autogen/mocs_compilation.cpp.o: \
  /usr/include/Eigen/src/Eigenvalues/MatrixBaseEigenvalues.h \
  /usr/include/x86_64-linux-gnu/qt6/QtGui/QVector2D \
  /usr/include/x86_64-linux-gnu/qt6/QtGui/QColor \
- /home/robocomp/robocomp/classes/doublebuffer/DoubleBuffer.h \
+ /home/robocomp/robocomp/classes/doublebuffer_sync/doublebuffer_sync.h \
+ /usr/include/c++/14/ranges /usr/include/c++/14/bits/elements_of.h \
  /usr/include/c++/14/shared_mutex \
  /home/robocomp/robocomp/classes/threadpool/threadpool.h \
  /usr/include/c++/14/queue /usr/include/c++/14/bits/stl_queue.h \

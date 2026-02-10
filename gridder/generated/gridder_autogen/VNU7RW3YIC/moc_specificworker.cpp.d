@@ -2,12 +2,13 @@
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/moc_predefs.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Gridder.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Lidar3D.h \
+  /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Webots2Robocomp.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/genericworker.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.tpp \
   /home/pbustos/robocomp/robocomp_core/classes/abstract_graphic_viewer/abstract_graphic_viewer.h \
-  /home/pbustos/robocomp/robocomp_core/classes/doublebuffer/DoubleBuffer.h \
+  /home/pbustos/robocomp/robocomp_core/classes/doublebuffer_sync/doublebuffer_sync.h \
   /home/pbustos/robocomp/robocomp_core/classes/fps/fps.h \
   /home/pbustos/robocomp/robocomp_core/classes/grafcetStep/GRAFCETStep.h \
   /home/pbustos/robocomp/robocomp_core/classes/threadpool/threadpool.h \
@@ -355,6 +356,7 @@
   /usr/include/c++/14/pstl/glue_numeric_defs.h \
   /usr/include/c++/14/queue \
   /usr/include/c++/14/random \
+  /usr/include/c++/14/ranges \
   /usr/include/c++/14/ratio \
   /usr/include/c++/14/set \
   /usr/include/c++/14/shared_mutex \

@@ -21,6 +21,8 @@
 #include <cppitertools/enumerate.hpp>
 #include <cppitertools/sliding_window.hpp>
 #include <cppitertools/range.hpp>
+#include <unordered_map>
+#include <cmath>
 
 class TPointVector;
 
@@ -57,6 +59,11 @@ SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, 
 SpecificWorker::~SpecificWorker()
 {
 	std::cout << "Destroying SpecificWorker" << std::endl;
+	// Signal the lidar thread to stop and wait for it
+	stop_lidar_thread = true;
+	if(read_lidar_th.joinable())
+		read_lidar_th.join();
+	std::cout << "Lidar thread stopped" << std::endl;
 }
 void SpecificWorker::initialize()
 {
@@ -75,7 +82,8 @@ void SpecificWorker::initialize()
         // Viewer
         viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM);
         viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 100, QColor("Blue"));
-        viewer->setSceneRect(params.GRID_MAX_DIM);
+        // Don't limit sceneRect - allow unlimited panning
+        // viewer->setSceneRect(params.GRID_MAX_DIM);
         viewer->show();
 
         // Grid
@@ -89,34 +97,50 @@ void SpecificWorker::initialize()
         connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, [this](QPointF p)
         {
             qInfo() << "[MOUSE] New global target arrived:" << p;
-            mutex_path.lock();
+            std::lock_guard<std::mutex> lock(mutex_path);
+
+            // Use current robot position in world coordinates as source
+            const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            const auto &[robot, lidar] = buffer_sync.read(timestamp);
+            if (not robot.has_value()) return;
+
             auto [success, msg, source_key, target_key] =
-            grid.validate_source_target(Eigen::Vector2f{0.0, 0.0},
-                                        750,
-                                        Eigen::Vector2f{p.x(), p.y()},
-                                        750);
-            if (success) {
+                grid.validate_source_target(robot.value().translation(),
+                                            750,
+                                            Eigen::Vector2f{p.x(), p.y()},
+                                            750);
+            if (not success) return;
 
-                auto paths = grid.compute_k_paths(source_key,
-                                                  target_key,
-                                                  std::clamp(3, 1, params.NUM_PATHS_TO_SEARCH),
-                                                  params.MIN_DISTANCE_BETWEEN_PATHS,
-                                                  true, true);
+            std::vector<std::vector<Eigen::Vector2f>> paths;
 
-
-                if(not paths.empty())
+            // First check if there's line of sight to target
+            if (grid.is_line_of_sigth_to_target_free(source_key, target_key, params.ROBOT_SEMI_WIDTH))
+            {
+                // Direct path - line of sight is free
+                auto direct_path = grid.compute_path_line_of_sight(source_key, target_key, params.ROBOT_SEMI_LENGTH);
+                if (!direct_path.empty())
                 {
-                    qInfo() << paths.size() << "paths found";
-                    draw_path(paths.front(), &viewer->scene);
-					//insert_path_node(Eigen::Vector2f(paths.front()));
-                    // this->lcdNumber_length->display((int) paths.front().size());
+                    paths.push_back(direct_path);
+                    qInfo() << "Line of sight path found";
                 }
+            }
 
-            mutex_path.unlock();
-        }
-            // get key from point and print key values
+            // If no direct path, use Dijkstra/A*
+            if (paths.empty())
+            {
+                paths = grid.compute_k_paths(source_key,
+                                             target_key,
+                                             std::clamp(3, 1, params.NUM_PATHS_TO_SEARCH),
+                                             params.MIN_DISTANCE_BETWEEN_PATHS,
+                                             true, true);
+                qInfo() << "Dijkstra path computed";
+            }
 
-
+            if (not paths.empty())
+            {
+                qInfo() << paths.size() << "paths found";
+                draw_path(paths.front(), &viewer->scene);
+            }
         });
         connect(viewer, &AbstractGraphicViewer::right_click, [this](QPointF p)
         {
@@ -131,68 +155,130 @@ void SpecificWorker::initialize()
 }
 void SpecificWorker::compute()
 {
-    // Get robot pose from Webots and return transform
-    // robot_pose = get_robot_pose();  // TODO: implement get_robot_pose()
+    static bool first_center = true;  // flag to center view on robot at startup
 
-    // read LiDAR
-    auto res_ = buffer_lidar_data.try_get();
-    if (not res_.has_value())  {   /*qWarning() << "No data Lidar";*/ return; }
-    auto points = res_.value();
+    const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto &[robot, lidar] = buffer_sync.read(timestamp);
+    if (not robot.has_value() or not lidar.has_value())
+        { qWarning() << "No data from buffer_sync: robot has value?"; return; };
+    const auto &robot_pos = robot.value();
+    const auto &points_world = lidar.value();
 
-    /// clear grid and update it
+    // Center view on robot at startup
+    if(first_center)
+    {
+        viewer->centerOn(robot_pos.translation().x(), robot_pos.translation().y());
+        first_center = false;
+    }
+
+    /// Update grid with world coordinates - only mark obstacle hits
     mutex_path.lock();
-        grid.check_and_resize(points);
-        grid.clear();  // sets all cells to initial values
-        grid.update_map(points, Eigen::Vector2f{0.0, 0.0}, params.MAX_LIDAR_RANGE);
-        grid.update_costs( params.ROBOT_SEMI_WIDTH, true);     // not color all cells
+        grid.check_and_resize(points_world);
+        grid.update_map(points_world, robot_pos, params.MAX_LIDAR_RANGE);
+        grid.update_costs(params.ROBOT_SEMI_WIDTH, true);
     mutex_path.unlock();
+
+    // Debug: draw lidar points to inspect noise
+    if(params.DRAW_LIDAR_POINTS)
+        draw_lidar_points(points_world);
+
+    // Update robot visualization in the viewer (world coordinates)
+    const auto robot_rot = robot_pos.linear();
+    const float robot_angle = std::atan2(robot_rot(1,0), robot_rot(0,0));
+    viewer->robot_poly()->setPos(robot_pos.translation().x(), robot_pos.translation().y());
+    viewer->robot_poly()->setRotation(qRadiansToDegrees(robot_angle));
 
     this->hz = fps.print("FPS:", 3000);
     this->lcdNumber_hz->display(this->hz);
 }
 
+void SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &points_world)
+{
+    static std::vector<QGraphicsEllipseItem*> lidar_points;
+    static const QPen pen(QColor("DarkBlue"));
+    static const QBrush brush(QColor("DarkBlue"));
+    static constexpr float s = 20.f;
+
+    for (auto *p : lidar_points)
+        viewer->scene.removeItem(p);
+    lidar_points.clear();
+
+    const int stride = std::max(1, static_cast<int>(points_world.size() / params.MAX_LIDAR_DRAW_POINTS));
+    lidar_points.reserve(std::min(static_cast<int>(points_world.size()), params.MAX_LIDAR_DRAW_POINTS));
+    for (size_t i = 0; i < points_world.size(); i += stride)
+    {
+        const auto &p = points_world[i];
+        auto *item = viewer->scene.addEllipse(-s / 2.f, -s / 2.f, s, s, pen, brush);
+        item->setPos(p.x(), p.y());
+        item->setZValue(5);
+        lidar_points.push_back(item);
+    }
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////
-// Eigen::Affine2f SpecificWorker::get_robot_pose()
-// {
-//     RoboCompWebots2Robocomp::ObjectPose pose;
-//     Eigen::Affine2f robot_pose;
-//     try
-//     {
-//         pose = webots2robocomp_proxy->getObjectPose("shadow");
-//         //qInfo() << "Robot pose from Webots: x=" << pose.position.x << " y=" << pose.position.y << " z=" << pose.position.z;
-//         robot_pose.translation() = Eigen::Vector2f(-pose.position.y, pose.position.x);
-//         const auto yaw = yawFromQuaternion(pose.orientation);
-//         robot_pose.linear() = Eigen::Rotation2Df(yaw).toRotationMatrix();
-//     }
-//     catch (const Ice::Exception &e){ std::cout<<e.what()<<std::endl; return {};}
-//     return robot_pose;
-// }
+Eigen::Affine2f SpecificWorker::get_robot_pose()
+{
+    RoboCompWebots2Robocomp::ObjectPose pose;
+    Eigen::Affine2f robot_pose;
+    try
+    {
+        pose = webots2robocomp_proxy->getObjectPose("shadow");
+         robot_pose.translation() = Eigen::Vector2f(-pose.position.y, pose.position.x);
+        const auto yaw = yawFromQuaternion(pose.orientation);
+        robot_pose.linear() = Eigen::Rotation2Df(yaw).toRotationMatrix();
+    }
+    catch (const Ice::Exception &e){ std::cout<<e.what()<<std::endl; return {};}
+    return robot_pose;
+}
+
+float SpecificWorker::yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat)
+{
+    double w = quat.w;
+    double x = quat.x;
+    double y = quat.y;
+    double z = quat.z;
+    const auto norm = std::sqrt(w*w + x*x + y*y + z*z);
+    w /= norm; x /= norm; y /= norm; z /= norm;
+    return static_cast<float>(std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)));
+}
 
 void SpecificWorker::read_lidar()
 {
     auto wait_period = std::chrono::milliseconds (getPeriod("Compute"));
-    while(true)
+    while(!stop_lidar_thread)
     {
+        const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         try
         {
-            auto data = lidar3d_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_LOW,
+            // Get robot pose
+            const auto &[position, orientation] = webots2robocomp_proxy->getObjectPose("shadow");
+            Eigen::Affine2f eig_pose;
+            eig_pose.translation() = Eigen::Vector2f(-position.y, position.x);
+            eig_pose.linear() = Eigen::Rotation2Df(yawFromQuaternion(orientation)).toRotationMatrix();
+
+            // Get LiDAR data
+            auto data = lidar3d1_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_LOW,
                                                                    params.MAX_LIDAR_LOW_RANGE,
                                                                    params.LIDAR_LOW_DECIMATION_FACTOR);
-            auto data_helios = lidar3d1_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_HIGH,
-                                                                           params.MAX_LIDAR_HIGH_RANGE,
-                                                                           params.LIDAR_HIGH_DECIMATION_FACTOR);
-            // concatenate both lidars
-            data.points.insert(data.points.end(), data_helios.points.begin(), data_helios.points.end());
-            // compute the period to read the lidar based on the current difference with the lidar period. Use a hysteresis of 2ms
+
+            // Transform points to world frame using the pose we just read
+            std::vector<Eigen::Vector2f> points_world;
+            points_world.reserve(data.points.size());
+            for (const auto &p : data.points)
+                if (std::hypot(p.y, p.x) >  600)
+                    points_world.emplace_back(eig_pose * Eigen::Vector2f{p.x, p.y});
+
+
+            // Put both in sync buffer with same timestamp
+            buffer_sync.put<0>(std::move(eig_pose), timestamp);
+            buffer_sync.put<1>(std::move(points_world), timestamp);
+
+            // Adjust period with hysteresis
             if (wait_period > std::chrono::milliseconds((long) data.period + 2)) wait_period--;
             else if (wait_period < std::chrono::milliseconds((long) data.period - 2)) wait_period++;
-            std::vector<Eigen::Vector3f> eig_data(data.points.size());
-            for (const auto &[i, p]: data.points | iter::enumerate)
-                eig_data[i] = {p.x, p.y, p.z};
-            buffer_lidar_data.put(std::move(eig_data));
         }
         catch (const Ice::Exception &e)
-        { std::cout << "Error reading from Lidar3D" << e << std::endl; }
+        { std::cout << "Error reading from Lidar3D or robot pose: " << e.what() << std::endl; }
         std::this_thread::sleep_for(wait_period);
     }
 } // Thread to read the lidar
@@ -200,18 +286,22 @@ void SpecificWorker::read_lidar()
 void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f> &path, QGraphicsScene *scene, bool erase_only)
 {
     static std::vector<QGraphicsEllipseItem*> points;
+    static const QColor color("green");
+    static const QPen pen(color);
+    static const QBrush brush(color);
+    static constexpr float s = 100;
+
     for(auto p : points)
         scene->removeItem(p);
     points.clear();
 
     if(erase_only) return;
 
-    float s = 100;
-    auto color = QColor("green");
+    points.reserve(path.size());
     for(const auto &p: path)
     {
-        auto ptr = scene->addEllipse(-s/2, -s/2, s, s, QPen(color), QBrush(color));
-        ptr->setPos(QPointF(p.x(), p.y()));
+        auto ptr = scene->addEllipse(-s/2, -s/2, s, s, pen, brush);
+        ptr->setPos(p.x(), p.y());
         points.push_back(ptr);
     }
 }

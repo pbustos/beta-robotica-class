@@ -43,10 +43,11 @@
 
 #include <Gridder.h>
 #include <Lidar3D.h>
+#include <Webots2Robocomp.h>
 
 #define BASIC_PERIOD 100
 
-using TuplePrx = std::tuple<RoboCompLidar3D::Lidar3DPrxPtr,RoboCompLidar3D::Lidar3DPrxPtr>;
+using TuplePrx = std::tuple<RoboCompLidar3D::Lidar3DPrxPtr,RoboCompLidar3D::Lidar3DPrxPtr,RoboCompWebots2Robocomp::Webots2RobocompPrxPtr>;
 
 
 class GenericWorker : public QWidget, public Ui_guiDlg
@@ -67,6 +68,7 @@ public:
 
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy;
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d1_proxy;
+	RoboCompWebots2Robocomp::Webots2RobocompPrxPtr webots2robocomp_proxy;
 
 	virtual bool Gridder_IsPathBlocked(RoboCompGridder::TPath path) = 0;
 	virtual bool Gridder_LineOfSightToTarget(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, float robotRadius) = 0;

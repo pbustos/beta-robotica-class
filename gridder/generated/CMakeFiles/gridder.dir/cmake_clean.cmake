@@ -1,7 +1,6 @@
 file(REMOVE_RECURSE
   "../bin/gridder"
   "../bin/gridder.pdb"
-  "CMakeFiles/gridder.dir/link.d"
   "CMakeFiles/gridder_autogen.dir/AutogenUsed.txt"
   "CMakeFiles/gridder_autogen.dir/ParseCache.txt"
   "gridder_autogen"
@@ -9,6 +8,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/gridder.dir/Gridder.cpp.o.d"
   "CMakeFiles/gridder.dir/Lidar3D.cpp.o"
   "CMakeFiles/gridder.dir/Lidar3D.cpp.o.d"
+  "CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o"
+  "CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o.d"
   "CMakeFiles/gridder.dir/__/src/grid.cpp.o"
   "CMakeFiles/gridder.dir/__/src/grid.cpp.o.d"
   "CMakeFiles/gridder.dir/__/src/specificworker.cpp.o"
@@ -35,6 +36,8 @@ file(REMOVE_RECURSE
   "Gridder.h"
   "Lidar3D.cpp"
   "Lidar3D.h"
+  "Webots2Robocomp.cpp"
+  "Webots2Robocomp.h"
   "gridder_autogen/mocs_compilation.cpp"
   "gridder_autogen/timestamp"
 )

@@ -61,7 +61,7 @@ void Grid::resize_grid(QRectF new_dim)
         bounding_box->setRect(dim);
 }
 
-void Grid::check_and_resize(const std::vector<Eigen::Vector3f> &points)
+void Grid::check_and_resize(const std::vector<Eigen::Vector2f> &points)
 {
     if(points.empty()) return;
 
@@ -193,13 +193,16 @@ Grid::Key Grid::point_to_key(const Eigen::Vector2f &p) const
     const int ts = params.tile_size;
     const float left = static_cast<float>(dim.left());
     const float top = static_cast<float>(dim.top());
-    int kx = static_cast<int>(std::ceil((p.x() - left) / ts));
-    int kz = static_cast<int>(std::ceil((p.y() - top) / ts));
+    const int kx = static_cast<int>(std::lround((p.x() - left) / ts));
+    const int kz = static_cast<int>(std::lround((p.y() - top) / ts));
     return Key{ static_cast<int>(left) + kx * ts, static_cast<int>(top) + kz * ts};
 };
 Eigen::Vector2f Grid::point_to_grid(const Eigen::Vector2f &p) const
 {
-    return Eigen::Vector2f{ceil((p.x() - dim.left()) / params.tile_size), ceil((p.y()) - dim.top()) / params.tile_size};
+    return Eigen::Vector2f{
+        static_cast<float>(std::ceil((p.x() - dim.left()) / params.tile_size)),
+        static_cast<float>(std::ceil((p.y() - dim.top()) / params.tile_size))
+    };
 }
 
 //////////////////////////////// STATUS //////////////////////////////////////////
@@ -253,7 +256,7 @@ void Grid::set_free(const QPointF &p)
 }
 void Grid::set_free(float xf, float yf)
 {
-    set_free(static_cast<long int>(xf), static_cast<long int>(xf));
+    set_free(static_cast<long int>(xf), static_cast<long int>(yf));
 }
 void Grid::set_occupied(const Key &k)
 {
@@ -286,15 +289,26 @@ inline void Grid::add_miss(const Eigen::Vector2f &p)
     if(it != fmap.end())
     {
         auto &v = it->second;
-        v.misses++;
-        float total = v.hits + v.misses;
-        if(v.hits / total < params.occupancy_threshold)
+        v.misses += 1.f;
+        // Log-odds update for free space (miss)
+        // Increased l_free to -0.4 to clear cells faster when robot moves
+        // This still requires ~4 observations to counter one hit (1.4/0.4 ≈ 3.5:1)
+        constexpr float l_free = -0.4f;   // log-odds decrease for free observation
+        constexpr float l_min = -2.0f;    // minimum log-odds (high confidence free)
+        constexpr float l_max = 4.0f;     // maximum log-odds (high confidence occupied)
+
+        v.log_odds += l_free;
+        v.log_odds = std::clamp(v.log_odds, l_min, l_max);
+
+        // Convert log-odds to probability for visualization
+        float prob = 1.0f - 1.0f / (1.0f + std::exp(v.log_odds));
+
+        if(prob < params.occupancy_threshold_low)
         {
             v.free = true;
             v.cost = params.free_cost;
             v.tile->setBrush(free_brush);
         }
-        if(v.misses > 20.f) v.misses = 20.f;
     }
 }
 inline void Grid::add_hit(const Eigen::Vector2f &p)
@@ -304,15 +318,25 @@ inline void Grid::add_hit(const Eigen::Vector2f &p)
     if(it != fmap.end())
     {
         auto &v = it->second;
-        v.hits++;
-        float total = v.hits + v.misses;
-        if(v.hits / total >= params.occupancy_threshold)
+        v.hits += 1.f;
+        // Log-odds update for occupied space (hit)
+        // l_occ increased to 1.4 for faster obstacle detection (1 hit ≈ 80% probability)
+        constexpr float l_occ = 1.4f;    // log-odds increase for occupied observation
+        constexpr float l_min = -2.0f;   // minimum log-odds (high confidence free)
+        constexpr float l_max = 4.0f;    // maximum log-odds (high confidence occupied)
+
+        v.log_odds += l_occ;
+        v.log_odds = std::clamp(v.log_odds, l_min, l_max);
+
+        // Convert log-odds to probability for visualization
+        float prob = 1.0f - 1.0f / (1.0f + std::exp(v.log_odds));
+
+        if(prob >= params.occupancy_threshold_high)
         {
             v.free = false;
-            v.cost = params.occupied_cost;  // Also set cost to occupied
+            v.cost = params.occupied_cost;
             v.tile->setBrush(occ_brush);
         }
-        if(v.hits > 20.f) v.hits = 20.f;
     }
 }
 double Grid::log_odds(double prob)
@@ -467,34 +491,34 @@ void Grid::restore_source_target(const Grid::Key &source_key, const Grid::Key &t
 std::vector<Eigen::Vector2f > Grid::compute_path_key(const Key &source_key, const Key &target_key)
 {
     const auto &[succ_src, source_cell] = get_cell(source_key);
-    if(!succ_src) return {};
+    const auto &[succ_trg, target_cell] = get_cell(target_key);
+    if(!succ_src || !succ_trg)
+    {
+        qWarning() << __FUNCTION__ << "Source/target key not found in grid";
+        return {};
+    }
+    if(!source_cell.free || !target_cell.free)
+    {
+        qWarning() << __FUNCTION__ << "Source/target is occupied";
+        return {};
+    }
 
     // Dijkstra algorithm
     const size_t map_size = fmap.size();
-    std::vector<uint32_t> min_distance(map_size, std::numeric_limits<uint32_t>::max());
+    std::vector<float> min_distance(map_size, std::numeric_limits<float>::infinity());
     std::vector<std::pair<std::uint32_t, Key>> previous(map_size, std::make_pair(-1, Key()));
 
-    min_distance[source_cell.id] = 0;
+    min_distance[source_cell.id] = 0.f;
 
-    // Use set for Dijkstra (ordered by distance)
-    auto comp = [](const std::pair<uint32_t, Key>& a, const std::pair<uint32_t, Key>& b)
+    using QItem = std::pair<float, Key>;
+    auto cmp = [](const QItem &a, const QItem &b) { return a.first > b.first; };
+    std::priority_queue<QItem, std::vector<QItem>, decltype(cmp)> pq(cmp);
+    pq.push({0.f, source_key});
+
+    while (!pq.empty())
     {
-        if(a.first != b.first) return a.first < b.first;
-        return a.second < b.second;  // tie-breaker for deterministic ordering
-    };
-    std::set<std::pair<uint32_t, Key>, decltype(comp)> active_vertices(comp);
-    active_vertices.insert({0, source_key});
-
-    while (!active_vertices.empty())
-    {
-        auto [dist, where] = *active_vertices.begin();
-        active_vertices.erase(active_vertices.begin());
-
-        if (where == target_key)
-        {
-            auto p = recover_path(previous, source_key, target_key);
-            return decimate_path(p);
-        }
+        auto [dist, where] = pq.top();
+        pq.pop();
 
         auto it = fmap.find(where);
         if(it == fmap.end()) continue;
@@ -503,17 +527,21 @@ std::vector<Eigen::Vector2f > Grid::compute_path_key(const Key &source_key, cons
         // Skip if we've already processed this node with a better distance
         if(dist > min_distance[where_cell.id]) continue;
 
+        if (where == target_key)
+        {
+            auto p = recover_path(previous, source_key, target_key);
+            return decimate_path(p);
+        }
+
         for (auto& [neighbor_key, neighbor_cell] : neighboors_8(where))
         {
-            uint32_t tentative_dist = min_distance[where_cell.id] + static_cast<uint32_t>(neighbor_cell.cost);
+            const float tentative_dist = min_distance[where_cell.id] + neighbor_cell.cost;
 
             if (tentative_dist < min_distance[neighbor_cell.id])
             {
-                // Remove old entry if exists
-                active_vertices.erase({min_distance[neighbor_cell.id], neighbor_key});
                 min_distance[neighbor_cell.id] = tentative_dist;
                 previous[neighbor_cell.id] = std::make_pair(where_cell.id, where);
-                active_vertices.insert({tentative_dist, neighbor_key});
+                pq.push({tentative_dist, neighbor_key});
             }
         }
     }
@@ -566,29 +594,20 @@ std::vector<Eigen::Vector2f > Grid::compute_path(const Eigen::Vector2f &source_,
 
     // Dijkstra algorithm
     const size_t map_size = fmap.size();
-    std::vector<uint32_t> min_distance(map_size, std::numeric_limits<uint32_t>::max());
+    std::vector<float> min_distance(map_size, std::numeric_limits<float>::infinity());
     std::vector<std::pair<std::uint32_t, Key>> previous(map_size, std::make_pair(-1, Key()));
 
-    min_distance[source_cell.id] = 0;
+    min_distance[source_cell.id] = 0.f;
 
-    auto comp = [](const std::pair<uint32_t, Key>& a, const std::pair<uint32_t, Key>& b)
+    using QItem = std::pair<float, Key>;
+    auto cmp = [](const QItem &a, const QItem &b) { return a.first > b.first; };
+    std::priority_queue<QItem, std::vector<QItem>, decltype(cmp)> pq(cmp);
+    pq.push({0.f, source_key});
+
+    while (!pq.empty())
     {
-        if(a.first != b.first) return a.first < b.first;
-        return a.second < b.second;
-    };
-    std::set<std::pair<uint32_t, Key>, decltype(comp)> active_vertices(comp);
-    active_vertices.insert({0, source_key});
-
-    while (!active_vertices.empty())
-    {
-        auto [dist, where] = *active_vertices.begin();
-        active_vertices.erase(active_vertices.begin());
-
-        if (where == target_key)
-        {
-            auto p = recover_path(previous, source_key, target_key);
-            return decimate_path(p);
-        }
+        auto [dist, where] = pq.top();
+        pq.pop();
 
         auto it = fmap.find(where);
         if(it == fmap.end()) continue;
@@ -596,16 +615,21 @@ std::vector<Eigen::Vector2f > Grid::compute_path(const Eigen::Vector2f &source_,
 
         if(dist > min_distance[where_cell.id]) continue;
 
+        if (where == target_key)
+        {
+            auto p = recover_path(previous, source_key, target_key);
+            return decimate_path(p);
+        }
+
         for (auto& [neighbor_key, neighbor_cell] : neighboors_8(where))
         {
-            uint32_t tentative_dist = min_distance[where_cell.id] + static_cast<uint32_t>(neighbor_cell.cost);
+            const float tentative_dist = min_distance[where_cell.id] + neighbor_cell.cost;
 
             if (tentative_dist < min_distance[neighbor_cell.id])
             {
-                active_vertices.erase({min_distance[neighbor_cell.id], neighbor_key});
                 min_distance[neighbor_cell.id] = tentative_dist;
                 previous[neighbor_cell.id] = std::make_pair(where_cell.id, where);
-                active_vertices.insert({tentative_dist, neighbor_key});
+                pq.push({tentative_dist, neighbor_key});
             }
         }
     }
@@ -637,17 +661,21 @@ std::vector<std::vector<Eigen::Vector2f>> Grid::compute_k_paths(const Key &sourc
     paths_list.push_back(initial_path);
     auto current_step= initial_path.cbegin();   // source
     Key deleted_key = source_;
+    bool has_deleted = false;
 
     // loop until k paths are found or the initial path is exhausted
     while(paths_list.size() < num_paths  and current_step != initial_path.cend())
     {
         // restore previously cell set to occupied
-        set_free(deleted_key);
+        if(has_deleted)
+            set_free(deleted_key);
         // get next key from path and mark it as occupied in the grid
         if(current_step = std::next(current_step); current_step != initial_path.cend())
         {
             // mark cell as occupied
-            set_occupied(point_to_key(*current_step));
+            deleted_key = point_to_key(*current_step);
+            has_deleted = true;
+            set_occupied(deleted_key);
 
             auto path = compute_path_key(source_, target_);
             if(not path.empty())
@@ -660,6 +688,8 @@ std::vector<std::vector<Eigen::Vector2f>> Grid::compute_k_paths(const Key &sourc
             }
         }
     }
+    if(has_deleted)
+        set_free(deleted_key);
     return paths_list;
 }
 //Method to compute line of sight path from source to target
@@ -766,6 +796,8 @@ std::vector<Eigen::Vector2f> Grid::recover_path(const std::vector<std::pair<std:
         u = previous[u].first;
         k = previous[u].second;
     }
+    // Ensure source is included at the beginning
+    aux.emplace_front(static_cast<float>(source.first), static_cast<float>(source.second));
     std::vector<Eigen::Vector2f> res{ std::begin(aux), std::end(aux) };
     return res;
 };
@@ -795,85 +827,175 @@ void Grid::update_costs(float robot_semi_width, bool color_all_cells)
 {
     static QBrush free_brush(QColor(params.free_color));
     static QBrush occ_brush(QColor(params.occupied_color));
+    static QBrush unknown_brush(QColor(params.unknown_color));
     static QBrush orange_brush(QColor("Orange"));
-    static QBrush yellow_brush(QColor("Yellow"));
-    static QBrush gray_brush(QColor("LightGray"));
     static QBrush green_brush(QColor("LightGreen"));
-    static QBrush white(QColor("White"));
-    static std::vector<std::tuple<float, float, QBrush, std::function<std::vector<std::pair<Grid::Key, Grid::T&>>(Grid*, Grid::Key, bool)>>> wall_ranges
-                ={{100, 75, orange_brush, &Grid::neighboors_8},
-                  {75, 50, yellow_brush, &Grid::neighboors_8},
-                  {50, 25, gray_brush, &Grid::neighboors_8},
-                  {25, 5,  green_brush, &Grid::neighboors_16}};
-    static std::vector<std::tuple<float, float, QBrush, std::function<std::vector<std::pair<Grid::Key, Grid::T&>>(Grid*, Grid::Key, bool)>>> wall_ranges_no_color
-                ={{100, 75, white, &Grid::neighboors_8},
-                  {75, 50, white, &Grid::neighboors_8},
-                  {50, 25, white, &Grid::neighboors_8},
-                  {25, 5,  white, &Grid::neighboors_16}};
 
-    // we assume the grid has been cleared before. All free cells have cost 1
-
-    // if not free, set cost to 100. These are cells detected by the  Lidar.
-    for (auto &&[k, v]: iter::filterfalse([](auto &v) { return std::get<1>(v).free; }, fmap))
+    // First pass: normalize costs and colors for observed cells only
+    for (auto &[k, v]: fmap)
     {
-        v.cost = params.occupied_cost;
-        v.tile->setBrush(occ_brush);
-    }
-
-    const auto final_ranges = color_all_cells ? wall_ranges : wall_ranges_no_color;
-    for(auto &[upper, lower, brush, neigh] : final_ranges)
-    {
-        // get all cells with cost == upper
-        for (auto &&[k, v]: iter::filter([upper](auto &v) { return std::get<1>(v).cost == upper; }, fmap))
+        const bool is_unknown = (v.hits == 0.f && v.misses == 0.f);
+        if(is_unknown)
         {
-            // get all neighboors of these cells whose cost is lower than upper and are free
-            auto neighs = neigh(this, k, false);
-            for (auto &[kk, vv]: neighs)
-            {
-                if (vv.cost >= upper || !vv.free)
-                    continue;
-                const auto &[ok, cell] = get_cell(kk);
-                cell.cost = lower;
-                if(upper == 100)    // set firts expansion to occupied
-                    cell.free = false;
-                else
-                    cell.free = true;
-                cell.tile->setBrush(brush);
-            }
+            v.cost = params.unknown_cost;
+            if(color_all_cells)
+                v.tile->setBrush(unknown_brush);
+        }
+        else if(!v.free)
+        {
+            v.cost = params.occupied_cost;
+            if(color_all_cells)
+                v.tile->setBrush(occ_brush);
+        }
+        else
+        {
+            v.cost = params.free_cost;
+            if(color_all_cells)
+                v.tile->setBrush(free_brush);
         }
     }
+
+    // Second pass: grow occupied into observed free cells with >=5/8 occupied neighbors
+    std::vector<Key> to_occupy;
+    to_occupy.reserve(fmap.size() / 8);
+
+    for (auto &[k, v]: fmap)
+    {
+        const bool is_unknown = (v.hits == 0.f && v.misses == 0.f);
+        if(is_unknown || !v.free)
+            continue;
+
+        int occ_count = 0;
+        for (const auto &[nk, nv] : neighboors_8(k, true))
+        {
+            if(!nv.free)
+            {
+                occ_count++;
+                if(occ_count >= 5) break;
+            }
+        }
+        if(occ_count >= 5)
+            to_occupy.push_back(k);
+    }
+
+    for (const auto &k : to_occupy)
+    {
+        auto &&[ok, cell] = get_cell(k);
+        if(!ok) continue;
+        cell.free = false;
+        cell.cost = params.occupied_cost;
+        if(color_all_cells)
+            cell.tile->setBrush(occ_brush);
+    }
+
+    // Third pass: add orange layer around occupied cells with half the weight
+    std::vector<Key> to_orange;
+    to_orange.reserve(fmap.size() / 8);
+    const float half_occ_cost = params.occupied_cost / 2.f;
+
+    for (auto &[k, v]: fmap)
+    {
+        if(v.free) continue;  // only look at occupied cells
+
+        for (const auto &[nk, nv] : neighboors_8(k, true))
+        {
+            if(nv.free && nv.cost < half_occ_cost)
+                to_orange.push_back(nk);
+        }
+    }
+
+    for (const auto &k : to_orange)
+    {
+        auto &&[ok, cell] = get_cell(k);
+        if(!ok || !cell.free) continue;
+        cell.cost = half_occ_cost;
+        if(color_all_cells)
+            cell.tile->setBrush(orange_brush);
+    }
+
+    // Fourth pass: add green layer (2 cells) around orange cells with quarter weight
+    std::vector<Key> to_green;
+    to_green.reserve(fmap.size() / 8);
+    const float quarter_occ_cost = params.occupied_cost / 4.f;
+
+    for (const auto &k : to_orange)
+    {
+        for (const auto &[nk, nv] : neighboors_8(k, true))
+        {
+            if(nv.free && nv.cost < quarter_occ_cost)
+                to_green.push_back(nk);
+        }
+    }
+
+    for (const auto &k : to_green)
+    {
+        auto &&[ok, cell] = get_cell(k);
+        if(!ok || !cell.free) continue;
+        cell.cost = quarter_occ_cost;
+        if(color_all_cells)
+            cell.tile->setBrush(green_brush);
+    }
+
+    // Fifth pass: second green layer around first green layer
+    std::vector<Key> to_green2;
+    to_green2.reserve(fmap.size() / 8);
+    const float eighth_occ_cost = params.occupied_cost / 8.f;
+
+    for (const auto &k : to_green)
+    {
+        for (const auto &[nk, nv] : neighboors_8(k, true))
+        {
+            if(nv.free && nv.cost < eighth_occ_cost)
+                to_green2.push_back(nk);
+        }
+    }
+
+    for (const auto &k : to_green2)
+    {
+        auto &&[ok, cell] = get_cell(k);
+        if(!ok || !cell.free) continue;
+        cell.cost = eighth_occ_cost;
+        if(color_all_cells)
+            cell.tile->setBrush(green_brush);
+    }
 }
-void Grid::update_map( const std::vector<Eigen::Vector3f> &points,
-                       const Eigen::Vector2f &robot_in_grid,
-                       float max_laser_range)
+void Grid::update_map(const std::vector<Eigen::Vector2f> &points,
+                      const Eigen::Affine2f &robot_in_grid,
+                      float max_laser_range)
 {
     const float tile_size_f = static_cast<float>(params.tile_size);
     const float inv_tile_size = 1.0f / tile_size_f;
+    // Margin to detect max-range returns (no obstacle detected)
+    // Use 5% of max range as margin to filter max-range returns
+    const float range_threshold = max_laser_range * 0.95f;
 
     for(const auto &point : points)
     {
-        const Eigen::Vector2f endpoint = point.head(2);
-        const Eigen::Vector2f diff = endpoint - robot_in_grid;
+        const Eigen::Vector2f diff = point - robot_in_grid.translation();
         const float length = diff.norm();
 
         if(length < tile_size_f) continue;  // Skip very short rays
 
-        // Use integer steps based on tile size for better cache locality
         const int num_steps = static_cast<int>(length * inv_tile_size);
         if(num_steps <= 0) continue;
 
         const float inv_steps = 1.0f / static_cast<float>(num_steps);
         const Eigen::Vector2f step_vec = diff * inv_steps;
 
-        Eigen::Vector2f p = robot_in_grid;
+        // Mark cells along the ray as free (miss) - for ALL rays
+        Eigen::Vector2f p = robot_in_grid.translation();
         for(int i = 0; i < num_steps - 1; ++i)
         {
             p += step_vec;
             add_miss(p);
         }
 
-        if(length <= max_laser_range)
-            add_hit(endpoint);
+        // Only mark endpoint as occupied if ray hit a real obstacle (not max-range)
+        if(length < range_threshold)
+        {
+            add_hit(point);
+        }
+        // else: ray reached max_range - endpoint is unknown, don't mark as occupied
     }
 }
 
@@ -1089,13 +1211,11 @@ std::vector<std::tuple<Grid::Key,Grid::T>> Grid::copy_submap(const Grid::Key &ce
     static std::vector<std::tuple<float, float, QBrush, std::function<std::vector<std::pair<Grid::Key, Grid::T&>>(Grid*, Grid::Key, bool)>>> wall_ranges
                                                                                                                                                      ={{100, 75, orange_brush, &Grid::neighboors_8},
                                                                                                                                                        {75, 50, yellow_brush, &Grid::neighboors_8},
-                                                                                                                                                       {50, 25, gray_brush, &Grid::neighboors_8},
-                                                                                                                                                       {25, 5,  green_brush, &Grid::neighboors_16}};
+                                                                                                                                                       {50, 5,  green_brush, &Grid::neighboors_16}};
     static std::vector<std::tuple<float, float, QBrush, std::function<std::vector<std::pair<Grid::Key, Grid::T&>>(Grid*, Grid::Key, bool)>>> wall_ranges_no_color
                                                                                                                                                      ={{100, 75, white, &Grid::neighboors_8},
                                                                                                                                                        {75, 50, white, &Grid::neighboors_8},
-                                                                                                                                                       {50, 25, white, &Grid::neighboors_8},
-                                                                                                                                                       {25, 5,  white, &Grid::neighboors_16}};
+                                                                                                                                                       {50, 5,  white, &Grid::neighboors_16}};
 
     std::vector<std::tuple<Grid::Key,Grid::T>> cells;
     std::vector<std::tuple<Grid::Key,Grid::T>> regrown_cells;

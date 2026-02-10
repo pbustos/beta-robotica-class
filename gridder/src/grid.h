@@ -51,6 +51,7 @@ public:
             float cost = 1;
             float hits = 0;
             float misses = 0;
+            float log_odds = 0.0f;  // Log-odds representation for occupancy probability
             QGraphicsRectItem *tile;
             // methods to save and read values to disk
             void save(std::ostream &os) const
@@ -68,7 +69,7 @@ public:
                         QPointF grid_center = QPointF(0,0),
                         float grid_angle = 0.f);
 
-        void check_and_resize(const std::vector<Eigen::Vector3f> &points);
+        void check_and_resize(const std::vector<Eigen::Vector2f> &points);
         void resize_grid(QRectF new_dim);
 
         // paths
@@ -81,9 +82,9 @@ public:
                                                                   bool target_is_human);
 
         // map maintainance
-        void update_map( const std::vector<Eigen::Vector3f> &points,
-                         const Eigen::Vector2f &robot_in_grid,
-                         float max_laser_range);
+        void update_map(const std::vector<Eigen::Vector2f> &points,
+                        const Eigen::Affine2f &robot_in_grid,
+                        float max_laser_range);
         void update_costs(float robot_semi_width, bool color_all_cells=true);
         inline std::tuple<bool, T &> get_cell(const Key &k);
         Key point_to_key(long int x, long int z) const;
@@ -192,8 +193,8 @@ public:
             const QString free_color = "white";
             const QString unknown_color = "LightGrey";
             const QString occupied_color = "DarkRed";
-            const float occupancy_threshold = 0.485;
-
+            const float occupancy_threshold_low = 0.45f;   // hysteresis lower bound
+            const float occupancy_threshold_high = 0.55f;  // hysteresis upper bound
         };
         Params params;
 

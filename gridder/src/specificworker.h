@@ -33,7 +33,7 @@
 
 #include <genericworker.h>
 #include "grid.h"
-#include "doublebuffer/DoubleBuffer.h"
+#include "doublebuffer_sync/doublebuffer_sync.h"
 #include <Eigen/Eigen>
 #include "abstract_graphic_viewer/abstract_graphic_viewer.h"
 #include "Gridder.h"
@@ -158,7 +158,7 @@ class SpecificWorker : public GenericWorker
 	    AbstractGraphicViewer *viewer;
 
 		//Robot
-		Eigen::Affine2f robot_pose;
+		Eigen::Affine2f robot_pose = Eigen::Affine2f::Identity();
 
 	    struct Params
 	    {
@@ -182,15 +182,21 @@ class SpecificWorker : public GenericWorker
 	        int NUM_PATHS_TO_SEARCH = 3;
 	        float MIN_DISTANCE_BETWEEN_PATHS = 500; // mm
 	        bool DISPLAY = true ; //TODO: config file
+	        bool DRAW_LIDAR_POINTS = true;  // debug: draw LiDAR points
+	        int MAX_LIDAR_DRAW_POINTS = 1500; // debug: limit number of points drawn
 	    };
 	    Params params;
 
 	    // Timer
 	    rc::Timer<> clock;
 
+		// Sync Buffer
+		BufferSync<InOut<Eigen::Affine2f, Eigen::Affine2f>,
+				   InOut<std::vector<Eigen::Vector2f>, std::vector<Eigen::Vector2f>>> buffer_sync;
+
 	    // Lidar Thread
-	    DoubleBuffer<std::vector<Eigen::Vector3f>, std::vector<Eigen::Vector3f>> buffer_lidar_data;
 	    std::thread read_lidar_th;
+	    std::atomic<bool> stop_lidar_thread{false};
 	    void read_lidar();
 
 	    // grid
@@ -203,11 +209,14 @@ class SpecificWorker : public GenericWorker
 	    // Draw
 	    void draw_paths(const std::vector<std::vector<Eigen::Vector2f>> &paths, QGraphicsScene *scene, bool erase_only=false);
 	    void draw_path(const std::vector<Eigen::Vector2f> &path, QGraphicsScene *scene, bool erase_only=false);
+	    void draw_lidar_points(const std::vector<Eigen::Vector2f> &points_world);
 
 	    // mutex
 	    std::mutex mutex_path;
 
-		//Eigen::Affine2f get_robot_pose();
+		Eigen::Affine2f get_robot_pose();
+
+	float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
 
 	    // Do some work
 	    //RoboCompGridPlanner::TPlan compute_line_of_sight_target(const Target &target);
