@@ -57,14 +57,37 @@ void SpecificWorker::initialize()
 	auto [r, e] = viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 100, QColor("Blue"));
 	robot_draw = r;
 	show ();
+
+	// mouse
+        connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, [this](QPointF p)
+        {
+	        qInfo() << "[MOUSE] New global target arrived:" << p;
+
+			// Use current robot position in world coordinates as source
+
+			const RoboCompGridder::TPoint source = {robot_pose.translation().x(), robot_pose.translation().y()};
+			const RoboCompGridder::TPoint target = {static_cast<float>(p.x()), static_cast<float>(p.y())};
+			std::vector<Eigen::Vector2f> path;
+
+			try
+			{ current_path_result = gridder_proxy->getPaths(source, target, 1, true, false, 1.0);}
+			catch (const Ice::Exception &e) {std::cerr << "Gridder error: " << e.what() << std::endl;}
+        });
 }
 
 void SpecificWorker::compute()
 {
+	// get map from gridder
+	try
+	{
+		auto gridder_map = gridder_proxy->getMap();
+	}
+	catch (const Ice::Exception &e){ std::cerr << "Gridder error: " << e.what() << std::endl;}
+
 	// Get robot pose from Webots and return transform
 	robot_pose = get_robot_pose();
 
-	// Update visual representation of the robot
+	// Update visual representation of the robotc
 	robot_draw->setPos(robot_pose.translation().x(), robot_pose.translation().y());
 	robot_draw->setRotation(qRadiansToDegrees((Eigen::Rotation2Df(robot_pose.linear()).angle())));
 
@@ -72,54 +95,60 @@ void SpecificWorker::compute()
 	const auto data = get_lidar();
 	draw_lidar(data, robot_pose, &viewer->scene);
 
-	// =========================================================================
-	// MPPI Controller - descomentar para activar
-	// =========================================================================
-	// if (has_target_)
-	// {
-	//     // 1. Request path from Gridder (if needed)
-	//     // try {
-	//     //     auto gridder_path = gridder_proxy->getPath(
-	//     //         robot_pose.translation().x(), robot_pose.translation().y(),
-	//     //         current_target_.x(), current_target_.y());
-	//     //     current_path_.clear();
-	//     //     for (const auto& p : gridder_path)
-	//     //         current_path_.emplace_back(p.x, p.y);
-	//     // } catch (const Ice::Exception& e) {
-	//     //     std::cerr << "Gridder error: " << e.what() << std::endl;
-	//     // }
-	//
-	//     // 2. Convert lidar points to obstacle positions (world frame)
-	//     // auto obstacles = lidar_to_obstacles(data);
-	//
-	//     // 3. Prepare current state for MPPI
-	//     // MPPIController::State current_state;
-	//     // current_state.x = robot_pose.translation().x();
-	//     // current_state.y = robot_pose.translation().y();
-	//     // current_state.theta = Eigen::Rotation2Df(robot_pose.linear()).angle();
-	//
-	//     // 4. Compute optimal control using MPPI
-	//     // auto control = mppi_controller_.compute(current_state, current_path_, obstacles);
-	//
-	//     // 5. Send velocities to the robot
-	//     // try {
-	//     //     omnirobot_proxy->setSpeedBase(control.vx, control.vy, control.omega);
-	//     // } catch (const Ice::Exception& e) {
-	//     //     std::cerr << "OmniRobot error: " << e.what() << std::endl;
-	//     // }
-	//
-	//     // 6. Draw MPPI optimal trajectory for visualization
-	//     // draw_mppi_trajectory(mppi_controller_.getOptimalTrajectory(), &viewer->scene);
-	//
-	//     // 7. Check if goal reached
-	//     // if (mppi_controller_.goalReached(current_state, current_path_.back()))
-	//     // {
-	//     //     has_target_ = false;
-	//     //     omnirobot_proxy->stopBase();
-	//     //     std::cout << "Goal reached!" << std::endl;
-	//     // }
-	// }
+	// Compute MPPI controller
+	compute_mppi_control(data);
+}
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::compute_mppi_control(const RoboCompLidar3D::TPoints &lidar_data)
+{
+	// =========================================================================
+	// MPPI Controller Logic
+	// =========================================================================
+	if (has_target_)
+	{
+		// 1. Request path from Gridder (if needed)
+		// try {
+		//     auto gridder_path = gridder_proxy->getPath(
+		//         robot_pose.translation().x(), robot_pose.translation().y(),
+		//         current_target_.x(), current_target_.y());
+		//     current_path_.clear();
+		//     for (const auto& p : gridder_path)
+		//         current_path_.emplace_back(p.x, p.y);
+		// } catch (const Ice::Exception& e) {
+		//     std::cerr << "Gridder error: " << e.what() << std::endl;
+		// }
+
+		// 2. Convert lidar points to obstacle positions (world frame)
+		// auto obstacles = lidar_to_obstacles(lidar_data);
+
+		// 3. Prepare current state for MPPI
+		// MPPIController::State current_state;
+		// current_state.x = robot_pose.translation().x();
+		// current_state.y = robot_pose.translation().y();
+		// current_state.theta = Eigen::Rotation2Df(robot_pose.linear()).angle();
+
+		// 4. Compute optimal control using MPPI
+		// auto control = mppi_controller_.compute(current_state, current_path_, obstacles);
+
+		// 5. Send velocities to the robot
+		// try {
+		//     omnirobot_proxy->setSpeedBase(control.vx, control.vy, control.omega);
+		// } catch (const Ice::Exception& e) {
+		//     std::cerr << "OmniRobot error: " << e.what() << std::endl;
+		// }
+
+		// 6. Draw MPPI optimal trajectory for visualization
+		// draw_mppi_trajectory(mppi_controller_.getOptimalTrajectory(), &viewer->scene);
+
+		// 7. Check if goal reached
+		// if (mppi_controller_.goalReached(current_state, current_path_.back()))
+		// {
+		//     has_target_ = false;
+		//     omnirobot_proxy->stopBase();
+		//     std::cout << "Goal reached!" << std::endl;
+		// }
+	}
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////

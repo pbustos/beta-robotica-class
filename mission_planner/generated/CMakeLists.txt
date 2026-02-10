@@ -35,15 +35,13 @@ SET (SOURCES
   $ENV{ROBOCOMP}/classes/ConfigLoader/ConfigLoader.cpp
   main.cpp
   genericworker.cpp
-        ../src/mppi_controller.h
-        ../src/mppi_controller.cpp
 )
 
 
 #ROBOCOMP
 ROBOCOMP_INITIALIZE( $ENV{ROBOCOMP}/ )
-ROBOCOMP_IDSL_TO_ICE(OmniRobot Gridder GenericBase Lidar3D Camera360RGB Webots2Robocomp)
-ROBOCOMP_ICE_TO_SRC(OmniRobot Gridder GenericBase Lidar3D Camera360RGB Webots2Robocomp)
+ROBOCOMP_IDSL_TO_ICE(Camera360RGB GenericBase Lidar3D Gridder Webots2Robocomp OmniRobot)
+ROBOCOMP_ICE_TO_SRC(Camera360RGB GenericBase Lidar3D Gridder Webots2Robocomp OmniRobot)
 SET (EXECUTABLE_OUTPUT_PATH ${RC_COMPONENT_DEVEL_PATH}/bin)
 set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 

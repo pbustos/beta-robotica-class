@@ -1,5 +1,6 @@
 # Proxies for required interfaces
 Proxies.Camera360RGB = "camera360rgb:tcp -h localhost -p 0"
+Proxies.Gridder = "gridder:tcp -h localhost -p 0"
 Proxies.Lidar3D = "lidar3d:tcp -h localhost -p 0"
 Proxies.OmniRobot = "omnirobot:tcp -h localhost -p 0"
 Proxies.Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 0"

@@ -18,11 +18,11 @@
  */
 
 
-/** \mainpage RoboComp::mapa
+/** \mainpage RoboComp::mission_planner
  *
  * \section intro_sec Introduction
  *
- * The mapa component...
+ * The mission_planner component...
  *
  * \section interface_sec Interface
  *
@@ -34,7 +34,7 @@
  * ...
  *
  * \subsection install2_ssec Compile and install
- * cd mapa
+ * cd mission_planner
  * <br>
  * cmake . && make
  * <br>
@@ -52,7 +52,7 @@
  *
  * \subsection execution_ssec Execution
  *
- * Just: "${PATH_TO_BINARY}/mapa --Ice.Config=${PATH_TO_CONFIG_FILE}"
+ * Just: "${PATH_TO_BINARY}/mission_planner --Ice.Config=${PATH_TO_CONFIG_FILE}"
  *
  * \subsection running_ssec Once running
  *
@@ -87,8 +87,8 @@
 
 #define USE_QTGUI
 
-#define PROGRAM_NAME    "mapa"
-#define SERVER_FULL_NAME   "RoboComp mapa::mapa"
+#define PROGRAM_NAME    "mission_planner"
+#define SERVER_FULL_NAME   "RoboComp mission_planner::mission_planner"
 
 
 template <typename ProxyType, typename ProxyPointer>
@@ -110,10 +110,10 @@ void require(const Ice::CommunicatorPtr& communicator,
 }
 
 
-class mapa : public Ice::Application
+class mission_planner : public Ice::Application
 {
 public:
-	mapa (QString configFile, QString prfx, bool startup_check) { 
+	mission_planner (QString configFile, QString prfx, bool startup_check) { 
 		this->configFile = configFile.toStdString();
 		this->prefix = prfx.toStdString();
 		this->startup_check_flag=startup_check; 
@@ -134,7 +134,7 @@ public:
 	virtual int run(int, char*[]);
 };
 
-Ice::InitializationData mapa::getInitializationDataIce(){
+Ice::InitializationData mission_planner::getInitializationDataIce(){
         Ice::InitializationData initData;
         initData.properties = Ice::createProperties();
         initData.properties->setProperty("Ice.Warn.Connections", this->configLoader.get<std::string>("Ice.Warn.Connections"));
@@ -144,14 +144,14 @@ Ice::InitializationData mapa::getInitializationDataIce(){
 		return initData;
 }
 
-void mapa::initialize()
+void mission_planner::initialize()
 {
     this->configLoader.load(this->configFile);
 	this->configLoader.printConfig();
 	std::cout<<std::endl;
 }
 
-int mapa::run(int argc, char* argv[])
+int mission_planner::run(int argc, char* argv[])
 {
 #ifdef USE_QTGUI
 	QApplication a(argc, argv);  // GUI application
@@ -175,6 +175,7 @@ int mapa::run(int argc, char* argv[])
 	int status=EXIT_SUCCESS;
 
 	RoboCompCamera360RGB::Camera360RGBPrxPtr camera360rgb_proxy;
+	RoboCompGridder::GridderPrxPtr gridder_proxy;
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy;
 	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
 	RoboCompWebots2Robocomp::Webots2RobocompPrxPtr webots2robocomp_proxy;
@@ -183,6 +184,8 @@ int mapa::run(int argc, char* argv[])
 	//Require code
 	require<RoboCompCamera360RGB::Camera360RGBPrx, RoboCompCamera360RGB::Camera360RGBPrxPtr>(communicator(),
 	                    configLoader.get<std::string>("Proxies.Camera360RGB"), "Camera360RGBProxy", camera360rgb_proxy);
+	require<RoboCompGridder::GridderPrx, RoboCompGridder::GridderPrxPtr>(communicator(),
+	                    configLoader.get<std::string>("Proxies.Gridder"), "GridderProxy", gridder_proxy);
 	require<RoboCompLidar3D::Lidar3DPrx, RoboCompLidar3D::Lidar3DPrxPtr>(communicator(),
 	                    configLoader.get<std::string>("Proxies.Lidar3D"), "Lidar3DProxy", lidar3d_proxy);
 	require<RoboCompOmniRobot::OmniRobotPrx, RoboCompOmniRobot::OmniRobotPrxPtr>(communicator(),
@@ -190,7 +193,7 @@ int mapa::run(int argc, char* argv[])
 	require<RoboCompWebots2Robocomp::Webots2RobocompPrx, RoboCompWebots2Robocomp::Webots2RobocompPrxPtr>(communicator(),
 	                    configLoader.get<std::string>("Proxies.Webots2Robocomp"), "Webots2RobocompProxy", webots2robocomp_proxy);
 
-	tprx = std::make_tuple(camera360rgb_proxy,lidar3d_proxy,omnirobot_proxy,webots2robocomp_proxy);
+	tprx = std::make_tuple(camera360rgb_proxy,gridder_proxy,lidar3d_proxy,omnirobot_proxy,webots2robocomp_proxy);
 	SpecificWorker *worker = new SpecificWorker(this->configLoader, tprx, startup_check_flag);
 	QObject::connect(worker, SIGNAL(kill()), &a, SLOT(quit()));
 
@@ -272,7 +275,7 @@ int main(int argc, char* argv[])
 		}
 
 	}
-	mapa app(configFile, prefix, startup_check_flag);
+	mission_planner app(configFile, prefix, startup_check_flag);
 
 	return app.main(argc, argv, app.getInitializationDataIce());
 }

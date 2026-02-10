@@ -130,6 +130,8 @@ class SpecificWorker : public GenericWorker
 		Eigen::Affine2f robot_pose;
 
 		Eigen::Affine2f get_robot_pose();
+		RoboCompGridder::Result current_path_result = {};
+		bool has_target_ = false;
 
 		void draw_lidar (const RoboCompLidar3D::TPoints &filtered_points, const Eigen::Affine2f &robot_pose, QGraphicsScene *scene);
 
@@ -139,6 +141,8 @@ class SpecificWorker : public GenericWorker
 		RoboCompLidar3D::TPoints get_lidar();
 
 		double yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
+
+		void compute_mppi_control(const RoboCompLidar3D::TPoints &lidar_data);
 
 		//Transforms param local_point to the room's coordinate system by multiplying with robot_pose (which already is at the room's coordinate system)
 		//Eigen::Vector2f transform_to_world(const RoboCompLidar3D::TPoint &local_point);
