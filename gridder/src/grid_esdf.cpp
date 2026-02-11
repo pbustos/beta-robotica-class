@@ -179,6 +179,49 @@ void GridESDF::add_obstacle(const Key &k, uint64_t timestamp)
     }
 }
 
+void GridESDF::add_confirmed_obstacle(const Key &k)
+{
+    // Add obstacle directly as confirmed - used for external map loading
+    // Skip neighbor verification, create visual tile immediately
+    auto it = obstacles_.find(k);
+    if (it != obstacles_.end())
+    {
+        // Already exists - ensure it has a tile
+        if (it->second.tile == nullptr && scene_)
+        {
+            const float ts = params_.tile_size;
+            it->second.tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
+                                              QPen(Qt::NoPen),
+                                              QBrush(QColor(params_.obstacle_color)));
+            it->second.tile->setPos(k.first + ts/2, k.second + ts/2);
+            it->second.tile->setZValue(1);
+        }
+        it->second.log_odds = params_.log_odds_max;
+        it->second.hits = params_.min_hits_to_confirm + 1;
+    }
+    else
+    {
+        // New obstacle - create as fully confirmed with visual
+        ObstacleCell cell;
+        cell.log_odds = params_.log_odds_max;
+        cell.hits = params_.min_hits_to_confirm + 1;
+        cell.last_seen = 0;
+
+        if (scene_)
+        {
+            const float ts = params_.tile_size;
+            cell.tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
+                                        QPen(Qt::NoPen),
+                                        QBrush(QColor(params_.obstacle_color)));
+            cell.tile->setPos(k.first + ts/2, k.second + ts/2);
+            cell.tile->setZValue(1);
+        }
+        obstacles_[k] = cell;
+    }
+    // Note: visualization_dirty_ is NOT set here to avoid performance issues
+    // when loading many obstacles. Call mark_visualization_dirty() after batch loading.
+}
+
 void GridESDF::remove_obstacle(const Key &k)
 {
     auto it = obstacles_.find(k);
@@ -799,7 +842,7 @@ void GridESDF::morphological_close(int iterations)
             }
         }
 
-        // Add candidate if it has >= 5 obstacle neighbors (fills gaps)
+        // Add candidate if it has >= 3 obstacle neighbors (fills gaps in walls)
         for (const auto &c : candidates)
         {
             int obstacle_neighbors = 0;
@@ -808,7 +851,7 @@ void GridESDF::morphological_close(int iterations)
                 if (obstacle_set.find(n) != obstacle_set.end())
                     ++obstacle_neighbors;
             }
-            if (obstacle_neighbors >= 5)
+            if (obstacle_neighbors >= 3)
                 to_add.push_back(c);
         }
 

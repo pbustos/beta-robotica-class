@@ -17,6 +17,8 @@ generated/gridder_autogen/timestamp: generated/CMakeLists.txt \
   src/grid_esdf.cpp \
   src/grid_esdf.h \
   src/mainUI.ui \
+  src/mrpt_map_loader.cpp \
+  src/mrpt_map_loader.h \
   src/specificworker.cpp \
   src/specificworker.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.h \
@@ -1600,6 +1602,7 @@ bin/gridder: /lib/i386-linux-gnu/libbz2.so.1.0 \
   generated/CMakeFiles/gridder.dir/Webots2Robocomp.cpp.o \
   generated/CMakeFiles/gridder.dir/__/src/grid.cpp.o \
   generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o \
+  generated/CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.o \
   generated/CMakeFiles/gridder.dir/__/src/specificworker.cpp.o \
   generated/CMakeFiles/gridder.dir/genericworker.cpp.o \
   generated/CMakeFiles/gridder.dir/gridderI.cpp.o \
@@ -4647,6 +4650,524 @@ generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o: src/grid_esdf.cpp \
   /usr/lib/gcc/x86_64-linux-gnu/14/include/syslimits.h \
   /usr/lib/gcc/x86_64-linux-gnu/14/include/xmmintrin.h
 
+generated/CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.o: src/mrpt_map_loader.cpp \
+  src/mrpt_map_loader.h \
+  /usr/include/Eigen/Cholesky \
+  /usr/include/Eigen/Core \
+  /usr/include/Eigen/Dense \
+  /usr/include/Eigen/Eigenvalues \
+  /usr/include/Eigen/Geometry \
+  /usr/include/Eigen/Householder \
+  /usr/include/Eigen/Jacobi \
+  /usr/include/Eigen/LU \
+  /usr/include/Eigen/QR \
+  /usr/include/Eigen/SVD \
+  /usr/include/Eigen/src/Cholesky/LDLT.h \
+  /usr/include/Eigen/src/Cholesky/LLT.h \
+  /usr/include/Eigen/src/Core/ArithmeticSequence.h \
+  /usr/include/Eigen/src/Core/Array.h \
+  /usr/include/Eigen/src/Core/ArrayBase.h \
+  /usr/include/Eigen/src/Core/ArrayWrapper.h \
+  /usr/include/Eigen/src/Core/Assign.h \
+  /usr/include/Eigen/src/Core/AssignEvaluator.h \
+  /usr/include/Eigen/src/Core/BandMatrix.h \
+  /usr/include/Eigen/src/Core/Block.h \
+  /usr/include/Eigen/src/Core/BooleanRedux.h \
+  /usr/include/Eigen/src/Core/CommaInitializer.h \
+  /usr/include/Eigen/src/Core/ConditionEstimator.h \
+  /usr/include/Eigen/src/Core/CoreEvaluators.h \
+  /usr/include/Eigen/src/Core/CoreIterators.h \
+  /usr/include/Eigen/src/Core/CwiseBinaryOp.h \
+  /usr/include/Eigen/src/Core/CwiseNullaryOp.h \
+  /usr/include/Eigen/src/Core/CwiseTernaryOp.h \
+  /usr/include/Eigen/src/Core/CwiseUnaryOp.h \
+  /usr/include/Eigen/src/Core/CwiseUnaryView.h \
+  /usr/include/Eigen/src/Core/DenseBase.h \
+  /usr/include/Eigen/src/Core/DenseCoeffsBase.h \
+  /usr/include/Eigen/src/Core/DenseStorage.h \
+  /usr/include/Eigen/src/Core/Diagonal.h \
+  /usr/include/Eigen/src/Core/DiagonalMatrix.h \
+  /usr/include/Eigen/src/Core/DiagonalProduct.h \
+  /usr/include/Eigen/src/Core/Dot.h \
+  /usr/include/Eigen/src/Core/EigenBase.h \
+  /usr/include/Eigen/src/Core/Fuzzy.h \
+  /usr/include/Eigen/src/Core/GeneralProduct.h \
+  /usr/include/Eigen/src/Core/GenericPacketMath.h \
+  /usr/include/Eigen/src/Core/GlobalFunctions.h \
+  /usr/include/Eigen/src/Core/IO.h \
+  /usr/include/Eigen/src/Core/IndexedView.h \
+  /usr/include/Eigen/src/Core/Inverse.h \
+  /usr/include/Eigen/src/Core/Map.h \
+  /usr/include/Eigen/src/Core/MapBase.h \
+  /usr/include/Eigen/src/Core/MathFunctions.h \
+  /usr/include/Eigen/src/Core/MathFunctionsImpl.h \
+  /usr/include/Eigen/src/Core/Matrix.h \
+  /usr/include/Eigen/src/Core/MatrixBase.h \
+  /usr/include/Eigen/src/Core/NestByValue.h \
+  /usr/include/Eigen/src/Core/NoAlias.h \
+  /usr/include/Eigen/src/Core/NumTraits.h \
+  /usr/include/Eigen/src/Core/PartialReduxEvaluator.h \
+  /usr/include/Eigen/src/Core/PermutationMatrix.h \
+  /usr/include/Eigen/src/Core/PlainObjectBase.h \
+  /usr/include/Eigen/src/Core/Product.h \
+  /usr/include/Eigen/src/Core/ProductEvaluators.h \
+  /usr/include/Eigen/src/Core/Random.h \
+  /usr/include/Eigen/src/Core/Redux.h \
+  /usr/include/Eigen/src/Core/Ref.h \
+  /usr/include/Eigen/src/Core/Replicate.h \
+  /usr/include/Eigen/src/Core/Reshaped.h \
+  /usr/include/Eigen/src/Core/ReturnByValue.h \
+  /usr/include/Eigen/src/Core/Reverse.h \
+  /usr/include/Eigen/src/Core/Select.h \
+  /usr/include/Eigen/src/Core/SelfAdjointView.h \
+  /usr/include/Eigen/src/Core/SelfCwiseBinaryOp.h \
+  /usr/include/Eigen/src/Core/Solve.h \
+  /usr/include/Eigen/src/Core/SolveTriangular.h \
+  /usr/include/Eigen/src/Core/SolverBase.h \
+  /usr/include/Eigen/src/Core/StableNorm.h \
+  /usr/include/Eigen/src/Core/StlIterators.h \
+  /usr/include/Eigen/src/Core/Stride.h \
+  /usr/include/Eigen/src/Core/Swap.h \
+  /usr/include/Eigen/src/Core/Transpose.h \
+  /usr/include/Eigen/src/Core/Transpositions.h \
+  /usr/include/Eigen/src/Core/TriangularMatrix.h \
+  /usr/include/Eigen/src/Core/VectorBlock.h \
+  /usr/include/Eigen/src/Core/VectorwiseOp.h \
+  /usr/include/Eigen/src/Core/Visitor.h \
+  /usr/include/Eigen/src/Core/arch/Default/BFloat16.h \
+  /usr/include/Eigen/src/Core/arch/Default/ConjHelper.h \
+  /usr/include/Eigen/src/Core/arch/Default/GenericPacketMathFunctions.h \
+  /usr/include/Eigen/src/Core/arch/Default/GenericPacketMathFunctionsFwd.h \
+  /usr/include/Eigen/src/Core/arch/Default/Half.h \
+  /usr/include/Eigen/src/Core/arch/Default/Settings.h \
+  /usr/include/Eigen/src/Core/arch/Default/TypeCasting.h \
+  /usr/include/Eigen/src/Core/arch/SSE/Complex.h \
+  /usr/include/Eigen/src/Core/arch/SSE/MathFunctions.h \
+  /usr/include/Eigen/src/Core/arch/SSE/PacketMath.h \
+  /usr/include/Eigen/src/Core/arch/SSE/TypeCasting.h \
+  /usr/include/Eigen/src/Core/functors/AssignmentFunctors.h \
+  /usr/include/Eigen/src/Core/functors/BinaryFunctors.h \
+  /usr/include/Eigen/src/Core/functors/NullaryFunctors.h \
+  /usr/include/Eigen/src/Core/functors/StlFunctors.h \
+  /usr/include/Eigen/src/Core/functors/TernaryFunctors.h \
+  /usr/include/Eigen/src/Core/functors/UnaryFunctors.h \
+  /usr/include/Eigen/src/Core/products/GeneralBlockPanelKernel.h \
+  /usr/include/Eigen/src/Core/products/GeneralMatrixMatrix.h \
+  /usr/include/Eigen/src/Core/products/GeneralMatrixMatrixTriangular.h \
+  /usr/include/Eigen/src/Core/products/GeneralMatrixVector.h \
+  /usr/include/Eigen/src/Core/products/Parallelizer.h \
+  /usr/include/Eigen/src/Core/products/SelfadjointMatrixMatrix.h \
+  /usr/include/Eigen/src/Core/products/SelfadjointMatrixVector.h \
+  /usr/include/Eigen/src/Core/products/SelfadjointProduct.h \
+  /usr/include/Eigen/src/Core/products/SelfadjointRank2Update.h \
+  /usr/include/Eigen/src/Core/products/TriangularMatrixMatrix.h \
+  /usr/include/Eigen/src/Core/products/TriangularMatrixVector.h \
+  /usr/include/Eigen/src/Core/products/TriangularSolverMatrix.h \
+  /usr/include/Eigen/src/Core/products/TriangularSolverVector.h \
+  /usr/include/Eigen/src/Core/util/BlasUtil.h \
+  /usr/include/Eigen/src/Core/util/ConfigureVectorization.h \
+  /usr/include/Eigen/src/Core/util/Constants.h \
+  /usr/include/Eigen/src/Core/util/DisableStupidWarnings.h \
+  /usr/include/Eigen/src/Core/util/ForwardDeclarations.h \
+  /usr/include/Eigen/src/Core/util/IndexedViewHelper.h \
+  /usr/include/Eigen/src/Core/util/IntegralConstant.h \
+  /usr/include/Eigen/src/Core/util/MKL_support.h \
+  /usr/include/Eigen/src/Core/util/Macros.h \
+  /usr/include/Eigen/src/Core/util/Memory.h \
+  /usr/include/Eigen/src/Core/util/Meta.h \
+  /usr/include/Eigen/src/Core/util/ReenableStupidWarnings.h \
+  /usr/include/Eigen/src/Core/util/ReshapedHelper.h \
+  /usr/include/Eigen/src/Core/util/StaticAssert.h \
+  /usr/include/Eigen/src/Core/util/SymbolicIndex.h \
+  /usr/include/Eigen/src/Core/util/XprHelper.h \
+  /usr/include/Eigen/src/Eigenvalues/ComplexSchur.h \
+  /usr/include/Eigen/src/Eigenvalues/HessenbergDecomposition.h \
+  /usr/include/Eigen/src/Eigenvalues/RealQZ.h \
+  /usr/include/Eigen/src/Eigenvalues/RealSchur.h \
+  /usr/include/Eigen/src/Eigenvalues/Tridiagonalization.h \
+  /usr/include/Eigen/src/Eigenvalues/ComplexEigenSolver.h \
+  /usr/include/Eigen/src/Eigenvalues/ComplexSchur.h \
+  /usr/include/Eigen/src/Eigenvalues/EigenSolver.h \
+  /usr/include/Eigen/src/Eigenvalues/GeneralizedEigenSolver.h \
+  /usr/include/Eigen/src/Eigenvalues/GeneralizedSelfAdjointEigenSolver.h \
+  /usr/include/Eigen/src/Eigenvalues/HessenbergDecomposition.h \
+  /usr/include/Eigen/src/Eigenvalues/MatrixBaseEigenvalues.h \
+  /usr/include/Eigen/src/Eigenvalues/RealQZ.h \
+  /usr/include/Eigen/src/Eigenvalues/RealSchur.h \
+  /usr/include/Eigen/src/Eigenvalues/SelfAdjointEigenSolver.h \
+  /usr/include/Eigen/src/Eigenvalues/Tridiagonalization.h \
+  /usr/include/Eigen/src/Geometry/AlignedBox.h \
+  /usr/include/Eigen/src/Geometry/AngleAxis.h \
+  /usr/include/Eigen/src/Geometry/EulerAngles.h \
+  /usr/include/Eigen/src/Geometry/Homogeneous.h \
+  /usr/include/Eigen/src/Geometry/Hyperplane.h \
+  /usr/include/Eigen/src/Geometry/OrthoMethods.h \
+  /usr/include/Eigen/src/Geometry/ParametrizedLine.h \
+  /usr/include/Eigen/src/Geometry/Quaternion.h \
+  /usr/include/Eigen/src/Geometry/Rotation2D.h \
+  /usr/include/Eigen/src/Geometry/RotationBase.h \
+  /usr/include/Eigen/src/Geometry/Scaling.h \
+  /usr/include/Eigen/src/Geometry/Transform.h \
+  /usr/include/Eigen/src/Geometry/Translation.h \
+  /usr/include/Eigen/src/Geometry/Umeyama.h \
+  /usr/include/Eigen/src/Geometry/arch/Geometry_SIMD.h \
+  /usr/include/Eigen/src/Householder/BlockHouseholder.h \
+  /usr/include/Eigen/src/Householder/Householder.h \
+  /usr/include/Eigen/src/Householder/HouseholderSequence.h \
+  /usr/include/Eigen/src/Jacobi/Jacobi.h \
+  /usr/include/Eigen/src/LU/Determinant.h \
+  /usr/include/Eigen/src/LU/FullPivLU.h \
+  /usr/include/Eigen/src/LU/InverseImpl.h \
+  /usr/include/Eigen/src/LU/PartialPivLU.h \
+  /usr/include/Eigen/src/LU/arch/InverseSize4.h \
+  /usr/include/Eigen/src/QR/ColPivHouseholderQR.h \
+  /usr/include/Eigen/src/QR/CompleteOrthogonalDecomposition.h \
+  /usr/include/Eigen/src/QR/FullPivHouseholderQR.h \
+  /usr/include/Eigen/src/QR/HouseholderQR.h \
+  /usr/include/Eigen/src/SVD/BDCSVD.h \
+  /usr/include/Eigen/src/SVD/JacobiSVD.h \
+  /usr/include/Eigen/src/SVD/SVDBase.h \
+  /usr/include/Eigen/src/SVD/UpperBidiagonalization.h \
+  /usr/include/Eigen/src/misc/Image.h \
+  /usr/include/Eigen/src/misc/Kernel.h \
+  /usr/include/Eigen/src/misc/RealSvd2x2.h \
+  /usr/include/alloca.h \
+  /usr/include/asm-generic/errno-base.h \
+  /usr/include/asm-generic/errno.h \
+  /usr/include/assert.h \
+  /usr/include/c++/14/algorithm \
+  /usr/include/c++/14/array \
+  /usr/include/c++/14/atomic \
+  /usr/include/c++/14/backward/binders.h \
+  /usr/include/c++/14/bit \
+  /usr/include/c++/14/bits/algorithmfwd.h \
+  /usr/include/c++/14/bits/alloc_traits.h \
+  /usr/include/c++/14/bits/allocator.h \
+  /usr/include/c++/14/bits/atomic_base.h \
+  /usr/include/c++/14/bits/atomic_lockfree_defines.h \
+  /usr/include/c++/14/bits/atomic_wait.h \
+  /usr/include/c++/14/bits/basic_ios.h \
+  /usr/include/c++/14/bits/basic_ios.tcc \
+  /usr/include/c++/14/bits/basic_string.h \
+  /usr/include/c++/14/bits/basic_string.tcc \
+  /usr/include/c++/14/bits/char_traits.h \
+  /usr/include/c++/14/bits/charconv.h \
+  /usr/include/c++/14/bits/codecvt.h \
+  /usr/include/c++/14/bits/concept_check.h \
+  /usr/include/c++/14/bits/cpp_type_traits.h \
+  /usr/include/c++/14/bits/cxxabi_forced.h \
+  /usr/include/c++/14/bits/cxxabi_init_exception.h \
+  /usr/include/c++/14/bits/enable_special_members.h \
+  /usr/include/c++/14/bits/erase_if.h \
+  /usr/include/c++/14/bits/exception.h \
+  /usr/include/c++/14/bits/exception_defines.h \
+  /usr/include/c++/14/bits/exception_ptr.h \
+  /usr/include/c++/14/bits/fstream.tcc \
+  /usr/include/c++/14/bits/functexcept.h \
+  /usr/include/c++/14/bits/functional_hash.h \
+  /usr/include/c++/14/bits/hash_bytes.h \
+  /usr/include/c++/14/bits/hashtable.h \
+  /usr/include/c++/14/bits/hashtable_policy.h \
+  /usr/include/c++/14/bits/invoke.h \
+  /usr/include/c++/14/bits/ios_base.h \
+  /usr/include/c++/14/bits/istream.tcc \
+  /usr/include/c++/14/bits/iterator_concepts.h \
+  /usr/include/c++/14/bits/locale_classes.h \
+  /usr/include/c++/14/bits/locale_classes.tcc \
+  /usr/include/c++/14/bits/locale_conv.h \
+  /usr/include/c++/14/bits/locale_facets.h \
+  /usr/include/c++/14/bits/locale_facets.tcc \
+  /usr/include/c++/14/bits/locale_facets_nonio.h \
+  /usr/include/c++/14/bits/locale_facets_nonio.tcc \
+  /usr/include/c++/14/bits/localefwd.h \
+  /usr/include/c++/14/bits/max_size_type.h \
+  /usr/include/c++/14/bits/memory_resource.h \
+  /usr/include/c++/14/bits/memoryfwd.h \
+  /usr/include/c++/14/bits/mofunc_impl.h \
+  /usr/include/c++/14/bits/move.h \
+  /usr/include/c++/14/bits/move_only_function.h \
+  /usr/include/c++/14/bits/nested_exception.h \
+  /usr/include/c++/14/bits/new_allocator.h \
+  /usr/include/c++/14/bits/node_handle.h \
+  /usr/include/c++/14/bits/ostream.tcc \
+  /usr/include/c++/14/bits/ostream_insert.h \
+  /usr/include/c++/14/bits/parse_numbers.h \
+  /usr/include/c++/14/bits/postypes.h \
+  /usr/include/c++/14/bits/predefined_ops.h \
+  /usr/include/c++/14/bits/ptr_traits.h \
+  /usr/include/c++/14/bits/range_access.h \
+  /usr/include/c++/14/bits/ranges_algo.h \
+  /usr/include/c++/14/bits/ranges_algobase.h \
+  /usr/include/c++/14/bits/ranges_base.h \
+  /usr/include/c++/14/bits/ranges_cmp.h \
+  /usr/include/c++/14/bits/ranges_util.h \
+  /usr/include/c++/14/bits/refwrap.h \
+  /usr/include/c++/14/bits/requires_hosted.h \
+  /usr/include/c++/14/bits/specfun.h \
+  /usr/include/c++/14/bits/sstream.tcc \
+  /usr/include/c++/14/bits/std_abs.h \
+  /usr/include/c++/14/bits/std_function.h \
+  /usr/include/c++/14/bits/std_mutex.h \
+  /usr/include/c++/14/bits/stl_algo.h \
+  /usr/include/c++/14/bits/stl_algobase.h \
+  /usr/include/c++/14/bits/stl_bvector.h \
+  /usr/include/c++/14/bits/stl_construct.h \
+  /usr/include/c++/14/bits/stl_function.h \
+  /usr/include/c++/14/bits/stl_heap.h \
+  /usr/include/c++/14/bits/stl_iterator.h \
+  /usr/include/c++/14/bits/stl_iterator_base_funcs.h \
+  /usr/include/c++/14/bits/stl_iterator_base_types.h \
+  /usr/include/c++/14/bits/stl_pair.h \
+  /usr/include/c++/14/bits/stl_tempbuf.h \
+  /usr/include/c++/14/bits/stl_uninitialized.h \
+  /usr/include/c++/14/bits/stl_vector.h \
+  /usr/include/c++/14/bits/streambuf.tcc \
+  /usr/include/c++/14/bits/streambuf_iterator.h \
+  /usr/include/c++/14/bits/string_view.tcc \
+  /usr/include/c++/14/bits/stringfwd.h \
+  /usr/include/c++/14/bits/unicode-data.h \
+  /usr/include/c++/14/bits/unicode.h \
+  /usr/include/c++/14/bits/uniform_int_dist.h \
+  /usr/include/c++/14/bits/unordered_map.h \
+  /usr/include/c++/14/bits/uses_allocator.h \
+  /usr/include/c++/14/bits/uses_allocator_args.h \
+  /usr/include/c++/14/bits/utility.h \
+  /usr/include/c++/14/bits/vector.tcc \
+  /usr/include/c++/14/bits/version.h \
+  /usr/include/c++/14/cassert \
+  /usr/include/c++/14/cctype \
+  /usr/include/c++/14/cerrno \
+  /usr/include/c++/14/charconv \
+  /usr/include/c++/14/climits \
+  /usr/include/c++/14/clocale \
+  /usr/include/c++/14/cmath \
+  /usr/include/c++/14/compare \
+  /usr/include/c++/14/complex \
+  /usr/include/c++/14/concepts \
+  /usr/include/c++/14/cstddef \
+  /usr/include/c++/14/cstdint \
+  /usr/include/c++/14/cstdio \
+  /usr/include/c++/14/cstdlib \
+  /usr/include/c++/14/cstring \
+  /usr/include/c++/14/ctime \
+  /usr/include/c++/14/cwchar \
+  /usr/include/c++/14/cwctype \
+  /usr/include/c++/14/debug/assertions.h \
+  /usr/include/c++/14/debug/debug.h \
+  /usr/include/c++/14/exception \
+  /usr/include/c++/14/ext/aligned_buffer.h \
+  /usr/include/c++/14/ext/alloc_traits.h \
+  /usr/include/c++/14/ext/atomicity.h \
+  /usr/include/c++/14/ext/numeric_traits.h \
+  /usr/include/c++/14/ext/string_conversions.h \
+  /usr/include/c++/14/ext/type_traits.h \
+  /usr/include/c++/14/format \
+  /usr/include/c++/14/fstream \
+  /usr/include/c++/14/functional \
+  /usr/include/c++/14/initializer_list \
+  /usr/include/c++/14/ios \
+  /usr/include/c++/14/iosfwd \
+  /usr/include/c++/14/iostream \
+  /usr/include/c++/14/istream \
+  /usr/include/c++/14/limits \
+  /usr/include/c++/14/locale \
+  /usr/include/c++/14/new \
+  /usr/include/c++/14/numbers \
+  /usr/include/c++/14/optional \
+  /usr/include/c++/14/ostream \
+  /usr/include/c++/14/pstl/execution_defs.h \
+  /usr/include/c++/14/pstl/glue_algorithm_defs.h \
+  /usr/include/c++/14/pstl/pstl_config.h \
+  /usr/include/c++/14/span \
+  /usr/include/c++/14/sstream \
+  /usr/include/c++/14/stdexcept \
+  /usr/include/c++/14/stdlib.h \
+  /usr/include/c++/14/streambuf \
+  /usr/include/c++/14/string \
+  /usr/include/c++/14/string_view \
+  /usr/include/c++/14/system_error \
+  /usr/include/c++/14/tr1/bessel_function.tcc \
+  /usr/include/c++/14/tr1/beta_function.tcc \
+  /usr/include/c++/14/tr1/ell_integral.tcc \
+  /usr/include/c++/14/tr1/exp_integral.tcc \
+  /usr/include/c++/14/tr1/gamma.tcc \
+  /usr/include/c++/14/tr1/hypergeometric.tcc \
+  /usr/include/c++/14/tr1/legendre_function.tcc \
+  /usr/include/c++/14/tr1/modified_bessel_func.tcc \
+  /usr/include/c++/14/tr1/poly_hermite.tcc \
+  /usr/include/c++/14/tr1/poly_laguerre.tcc \
+  /usr/include/c++/14/tr1/riemann_zeta.tcc \
+  /usr/include/c++/14/tr1/special_function_util.h \
+  /usr/include/c++/14/tuple \
+  /usr/include/c++/14/type_traits \
+  /usr/include/c++/14/typeinfo \
+  /usr/include/c++/14/unordered_map \
+  /usr/include/c++/14/variant \
+  /usr/include/c++/14/vector \
+  /usr/include/ctype.h \
+  /usr/include/eigen3/Eigen/src/plugins/ArrayCwiseBinaryOps.h \
+  /usr/include/eigen3/Eigen/src/plugins/ArrayCwiseUnaryOps.h \
+  /usr/include/eigen3/Eigen/src/plugins/BlockMethods.h \
+  /usr/include/eigen3/Eigen/src/plugins/CommonCwiseBinaryOps.h \
+  /usr/include/eigen3/Eigen/src/plugins/CommonCwiseUnaryOps.h \
+  /usr/include/eigen3/Eigen/src/plugins/IndexedViewMethods.h \
+  /usr/include/eigen3/Eigen/src/plugins/MatrixCwiseBinaryOps.h \
+  /usr/include/eigen3/Eigen/src/plugins/MatrixCwiseUnaryOps.h \
+  /usr/include/eigen3/Eigen/src/plugins/ReshapedMethods.h \
+  /usr/include/endian.h \
+  /usr/include/errno.h \
+  /usr/include/features-time64.h \
+  /usr/include/features.h \
+  /usr/include/libintl.h \
+  /usr/include/limits.h \
+  /usr/include/linux/close_range.h \
+  /usr/include/linux/errno.h \
+  /usr/include/linux/limits.h \
+  /usr/include/locale.h \
+  /usr/include/math.h \
+  /usr/include/pthread.h \
+  /usr/include/sched.h \
+  /usr/include/stdc-predef.h \
+  /usr/include/stdint.h \
+  /usr/include/stdio.h \
+  /usr/include/stdlib.h \
+  /usr/include/string.h \
+  /usr/include/strings.h \
+  /usr/include/syscall.h \
+  /usr/include/time.h \
+  /usr/include/unistd.h \
+  /usr/include/wchar.h \
+  /usr/include/wctype.h \
+  /usr/include/x86_64-linux-gnu/asm/errno.h \
+  /usr/include/x86_64-linux-gnu/asm/unistd.h \
+  /usr/include/x86_64-linux-gnu/asm/unistd_64.h \
+  /usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h \
+  /usr/include/x86_64-linux-gnu/bits/byteswap.h \
+  /usr/include/x86_64-linux-gnu/bits/confname.h \
+  /usr/include/x86_64-linux-gnu/bits/cpu-set.h \
+  /usr/include/x86_64-linux-gnu/bits/endian.h \
+  /usr/include/x86_64-linux-gnu/bits/endianness.h \
+  /usr/include/x86_64-linux-gnu/bits/environments.h \
+  /usr/include/x86_64-linux-gnu/bits/errno.h \
+  /usr/include/x86_64-linux-gnu/bits/floatn-common.h \
+  /usr/include/x86_64-linux-gnu/bits/floatn.h \
+  /usr/include/x86_64-linux-gnu/bits/flt-eval-method.h \
+  /usr/include/x86_64-linux-gnu/bits/fp-fast.h \
+  /usr/include/x86_64-linux-gnu/bits/fp-logb.h \
+  /usr/include/x86_64-linux-gnu/bits/getopt_core.h \
+  /usr/include/x86_64-linux-gnu/bits/getopt_posix.h \
+  /usr/include/x86_64-linux-gnu/bits/iscanonical.h \
+  /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
+  /usr/include/x86_64-linux-gnu/bits/libm-simd-decl-stubs.h \
+  /usr/include/x86_64-linux-gnu/bits/local_lim.h \
+  /usr/include/x86_64-linux-gnu/bits/locale.h \
+  /usr/include/x86_64-linux-gnu/bits/long-double.h \
+  /usr/include/x86_64-linux-gnu/bits/math-vector.h \
+  /usr/include/x86_64-linux-gnu/bits/mathcalls-helper-functions.h \
+  /usr/include/x86_64-linux-gnu/bits/mathcalls-narrow.h \
+  /usr/include/x86_64-linux-gnu/bits/mathcalls.h \
+  /usr/include/x86_64-linux-gnu/bits/posix1_lim.h \
+  /usr/include/x86_64-linux-gnu/bits/posix2_lim.h \
+  /usr/include/x86_64-linux-gnu/bits/posix_opt.h \
+  /usr/include/x86_64-linux-gnu/bits/pthread_stack_min-dynamic.h \
+  /usr/include/x86_64-linux-gnu/bits/pthreadtypes-arch.h \
+  /usr/include/x86_64-linux-gnu/bits/pthreadtypes.h \
+  /usr/include/x86_64-linux-gnu/bits/sched.h \
+  /usr/include/x86_64-linux-gnu/bits/select-decl.h \
+  /usr/include/x86_64-linux-gnu/bits/select.h \
+  /usr/include/x86_64-linux-gnu/bits/select2.h \
+  /usr/include/x86_64-linux-gnu/bits/setjmp.h \
+  /usr/include/x86_64-linux-gnu/bits/stdint-intn.h \
+  /usr/include/x86_64-linux-gnu/bits/stdint-least.h \
+  /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
+  /usr/include/x86_64-linux-gnu/bits/stdio.h \
+  /usr/include/x86_64-linux-gnu/bits/stdio2-decl.h \
+  /usr/include/x86_64-linux-gnu/bits/stdio2.h \
+  /usr/include/x86_64-linux-gnu/bits/stdio_lim.h \
+  /usr/include/x86_64-linux-gnu/bits/stdlib-bsearch.h \
+  /usr/include/x86_64-linux-gnu/bits/stdlib-float.h \
+  /usr/include/x86_64-linux-gnu/bits/stdlib.h \
+  /usr/include/x86_64-linux-gnu/bits/string_fortified.h \
+  /usr/include/x86_64-linux-gnu/bits/strings_fortified.h \
+  /usr/include/x86_64-linux-gnu/bits/struct_mutex.h \
+  /usr/include/x86_64-linux-gnu/bits/struct_rwlock.h \
+  /usr/include/x86_64-linux-gnu/bits/syscall.h \
+  /usr/include/x86_64-linux-gnu/bits/thread-shared-types.h \
+  /usr/include/x86_64-linux-gnu/bits/time.h \
+  /usr/include/x86_64-linux-gnu/bits/time64.h \
+  /usr/include/x86_64-linux-gnu/bits/timesize.h \
+  /usr/include/x86_64-linux-gnu/bits/timex.h \
+  /usr/include/x86_64-linux-gnu/bits/types.h \
+  /usr/include/x86_64-linux-gnu/bits/types/FILE.h \
+  /usr/include/x86_64-linux-gnu/bits/types/__FILE.h \
+  /usr/include/x86_64-linux-gnu/bits/types/__fpos64_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/__fpos_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/__locale_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/clock_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/clockid_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/cookie_io_functions_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/error_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/locale_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/mbstate_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/sigset_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/struct_FILE.h \
+  /usr/include/x86_64-linux-gnu/bits/types/struct___jmp_buf_tag.h \
+  /usr/include/x86_64-linux-gnu/bits/types/struct_itimerspec.h \
+  /usr/include/x86_64-linux-gnu/bits/types/struct_sched_param.h \
+  /usr/include/x86_64-linux-gnu/bits/types/struct_timespec.h \
+  /usr/include/x86_64-linux-gnu/bits/types/struct_timeval.h \
+  /usr/include/x86_64-linux-gnu/bits/types/struct_tm.h \
+  /usr/include/x86_64-linux-gnu/bits/types/time_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/timer_t.h \
+  /usr/include/x86_64-linux-gnu/bits/types/wint_t.h \
+  /usr/include/x86_64-linux-gnu/bits/typesizes.h \
+  /usr/include/x86_64-linux-gnu/bits/uintn-identity.h \
+  /usr/include/x86_64-linux-gnu/bits/uio_lim.h \
+  /usr/include/x86_64-linux-gnu/bits/unistd-decl.h \
+  /usr/include/x86_64-linux-gnu/bits/unistd.h \
+  /usr/include/x86_64-linux-gnu/bits/unistd_ext.h \
+  /usr/include/x86_64-linux-gnu/bits/waitflags.h \
+  /usr/include/x86_64-linux-gnu/bits/waitstatus.h \
+  /usr/include/x86_64-linux-gnu/bits/wchar.h \
+  /usr/include/x86_64-linux-gnu/bits/wchar2-decl.h \
+  /usr/include/x86_64-linux-gnu/bits/wchar2.h \
+  /usr/include/x86_64-linux-gnu/bits/wctype-wchar.h \
+  /usr/include/x86_64-linux-gnu/bits/wordsize.h \
+  /usr/include/x86_64-linux-gnu/bits/xopen_lim.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/atomic_word.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/basic_file.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/c++allocator.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/c++config.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/c++io.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/c++locale.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/cpu_defines.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/ctype_base.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/ctype_inline.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/error_constants.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/gthr-default.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/gthr.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/messages_members.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/os_defines.h \
+  /usr/include/x86_64-linux-gnu/c++/14/bits/time_members.h \
+  /usr/include/x86_64-linux-gnu/gnu/stubs-64.h \
+  /usr/include/x86_64-linux-gnu/gnu/stubs.h \
+  /usr/include/x86_64-linux-gnu/sys/cdefs.h \
+  /usr/include/x86_64-linux-gnu/sys/select.h \
+  /usr/include/x86_64-linux-gnu/sys/single_threaded.h \
+  /usr/include/x86_64-linux-gnu/sys/syscall.h \
+  /usr/include/x86_64-linux-gnu/sys/types.h \
+  /usr/lib/gcc/x86_64-linux-gnu/14/include/emmintrin.h \
+  /usr/lib/gcc/x86_64-linux-gnu/14/include/limits.h \
+  /usr/lib/gcc/x86_64-linux-gnu/14/include/mm_malloc.h \
+  /usr/lib/gcc/x86_64-linux-gnu/14/include/mmintrin.h \
+  /usr/lib/gcc/x86_64-linux-gnu/14/include/stdarg.h \
+  /usr/lib/gcc/x86_64-linux-gnu/14/include/stddef.h \
+  /usr/lib/gcc/x86_64-linux-gnu/14/include/stdint.h \
+  /usr/lib/gcc/x86_64-linux-gnu/14/include/syslimits.h \
+  /usr/lib/gcc/x86_64-linux-gnu/14/include/xmmintrin.h
+
 generated/CMakeFiles/gridder.dir/__/src/specificworker.cpp.o: src/specificworker.cpp \
   generated/Gridder.h \
   generated/Lidar3D.h \
@@ -4655,6 +5176,7 @@ generated/CMakeFiles/gridder.dir/__/src/specificworker.cpp.o: src/specificworker
   generated/gridder_autogen/include/ui_mainUI.h \
   src/grid.h \
   src/grid_esdf.h \
+  src/mrpt_map_loader.h \
   src/specificworker.h \
   /home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.h \
   /home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.tpp \
@@ -7070,6 +7592,7 @@ generated/CMakeFiles/gridder.dir/genericworker.cpp.o: generated/genericworker.cp
 generated/CMakeFiles/gridder.dir/gridderI.cpp.o: generated/gridderI.cpp \
   src/grid.h \
   src/grid_esdf.h \
+  src/mrpt_map_loader.h \
   src/specificworker.h \
   generated/Gridder.h \
   generated/Lidar3D.h \
@@ -8532,6 +9055,7 @@ generated/CMakeFiles/gridder.dir/gridder_autogen/mocs_compilation.cpp.o: generat
   generated/gridder_autogen/UT3IXPAZPU/moc_abstract_graphic_viewer.cpp \
   src/grid.h \
   src/grid_esdf.h \
+  src/mrpt_map_loader.h \
   src/specificworker.h \
   generated/gridder_autogen/VNU7RW3YIC/moc_specificworker.cpp \
   generated/gridder_autogen/include/ui_mainUI.h \
@@ -12629,6 +13153,7 @@ generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatc
 generated/CMakeFiles/gridder.dir/main.cpp.o: generated/main.cpp \
   src/grid.h \
   src/grid_esdf.h \
+  src/mrpt_map_loader.h \
   src/specificworker.h \
   generated/Gridder.h \
   generated/Lidar3D.h \
@@ -15535,10 +16060,6 @@ generated/gridder_autogen/UT3IXPAZPU/moc_abstract_graphic_viewer.cpp:
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qmovie.h:
 
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qwindowdefs.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qmatrix4x4.h:
-
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qkeysequence.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qimagewriter.h:
@@ -15555,9 +16076,11 @@ generated/gridder_autogen/UT3IXPAZPU/moc_abstract_graphic_viewer.cpp:
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qguiapplication.h:
 
-/usr/include/Eigen/src/Core/BooleanRedux.h:
+/usr/include/x86_64-linux-gnu/bits/types/struct_iovec.h:
 
-/usr/include/boost/type_traits/integral_constant.hpp:
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qglyphrun.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qgenericpluginfactory.h:
 
 /usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6Dependencies.cmake:
 
@@ -15784,6 +16307,12 @@ generated/gridder_autogen/include/ui_mainUI.h:
 /usr/include/x86_64-linux-gnu/bits/wchar2.h:
 
 /usr/include/c++/14/thread:
+
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qwindowdefs.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qmatrix4x4.h:
+
+src/mrpt_map_loader.cpp:
 
 /usr/include/boost/type_traits/conjunction.hpp:
 
@@ -16289,6 +16818,8 @@ generated/CMakeFiles/gridder.dir/gridderI.cpp.o:
 
 /usr/include/eigen3/Eigen/src/SparseLU/SparseLU_pruneL.h:
 
+generated/CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.o:
+
 /usr/include/eigen3/Eigen/Jacobi:
 
 /usr/include/Ice/UserExceptionFactory.h:
@@ -16311,10 +16842,6 @@ generated/CMakeLists.txt:
 
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qfloat16.h:
 
-/usr/include/c++/14/type_traits:
-
-/usr/include/boost/mp11/detail/mp_defer.hpp:
-
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qbytearrayview.h:
 
 /usr/include/Ice/UniquePtr.h:
@@ -16334,6 +16861,10 @@ generated/CMakeLists.txt:
 /usr/include/Ice/StreamHelpers.h:
 
 /usr/include/eigen3/Eigen/src/Core/util/Meta.h:
+
+/usr/include/c++/14/bits/fstream.tcc:
+
+/usr/include/eigen3/Eigen/src/Core/products/SelfadjointRank2Update.h:
 
 /usr/include/Ice/ServantManagerF.h:
 
@@ -16467,6 +16998,22 @@ generated/CMakeLists.txt:
 
 /home/robocomp/robocomp/cmake/robocomp.cmake:
 
+/usr/include/c++/14/utility:
+
+/usr/include/x86_64-linux-gnu/bits/types/struct_osockaddr.h:
+
+/usr/include/c++/14/bits/basic_ios.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/14/include/avx512vnnivlintrin.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qsocketnotifier.h:
+
+/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/SelectLibraryConfigurations.cmake:
+
+/usr/include/Eigen/src/Eigenvalues/ComplexSchur.h:
+
+/usr/include/eigen3/Eigen/src/Core/SolveTriangular.h:
+
 /usr/include/Ice/Incoming.h:
 
 /usr/include/eigen3/Eigen/src/misc/RealSvd2x2.h:
@@ -16480,6 +17027,12 @@ generated/CMakeLists.txt:
 /usr/lib/x86_64-linux-gnu/cmake/Qt6OpenGL/Qt6OpenGLVersionlessTargets.cmake:
 
 /usr/include/eigen3/Eigen/src/Core/ArithmeticSequence.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qtexttable.h:
+
+/usr/include/c++/14/bits/stl_algobase.h:
+
+/usr/include/boost/static_assert.hpp:
 
 /usr/include/c++/14/bits/stl_relops.h:
 
@@ -16499,10 +17052,6 @@ generated/CMakeLists.txt:
 
 /home/pbustos/robocomp/robocomp_core/classes/fps/fps.h:
 
-/usr/include/c++/14/bits/fstream.tcc:
-
-/usr/include/eigen3/Eigen/src/Core/products/SelfadjointRank2Update.h:
-
 /usr/include/eigen3/Eigen/src/Core/ReturnByValue.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qpicture.h:
@@ -16510,6 +17059,8 @@ generated/CMakeLists.txt:
 /usr/include/eigen3/Eigen/Core:
 
 src/mainUI.ui:
+
+/usr/include/c++/14/bits/exception_ptr.h:
 
 /usr/include/Ice/PluginF.h:
 
@@ -16599,8 +17150,6 @@ src/specificworker.cpp:
 
 /usr/include/eigen3/Eigen/src/Core/util/ForwardDeclarations.h:
 
-/usr/include/c++/14/bits/exception_ptr.h:
-
 /usr/include/c++/14/bits/uniform_int_dist.h:
 
 /usr/include/Ice/ObserverHelper.h:
@@ -16671,38 +17220,6 @@ generated/Gridder.h:
 
 /usr/include/Ice/CommunicatorF.h:
 
-/usr/local/include/toml++/impl/forward_declarations.hpp:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qlibrary.h:
-
-/usr/include/IceUtil/Atomic.h:
-
-/usr/include/boost/type_traits/is_rvalue_reference.hpp:
-
-/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/Internal/CheckCompilerFlag.cmake:
-
-/usr/include/c++/14/utility:
-
-/usr/include/x86_64-linux-gnu/bits/types/struct_osockaddr.h:
-
-/usr/include/c++/14/bits/basic_ios.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/14/include/avx512vnnivlintrin.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qsocketnotifier.h:
-
-/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/SelectLibraryConfigurations.cmake:
-
-/usr/include/Eigen/src/Eigenvalues/ComplexSchur.h:
-
-/usr/include/eigen3/Eigen/src/Core/SolveTriangular.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qtexttable.h:
-
-/usr/include/boost/static_assert.hpp:
-
-/usr/include/c++/14/bits/stl_algobase.h:
-
 /home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp:
 
 /usr/include/eigen3/Eigen/src/Core/NestByValue.h:
@@ -16761,14 +17278,6 @@ generated/main.cpp:
 
 /usr/include/boost/mp11/detail/mp_copy_if.hpp:
 
-/usr/include/eigen3/Eigen/src/Core/DiagonalMatrix.h:
-
-generated/genericworker.h:
-
-/usr/include/eigen3/Eigen/src/LU/PartialPivLU.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qbindingstorage.h:
-
 /usr/include/Ice/Version.h:
 
 /home/robocomp/robocomp/classes/timer/timer.h:
@@ -16797,6 +17306,14 @@ generated/Lidar3D.h:
 
 /usr/include/Ice/RequestHandlerF.h:
 
+/usr/include/eigen3/Eigen/src/Core/DiagonalMatrix.h:
+
+generated/genericworker.h:
+
+/usr/include/eigen3/Eigen/src/LU/PartialPivLU.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qbindingstorage.h:
+
 /usr/include/IceUtil/MutexProtocol.h:
 
 /usr/include/eigen3/Eigen/src/SparseLU/SparseLU_Structs.h:
@@ -16814,6 +17331,20 @@ generated/Lidar3D.h:
 /usr/include/x86_64-linux-gnu/qt6/QtCore/QMap:
 
 /usr/include/c++/14/atomic:
+
+/usr/local/include/toml++/impl/forward_declarations.hpp:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qlibrary.h:
+
+/usr/include/IceUtil/Atomic.h:
+
+/home/pbustos/robocomp/robocomp_core/classes/grafcetStep/GRAFCETStep.h:
+
+/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CMakeFindDependencyMacro.cmake:
+
+/usr/include/boost/type_traits/is_rvalue_reference.hpp:
+
+/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/Internal/CheckCompilerFlag.cmake:
 
 /usr/include/Eigen/Cholesky:
 
@@ -17019,6 +17550,10 @@ src/grid.cpp:
 
 /home/robocomp/robocomp/classes/rapplication/rapplication.h:
 
+/usr/include/c++/14/type_traits:
+
+/usr/include/boost/mp11/detail/mp_defer.hpp:
+
 /usr/include/Eigen/src/Core/ReturnByValue.h:
 
 /usr/include/c++/14/ext/atomicity.h:
@@ -17082,12 +17617,6 @@ src/specificworker.h:
 /usr/include/Eigen/src/Eigenvalues/GeneralizedEigenSolver.h:
 
 /usr/include/c++/14/bits/stl_function.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/14/include/sm3intrin.h:
-
-/usr/include/eigen3/Eigen/src/Core/functors/NullaryFunctors.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qhash.h:
 
 /usr/include/boost/container_hash/is_range.hpp:
 
@@ -17207,6 +17736,8 @@ src/specificworker.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qpageranges.h:
 
+src/mrpt_map_loader.h:
+
 /usr/include/c++/14/bits/cxxabi_forced.h:
 
 /lib/x86_64-linux-gnu/libgpg-error.so.0:
@@ -17214,14 +17745,6 @@ src/specificworker.h:
 /usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:
 
 /usr/include/boost/mp11/detail/mp_map_find.hpp:
-
-/usr/include/eigen3/Eigen/src/Core/functors/BinaryFunctors.h:
-
-/usr/include/eigen3/Eigen/src/IterativeLinearSolvers/SolveWithGuess.h:
-
-/usr/include/boost/mp11/detail/mp_with_index.hpp:
-
-/usr/include/eigen3/Eigen/src/plugins/CommonCwiseUnaryOps.h:
 
 /usr/include/eigen3/Eigen/src/Core/NumTraits.h:
 
@@ -17271,19 +17794,21 @@ src/specificworker.h:
 
 /usr/include/Ice/ReferenceF.h:
 
+/usr/include/Eigen/src/Core/BooleanRedux.h:
+
+/usr/include/boost/type_traits/integral_constant.hpp:
+
+/usr/lib/gcc/x86_64-linux-gnu/14/include/sm3intrin.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qhash.h:
+
+/usr/include/eigen3/Eigen/src/Core/functors/NullaryFunctors.h:
+
 /usr/include/Eigen/src/SparseCore/SparseRef.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/14/include/avxneconvertintrin.h:
 
 /usr/include/c++/14/concepts:
-
-/usr/include/IceUtil/PopDisableWarnings.h:
-
-/usr/include/Eigen/src/QR/ColPivHouseholderQR.h:
-
-/usr/include/x86_64-linux-gnu/bits/pthreadtypes.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qresultstore.h:
 
 /usr/include/c++/14/fstream:
 
@@ -17292,6 +17817,14 @@ generated/Webots2Robocomp.h:
 /usr/local/include/toml++/impl/header_end.hpp:
 
 /usr/include/eigen3/Eigen/src/Core/ArrayBase.h:
+
+/usr/include/IceUtil/PopDisableWarnings.h:
+
+/usr/include/Eigen/src/QR/ColPivHouseholderQR.h:
+
+/usr/include/x86_64-linux-gnu/bits/pthreadtypes.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qresultstore.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/14/include/avx512vbmiintrin.h:
 
@@ -17349,17 +17882,17 @@ generated/gridderI.h:
 
 /usr/include/c++/14/bits/istream.tcc:
 
-/usr/include/c++/14/bit:
-
-/usr/lib/gcc/x86_64-linux-gnu/14/include/cetintrin.h:
-
-/usr/include/eigen3/Eigen/src/OrderingMethods/Eigen_Colamd.h:
-
 generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o:
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qquaternion.h:
 
 /usr/include/boost/type_traits/declval.hpp:
+
+/usr/include/c++/14/bit:
+
+/usr/lib/gcc/x86_64-linux-gnu/14/include/cetintrin.h:
+
+/usr/include/eigen3/Eigen/src/OrderingMethods/Eigen_Colamd.h:
 
 /usr/include/c++/14/bits/atomic_base.h:
 
@@ -17415,9 +17948,13 @@ generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAF
 
 /usr/include/c++/14/bits/cxxabi_init_exception.h:
 
-/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CMakeFindDependencyMacro.cmake:
+/usr/include/eigen3/Eigen/src/Core/functors/BinaryFunctors.h:
 
-/home/pbustos/robocomp/robocomp_core/classes/grafcetStep/GRAFCETStep.h:
+/usr/include/eigen3/Eigen/src/IterativeLinearSolvers/SolveWithGuess.h:
+
+/usr/include/boost/mp11/detail/mp_with_index.hpp:
+
+/usr/include/eigen3/Eigen/src/plugins/CommonCwiseUnaryOps.h:
 
 /usr/include/c++/14/bits/stream_iterator.h:
 
@@ -18181,10 +18718,6 @@ generated/CMakeFiles/gridder.dir/genericworker.cpp.o:
 
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qdir.h:
 
-/usr/include/x86_64-linux-gnu/bits/types/struct_iovec.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qglyphrun.h:
-
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qelapsedtimer.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qfileinfo.h:
@@ -18334,8 +18867,6 @@ generated/CMakeFiles/gridder.dir/genericworker.cpp.o:
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qstorageinfo.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qscopedvaluerollback.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qgenericpluginfactory.h:
 
 /usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicFinalizerHelpers.cmake:
 

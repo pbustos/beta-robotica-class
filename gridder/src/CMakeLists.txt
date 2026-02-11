@@ -3,12 +3,14 @@ LIST(APPEND SOURCES
   ../src/specificworker.cpp
   ../src/grid.cpp
   ../src/grid_esdf.cpp
+  ../src/mrpt_map_loader.cpp
 )
 # Headers set
 LIST(APPEND HEADERS
   ../src/specificworker.h
   ../src/grid.h
   ../src/grid_esdf.h
+  ../src/mrpt_map_loader.h
   ${ROBOCOMP}/abstract_graphic_viewer/abstract_graphic_viewer.h
 )
 

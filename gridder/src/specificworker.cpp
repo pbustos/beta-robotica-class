@@ -94,6 +94,16 @@ void SpecificWorker::initialize()
         grid.initialize(params.GRID_MAX_DIM, static_cast<int>(params.TILE_SIZE), &viewer->scene);
         grid_esdf.initialize(static_cast<int>(params.TILE_SIZE), &viewer->scene);
 
+        // Load pre-computed MRPT map
+        std::string map_file = "mapa2.gridmap";
+        if (Gridder_loadMRPTMap(map_file))
+        {
+            qInfo() << "[MRPT] Map loaded successfully:" << map_file.c_str();
+            external_map_loaded = true;  // Disable dynamic grid updates
+        }
+        else
+            qWarning() << "[MRPT] Failed to load map:" << map_file.c_str();
+
         // Lidar thread is created
         read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
         std::cout << __FUNCTION__ << " Started lidar reader" << std::endl;
@@ -233,6 +243,15 @@ void SpecificWorker::initialize()
             draw_path({}, &viewer->scene, true);
             cancel_from_mouse = true;
         });
+        // Shift+Left click to reposition robot (for initial placement with external maps)
+        connect(viewer, &AbstractGraphicViewer::robot_moved, [this](QPointF p)
+        {
+            qInfo() << "[ROBOT] Manual reposition to:" << p;
+            // Update robot visual position
+            viewer->robot_poly()->setPos(p.x(), p.y());
+            // Update internal robot pose (for path planning source)
+            robot_pose.translation() = Eigen::Vector2f(p.x(), p.y());
+        });
         if(not params.DISPLAY)
             hide();
 		
@@ -256,50 +275,25 @@ void SpecificWorker::compute()
         first_center = false;
     }
 
-    /// Update grid with world coordinates
+    /// Update grid with world coordinates (only if no external map loaded)
     const auto timestamp_ms = static_cast<uint64_t>(timestamp);
     mutex_path.lock();
-    switch (params.GRID_MODE)
+
+    // SPARSE_ESDF mode: VoxBlox-style, only stores obstacles
+    if (not external_map_loaded)
     {
-        case Params::GridMode::SPARSE_ESDF:
-        {
-            // Sparse ESDF mode: VoxBlox-style, only stores obstacles
-            grid_esdf.update(points_world, robot_pos.translation(), params.MAX_LIDAR_RANGE, timestamp_ms);
-            grid_esdf.update_visualization(true);
-            break;
-        }
-        case Params::GridMode::DENSE_ESDF:
-        {
-            // Dense ESDF mode: full grid with ESDF optimization
-            grid.check_and_resize(points_world);
-            grid.update_map_esdf(points_world, robot_pos, params.MAX_LIDAR_RANGE);
-            grid.update_costs_esdf(params.ROBOT_SEMI_WIDTH, true);
-            break;
-        }
-        case Params::GridMode::DENSE:
-        default:
-        {
-            // Dense ray casting mode: original, accurate but slower
-            grid.check_and_resize(points_world);
-            grid.update_map(points_world, robot_pos, params.MAX_LIDAR_RANGE);
-            grid.update_costs(params.ROBOT_SEMI_WIDTH, true);
-            break;
-        }
+        // Dynamic updates from LiDAR only when no external map is loaded
+        grid.check_and_resize(points_world);
+        grid_esdf.update(points_world, robot_pos.translation(), params.MAX_LIDAR_RANGE, timestamp_ms);
+        grid_esdf.update_visualization(true);  // Only update visualization when there are changes
     }
+    // When external_map_loaded, visualization is static - no need to update
+
     mutex_path.unlock();
 
     // Debug: draw lidar points to inspect noise
     if(params.DRAW_LIDAR_POINTS)
         draw_lidar_points(points_world);
-
-    // Debug: draw detected obstacle clusters
-    if(params.DRAW_CLUSTERS)
-    {
-        auto clusters = cluster_lidar_points(points_world, robot_pos.translation(),
-                                             params.CLUSTER_DISTANCE_THRESHOLD,
-                                             params.CLUSTER_MIN_POINTS);
-        draw_clusters(clusters, &viewer->scene);
-    }
 
     // Update robot visualization in the viewer (world coordinates)
     const auto robot_rot = robot_pos.linear();
@@ -316,24 +310,39 @@ void SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &point
     static std::vector<QGraphicsEllipseItem*> lidar_points;
     static const QPen pen(QColor("DarkBlue"));
     static const QBrush brush(QColor("DarkBlue"));
-    static constexpr float s = 20.f;
-
-    for (auto *p : lidar_points)
-    {
-        viewer->scene.removeItem(p);
-        delete p;  // Fix memory leak
-    }
-    lidar_points.clear();
+    static constexpr float s = 40.f;
 
     const int stride = std::max(1, static_cast<int>(points_world.size() / params.MAX_LIDAR_DRAW_POINTS));
-    lidar_points.reserve(std::min(static_cast<int>(points_world.size()), params.MAX_LIDAR_DRAW_POINTS));
-    for (size_t i = 0; i < points_world.size(); i += stride)
+    const size_t num_points_to_draw = (points_world.size() + stride - 1) / stride;
+
+    // Reuse existing items when possible, only create/delete when needed
+    // Remove excess items if we have too many
+    while (lidar_points.size() > num_points_to_draw)
+    {
+        auto *p = lidar_points.back();
+        viewer->scene.removeItem(p);
+        delete p;
+        lidar_points.pop_back();
+    }
+
+    // Update existing items and create new ones as needed
+    size_t idx = 0;
+    for (size_t i = 0; i < points_world.size() && idx < num_points_to_draw; i += stride, ++idx)
     {
         const auto &p = points_world[i];
-        auto *item = viewer->scene.addEllipse(-s / 2.f, -s / 2.f, s, s, pen, brush);
-        item->setPos(p.x(), p.y());
-        item->setZValue(5);
-        lidar_points.push_back(item);
+        if (idx < lidar_points.size())
+        {
+            // Reuse existing item - just update position
+            lidar_points[idx]->setPos(p.x(), p.y());
+        }
+        else
+        {
+            // Create new item
+            auto *item = viewer->scene.addEllipse(-s / 2.f, -s / 2.f, s, s, pen, brush);
+            item->setPos(p.x(), p.y());
+            item->setZValue(5);
+            lidar_points.push_back(item);
+        }
     }
 }
 
@@ -1008,6 +1017,171 @@ bool SpecificWorker::Gridder_IsPathBlocked(RoboCompGridder::TPath path)
         return grid.is_path_blocked(path_);
     }
 }
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+bool SpecificWorker::Gridder_loadMRPTMap(const std::string &filepath)
+{
+    qInfo() << "[MRPT Loader] Loading map from:" << filepath.c_str();
+
+    // Load MRPT map file
+    auto load_result = MRPTMapLoader::load_gridmap(filepath);
+
+    if (!load_result.success)
+    {
+        qWarning() << "[MRPT Loader] Failed to load map:" << load_result.error_msg.c_str();
+        return false;
+    }
+
+    qInfo() << MRPTMapLoader::create_summary_report(load_result).c_str();
+    qInfo() << "[MRPT Loader] Cells to add:" << load_result.cells.size()
+            << "(should be ~" << load_result.num_occupied << "occupied cells)";
+
+    std::lock_guard<std::mutex> lock(mutex_path);
+
+    // Choose loading strategy based on grid mode
+    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
+    {
+        qInfo() << "[MRPT Loader] Loading into SPARSE_ESDF grid";
+
+        // Reinitialize grid with MRPT map resolution if different
+        int mrpt_resolution = static_cast<int>(load_result.metadata.resolution);
+        if (mrpt_resolution > 0 && mrpt_resolution != static_cast<int>(params.TILE_SIZE))
+        {
+            qInfo() << "[MRPT Loader] Adjusting grid tile size from" << params.TILE_SIZE
+                    << "to" << mrpt_resolution << "mm (MRPT resolution)";
+            params.TILE_SIZE = static_cast<float>(mrpt_resolution);
+            grid_esdf.initialize(mrpt_resolution, &viewer->scene);
+        }
+        else
+        {
+            // Clear previous data
+            grid_esdf.clear();
+        }
+
+        // Convert MRPT cells to sparse grid format
+        // Apply rotation and offset to align MRPT map with Webots world coordinates
+        const float offset_x = params.MRPT_MAP_OFFSET_X;
+        const float offset_y = params.MRPT_MAP_OFFSET_Y;
+        const float rotation = params.MRPT_MAP_ROTATION;
+        const float cos_r = std::cos(rotation);
+        const float sin_r = std::sin(rotation);
+
+        if (offset_x != 0.f || offset_y != 0.f || rotation != 0.f)
+            qInfo() << "[MRPT Loader] Applying transform: rotation=" << rotation << "rad, offset=(" << offset_x << "," << offset_y << ")mm";
+
+        for (const auto &mrpt_cell : load_result.cells)
+        {
+            // Only add occupied cells (already filtered in loader, but double-check)
+            if (MRPTMapLoader::is_occupied(mrpt_cell.occupancy, 0.5f))
+            {
+                // First rotate around origin, then apply offset
+                const float orig_x = static_cast<float>(mrpt_cell.x);
+                const float orig_y = static_cast<float>(mrpt_cell.y);
+                const float cell_x = orig_x * cos_r - orig_y * sin_r + offset_x;
+                const float cell_y = orig_x * sin_r + orig_y * cos_r + offset_y;
+                const auto key = grid_esdf.point_to_key(Eigen::Vector2f(cell_x, cell_y));
+                // Use add_confirmed_obstacle for external maps (creates visual immediately)
+                grid_esdf.add_confirmed_obstacle(key);
+            }
+        }
+
+        // Mark dirty once after loading all obstacles, then update visualization
+        grid_esdf.mark_visualization_dirty();
+        grid_esdf.update_visualization(true);
+        qInfo() << "[MRPT Loader] SPARSE_ESDF loaded with" << grid_esdf.num_obstacles() << "obstacles";
+    }
+    else
+    {
+        qInfo() << "[MRPT Loader] Loading into DENSE grid";
+        // Clear previous data
+        grid.reset();
+
+        // Convert MRPT cells to dense grid format
+        for (const auto &mrpt_cell : load_result.cells)
+        {
+            const Grid::Key key = grid.point_to_key(Eigen::Vector2f(
+                static_cast<float>(mrpt_cell.x), static_cast<float>(mrpt_cell.y)));
+
+            if (MRPTMapLoader::is_occupied(mrpt_cell.occupancy, 0.5f))
+            {
+                grid.set_occupied(key);
+                grid.set_cost(key, MRPTMapLoader::convert_occupancy_to_cost(mrpt_cell.occupancy));
+            }
+            else
+            {
+                grid.set_free(key);
+            }
+        }
+
+        // Update costs and visualization
+        grid.update_costs(params.ROBOT_SEMI_WIDTH, true);
+        qInfo() << "[MRPT Loader] DENSE grid loaded with" << grid.size() << "cells";
+    }
+
+    return true;
+}
+
+std::string SpecificWorker::Gridder_loadAndInitializeMap(const std::string &filepath)
+{
+    qInfo() << "[MRPT Loader] Loading and initializing map from:" << filepath.c_str();
+
+    auto load_result = MRPTMapLoader::load_gridmap(filepath);
+
+    if (!load_result.success)
+    {
+        std::string msg = "Error loading map: " + load_result.error_msg;
+        qWarning() << msg.c_str();
+        return msg;
+    }
+
+    // Calculate bounding box from loaded cells
+    if (load_result.cells.empty())
+        return "Error: No cells loaded from map";
+
+    int32_t min_x = std::numeric_limits<int32_t>::max();
+    int32_t max_x = std::numeric_limits<int32_t>::lowest();
+    int32_t min_y = std::numeric_limits<int32_t>::max();
+    int32_t max_y = std::numeric_limits<int32_t>::lowest();
+
+    for (const auto &cell : load_result.cells)
+    {
+        min_x = std::min(min_x, cell.x);
+        max_x = std::max(max_x, cell.x);
+        min_y = std::min(min_y, cell.y);
+        max_y = std::max(max_y, cell.y);
+    }
+
+    // Add margin around the bounding box
+    const int32_t margin = static_cast<int32_t>(load_result.metadata.resolution * 5);  // 5 cells margin
+    min_x -= margin;
+    max_x += margin;
+    min_y -= margin;
+    max_y += margin;
+
+    const int32_t width = max_x - min_x;
+    const int32_t height = max_y - min_y;
+
+    qInfo() << "[MRPT Loader] Map bounds: x=[" << min_x << "," << max_x
+            << "] y=[" << min_y << "," << max_y << "]"
+            << "size=" << width << "x" << height;
+
+    // Update grid dimensions
+    params.GRID_MAX_DIM = QRectF(min_x, min_y, width, height);
+
+    // Load the map using selected grid mode
+    if (Gridder_loadMRPTMap(filepath))
+    {
+        std::string msg = "Successfully loaded map with: " +
+                         std::to_string(load_result.cells.size()) + " cells";
+        qInfo() << msg.c_str();
+        return msg;
+    }
+    else
+    {
+        return "Failed to load MRPT map";
+    }
+}
+
 //////////////////////////////////////////////////////////////////////////////////////////////
 int SpecificWorker::startup_check()
 {

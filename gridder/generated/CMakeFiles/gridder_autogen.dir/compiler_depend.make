@@ -17,6 +17,8 @@ generated/gridder_autogen/timestamp: generated/CMakeLists.txt \
   src/grid_esdf.cpp \
   src/grid_esdf.h \
   src/mainUI.ui \
+  src/mrpt_map_loader.cpp \
+  src/mrpt_map_loader.h \
   src/specificworker.cpp \
   src/specificworker.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.h \
@@ -2006,10 +2008,6 @@ generated/gridder_autogen/timestamp: generated/CMakeLists.txt \
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qmovie.h:
 
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qwindowdefs.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qmatrix4x4.h:
-
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qkeysequence.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qimagewriter.h:
@@ -2024,7 +2022,9 @@ generated/gridder_autogen/timestamp: generated/CMakeLists.txt \
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qguiapplication.h:
 
-/usr/include/boost/type_traits/integral_constant.hpp:
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qglyphrun.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qgenericpluginfactory.h:
 
 /usr/lib/x86_64-linux-gnu/cmake/Qt6/Qt6Dependencies.cmake:
 
@@ -2207,6 +2207,12 @@ generated/gridder_autogen/timestamp: generated/CMakeLists.txt \
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qiterator.h:
 
 /usr/include/c++/14/thread:
+
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qwindowdefs.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qmatrix4x4.h:
+
+src/mrpt_map_loader.cpp:
 
 /usr/include/boost/type_traits/conjunction.hpp:
 
@@ -2648,10 +2654,6 @@ generated/CMakeLists.txt:
 
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qfloat16.h:
 
-/usr/include/c++/14/type_traits:
-
-/usr/include/boost/mp11/detail/mp_defer.hpp:
-
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qbytearrayview.h:
 
 /usr/include/Ice/UniquePtr.h:
@@ -2669,6 +2671,10 @@ generated/CMakeLists.txt:
 /usr/include/Ice/StreamHelpers.h:
 
 /usr/include/eigen3/Eigen/src/Core/util/Meta.h:
+
+/usr/include/c++/14/bits/fstream.tcc:
+
+/usr/include/eigen3/Eigen/src/Core/products/SelfadjointRank2Update.h:
 
 /usr/include/Ice/ServantManagerF.h:
 
@@ -2778,6 +2784,18 @@ generated/CMakeLists.txt:
 
 /home/robocomp/robocomp/cmake/robocomp.cmake:
 
+/usr/include/c++/14/utility:
+
+/usr/include/c++/14/bits/basic_ios.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/14/include/avx512vnnivlintrin.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qsocketnotifier.h:
+
+/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/SelectLibraryConfigurations.cmake:
+
+/usr/include/eigen3/Eigen/src/Core/SolveTriangular.h:
+
 /usr/include/Ice/Incoming.h:
 
 /usr/include/eigen3/Eigen/src/misc/RealSvd2x2.h:
@@ -2792,6 +2810,12 @@ generated/CMakeLists.txt:
 
 /usr/include/eigen3/Eigen/src/Core/ArithmeticSequence.h:
 
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qtexttable.h:
+
+/usr/include/c++/14/bits/stl_algobase.h:
+
+/usr/include/boost/static_assert.hpp:
+
 /usr/include/c++/14/bits/stl_relops.h:
 
 /usr/include/eigen3/Eigen/src/plugins/IndexedViewMethods.h:
@@ -2804,10 +2828,6 @@ generated/CMakeLists.txt:
 
 /home/pbustos/robocomp/robocomp_core/classes/fps/fps.h:
 
-/usr/include/c++/14/bits/fstream.tcc:
-
-/usr/include/eigen3/Eigen/src/Core/products/SelfadjointRank2Update.h:
-
 /usr/include/eigen3/Eigen/src/Core/ReturnByValue.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qpicture.h:
@@ -2815,6 +2835,8 @@ generated/CMakeLists.txt:
 /usr/include/eigen3/Eigen/Core:
 
 src/mainUI.ui:
+
+/usr/include/c++/14/bits/exception_ptr.h:
 
 /usr/include/IceUtil/Handle.h:
 
@@ -2886,8 +2908,6 @@ src/specificworker.cpp:
 
 /usr/include/eigen3/Eigen/src/Core/util/ForwardDeclarations.h:
 
-/usr/include/c++/14/bits/exception_ptr.h:
-
 /usr/include/c++/14/bits/uniform_int_dist.h:
 
 /usr/include/Ice/ObserverHelper.h:
@@ -2946,34 +2966,6 @@ generated/Gridder.h:
 
 /usr/include/Ice/CommunicatorF.h:
 
-/usr/local/include/toml++/impl/forward_declarations.hpp:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qlibrary.h:
-
-/usr/include/IceUtil/Atomic.h:
-
-/usr/include/boost/type_traits/is_rvalue_reference.hpp:
-
-/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/Internal/CheckCompilerFlag.cmake:
-
-/usr/include/c++/14/utility:
-
-/usr/include/c++/14/bits/basic_ios.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/14/include/avx512vnnivlintrin.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qsocketnotifier.h:
-
-/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/SelectLibraryConfigurations.cmake:
-
-/usr/include/eigen3/Eigen/src/Core/SolveTriangular.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qtexttable.h:
-
-/usr/include/boost/static_assert.hpp:
-
-/usr/include/c++/14/bits/stl_algobase.h:
-
 /home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp:
 
 /usr/include/eigen3/Eigen/src/Core/NestByValue.h:
@@ -3026,14 +3018,6 @@ generated/main.cpp:
 
 /usr/include/boost/mp11/detail/mp_copy_if.hpp:
 
-/usr/include/eigen3/Eigen/src/Core/DiagonalMatrix.h:
-
-generated/genericworker.h:
-
-/usr/include/eigen3/Eigen/src/LU/PartialPivLU.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qbindingstorage.h:
-
 /usr/include/Ice/Version.h:
 
 /usr/include/x86_64-linux-gnu/sys/times.h:
@@ -3058,6 +3042,14 @@ generated/Lidar3D.h:
 
 /usr/include/Ice/RequestHandlerF.h:
 
+/usr/include/eigen3/Eigen/src/Core/DiagonalMatrix.h:
+
+generated/genericworker.h:
+
+/usr/include/eigen3/Eigen/src/LU/PartialPivLU.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qbindingstorage.h:
+
 /usr/include/IceUtil/MutexProtocol.h:
 
 /usr/include/eigen3/Eigen/src/SparseLU/SparseLU_Structs.h:
@@ -3071,6 +3063,20 @@ generated/Lidar3D.h:
 /usr/include/x86_64-linux-gnu/qt6/QtCore/QMap:
 
 /usr/include/c++/14/atomic:
+
+/usr/local/include/toml++/impl/forward_declarations.hpp:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qlibrary.h:
+
+/usr/include/IceUtil/Atomic.h:
+
+/home/pbustos/robocomp/robocomp_core/classes/grafcetStep/GRAFCETStep.h:
+
+/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CMakeFindDependencyMacro.cmake:
+
+/usr/include/boost/type_traits/is_rvalue_reference.hpp:
+
+/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/Internal/CheckCompilerFlag.cmake:
 
 /usr/include/eigen3/Eigen/src/Core/Block.h:
 
@@ -3228,6 +3234,10 @@ src/grid.cpp:
 
 /home/robocomp/robocomp/classes/rapplication/rapplication.h:
 
+/usr/include/c++/14/type_traits:
+
+/usr/include/boost/mp11/detail/mp_defer.hpp:
+
 /usr/include/c++/14/ext/atomicity.h:
 
 /usr/include/IceUtil/ScopedArray.h:
@@ -3277,12 +3287,6 @@ src/specificworker.h:
 /usr/include/c++/14/memory:
 
 /usr/include/c++/14/bits/stl_function.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/14/include/sm3intrin.h:
-
-/usr/include/eigen3/Eigen/src/Core/functors/NullaryFunctors.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qhash.h:
 
 /usr/include/boost/container_hash/is_range.hpp:
 
@@ -3380,19 +3384,13 @@ src/specificworker.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtGui/qpageranges.h:
 
+src/mrpt_map_loader.h:
+
 /usr/include/c++/14/bits/cxxabi_forced.h:
 
 /usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:
 
 /usr/include/boost/mp11/detail/mp_map_find.hpp:
-
-/usr/include/eigen3/Eigen/src/Core/functors/BinaryFunctors.h:
-
-/usr/include/eigen3/Eigen/src/IterativeLinearSolvers/SolveWithGuess.h:
-
-/usr/include/boost/mp11/detail/mp_with_index.hpp:
-
-/usr/include/eigen3/Eigen/src/plugins/CommonCwiseUnaryOps.h:
 
 /usr/include/eigen3/Eigen/src/Core/NumTraits.h:
 
@@ -3432,15 +3430,17 @@ src/specificworker.h:
 
 /usr/include/Ice/ReferenceF.h:
 
+/usr/include/boost/type_traits/integral_constant.hpp:
+
+/usr/lib/gcc/x86_64-linux-gnu/14/include/sm3intrin.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qhash.h:
+
+/usr/include/eigen3/Eigen/src/Core/functors/NullaryFunctors.h:
+
 /usr/lib/gcc/x86_64-linux-gnu/14/include/avxneconvertintrin.h:
 
 /usr/include/c++/14/concepts:
-
-/usr/include/IceUtil/PopDisableWarnings.h:
-
-/usr/include/x86_64-linux-gnu/bits/pthreadtypes.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtCore/qresultstore.h:
 
 /usr/include/c++/14/fstream:
 
@@ -3449,6 +3449,12 @@ generated/Webots2Robocomp.h:
 /usr/local/include/toml++/impl/header_end.hpp:
 
 /usr/include/eigen3/Eigen/src/Core/ArrayBase.h:
+
+/usr/include/IceUtil/PopDisableWarnings.h:
+
+/usr/include/x86_64-linux-gnu/bits/pthreadtypes.h:
+
+/usr/include/x86_64-linux-gnu/qt6/QtCore/qresultstore.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/14/include/avx512vbmiintrin.h:
 
@@ -3502,15 +3508,15 @@ generated/gridderI.h:
 
 /usr/include/c++/14/bits/istream.tcc:
 
+/usr/include/x86_64-linux-gnu/qt6/QtGui/qquaternion.h:
+
+/usr/include/boost/type_traits/declval.hpp:
+
 /usr/include/c++/14/bit:
 
 /usr/lib/gcc/x86_64-linux-gnu/14/include/cetintrin.h:
 
 /usr/include/eigen3/Eigen/src/OrderingMethods/Eigen_Colamd.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qquaternion.h:
-
-/usr/include/boost/type_traits/declval.hpp:
 
 /usr/include/c++/14/bits/atomic_base.h:
 
@@ -3556,9 +3562,13 @@ generated/gridderI.h:
 
 /usr/include/c++/14/bits/cxxabi_init_exception.h:
 
-/home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/share/cmake-4.1/Modules/CMakeFindDependencyMacro.cmake:
+/usr/include/eigen3/Eigen/src/Core/functors/BinaryFunctors.h:
 
-/home/pbustos/robocomp/robocomp_core/classes/grafcetStep/GRAFCETStep.h:
+/usr/include/eigen3/Eigen/src/IterativeLinearSolvers/SolveWithGuess.h:
+
+/usr/include/boost/mp11/detail/mp_with_index.hpp:
+
+/usr/include/eigen3/Eigen/src/plugins/CommonCwiseUnaryOps.h:
 
 /usr/include/c++/14/bits/stream_iterator.h:
 
@@ -4214,8 +4224,6 @@ generated/gridderI.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qdir.h:
 
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qglyphrun.h:
-
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qelapsedtimer.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qfileinfo.h:
@@ -4341,8 +4349,6 @@ generated/gridderI.h:
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qstorageinfo.h:
 
 /usr/include/x86_64-linux-gnu/qt6/QtCore/qscopedvaluerollback.h:
-
-/usr/include/x86_64-linux-gnu/qt6/QtGui/qgenericpluginfactory.h:
 
 /usr/lib/x86_64-linux-gnu/cmake/Qt6/QtPublicFinalizerHelpers.cmake:
 

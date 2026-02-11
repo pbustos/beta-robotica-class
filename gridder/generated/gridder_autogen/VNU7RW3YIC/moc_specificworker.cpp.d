@@ -6,6 +6,7 @@
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/genericworker.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.h \
+  /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.tpp \
   /home/pbustos/robocomp/robocomp_core/classes/abstract_graphic_viewer/abstract_graphic_viewer.h \

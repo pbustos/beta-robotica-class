@@ -113,6 +113,8 @@ Obstacles are confirmed using a log-odds approach:
 | `getClosestFreePoint(source)` | Find nearest free cell to a point |
 | `getDimensions()` | Get grid dimensions |
 | `setGridDimensions(dimensions)` | Set grid dimensions |
+| `loadMRPTMap(filepath)` | Load pre-computed map from MRPT .gridmap file |
+| `loadAndInitializeMap(filepath)` | Load MRPT map and auto-adjust grid dimensions |
 
 ### Map Serialization
 
@@ -132,6 +134,36 @@ struct Map {
 ```
 
 **Transmission size**: ~9 bytes per cell (only non-free cells transmitted)
+
+## MRPT Map Loading
+
+Load pre-computed occupancy grids from MRPT `.gridmap` files for rapid initialization.
+
+### Quick Start
+
+```cpp
+// In initialize()
+if (Gridder_loadMRPTMap("my_map.gridmap")) {
+    external_map_loaded = true;  // Disables LiDAR updates
+}
+```
+
+### Configuration
+
+Align MRPT map with simulation world in `specificworker.h`:
+
+```cpp
+float MRPT_MAP_OFFSET_X = -13677.7f;  // mm - X translation
+float MRPT_MAP_OFFSET_Y = -7171.55f;  // mm - Y translation
+float MRPT_MAP_ROTATION = M_PI_2;     // radians - 90° left
+```
+
+### Format Support
+
+- **MRPT Native** (COccupancyGridMap2D) - zstd compression auto-detected
+- Occupancy: `0`=unknown, `1-127`=free, `>127`=occupied
+
+**Full documentation**: [MRPT_REFERENCE.md](MRPT_REFERENCE.md)
 
 ## Configuration
 
@@ -178,9 +210,10 @@ bin/gridder etc/myconfig
 ## UI Controls
 
 - **Left Click**: Set path target
-- **Right Click**: Cancel current path
+- **Shift + Left Click**: Reposition robot manually
+- **Right Click + Drag**: Pan view
+- **Ctrl + Right Click**: Cancel current path
 - **Mouse Wheel**: Zoom
-- **Right Drag**: Pan view
 
 ## Performance
 
@@ -200,9 +233,8 @@ bin/gridder etc/myconfig
 | File | Description |
 |------|-------------|
 | [GRIDDER_MATH.md](GRIDDER_MATH.md) | Mathematical derivation of log-odds occupancy grid update formula |
-| [ESDF_IMPLEMENTATION.md](ESDF_IMPLEMENTATION.md) | VoxBlox-style ESDF implementation details and algorithms |
-| [slam10-gridmaps.md](slam10-gridmaps.md) | Reference material on probabilistic grid mapping (based on Thrun's SLAM course) |
-| [slam10-gridmaps.pdf](slam10-gridmaps.pdf) | Original PDF slides on grid mapping |
+| [MRPT_REFERENCE.md](MRPT_REFERENCE.md) | Complete MRPT map loader reference (format, API, configuration) |
+| [slam10-gridmaps.md](slam10-gridmaps.md) | Reference material on probabilistic grid mapping |
 
 ---
 

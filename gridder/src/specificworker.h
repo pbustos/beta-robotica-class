@@ -34,6 +34,7 @@
 #include <genericworker.h>
 #include "grid.h"
 #include "grid_esdf.h"
+#include "mrpt_map_loader.h"
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include <Eigen/Eigen>
 #include "abstract_graphic_viewer/abstract_graphic_viewer.h"
@@ -109,10 +110,25 @@ class SpecificWorker : public GenericWorker
                                                  float safetyFactor);
 
     /**
-         * @brief Returns the current map with obstacle cells and their costs
-         * @return Map structure containing cells with cost > 0
-         */
+     * @brief Returns the current map with obstacle cells and their costs
+     * @return Map structure containing cells with cost > 0
+     */
         RoboCompGridder::Map Gridder_getMap();
+
+    /**
+	 * @brief Loads an MRPT gridmap file and populates the internal grid
+	 * @param filepath Path to the .gridmap file
+	 * @return true if successful, false otherwise
+	 */
+	bool Gridder_loadMRPTMap(const std::string &filepath);
+
+    /**
+	 * @brief Clears the current grid and loads a new map from MRPT format
+	 * Automatically detects SPARSE_ESDF vs DENSE grid mode
+	 * @param filepath Path to the .gridmap file
+	 * @return Status message describing result
+	 */
+	std::string Gridder_loadAndInitializeMap(const std::string &filepath);
 
     /**
 		 * @brief Sets the dimensions of the grid
@@ -161,6 +177,7 @@ class SpecificWorker : public GenericWorker
 	private:
 		bool startup_check_flag;
 		bool cancel_from_mouse = false;     // cancel current target from mouse right click
+		bool external_map_loaded = false;   // true if an external map was loaded (disables dynamic updates)
 
 	    //Graphics
 	    AbstractGraphicViewer *viewer;
@@ -190,13 +207,10 @@ class SpecificWorker : public GenericWorker
 	        int NUM_PATHS_TO_SEARCH = 3;
 	        float MIN_DISTANCE_BETWEEN_PATHS = 500; // mm
 	        bool DISPLAY = true ; //TODO: config file
-	        bool DRAW_LIDAR_POINTS = true;  // debug: draw LiDAR points
+	        bool DRAW_LIDAR_POINTS = true;  // debug: draw LiDAR points (can impact performance)
 	        int MAX_LIDAR_DRAW_POINTS = 1500; // debug: limit number of points drawn
-	        // Clustering parameters
-	        bool DRAW_CLUSTERS = false;  // draw detected obstacle clusters
-	        float CLUSTER_DISTANCE_THRESHOLD = 300.f;  // mm - base distance threshold for clustering
-	        int CLUSTER_MIN_POINTS = 3;  // minimum points to form a valid cluster
-	        // Grid mode selection
+
+	    	// Grid mode selection
 	        enum class GridMode { DENSE, DENSE_ESDF, SPARSE_ESDF };
 	        GridMode GRID_MODE = GridMode::SPARSE_ESDF;  // Options:
             // DENSE: original ray casting (accurate, slow for large maps)
@@ -205,6 +219,10 @@ class SpecificWorker : public GenericWorker
 	        bool USE_ESDF_MODE = false;  // kept for backward compatibility
 	        // Path planning safety factor: 0=shortest path (touch walls), 1=safest path (prefer center)
 	        float SAFETY_FACTOR = 1.0f;	// 0=touch walls, 1=prefer center
+	        // MRPT map offset to align with Webots world coordinates (in mm)
+	        float MRPT_MAP_OFFSET_X = 26100.7f;  // mm - X offset to apply to loaded map
+	        float MRPT_MAP_OFFSET_Y = 5600.f;  // mm - Y offset to apply to loaded map
+	        float MRPT_MAP_ROTATION = M_PI_2;   // radians - rotation to apply (90º left = PI/2)
 	    };
 	    Params params;
 

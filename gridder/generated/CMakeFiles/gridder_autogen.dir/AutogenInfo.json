@@ -245,6 +245,12 @@
 			null
 		],
 		[
+			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.h",
+			"MU",
+			"VNU7RW3YIC/moc_mrpt_map_loader.cpp",
+			null
+		],
+		[
 			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/specificworker.h",
 			"MU",
 			"VNU7RW3YIC/moc_specificworker.cpp",
@@ -387,6 +393,11 @@
 		],
 		[
 			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.cpp",
+			"MU",
+			null
+		],
+		[
+			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.cpp",
 			"MU",
 			null
 		],

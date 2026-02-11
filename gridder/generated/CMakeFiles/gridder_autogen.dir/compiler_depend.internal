@@ -18,6 +18,8 @@
  /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.cpp
  /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.h
  /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mainUI.ui
+ /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.cpp
+ /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.h
  /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/specificworker.cpp
  /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/specificworker.h
  /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.h

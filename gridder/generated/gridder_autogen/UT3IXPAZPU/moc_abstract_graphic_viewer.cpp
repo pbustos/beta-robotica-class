@@ -26,11 +26,12 @@ QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 namespace {
 struct qt_meta_stringdata_AbstractGraphicViewer_t {
-    uint offsetsAndSizes[8];
+    uint offsetsAndSizes[10];
     char stringdata0[22];
     char stringdata1[22];
     char stringdata2[1];
     char stringdata3[12];
+    char stringdata4[12];
 };
 #define QT_MOC_LITERAL(ofs, len) \
     uint(sizeof(qt_meta_stringdata_AbstractGraphicViewer_t::offsetsAndSizes) + ofs), len 
@@ -39,12 +40,14 @@ Q_CONSTINIT static const qt_meta_stringdata_AbstractGraphicViewer_t qt_meta_stri
         QT_MOC_LITERAL(0, 21),  // "AbstractGraphicViewer"
         QT_MOC_LITERAL(22, 21),  // "new_mouse_coordinates"
         QT_MOC_LITERAL(44, 0),  // ""
-        QT_MOC_LITERAL(45, 11)   // "right_click"
+        QT_MOC_LITERAL(45, 11),  // "right_click"
+        QT_MOC_LITERAL(57, 11)   // "robot_moved"
     },
     "AbstractGraphicViewer",
     "new_mouse_coordinates",
     "",
-    "right_click"
+    "right_click",
+    "robot_moved"
 };
 #undef QT_MOC_LITERAL
 } // unnamed namespace
@@ -55,18 +58,20 @@ Q_CONSTINIT static const uint qt_meta_data_AbstractGraphicViewer[] = {
       10,       // revision
        0,       // classname
        0,    0, // classinfo
-       2,   14, // methods
+       3,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
        0,       // flags
-       2,       // signalCount
+       3,       // signalCount
 
  // signals: name, argc, parameters, tag, flags, initial metatype offsets
-       1,    1,   26,    2, 0x06,    1 /* Public */,
-       3,    1,   29,    2, 0x06,    3 /* Public */,
+       1,    1,   32,    2, 0x06,    1 /* Public */,
+       3,    1,   35,    2, 0x06,    3 /* Public */,
+       4,    1,   38,    2, 0x06,    5 /* Public */,
 
  // signals: parameters
+    QMetaType::Void, QMetaType::QPointF,    2,
     QMetaType::Void, QMetaType::QPointF,    2,
     QMetaType::Void, QMetaType::QPointF,    2,
 
@@ -87,6 +92,9 @@ Q_CONSTINIT const QMetaObject AbstractGraphicViewer::staticMetaObject = { {
         QtPrivate::TypeAndForceComplete<QPointF, std::false_type>,
         // method 'right_click'
         QtPrivate::TypeAndForceComplete<void, std::false_type>,
+        QtPrivate::TypeAndForceComplete<QPointF, std::false_type>,
+        // method 'robot_moved'
+        QtPrivate::TypeAndForceComplete<void, std::false_type>,
         QtPrivate::TypeAndForceComplete<QPointF, std::false_type>
     >,
     nullptr
@@ -100,6 +108,7 @@ void AbstractGraphicViewer::qt_static_metacall(QObject *_o, QMetaObject::Call _c
         switch (_id) {
         case 0: _t->new_mouse_coordinates((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
         case 1: _t->right_click((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
+        case 2: _t->robot_moved((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
         default: ;
         }
     } else if (_c == QMetaObject::IndexOfMethod) {
@@ -115,6 +124,13 @@ void AbstractGraphicViewer::qt_static_metacall(QObject *_o, QMetaObject::Call _c
             using _t = void (AbstractGraphicViewer::*)(QPointF );
             if (_t _q_method = &AbstractGraphicViewer::right_click; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
                 *result = 1;
+                return;
+            }
+        }
+        {
+            using _t = void (AbstractGraphicViewer::*)(QPointF );
+            if (_t _q_method = &AbstractGraphicViewer::robot_moved; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
+                *result = 2;
                 return;
             }
         }
@@ -140,13 +156,13 @@ int AbstractGraphicViewer::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 2)
+        if (_id < 3)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 2;
+        _id -= 3;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 2)
+        if (_id < 3)
             *reinterpret_cast<QMetaType *>(_a[0]) = QMetaType();
-        _id -= 2;
+        _id -= 3;
     }
     return _id;
 }
@@ -163,6 +179,13 @@ void AbstractGraphicViewer::right_click(QPointF _t1)
 {
     void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
     QMetaObject::activate(this, &staticMetaObject, 1, _a);
+}
+
+// SIGNAL 2
+void AbstractGraphicViewer::robot_moved(QPointF _t1)
+{
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
+    QMetaObject::activate(this, &staticMetaObject, 2, _a);
 }
 QT_WARNING_POP
 QT_END_MOC_NAMESPACE

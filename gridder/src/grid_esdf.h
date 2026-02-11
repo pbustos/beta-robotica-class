@@ -85,6 +85,7 @@ public:
 
     // Obstacle management
     void add_obstacle(const Key &k, uint64_t timestamp);
+    void add_confirmed_obstacle(const Key &k);  // Add obstacle directly as confirmed (for external maps)
     void remove_obstacle(const Key &k);
     bool is_obstacle(const Key &k) const;
     bool is_occupied_for_planning(const Key &k, float robot_radius) const;  // Obstacle + inflation
@@ -119,6 +120,7 @@ public:
     // Statistics
     size_t num_obstacles() const { return obstacles_.size(); }
     size_t esdf_cache_size() const { return esdf_cache_.size(); }
+    void mark_visualization_dirty() { visualization_dirty_ = true; }  // Call after batch loading
 
     // Serialization for network transmission
     // Compact cell representation: x, y in mm, cost (0-255 normalized)

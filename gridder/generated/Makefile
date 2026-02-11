@@ -379,6 +379,30 @@ __/src/grid_esdf.cpp.s:
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.s
 .PHONY : __/src/grid_esdf.cpp.s
 
+__/src/mrpt_map_loader.o: __/src/mrpt_map_loader.cpp.o
+.PHONY : __/src/mrpt_map_loader.o
+
+# target to build an object file
+__/src/mrpt_map_loader.cpp.o:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.o
+.PHONY : __/src/mrpt_map_loader.cpp.o
+
+__/src/mrpt_map_loader.i: __/src/mrpt_map_loader.cpp.i
+.PHONY : __/src/mrpt_map_loader.i
+
+# target to preprocess a source file
+__/src/mrpt_map_loader.cpp.i:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.i
+.PHONY : __/src/mrpt_map_loader.cpp.i
+
+__/src/mrpt_map_loader.s: __/src/mrpt_map_loader.cpp.s
+.PHONY : __/src/mrpt_map_loader.s
+
+# target to generate assembly for a file
+__/src/mrpt_map_loader.cpp.s:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.s
+.PHONY : __/src/mrpt_map_loader.cpp.s
+
 __/src/specificworker.o: __/src/specificworker.cpp.o
 .PHONY : __/src/specificworker.o
 
@@ -653,6 +677,9 @@ help:
 	@echo "... __/src/grid_esdf.o"
 	@echo "... __/src/grid_esdf.i"
 	@echo "... __/src/grid_esdf.s"
+	@echo "... __/src/mrpt_map_loader.o"
+	@echo "... __/src/mrpt_map_loader.i"
+	@echo "... __/src/mrpt_map_loader.s"
 	@echo "... __/src/specificworker.o"
 	@echo "... __/src/specificworker.i"
 	@echo "... __/src/specificworker.s"
