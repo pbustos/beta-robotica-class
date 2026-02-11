@@ -219,6 +219,9 @@ class SpecificWorker : public GenericWorker
 	        bool USE_ESDF_MODE = false;  // kept for backward compatibility
 	        // Path planning safety factor: 0=shortest path (touch walls), 1=safest path (prefer center)
 	        float SAFETY_FACTOR = 1.0f;	// 0=touch walls, 1=prefer center
+	        size_t MAX_ASTAR_NODES = 50000;  // Maximum nodes to expand in A* before giving up
+	        float ASTAR_DISTANCE_FACTOR = 100.f;  // Multiply path distance in cells by this factor for max nodes
+
 	        // MRPT map offset to align with Webots world coordinates (in mm)
 	        float MRPT_MAP_OFFSET_X = 26100.7f;  // mm - X offset to apply to loaded map
 	        float MRPT_MAP_OFFSET_Y = 5600.f;  // mm - Y offset to apply to loaded map

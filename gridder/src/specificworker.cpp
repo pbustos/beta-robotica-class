@@ -94,6 +94,10 @@ void SpecificWorker::initialize()
         grid.initialize(params.GRID_MAX_DIM, static_cast<int>(params.TILE_SIZE), &viewer->scene);
         grid_esdf.initialize(static_cast<int>(params.TILE_SIZE), &viewer->scene);
 
+        // Configure A* parameters
+        grid_esdf.params().max_astar_nodes = params.MAX_ASTAR_NODES;
+        grid_esdf.params().astar_distance_factor = params.ASTAR_DISTANCE_FACTOR;
+
         // Load pre-computed MRPT map
         std::string map_file = "mapa2.gridmap";
         if (Gridder_loadMRPTMap(map_file))

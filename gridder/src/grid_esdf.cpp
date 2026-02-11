@@ -82,37 +82,60 @@ bool GridESDF::is_obstacle(const Key &k) const
     auto it = obstacles_.find(k);
     if (it == obstacles_.end())
         return false;
-    // Consider obstacle if:
-    // 1. Has visual tile (confirmed with neighbors), OR
-    // 2. Has enough hits and confidence (for planning safety even without visual)
-    return it->second.tile != nullptr ||
-           (it->second.hits >= 2.0f && it->second.log_odds >= params_.occupancy_threshold * 0.5f);
+
+    // Fast path: confirmed obstacle with visual tile
+    if (it->second.tile != nullptr)
+        return true;
+
+    // Secondary check: enough hits and confidence (for planning safety even without visual)
+    return it->second.hits >= 2.0f && it->second.log_odds >= params_.occupancy_threshold * 0.5f;
 }
 
 // Check if a cell should be avoided for path planning (obstacle + inflation zone)
 bool GridESDF::is_occupied_for_planning(const Key &k, float robot_radius) const
 {
-    // First check if it's a direct obstacle
-    if (is_obstacle(k))
+    // First check if it's a direct obstacle (fast path)
+    auto it = obstacles_.find(k);
+    if (it != obstacles_.end() && it->second.tile != nullptr)
         return true;
 
-    // Then check if any neighbor within robot_radius is an obstacle
-    const float tile_size_f = static_cast<float>(params_.tile_size);
-    const int cells_to_check = static_cast<int>(std::ceil(robot_radius / tile_size_f));
+    // If no robot radius, only check direct obstacle
+    if (robot_radius <= 0)
+        return false;
 
-    for (int dx = -cells_to_check; dx <= cells_to_check; ++dx)
+    // Use ESDF cache if available for faster lookup
+    auto esdf_it = esdf_cache_.find(k);
+    if (esdf_it != esdf_cache_.end() && esdf_it->second.distance < robot_radius)
+        return true;
+
+    // Check only immediate neighbors (1-ring) for robot radius
+    // This is O(8) instead of O(cells_to_check^2)
+    const int cells_to_check = std::max(1, static_cast<int>(std::ceil(robot_radius / static_cast<float>(params_.tile_size))));
+
+    // Optimized search: only check in cardinal and diagonal directions
+    static const std::array<std::pair<int,int>, 8> directions = {{
+        {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+        {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+    }};
+
+    for (int dist = 1; dist <= cells_to_check; ++dist)
     {
-        for (int dy = -cells_to_check; dy <= cells_to_check; ++dy)
+        for (const auto &[dx_base, dy_base] : directions)
         {
-            if (dx == 0 && dy == 0) continue;
+            int dx = dx_base * dist;
+            int dy = dy_base * dist;
 
             Key neighbor{k.first + dx * params_.tile_size,
                         k.second + dy * params_.tile_size};
 
-            // Check distance
-            float dist = std::hypot(static_cast<float>(dx), static_cast<float>(dy)) * tile_size_f;
-            if (dist <= robot_radius && is_obstacle(neighbor))
-                return true;
+            auto nit = obstacles_.find(neighbor);
+            if (nit != obstacles_.end() && nit->second.tile != nullptr)
+            {
+                float actual_dist = std::hypot(static_cast<float>(dx), static_cast<float>(dy))
+                                   * static_cast<float>(params_.tile_size);
+                if (actual_dist <= robot_radius)
+                    return true;
+            }
         }
     }
     return false;
@@ -254,6 +277,10 @@ void GridESDF::update(const std::vector<Eigen::Vector2f> &hit_points,
     const float range_threshold = max_range * 0.95f;
     const float tile_size_f = static_cast<float>(params_.tile_size);
 
+    // Track keys we've already processed this frame to avoid duplicates
+    std::unordered_set<Key, boost::hash<Key>> processed_keys;
+    processed_keys.reserve(hit_points.size());
+
     for (const auto &point : hit_points)
     {
         const float range = (point - robot_pos).norm();
@@ -267,7 +294,11 @@ void GridESDF::update(const std::vector<Eigen::Vector2f> &hit_points,
         {
             // This is a real obstacle hit
             Key k = point_to_key(point);
-            add_obstacle(k, timestamp);
+            // Only process each key once per frame
+            if (processed_keys.insert(k).second)
+            {
+                add_obstacle(k, timestamp);
+            }
         }
 
         // Trace free space along ray (sparse sampling)
@@ -281,6 +312,9 @@ void GridESDF::trace_free_space(const Eigen::Vector2f &from,
                                  const Eigen::Vector2f &to,
                                  uint64_t timestamp)
 {
+    // Skip if obstacles map is empty (nothing to clear)
+    if (obstacles_.empty()) return;
+
     // Sparse sampling: check every 2-3 cells along the ray
     const float tile_size_f = static_cast<float>(params_.tile_size);
     const float step = tile_size_f * 2.5f;  // Sample every ~2.5 cells
@@ -291,10 +325,17 @@ void GridESDF::trace_free_space(const Eigen::Vector2f &from,
 
     const Eigen::Vector2f dir = delta.normalized();
 
+    // Track last key to avoid checking same cell twice
+    Key last_key = {std::numeric_limits<int>::min(), std::numeric_limits<int>::min()};
+
     for (float t = tile_size_f; t < length; t += step)
     {
-        Eigen::Vector2f sample = from + dir * t;
-        Key k = point_to_key(sample);
+        const Eigen::Vector2f sample = from + dir * t;
+        const Key k = point_to_key(sample);
+
+        // Skip if same cell as last sample
+        if (k == last_key) continue;
+        last_key = k;
 
         // If this cell is marked as obstacle, reduce its confidence
         auto it = obstacles_.find(k);
@@ -381,26 +422,54 @@ float GridESDF::get_distance(const Key &k)
     if (is_obstacle(k))
         return 0.0f;
 
-    // Check cache
+    // Check cache first - fast path
     auto it = esdf_cache_.find(k);
     if (it != esdf_cache_.end())
         return it->second.distance;
 
-    // Not in cache - compute on demand by finding nearest obstacle
-    // This is O(n) but only happens for uncached queries
-    float min_dist = std::numeric_limits<float>::max();
-    const Eigen::Vector2f p = key_to_point(k);
+    // Not in cache - use fast local search within max_esdf_distance
+    // This is O(1) average case instead of O(n)
+    const float tile_f = static_cast<float>(params_.tile_size);
+    const int search_radius = static_cast<int>(std::ceil(params_.max_esdf_distance / tile_f));
 
-    for (const auto &[ok, _] : obstacles_)
+    float min_dist = params_.max_esdf_distance;
+    Key nearest_obs = {0, 0};
+
+    // Search in a spiral pattern from center outward for early termination
+    for (int radius = 1; radius <= search_radius; ++radius)
     {
-        const Eigen::Vector2f op = key_to_point(ok);
-        const float dist = (p - op).norm();
-        if (dist < min_dist)
-            min_dist = dist;
+        const float min_possible_dist = static_cast<float>(radius) * tile_f;
+        if (min_possible_dist >= min_dist)
+            break;  // Can't find closer obstacle at this radius
+
+        // Check cells at this radius
+        for (int dx = -radius; dx <= radius; ++dx)
+        {
+            for (int dy = -radius; dy <= radius; ++dy)
+            {
+                // Only check cells on the perimeter
+                if (std::abs(dx) != radius && std::abs(dy) != radius)
+                    continue;
+
+                Key neighbor = {k.first + dx * params_.tile_size,
+                               k.second + dy * params_.tile_size};
+
+                auto obs_it = obstacles_.find(neighbor);
+                if (obs_it != obstacles_.end() && obs_it->second.tile != nullptr)
+                {
+                    float dist = std::hypot(static_cast<float>(dx), static_cast<float>(dy)) * tile_f;
+                    if (dist < min_dist)
+                    {
+                        min_dist = dist;
+                        nearest_obs = neighbor;
+                    }
+                }
+            }
+        }
     }
 
     // Cache the result
-    esdf_cache_[k] = {min_dist, {0, 0}};  // TODO: track nearest obstacle
+    esdf_cache_[k] = {min_dist, nearest_obs};
     return min_dist;
 }
 
@@ -477,16 +546,14 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
     // Clamp safety_factor to [0, 1]
     safety_factor = std::clamp(safety_factor, 0.f, 1.f);
 
-    qDebug() << "[A*] Computing path from" << source_key.first << source_key.second
-             << "to" << target_key.first << target_key.second
-             << "robot_radius:" << robot_radius << "safety:" << safety_factor;
-    qDebug() << "[A*] Total obstacles in map:" << obstacles_.size();
+    // Limit expansion to reasonable area - use configurable parameters
+    const float direct_dist = std::hypot(static_cast<float>(target_key.first - source_key.first),
+                                         static_cast<float>(target_key.second - source_key.second));
+    const size_t max_nodes = std::max(params_.max_astar_nodes,
+                                      static_cast<size_t>((direct_dist / tile_size_f) * params_.astar_distance_factor));
 
-    // Count confirmed obstacles (with tiles)
-    int confirmed = 0;
-    for (const auto &[k, cell] : obstacles_)
-        if (cell.tile != nullptr) confirmed++;
-    qDebug() << "[A*] Confirmed obstacles (with tiles):" << confirmed;
+    qDebug() << "[A*] Computing path from" << source_key.first << source_key.second
+             << "to" << target_key.first << target_key.second;
 
     // Check if source or target are in occupied zone (obstacle + inflation)
     if (is_occupied_for_planning(source_key, robot_radius))
@@ -500,12 +567,17 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
         return {};
     }
 
-    // A* with ESDF-based cost
+    // A* with ESDF-based cost - optimized with pre-reserved containers
     using QElement = std::pair<float, Key>;  // (f_score, key)
     std::priority_queue<QElement, std::vector<QElement>, std::greater<>> open_set;
     std::unordered_map<Key, float, boost::hash<Key>> g_score;
     std::unordered_map<Key, Key, boost::hash<Key>> came_from;
     std::unordered_set<Key, boost::hash<Key>> closed_set;  // Already processed nodes
+
+    // Pre-allocate reasonable sizes
+    g_score.reserve(max_nodes / 2);
+    came_from.reserve(max_nodes / 2);
+    closed_set.reserve(max_nodes / 2);
 
     auto heuristic = [&](const Key &k) -> float {
         return std::hypot(static_cast<float>(k.first - target_key.first),
@@ -515,8 +587,21 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
     g_score[source_key] = 0.0f;
     open_set.push({heuristic(source_key), source_key});
 
+    // Pre-compute neighbor offsets to avoid repeated calculations
+    static const std::array<std::tuple<int, int, float>, 8> neighbor_offsets = {{
+        {1, 0, 1.0f}, {-1, 0, 1.0f}, {0, 1, 1.0f}, {0, -1, 1.0f},
+        {1, 1, 1.414f}, {1, -1, 1.414f}, {-1, 1, 1.414f}, {-1, -1, 1.414f}
+    }};
+
     while (!open_set.empty())
     {
+        // Check node expansion limit
+        if (closed_set.size() > max_nodes)
+        {
+            qDebug() << "[A*] Node expansion limit reached, no path found";
+            return {};
+        }
+
         auto [f, current] = open_set.top();
         open_set.pop();
 
@@ -529,6 +614,7 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
         {
             // Reconstruct path
             std::vector<Eigen::Vector2f> path;
+            path.reserve(closed_set.size() / 10);  // Reasonable estimate
             Key k = target_key;
             while (came_from.find(k) != came_from.end())
             {
@@ -538,28 +624,18 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
             path.push_back(key_to_point(source_key));
             std::reverse(path.begin(), path.end());
 
-            // DEBUG: Check if path passes through any obstacles
-            int obstacles_in_path = 0;
-            for (const auto &pt : path)
-            {
-                Key pk = point_to_key(pt);
-                if (is_occupied_for_planning(pk, robot_radius))
-                {
-                    obstacles_in_path++;
-                    qDebug() << "[A*] WARNING: Path point" << pt.x() << pt.y()
-                             << "is in occupied zone at key" << pk.first << pk.second;
-                }
-            }
-            qDebug() << "[A*] Path computed with" << path.size() << "points,"
-                     << obstacles_in_path << "in occupied zones";
-
+            qDebug() << "[A*] Path found with" << path.size() << "points, expanded" << closed_set.size() << "nodes";
             return path;
         }
 
         const float current_g = g_score[current];
 
-        for (const auto &neighbor : get_neighbors_8(current))
+        // Use pre-computed offsets instead of get_neighbors_8
+        for (const auto &[dx, dy, dist_mult] : neighbor_offsets)
         {
+            Key neighbor{current.first + dx * params_.tile_size,
+                        current.second + dy * params_.tile_size};
+
             // Skip already processed nodes
             if (closed_set.count(neighbor) > 0)
                 continue;
@@ -568,16 +644,9 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
             if (is_occupied_for_planning(neighbor, robot_radius))
                 continue;
 
-            // Diagonal cost
-            const bool is_diagonal = (neighbor.first != current.first &&
-                                     neighbor.second != current.second);
-            const float move_cost = is_diagonal ? tile_size_f * 1.414f : tile_size_f;
+            const float move_cost = tile_size_f * dist_mult;
 
-            // Add ESDF-based cost scaled by safety_factor with aggressive scaling
-            // safety=0: no ESDF cost (shortest path, can touch green cells)
-            // safety=0.5: moderate ESDF cost
-            // safety=1: very high ESDF cost (strongly prefer center of free space)
-            // Using exponential scaling: scale = 1 + safety^2 * 10 (range 1-11x)
+            // Add ESDF-based cost scaled by safety_factor
             const float safety_scale = 1.0f + safety_factor * safety_factor * 10.0f;
             const float esdf_cost = get_cost(neighbor) * safety_factor * safety_scale;
             const float tentative_g = current_g + move_cost + esdf_cost;
@@ -592,7 +661,7 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
         }
     }
 
-    qDebug() << "[A*] No path found!";
+    qDebug() << "[A*] No path found after expanding" << closed_set.size() << "nodes";
     return {};  // No path found
 }
 
@@ -721,9 +790,19 @@ void GridESDF::update_visualization(bool show_inflation)
 {
     if (!scene_) return;
 
-    // Skip if no changes
-    if (!visualization_dirty_ && show_inflation)
+    // Count confirmed obstacles
+    const size_t current_confirmed = count_confirmed_obstacles();
+
+    // Skip if nothing has changed (fast path)
+    if (!visualization_dirty_ && current_confirmed == last_confirmed_obstacles_)
         return;
+
+    // Only update if obstacle count changed
+    if (current_confirmed == last_confirmed_obstacles_ && !inflation_tiles_.empty())
+    {
+        visualization_dirty_ = false;
+        return;
+    }
 
     // Clear old inflation tiles
     for (auto *tile : inflation_tiles_)
@@ -736,6 +815,7 @@ void GridESDF::update_visualization(bool show_inflation)
     if (!show_inflation)
     {
         visualization_dirty_ = false;
+        last_confirmed_obstacles_ = current_confirmed;
         return;
     }
 
@@ -743,6 +823,7 @@ void GridESDF::update_visualization(bool show_inflation)
 
     // Collect all confirmed obstacle keys first
     std::unordered_set<Key, boost::hash<Key>> obstacle_set;
+    obstacle_set.reserve(obstacles_.size());
     for (const auto &[ok, cell] : obstacles_)
     {
         if (cell.tile != nullptr)
@@ -751,6 +832,7 @@ void GridESDF::update_visualization(bool show_inflation)
 
     // Layer 1 (orange): all cells adjacent to any obstacle
     std::unordered_set<Key, boost::hash<Key>> layer1_set;
+    layer1_set.reserve(obstacle_set.size() * 4);
     for (const auto &ok : obstacle_set)
     {
         for (const auto &n : get_neighbors_8(ok))
@@ -763,6 +845,7 @@ void GridESDF::update_visualization(bool show_inflation)
 
     // Layer 2 (green): all cells adjacent to layer1 but not obstacle or layer1
     std::unordered_set<Key, boost::hash<Key>> layer2_set;
+    layer2_set.reserve(layer1_set.size() * 4);
     for (const auto &l1 : layer1_set)
     {
         for (const auto &n : get_neighbors_8(l1))
@@ -773,6 +856,9 @@ void GridESDF::update_visualization(bool show_inflation)
                 layer2_set.insert(n);
         }
     }
+
+    // Reserve space for tiles
+    inflation_tiles_.reserve(layer1_set.size() + layer2_set.size());
 
     // Draw layer 2 first (green) - lower z-order
     for (const auto &k : layer2_set)
@@ -797,6 +883,7 @@ void GridESDF::update_visualization(bool show_inflation)
     }
 
     visualization_dirty_ = false;
+    last_confirmed_obstacles_ = current_confirmed;
 }
 
 size_t GridESDF::count_confirmed_obstacles() const

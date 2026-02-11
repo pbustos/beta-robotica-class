@@ -67,6 +67,9 @@ public:
         // Cost parameters
         float obstacle_cost = 100.f;
         float free_cost = 1.f;
+        // A* path planning limits
+        size_t max_astar_nodes = 50000;      // Maximum nodes to expand before giving up
+        float astar_distance_factor = 100.f; // Multiply path distance in cells by this factor
     };
 
     GridESDF() = default;
