@@ -1,4 +1,4 @@
-/home/robolab/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/include/moc_sigwatch.cpp: /home/robolab/robocomp/classes/sigwatch/sigwatch.h \
+/home/robolab/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/include/moc_sigwatch.cpp: /home/robocomp/robocomp/classes/sigwatch/sigwatch.h \
   /home/robolab/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/moc_predefs.h \
   /usr/include/alloca.h \
   /usr/include/asm-generic/errno-base.h \

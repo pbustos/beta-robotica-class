@@ -478,6 +478,50 @@ float GridESDF::get_distance(const Eigen::Vector2f &p)
     return get_distance(point_to_key(p));
 }
 
+//////////////////////////////////////////////////////////////////////////////
+// Fast distance query (no cache, thread-safe, for localization)
+//////////////////////////////////////////////////////////////////////////////
+
+float GridESDF::get_distance_fast(const Key &k) const
+{
+    // Check if it's an obstacle
+    auto obs_it = obstacles_.find(k);
+    if (obs_it != obstacles_.end() && obs_it->second.tile != nullptr)
+        return 0.0f;
+
+    // Simple search: check only nearby cells (limited radius for speed)
+    const float tile_f = static_cast<float>(params_.tile_size);
+    const int search_radius = 5;  // Only check 5 cells away max (250mm at 50mm tiles)
+
+    float min_dist = search_radius * tile_f;  // Return max if nothing found
+
+    for (int dx = -search_radius; dx <= search_radius; ++dx)
+    {
+        for (int dy = -search_radius; dy <= search_radius; ++dy)
+        {
+            if (dx == 0 && dy == 0) continue;
+
+            Key neighbor = {k.first + dx * params_.tile_size,
+                           k.second + dy * params_.tile_size};
+
+            auto it = obstacles_.find(neighbor);
+            if (it != obstacles_.end() && it->second.tile != nullptr)
+            {
+                float dist = std::hypot(static_cast<float>(dx), static_cast<float>(dy)) * tile_f;
+                if (dist < min_dist)
+                    min_dist = dist;
+            }
+        }
+    }
+
+    return min_dist;
+}
+
+float GridESDF::get_distance_fast(float x, float y) const
+{
+    return get_distance_fast(point_to_key(Eigen::Vector2f(x, y)));
+}
+
 float GridESDF::get_cost(const Key &k)
 {
     if (is_obstacle(k))
@@ -573,11 +617,27 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
     std::unordered_map<Key, float, boost::hash<Key>> g_score;
     std::unordered_map<Key, Key, boost::hash<Key>> came_from;
     std::unordered_set<Key, boost::hash<Key>> closed_set;  // Already processed nodes
+    std::unordered_set<Key, boost::hash<Key>> occupied_cache;  // Cache for occupied cells
 
     // Pre-allocate reasonable sizes
     g_score.reserve(max_nodes / 2);
     came_from.reserve(max_nodes / 2);
     closed_set.reserve(max_nodes / 2);
+    occupied_cache.reserve(max_nodes / 4);
+
+    // Lambda with cached occupation check
+    auto is_occupied_cached = [&](const Key &k) -> bool {
+        // Check cache first
+        if (occupied_cache.count(k) > 0)
+            return true;
+        if (closed_set.count(k) > 0)
+            return false;  // Already processed as free
+
+        bool occupied = is_occupied_for_planning(k, robot_radius);
+        if (occupied)
+            occupied_cache.insert(k);
+        return occupied;
+    };
 
     auto heuristic = [&](const Key &k) -> float {
         return std::hypot(static_cast<float>(k.first - target_key.first),
@@ -640,16 +700,24 @@ std::vector<Eigen::Vector2f> GridESDF::compute_path(const Eigen::Vector2f &sourc
             if (closed_set.count(neighbor) > 0)
                 continue;
 
-            // Skip occupied zones (obstacles + inflation for robot radius)
-            if (is_occupied_for_planning(neighbor, robot_radius))
+            // Skip occupied zones (cached check)
+            if (is_occupied_cached(neighbor))
                 continue;
 
             const float move_cost = tile_size_f * dist_mult;
 
-            // Add ESDF-based cost scaled by safety_factor
-            const float safety_scale = 1.0f + safety_factor * safety_factor * 10.0f;
-            const float esdf_cost = get_cost(neighbor) * safety_factor * safety_scale;
-            const float tentative_g = current_g + move_cost + esdf_cost;
+            // Add ESDF-based cost only if safety_factor > 0 (skip expensive get_cost call)
+            float tentative_g;
+            if (safety_factor > 0.01f)
+            {
+                const float safety_scale = 1.0f + safety_factor * safety_factor * 10.0f;
+                const float esdf_cost = get_cost(neighbor) * safety_factor * safety_scale;
+                tentative_g = current_g + move_cost + esdf_cost;
+            }
+            else
+            {
+                tentative_g = current_g + move_cost;  // Pure shortest path
+            }
 
             auto it = g_score.find(neighbor);
             if (it == g_score.end() || tentative_g < it->second)

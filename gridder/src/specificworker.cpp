@@ -109,6 +109,25 @@ void SpecificWorker::initialize()
         else
             qWarning() << "[MRPT] Failed to load map:" << map_file.c_str();
 
+        // Initialize localizer if enabled and map is loaded
+        if (params.USE_LOCALIZER && external_map_loaded)
+        {
+            localizer.initialize(&grid_esdf, &viewer->scene);
+
+            // Configure localizer parameters
+            Localizer::Params loc_params;
+            loc_params.initial_particles = params.LOCALIZER_PARTICLES;
+            loc_params.min_particles = 100;
+            loc_params.max_particles = 2000;
+            loc_params.draw_particles = true;
+            loc_params.lidar_subsample = 5;  // Use every 5th LiDAR point
+            localizer.setParams(loc_params);
+
+            // Reset with Gaussian distribution around origin (will be updated on first pose)
+            // The actual initialization will happen when we get the first ground truth pose
+            qInfo() << "[Localizer] Initialized, waiting for first pose...";
+        }
+
         // Lidar thread is created
         read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
         std::cout << __FUNCTION__ << " Started lidar reader" << std::endl;
@@ -121,7 +140,7 @@ void SpecificWorker::initialize()
 
             // Use current robot position in world coordinates as source
             const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-            const auto &[robot, lidar] = buffer_sync.read(timestamp);
+            const auto &[robot, lidar_world, lidar_local] = buffer_sync.read(timestamp);
             if (not robot.has_value()) return;
 
             const Eigen::Vector2f source = robot.value().translation();
@@ -259,57 +278,173 @@ void SpecificWorker::initialize()
         // });
         if(not params.DISPLAY)
             hide();
-		
-	}
+
+        // test robot is alive
+        const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        int startup_check_counter = 0;
+        std::optional<Eigen::Affine2f> robot;
+        std::optional<std::vector<Eigen::Vector2f>> lidar_world;
+        std::optional<std::vector<Eigen::Vector2f>> lidar_local;
+        // do this 5 times and then exit is no data.
+        do
+        {
+            qWarning() << "No data from buffer_sync: robot has value? Retrying... (" << startup_check_counter << ")";
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            const auto &[r, lw, ll] = buffer_sync.read(timestamp);
+            robot = r; lidar_world = lw; lidar_local = ll;
+        }while (++startup_check_counter < 5 and (not robot.has_value() or not lidar_world.has_value()));
+        if (not robot.has_value() or not lidar_world.has_value())
+        { qWarning() << "No data from buffer_sync: robot has value?. Exiting program"; std::terminate(); };
+        const auto &robot_pos = robot.value();  // Ground truth pose from simulator
+        viewer->centerOn(robot_pos.translation().x(), robot_pos.translation().y());
+    }
 }
 void SpecificWorker::compute()
 {
-    static bool first_center = true;  // flag to center view on robot at startup
-
-    const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    const auto &[robot, lidar] = buffer_sync.read(timestamp);
-    if (not robot.has_value() or not lidar.has_value())
+    const auto timestamp = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const auto &[robot, lidar_world, lidar_local] = buffer_sync.read(timestamp);
+    if (not robot.has_value() or not lidar_world.has_value() or not lidar_local.has_value())
         { qWarning() << "No data from buffer_sync: robot has value?"; return; };
-    const auto &robot_pos = robot.value();
-    const auto &points_world = lidar.value();
-
-    // Center view on robot at startup
-    if(first_center)
-    {
-        viewer->centerOn(robot_pos.translation().x(), robot_pos.translation().y());
-        first_center = false;
-    }
+    const auto &robot_pos = robot.value();  // Ground truth pose from simulator
+    const auto &points_world = lidar_world.value();
+    const auto &points_local = lidar_local.value();
 
     /// Update grid with world coordinates (only if no external map loaded)
-    const auto timestamp_ms = static_cast<uint64_t>(timestamp);
     mutex_path.lock();
-
-    // SPARSE_ESDF mode: VoxBlox-style, only stores obstacles
     if (not external_map_loaded)
     {
-        // Dynamic updates from LiDAR only when no external map is loaded
+        // SPARSE_ESDF mode: VoxBlox-style, only stores obstacles
         grid.check_and_resize(points_world);
-        grid_esdf.update(points_world, robot_pos.translation(), params.MAX_LIDAR_RANGE, timestamp_ms);
+        grid_esdf.update(points_world, robot_pos.translation(), params.MAX_LIDAR_RANGE, timestamp);
         grid_esdf.update_visualization(true);  // Only update visualization when there are changes
     }
     // When external_map_loaded, visualization is static - no need to update
-
     mutex_path.unlock();
+
+    // ============ LOCALIZER UPDATE ============
+    float display_x = robot_pos.translation().x();
+    float display_y = robot_pos.translation().y();
+    float display_angle = std::atan2(robot_pos.linear()(1,0), robot_pos.linear()(0,0));
+
+    if (params.USE_LOCALIZER and external_map_loaded)
+    {
+        if (const auto estimated = update_localizer(robot_pos, points_local); estimated.has_value())
+        {
+            // Sanity check: only use estimate if it's reasonable
+            // (not too far from GT - max 5m error allowed)
+            float error = std::hypot(estimated->x - display_x, estimated->y - display_y);
+            if (error < 5000.f && localizer.getEffectiveSampleSize() > 10.0)
+            {
+                // Use localized pose for display
+                display_x = estimated->x;
+                display_y = estimated->y;
+                display_angle = estimated->theta;
+            }
+        }
+    }
 
     // Debug: draw lidar points to inspect noise
     if(params.DRAW_LIDAR_POINTS)
         draw_lidar_points(points_world);
 
-    // Update robot visualization in the viewer (world coordinates)
-    const auto robot_rot = robot_pos.linear();
-    const float robot_angle = std::atan2(robot_rot(1,0), robot_rot(0,0));
-    viewer->robot_poly()->setPos(robot_pos.translation().x(), robot_pos.translation().y());
-    viewer->robot_poly()->setRotation(qRadiansToDegrees(robot_angle));
+    // Update robot visualization in the viewer (using localized pose if available)
+    viewer->robot_poly()->setPos(display_x, display_y);
+    viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
 
     this->hz = fps.print("FPS:", 3000);
     this->lcdNumber_hz->display(this->hz);
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////
+std::optional<Localizer::Pose2D> SpecificWorker::update_localizer(const Eigen::Affine2f &robot_pos, const std::vector<Eigen::Vector2f> &points_local)
+{
+    // Get current ground truth pose
+    const float gt_x = robot_pos.translation().x();
+    const float gt_y = robot_pos.translation().y();
+    const auto robot_rot = robot_pos.linear();
+    const float gt_theta = std::atan2(robot_rot(1,0), robot_rot(0,0));
+    Localizer::Pose2D current_gt_pose{gt_x, gt_y, gt_theta};
+
+    // Initialize localizer on first valid pose
+    if (!localizer_initialized)
+    {
+        // Initialize with Gaussian around ground truth (simulating initial uncertainty)
+        localizer.resetGaussian(current_gt_pose, 500.f, 0.2f);  // 500mm pos, 0.2rad angle uncertainty
+        last_ground_truth_pose = current_gt_pose;
+        localizer_initialized = true;
+        qInfo() << "[Localizer] Initialized at:" << gt_x << gt_y << "theta:" << qRadiansToDegrees(gt_theta);
+        return std::nullopt;
+    }
+
+    // Compute odometry from ground truth poses (simulating odometry)
+    auto odom = Localizer::computeOdometryDelta(last_ground_truth_pose, current_gt_pose);
+
+    // Debug: check if poses are different
+    float pose_diff = std::hypot(current_gt_pose.x - last_ground_truth_pose.x,
+                                  current_gt_pose.y - last_ground_truth_pose.y);
+    static int odom_debug = 0;
+    if (++odom_debug % 50 == 0 && pose_diff > 1.0f)
+    {
+        qInfo() << "[Localizer ODOM] last:" << last_ground_truth_pose.x << last_ground_truth_pose.y
+                << "curr:" << current_gt_pose.x << current_gt_pose.y
+                << "diff:" << pose_diff << "odom:" << odom.delta_x << odom.delta_y;
+    }
+
+    // LiDAR points already come in local (robot) frame - no transformation needed
+    // Update localizer directly with local points
+    auto estimated_pose = localizer.update(odom, points_local);
+
+    // Periodic debug: show GT errors and LiDAR stats every ~10 seconds
+    static int debug_counter = 0;
+    if (++debug_counter % 100 == 0)
+    {
+        // Compute LiDAR stats using GT pose
+        const float c = std::cos(gt_theta);
+        const float s = std::sin(gt_theta);
+        int hits = 0;
+        float sum_dist = 0;
+        const int sample_step = std::max(1, static_cast<int>(points_local.size() / 100));
+        int count = 0;
+        for (size_t i = 0; i < points_local.size(); i += sample_step)
+        {
+            const auto& p = points_local[i];
+            const float wx = gt_x + p.x() * c - p.y() * s;
+            const float wy = gt_y + p.x() * s + p.y() * c;
+            auto key = grid_esdf.point_to_key(Eigen::Vector2f(wx, wy));
+            float dist = grid_esdf.get_distance(key);
+            sum_dist += dist;
+            count++;
+            if (dist < 100.f) hits++;
+        }
+
+        // Get estimated pose
+        auto est = localizer.getMeanPose();
+        float pos_error = std::hypot(est.x - gt_x, est.y - gt_y);
+        float angle_error = std::abs(Localizer::Pose2D::normalizeAngle(est.theta - gt_theta));
+
+        // Compute accumulated translation since init
+        static float init_gt_x = gt_x, init_gt_y = gt_y;
+        static float init_est_x = est.x, init_est_y = est.y;
+        static bool first_debug = true;
+        if (first_debug) { init_gt_x = gt_x; init_gt_y = gt_y; init_est_x = est.x; init_est_y = est.y; first_debug = false; }
+
+        float gt_moved = std::hypot(gt_x - init_gt_x, gt_y - init_gt_y);
+        float est_moved = std::hypot(est.x - init_est_x, est.y - init_est_y);
+
+        qInfo() << "[Localizer] GT error: pos=" << static_cast<int>(pos_error) << "mm, angle=" << qRadiansToDegrees(angle_error) << "deg"
+                << "| odom: dx=" << static_cast<int>(odom.delta_x) << "dy=" << static_cast<int>(odom.delta_y)
+                << "| GT moved:" << static_cast<int>(gt_moved) << "mm, Est moved:" << static_cast<int>(est_moved) << "mm"
+                << "| hits:" << hits << "/" << count
+                << "| ESS:" << static_cast<int>(localizer.getEffectiveSampleSize());
+    }
+
+    last_ground_truth_pose = current_gt_pose;
+
+    // Return estimated pose (or mean pose if not converged)
+    return estimated_pose.has_value() ? estimated_pose : std::optional<Localizer::Pose2D>(localizer.getMeanPose());
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &points_world)
 {
     static std::vector<QGraphicsEllipseItem*> lidar_points;
@@ -614,17 +749,22 @@ void SpecificWorker::read_lidar()
                                                                    params.MAX_LIDAR_LOW_RANGE,
                                                                    params.LIDAR_LOW_DECIMATION_FACTOR);
 
-            // Transform points to world frame using the pose we just read
+            // Store local points (original LiDAR frame) and transform to world frame
             std::vector<Eigen::Vector2f> points_world;
+            std::vector<Eigen::Vector2f> points_local;
             points_world.reserve(data.points.size());
+            points_local.reserve(data.points.size());
             for (const auto &p : data.points)
-                if (std::hypot(p.y, p.x) >  600)
+                if (std::hypot(p.y, p.x) > 100) // TODO: move to Params
+                {
+                    points_local.emplace_back(p.x, p.y);
                     points_world.emplace_back(eig_pose * Eigen::Vector2f{p.x, p.y});
+                }
 
-
-            // Put both in sync buffer with same timestamp
+            // Put all in sync buffer with same timestamp
             buffer_sync.put<0>(std::move(eig_pose), timestamp);
             buffer_sync.put<1>(std::move(points_world), timestamp);
+            buffer_sync.put<2>(std::move(points_local), timestamp);
 
             // Adjust period with hysteresis
             if (wait_period > std::chrono::milliseconds((long) data.period + 2)) wait_period--;

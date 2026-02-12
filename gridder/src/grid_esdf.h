@@ -100,6 +100,10 @@ public:
     float get_cost(const Key &k);
     float get_cost(const Eigen::Vector2f &p);
 
+    // Fast distance query (no cache, thread-safe, for localization)
+    float get_distance_fast(const Key &k) const;
+    float get_distance_fast(float x, float y) const;
+
     // Key conversion
     Key point_to_key(const Eigen::Vector2f &p) const;
     Key point_to_key(float x, float y) const;

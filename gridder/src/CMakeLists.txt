@@ -4,6 +4,7 @@ LIST(APPEND SOURCES
   ../src/grid.cpp
   ../src/grid_esdf.cpp
   ../src/mrpt_map_loader.cpp
+  ../src/localizer.cpp
 )
 # Headers set
 LIST(APPEND HEADERS
@@ -11,6 +12,7 @@ LIST(APPEND HEADERS
   ../src/grid.h
   ../src/grid_esdf.h
   ../src/mrpt_map_loader.h
+  ../src/localizer.h
   ${ROBOCOMP}/abstract_graphic_viewer/abstract_graphic_viewer.h
 )
 

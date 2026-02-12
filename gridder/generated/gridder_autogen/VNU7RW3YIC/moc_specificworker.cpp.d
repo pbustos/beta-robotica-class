@@ -6,6 +6,7 @@
   /home/robolab/robocomp/components/beta-robotica-class/gridder/generated/genericworker.h \
   /home/robolab/robocomp/components/beta-robotica-class/gridder/src/grid.h \
   /home/robolab/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.h \
+  /home/robolab/robocomp/components/beta-robotica-class/gridder/src/localizer.h \
   /home/robolab/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.h \
   /home/robolab/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.h \
   /home/robolab/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.tpp \
@@ -1052,6 +1053,7 @@
   /usr/include/x86_64-linux-gnu/qt6/QtStateMachine/qstatemachineglobal.h \
   /usr/include/x86_64-linux-gnu/qt6/QtStateMachine/qtstatemachine-config.h \
   /usr/include/x86_64-linux-gnu/qt6/QtWidgets/QApplication \
+  /usr/include/x86_64-linux-gnu/qt6/QtWidgets/QGraphicsEllipseItem \
   /usr/include/x86_64-linux-gnu/qt6/QtWidgets/QGraphicsPolygonItem \
   /usr/include/x86_64-linux-gnu/qt6/QtWidgets/QGraphicsRectItem \
   /usr/include/x86_64-linux-gnu/qt6/QtWidgets/QGraphicsScene \
