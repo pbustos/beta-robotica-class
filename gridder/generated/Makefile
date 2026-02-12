@@ -48,10 +48,10 @@ cmake_force:
 SHELL = /bin/sh
 
 # The CMake executable.
-CMAKE_COMMAND = /snap/clion/415/bin/cmake/linux/x64/bin/cmake
+CMAKE_COMMAND = /usr/bin/cmake
 
 # The command to remove a file.
-RM = /snap/clion/415/bin/cmake/linux/x64/bin/cmake -E rm -f
+RM = /usr/bin/cmake -E rm -f
 
 # Escaping for special characters.
 EQUALS = =
@@ -68,7 +68,7 @@ CMAKE_BINARY_DIR = /home/robolab/robocomp/components/beta-robotica-class/gridder
 # Special rule for the target edit_cache
 edit_cache:
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "No interactive CMake dialog available..."
-	/snap/clion/415/bin/cmake/linux/x64/bin/cmake -E echo No\ interactive\ CMake\ dialog\ available.
+	/usr/bin/cmake -E echo No\ interactive\ CMake\ dialog\ available.
 .PHONY : edit_cache
 
 # Special rule for the target edit_cache
@@ -78,7 +78,7 @@ edit_cache/fast: edit_cache
 # Special rule for the target rebuild_cache
 rebuild_cache:
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Running CMake to regenerate build system..."
-	/snap/clion/415/bin/cmake/linux/x64/bin/cmake --regenerate-during-build -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR)
+	/usr/bin/cmake --regenerate-during-build -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR)
 .PHONY : rebuild_cache
 
 # Special rule for the target rebuild_cache
@@ -97,37 +97,37 @@ list_install_components/fast: list_install_components
 # Special rule for the target install
 install: preinstall
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Install the project..."
-	/snap/clion/415/bin/cmake/linux/x64/bin/cmake -P cmake_install.cmake
+	/usr/bin/cmake -P cmake_install.cmake
 .PHONY : install
 
 # Special rule for the target install
 install/fast: preinstall/fast
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Install the project..."
-	/snap/clion/415/bin/cmake/linux/x64/bin/cmake -P cmake_install.cmake
+	/usr/bin/cmake -P cmake_install.cmake
 .PHONY : install/fast
 
 # Special rule for the target install/local
 install/local: preinstall
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing only the local directory..."
-	/snap/clion/415/bin/cmake/linux/x64/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
+	/usr/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
 .PHONY : install/local
 
 # Special rule for the target install/local
 install/local/fast: preinstall/fast
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing only the local directory..."
-	/snap/clion/415/bin/cmake/linux/x64/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
+	/usr/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
 .PHONY : install/local/fast
 
 # Special rule for the target install/strip
 install/strip: preinstall
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing the project stripped..."
-	/snap/clion/415/bin/cmake/linux/x64/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
+	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
 .PHONY : install/strip
 
 # Special rule for the target install/strip
 install/strip/fast: preinstall/fast
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing the project stripped..."
-	/snap/clion/415/bin/cmake/linux/x64/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
+	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
 .PHONY : install/strip/fast
 
 # The main all target
@@ -523,125 +523,125 @@ gridder_autogen/mocs_compilation.cpp.s:
 	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/gridder_autogen/mocs_compilation.cpp.s
 .PHONY : gridder_autogen/mocs_compilation.cpp.s
 
-home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.o: home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
-.PHONY : home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.o
+home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.o: home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
+.PHONY : home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.o
 
 # target to build an object file
-home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
-.PHONY : home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
+home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
+.PHONY : home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
 
-home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.i: home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
-.PHONY : home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.i
+home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.i: home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
+.PHONY : home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.i
 
 # target to preprocess a source file
-home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
-.PHONY : home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
+home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
+.PHONY : home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
 
-home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.s: home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
-.PHONY : home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.s
+home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.s: home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
+.PHONY : home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.s
 
 # target to generate assembly for a file
-home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
-.PHONY : home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
+home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
+.PHONY : home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
 
-home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.o: home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
-.PHONY : home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.o
+home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.o: home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
+.PHONY : home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.o
 
 # target to build an object file
-home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
-.PHONY : home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
+home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
+.PHONY : home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
 
-home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.i: home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
-.PHONY : home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.i
+home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.i: home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
+.PHONY : home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.i
 
 # target to preprocess a source file
-home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
-.PHONY : home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
+home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
+.PHONY : home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
 
-home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.s: home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
-.PHONY : home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.s
+home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.s: home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
+.PHONY : home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.s
 
 # target to generate assembly for a file
-home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
-.PHONY : home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
+home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
+.PHONY : home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
 
-home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.o: home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
-.PHONY : home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.o
+home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.o: home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
+.PHONY : home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.o
 
 # target to build an object file
-home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
-.PHONY : home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
+home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
+.PHONY : home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
 
-home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.i: home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
-.PHONY : home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.i
+home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.i: home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
+.PHONY : home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.i
 
 # target to preprocess a source file
-home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
-.PHONY : home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
+home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
+.PHONY : home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
 
-home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.s: home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
-.PHONY : home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.s
+home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.s: home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
+.PHONY : home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.s
 
 # target to generate assembly for a file
-home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
-.PHONY : home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
+home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
+.PHONY : home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
 
-home/robocomp/robocomp/classes/rapplication/rapplication.o: home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o
-.PHONY : home/robocomp/robocomp/classes/rapplication/rapplication.o
+home/robolab/robocomp/classes/rapplication/rapplication.o: home/robolab/robocomp/classes/rapplication/rapplication.cpp.o
+.PHONY : home/robolab/robocomp/classes/rapplication/rapplication.o
 
 # target to build an object file
-home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o
-.PHONY : home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o
+home/robolab/robocomp/classes/rapplication/rapplication.cpp.o:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/rapplication/rapplication.cpp.o
+.PHONY : home/robolab/robocomp/classes/rapplication/rapplication.cpp.o
 
-home/robocomp/robocomp/classes/rapplication/rapplication.i: home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i
-.PHONY : home/robocomp/robocomp/classes/rapplication/rapplication.i
+home/robolab/robocomp/classes/rapplication/rapplication.i: home/robolab/robocomp/classes/rapplication/rapplication.cpp.i
+.PHONY : home/robolab/robocomp/classes/rapplication/rapplication.i
 
 # target to preprocess a source file
-home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i
-.PHONY : home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i
+home/robolab/robocomp/classes/rapplication/rapplication.cpp.i:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/rapplication/rapplication.cpp.i
+.PHONY : home/robolab/robocomp/classes/rapplication/rapplication.cpp.i
 
-home/robocomp/robocomp/classes/rapplication/rapplication.s: home/robocomp/robocomp/classes/rapplication/rapplication.cpp.s
-.PHONY : home/robocomp/robocomp/classes/rapplication/rapplication.s
+home/robolab/robocomp/classes/rapplication/rapplication.s: home/robolab/robocomp/classes/rapplication/rapplication.cpp.s
+.PHONY : home/robolab/robocomp/classes/rapplication/rapplication.s
 
 # target to generate assembly for a file
-home/robocomp/robocomp/classes/rapplication/rapplication.cpp.s:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.s
-.PHONY : home/robocomp/robocomp/classes/rapplication/rapplication.cpp.s
+home/robolab/robocomp/classes/rapplication/rapplication.cpp.s:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/rapplication/rapplication.cpp.s
+.PHONY : home/robolab/robocomp/classes/rapplication/rapplication.cpp.s
 
-home/robocomp/robocomp/classes/sigwatch/sigwatch.o: home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o
-.PHONY : home/robocomp/robocomp/classes/sigwatch/sigwatch.o
+home/robolab/robocomp/classes/sigwatch/sigwatch.o: home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.o
+.PHONY : home/robolab/robocomp/classes/sigwatch/sigwatch.o
 
 # target to build an object file
-home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o
-.PHONY : home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o
+home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.o:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.o
+.PHONY : home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.o
 
-home/robocomp/robocomp/classes/sigwatch/sigwatch.i: home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i
-.PHONY : home/robocomp/robocomp/classes/sigwatch/sigwatch.i
+home/robolab/robocomp/classes/sigwatch/sigwatch.i: home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.i
+.PHONY : home/robolab/robocomp/classes/sigwatch/sigwatch.i
 
 # target to preprocess a source file
-home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i
-.PHONY : home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i
+home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.i:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.i
+.PHONY : home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.i
 
-home/robocomp/robocomp/classes/sigwatch/sigwatch.s: home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.s
-.PHONY : home/robocomp/robocomp/classes/sigwatch/sigwatch.s
+home/robolab/robocomp/classes/sigwatch/sigwatch.s: home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.s
+.PHONY : home/robolab/robocomp/classes/sigwatch/sigwatch.s
 
 # target to generate assembly for a file
-home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.s:
-	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.s
-.PHONY : home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.s
+home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.s:
+	cd /home/robolab/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.s
+.PHONY : home/robolab/robocomp/classes/sigwatch/sigwatch.cpp.s
 
 main.o: main.cpp.o
 .PHONY : main.o
@@ -719,21 +719,21 @@ help:
 	@echo "... gridder_autogen/mocs_compilation.o"
 	@echo "... gridder_autogen/mocs_compilation.i"
 	@echo "... gridder_autogen/mocs_compilation.s"
-	@echo "... home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.o"
-	@echo "... home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.i"
-	@echo "... home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.s"
-	@echo "... home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.o"
-	@echo "... home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.i"
-	@echo "... home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.s"
-	@echo "... home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.o"
-	@echo "... home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.i"
-	@echo "... home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.s"
-	@echo "... home/robocomp/robocomp/classes/rapplication/rapplication.o"
-	@echo "... home/robocomp/robocomp/classes/rapplication/rapplication.i"
-	@echo "... home/robocomp/robocomp/classes/rapplication/rapplication.s"
-	@echo "... home/robocomp/robocomp/classes/sigwatch/sigwatch.o"
-	@echo "... home/robocomp/robocomp/classes/sigwatch/sigwatch.i"
-	@echo "... home/robocomp/robocomp/classes/sigwatch/sigwatch.s"
+	@echo "... home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.o"
+	@echo "... home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.i"
+	@echo "... home/robolab/robocomp/classes/ConfigLoader/ConfigLoader.s"
+	@echo "... home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.o"
+	@echo "... home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.i"
+	@echo "... home/robolab/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.s"
+	@echo "... home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.o"
+	@echo "... home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.i"
+	@echo "... home/robolab/robocomp/classes/grafcetStep/GRAFCETStep.s"
+	@echo "... home/robolab/robocomp/classes/rapplication/rapplication.o"
+	@echo "... home/robolab/robocomp/classes/rapplication/rapplication.i"
+	@echo "... home/robolab/robocomp/classes/rapplication/rapplication.s"
+	@echo "... home/robolab/robocomp/classes/sigwatch/sigwatch.o"
+	@echo "... home/robolab/robocomp/classes/sigwatch/sigwatch.i"
+	@echo "... home/robolab/robocomp/classes/sigwatch/sigwatch.s"
 	@echo "... main.o"
 	@echo "... main.i"
 	@echo "... main.s"

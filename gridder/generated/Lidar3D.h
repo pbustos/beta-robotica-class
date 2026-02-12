@@ -34,6 +34,9 @@
 #include <Ice/Optional.h>
 #include <IceUtil/UndefSysMacros.h>
 
+
+#define ICE_IGNORE_VERSION
+
 #ifndef ICE_IGNORE_VERSION
 #   if ICE_INT_VERSION / 100 != 307
 #       error Ice version mismatch!
