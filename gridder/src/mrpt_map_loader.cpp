@@ -14,12 +14,33 @@ static bool is_zstd_compressed(std::ifstream &file)
             magic[2] == 0x2F && magic[3] == (char)0xFD);
 }
 
+// Check if file is gzip compressed (magic bytes: 0x1F 0x8B)
+static bool is_gzip_compressed(std::ifstream &file)
+{
+    char magic[2];
+    file.read(magic, 2);
+    file.seekg(0);
+    return (magic[0] == 0x1F && magic[1] == (char)0x8B);
+}
+
 // Decompress zstd file using system command (requires zstd installed)
 static std::string decompress_zstd_to_temp(const std::string &filepath)
 {
     std::string temp_file = "/tmp/mrpt_map_decompressed_" +
                             std::to_string(std::hash<std::string>{}(filepath)) + ".bin";
     std::string cmd = "zstd -d -f -q \"" + filepath + "\" -o \"" + temp_file + "\" 2>/dev/null";
+    int result = system(cmd.c_str());
+    if (result != 0)
+        return "";
+    return temp_file;
+}
+
+// Decompress gzip file using system command (requires gzip installed)
+static std::string decompress_gzip_to_temp(const std::string &filepath)
+{
+    std::string temp_file = "/tmp/mrpt_map_decompressed_" +
+                            std::to_string(std::hash<std::string>{}(filepath)) + ".bin";
+    std::string cmd = "gunzip -c \"" + filepath + "\" > \"" + temp_file + "\" 2>/dev/null";
     int result = system(cmd.c_str());
     if (result != 0)
         return "";
@@ -51,6 +72,20 @@ MRPTMapLoader::LoadResult MRPTMapLoader::load_gridmap(const std::string &filepat
         {
             result.success = false;
             result.error_msg = "Failed to decompress zstd file (is zstd installed?)";
+            return result;
+        }
+        file_to_read = temp_file;
+    }
+    // Check for gzip compression
+    else if (is_gzip_compressed(check_file))
+    {
+        check_file.close();
+        std::cout << "[MRPT] Detected gzip compression, decompressing...\n";
+        temp_file = decompress_gzip_to_temp(filepath);
+        if (temp_file.empty())
+        {
+            result.success = false;
+            result.error_msg = "Failed to decompress gzip file (is gzip installed?)";
             return result;
         }
         file_to_read = temp_file;
@@ -103,13 +138,16 @@ bool MRPTMapLoader::try_read_mrpt_native_format(std::ifstream &file, LoadResult 
 {
     try
     {
-        // Read first byte (class name length indicator)
+        // Read first byte (class name length indicator with variable-length encoding)
+        // MRPT uses: if high bit set, length = (byte & 0x7F), else length = byte
         uint8_t first_byte;
         file.read(reinterpret_cast<char*>(&first_byte), 1);
 
-        // Check for MRPT class signature (0x9f = 159, but actual name is 31 chars)
-        // The format uses variable-length encoding
-        size_t name_len = 31;  // "mrpt::maps::COccupancyGridMap2D"
+        // Decode length using MRPT variable-length encoding
+        size_t name_len = (first_byte & 0x80) ? (first_byte & 0x7F) : first_byte;
+
+        if (name_len == 0 || name_len > 63)
+            return false;
 
         char class_name[64];
         file.read(class_name, name_len);
@@ -127,11 +165,18 @@ bool MRPTMapLoader::try_read_mrpt_native_format(std::ifstream &file, LoadResult 
         file.read(reinterpret_cast<char*>(&version_minor), 1);
         std::cout << "[MRPT] Version: " << (int)version_major << "." << (int)version_minor << "\n";
 
-        // Read grid dimensions
+        // Read grid dimensions (uint32_t)
         uint32_t width, height;
         file.read(reinterpret_cast<char*>(&width), sizeof(uint32_t));
         file.read(reinterpret_cast<char*>(&height), sizeof(uint32_t));
         std::cout << "[MRPT] Grid size: " << width << " x " << height << "\n";
+
+        // Validate dimensions
+        if (width == 0 || height == 0 || width > 100000 || height > 100000)
+        {
+            std::cerr << "[MRPT] Invalid dimensions: " << width << "x" << height << "\n";
+            return false;
+        }
 
         // Read bounds (floats in meters)
         float x_min, x_max, y_min, y_max, resolution;
@@ -151,40 +196,44 @@ bool MRPTMapLoader::try_read_mrpt_native_format(std::ifstream &file, LoadResult 
         result.metadata.origin_x = static_cast<int32_t>(x_min * 1000.f);
         result.metadata.origin_y = static_cast<int32_t>(y_min * 1000.f);
 
-        // Skip additional header bytes (padding to data)
-        // The header is 62 bytes total, we've read 32 + 2 + 8 + 20 = 62
-        // Data starts at position 62
-
-        // Read cell data (each cell is 1 byte: 0=free, 100=occupied, 50=unknown)
+        // Read cell data (each cell is 1 byte: 0-255 occupancy)
+        // Total cells = width * height
         std::vector<uint8_t> cells_raw(width * height);
         file.read(reinterpret_cast<char*>(cells_raw.data()), width * height);
 
-        if (file.gcount() != static_cast<std::streamsize>(width * height))
+        std::streamsize bytes_read = file.gcount();
+        if (bytes_read != static_cast<std::streamsize>(width * height))
         {
-            std::cerr << "[MRPT] Warning: Read " << file.gcount() << " bytes, expected " << width * height << "\n";
+            std::cerr << "[MRPT] Warning: Read " << bytes_read << " bytes, expected " << width * height << "\n";
+            // Continue anyway if we got some data
+            if (bytes_read == 0)
+                return false;
         }
 
         // Convert to our format - only store occupied cells for sparse representation
         // MRPT format (0-255 range):
-        //   0 = unknown/unexplored
-        //   ~66 (low values) = free
-        //   >127 (high values) = occupied
+        //   Low values (0-50) = free
+        //   Mid values (~127) = unknown
+        //   High values (>200) = occupied
         result.cells.reserve(width * height / 10);  // Assume ~10% occupied
 
         for (uint32_t y = 0; y < height; ++y)
         {
             for (uint32_t x = 0; x < width; ++x)
             {
-                uint8_t cell_value = cells_raw[y * width + x];
+                size_t idx = y * width + x;
+                if (idx >= static_cast<size_t>(bytes_read))
+                    break;
 
-                // MRPT uses 0-255 range:
-                // 0 = unknown, low values (1-100) = free, high values (>127) = occupied
-                if (cell_value == 0)
+                uint8_t cell_value = cells_raw[idx];
+
+                // MRPT uses 0-255 range for log-odds occupancy:
+                // ~0-50 = free, ~50-200 = unknown, >200 = occupied
+                if (cell_value < 50)  // Free
                 {
-                    // Unknown/unexplored - skip (don't add to sparse map)
-                    result.num_unknown++;
+                    result.num_free++;
                 }
-                else if (cell_value > 127)  // Occupied (high values)
+                else if (cell_value > 200)  // Occupied
                 {
                     MRPTCell cell;
                     cell.x = static_cast<int32_t>(x_min * 1000.f + x * resolution * 1000.f);
@@ -193,9 +242,9 @@ bool MRPTMapLoader::try_read_mrpt_native_format(std::ifstream &file, LoadResult 
                     result.cells.push_back(cell);
                     result.num_occupied++;
                 }
-                else  // Free (low non-zero values)
+                else  // Unknown
                 {
-                    result.num_free++;
+                    result.num_unknown++;
                 }
             }
         }

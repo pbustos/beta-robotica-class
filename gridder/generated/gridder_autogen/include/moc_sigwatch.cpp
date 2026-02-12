@@ -1,58 +1,47 @@
 /****************************************************************************
 ** Meta object code from reading C++ file 'sigwatch.h'
 **
-** Created by: The Qt Meta Object Compiler version 68 (Qt 6.4.2)
+** Created by: The Qt Meta Object Compiler version 68 (Qt 6.2.4)
 **
 ** WARNING! All changes made in this file will be lost!
 *****************************************************************************/
 
 #include <memory>
-#include "../../../../../../../../robocomp/robocomp/classes/sigwatch/sigwatch.h"
+#include "../../../../../../classes/sigwatch/sigwatch.h"
+#include <QtCore/qbytearray.h>
 #include <QtCore/qmetatype.h>
 #if !defined(Q_MOC_OUTPUT_REVISION)
 #error "The header file 'sigwatch.h' doesn't include <QObject>."
 #elif Q_MOC_OUTPUT_REVISION != 68
-#error "This file was generated using the moc from 6.4.2. It"
+#error "This file was generated using the moc from 6.2.4. It"
 #error "cannot be used with the include files from this version of Qt."
 #error "(The moc has changed too much.)"
-#endif
-
-#ifndef Q_CONSTINIT
-#define Q_CONSTINIT
 #endif
 
 QT_BEGIN_MOC_NAMESPACE
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
-namespace {
 struct qt_meta_stringdata_UnixSignalWatcher_t {
-    uint offsetsAndSizes[10];
-    char stringdata0[18];
-    char stringdata1[11];
-    char stringdata2[1];
-    char stringdata3[7];
-    char stringdata4[12];
+    const uint offsetsAndSize[10];
+    char stringdata0[49];
 };
 #define QT_MOC_LITERAL(ofs, len) \
-    uint(sizeof(qt_meta_stringdata_UnixSignalWatcher_t::offsetsAndSizes) + ofs), len 
-Q_CONSTINIT static const qt_meta_stringdata_UnixSignalWatcher_t qt_meta_stringdata_UnixSignalWatcher = {
+    uint(offsetof(qt_meta_stringdata_UnixSignalWatcher_t, stringdata0) + ofs), len 
+static const qt_meta_stringdata_UnixSignalWatcher_t qt_meta_stringdata_UnixSignalWatcher = {
     {
-        QT_MOC_LITERAL(0, 17),  // "UnixSignalWatcher"
-        QT_MOC_LITERAL(18, 10),  // "unixSignal"
-        QT_MOC_LITERAL(29, 0),  // ""
-        QT_MOC_LITERAL(30, 6),  // "signal"
-        QT_MOC_LITERAL(37, 11)   // "_q_onNotify"
+QT_MOC_LITERAL(0, 17), // "UnixSignalWatcher"
+QT_MOC_LITERAL(18, 10), // "unixSignal"
+QT_MOC_LITERAL(29, 0), // ""
+QT_MOC_LITERAL(30, 6), // "signal"
+QT_MOC_LITERAL(37, 11) // "_q_onNotify"
+
     },
-    "UnixSignalWatcher",
-    "unixSignal",
-    "",
-    "signal",
+    "UnixSignalWatcher\0unixSignal\0\0signal\0"
     "_q_onNotify"
 };
 #undef QT_MOC_LITERAL
-} // unnamed namespace
 
-Q_CONSTINIT static const uint qt_meta_data_UnixSignalWatcher[] = {
+static const uint qt_meta_data_UnixSignalWatcher[] = {
 
  // content:
       10,       // revision
@@ -80,25 +69,6 @@ Q_CONSTINIT static const uint qt_meta_data_UnixSignalWatcher[] = {
        0        // eod
 };
 
-Q_CONSTINIT const QMetaObject UnixSignalWatcher::staticMetaObject = { {
-    QMetaObject::SuperData::link<QObject::staticMetaObject>(),
-    qt_meta_stringdata_UnixSignalWatcher.offsetsAndSizes,
-    qt_meta_data_UnixSignalWatcher,
-    qt_static_metacall,
-    nullptr,
-    qt_incomplete_metaTypeArray<qt_meta_stringdata_UnixSignalWatcher_t,
-        // Q_OBJECT / Q_GADGET
-        QtPrivate::TypeAndForceComplete<UnixSignalWatcher, std::true_type>,
-        // method 'unixSignal'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        QtPrivate::TypeAndForceComplete<int, std::false_type>,
-        // method '_q_onNotify'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        QtPrivate::TypeAndForceComplete<int, std::false_type>
-    >,
-    nullptr
-} };
-
 void UnixSignalWatcher::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, void **_a)
 {
     if (_c == QMetaObject::InvokeMetaMethod) {
@@ -113,13 +83,29 @@ void UnixSignalWatcher::qt_static_metacall(QObject *_o, QMetaObject::Call _c, in
         int *result = reinterpret_cast<int *>(_a[0]);
         {
             using _t = void (UnixSignalWatcher::*)(int );
-            if (_t _q_method = &UnixSignalWatcher::unixSignal; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&UnixSignalWatcher::unixSignal)) {
                 *result = 0;
                 return;
             }
         }
     }
 }
+
+const QMetaObject UnixSignalWatcher::staticMetaObject = { {
+    QMetaObject::SuperData::link<QObject::staticMetaObject>(),
+    qt_meta_stringdata_UnixSignalWatcher.offsetsAndSize,
+    qt_meta_data_UnixSignalWatcher,
+    qt_static_metacall,
+    nullptr,
+qt_incomplete_metaTypeArray<qt_meta_stringdata_UnixSignalWatcher_t
+, QtPrivate::TypeAndForceComplete<UnixSignalWatcher, std::true_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<int, std::false_type>
+, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<int, std::false_type>
+
+
+>,
+    nullptr
+} };
+
 
 const QMetaObject *UnixSignalWatcher::metaObject() const
 {

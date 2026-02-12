@@ -22,6 +22,7 @@
 #include <cppitertools/sliding_window.hpp>
 #include <cppitertools/range.hpp>
 #include <unordered_map>
+#include <unordered_set>
 #include <cmath>
 
 class TPointVector;
@@ -99,7 +100,7 @@ void SpecificWorker::initialize()
         grid_esdf.params().astar_distance_factor = params.ASTAR_DISTANCE_FACTOR;
 
         // Load pre-computed MRPT map
-        std::string map_file = "mapa2.gridmap";
+        std::string map_file = "mapa_webots.gridmap";
         if (Gridder_loadMRPTMap(map_file))
         {
             qInfo() << "[MRPT] Map loaded successfully:" << map_file.c_str();
@@ -248,14 +249,14 @@ void SpecificWorker::initialize()
             cancel_from_mouse = true;
         });
         // Shift+Left click to reposition robot (for initial placement with external maps)
-        connect(viewer, &AbstractGraphicViewer::robot_moved, [this](QPointF p)
-        {
-            qInfo() << "[ROBOT] Manual reposition to:" << p;
-            // Update robot visual position
-            viewer->robot_poly()->setPos(p.x(), p.y());
-            // Update internal robot pose (for path planning source)
-            robot_pose.translation() = Eigen::Vector2f(p.x(), p.y());
-        });
+        // connect(viewer, &AbstractGraphicViewer::robot_moved, [this](QPointF p)
+        // {
+        //     qInfo() << "[ROBOT] Manual reposition to:" << p;
+        //     // Update robot visual position
+        //     viewer->robot_poly()->setPos(p.x(), p.y());
+        //     // Update internal robot pose (for path planning source)
+        //     robot_pose.translation() = Eigen::Vector2f(p.x(), p.y());
+        // });
         if(not params.DISPLAY)
             hide();
 		
@@ -1069,30 +1070,61 @@ bool SpecificWorker::Gridder_loadMRPTMap(const std::string &filepath)
         const float rotation = params.MRPT_MAP_ROTATION;
         const float cos_r = std::cos(rotation);
         const float sin_r = std::sin(rotation);
+        const bool mirror_x = params.MRPT_MAP_MIRROR_X;
 
-        if (offset_x != 0.f || offset_y != 0.f || rotation != 0.f)
-            qInfo() << "[MRPT Loader] Applying transform: rotation=" << rotation << "rad, offset=(" << offset_x << "," << offset_y << ")mm";
+        if (offset_x != 0.f || offset_y != 0.f || rotation != 0.f || mirror_x)
+            qInfo() << "[MRPT Loader] Applying transform: rotation=" << rotation << "rad, offset=(" << offset_x << "," << offset_y << ")mm, mirror_x=" << mirror_x;
+
+        // Track unique keys to detect collisions (multiple MRPT cells mapping to same grid cell)
+        std::unordered_set<GridESDF::Key, boost::hash<GridESDF::Key>> unique_keys;
+        size_t cells_processed = 0;
+        size_t cells_added = 0;
+        size_t cells_collided = 0;
 
         for (const auto &mrpt_cell : load_result.cells)
         {
-            // Only add occupied cells (already filtered in loader, but double-check)
-            if (MRPTMapLoader::is_occupied(mrpt_cell.occupancy, 0.5f))
+            // All cells from loader already have occupancy > 0.78 (filtered by cell_value > 200)
+            cells_processed++;
+
+            // Apply mirror if needed (negate X before rotation)
+            float orig_x = static_cast<float>(mrpt_cell.x);
+            const float orig_y = static_cast<float>(mrpt_cell.y);
+            if (mirror_x)
+                orig_x = -orig_x;
+
+            // First rotate around origin, then apply offset
+            const float cell_x = orig_x * cos_r - orig_y * sin_r + offset_x;
+            const float cell_y = orig_x * sin_r + orig_y * cos_r + offset_y;
+            const auto key = grid_esdf.point_to_key(Eigen::Vector2f(cell_x, cell_y));
+
+            // Check if this key already exists (collision detection)
+            if (unique_keys.find(key) == unique_keys.end())
             {
-                // First rotate around origin, then apply offset
-                const float orig_x = static_cast<float>(mrpt_cell.x);
-                const float orig_y = static_cast<float>(mrpt_cell.y);
-                const float cell_x = orig_x * cos_r - orig_y * sin_r + offset_x;
-                const float cell_y = orig_x * sin_r + orig_y * cos_r + offset_y;
-                const auto key = grid_esdf.point_to_key(Eigen::Vector2f(cell_x, cell_y));
-                // Use add_confirmed_obstacle for external maps (creates visual immediately)
+                unique_keys.insert(key);
                 grid_esdf.add_confirmed_obstacle(key);
+                cells_added++;
+            }
+            else
+            {
+                cells_collided++;  // Multiple MRPT cells map to same grid cell
             }
         }
 
         // Mark dirty once after loading all obstacles, then update visualization
         grid_esdf.mark_visualization_dirty();
         grid_esdf.update_visualization(true);
-        qInfo() << "[MRPT Loader] SPARSE_ESDF loaded with" << grid_esdf.num_obstacles() << "obstacles";
+
+        // Report statistics
+        qInfo() << "[MRPT Loader] SPARSE_ESDF Statistics:";
+        qInfo() << "  - MRPT cells processed:" << cells_processed;
+        qInfo() << "  - Grid cells added:" << cells_added;
+        qInfo() << "  - Collisions (MRPT->same grid cell):" << cells_collided;
+        qInfo() << "  - Final grid obstacles:" << grid_esdf.num_obstacles();
+        if (cells_collided > 0)
+        {
+            float collision_pct = 100.f * cells_collided / cells_processed;
+            qWarning() << "[MRPT Loader] WARNING:" << collision_pct << "% cells lost due to resolution mismatch!";
+        }
     }
     else
     {

@@ -1,7 +1,7 @@
 /****************************************************************************
 ** Meta object code from reading C++ file 'genericworker.h'
 **
-** Created by: The Qt Meta Object Compiler version 68 (Qt 6.4.2)
+** Created by: The Qt Meta Object Compiler version 68 (Qt 6.2.4)
 **
 ** WARNING! All changes made in this file will be lost!
 *****************************************************************************/
@@ -10,69 +10,47 @@
 #include "../../genericworker.h"
 #include <QtGui/qtextcursor.h>
 #include <QScreen>
+#include <QtCore/qbytearray.h>
 #include <QtCore/qmetatype.h>
 #if !defined(Q_MOC_OUTPUT_REVISION)
 #error "The header file 'genericworker.h' doesn't include <QObject>."
 #elif Q_MOC_OUTPUT_REVISION != 68
-#error "This file was generated using the moc from 6.4.2. It"
+#error "This file was generated using the moc from 6.2.4. It"
 #error "cannot be used with the include files from this version of Qt."
 #error "(The moc has changed too much.)"
-#endif
-
-#ifndef Q_CONSTINIT
-#define Q_CONSTINIT
 #endif
 
 QT_BEGIN_MOC_NAMESPACE
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
-namespace {
 struct qt_meta_stringdata_GenericWorker_t {
-    uint offsetsAndSizes[22];
-    char stringdata0[14];
-    char stringdata1[5];
-    char stringdata2[1];
-    char stringdata3[14];
-    char stringdata4[12];
-    char stringdata5[11];
-    char stringdata6[8];
-    char stringdata7[10];
-    char stringdata8[8];
-    char stringdata9[17];
-    char stringdata10[16];
+    const uint offsetsAndSize[22];
+    char stringdata0[116];
 };
 #define QT_MOC_LITERAL(ofs, len) \
-    uint(sizeof(qt_meta_stringdata_GenericWorker_t::offsetsAndSizes) + ofs), len 
-Q_CONSTINIT static const qt_meta_stringdata_GenericWorker_t qt_meta_stringdata_GenericWorker = {
+    uint(offsetof(qt_meta_stringdata_GenericWorker_t, stringdata0) + ofs), len 
+static const qt_meta_stringdata_GenericWorker_t qt_meta_stringdata_GenericWorker = {
     {
-        QT_MOC_LITERAL(0, 13),  // "GenericWorker"
-        QT_MOC_LITERAL(14, 4),  // "kill"
-        QT_MOC_LITERAL(19, 0),  // ""
-        QT_MOC_LITERAL(20, 13),  // "goToEmergency"
-        QT_MOC_LITERAL(34, 11),  // "goToRestore"
-        QT_MOC_LITERAL(46, 10),  // "initialize"
-        QT_MOC_LITERAL(57, 7),  // "compute"
-        QT_MOC_LITERAL(65, 9),  // "emergency"
-        QT_MOC_LITERAL(75, 7),  // "restore"
-        QT_MOC_LITERAL(83, 16),  // "hibernationCheck"
-        QT_MOC_LITERAL(100, 15)   // "hibernationTick"
+QT_MOC_LITERAL(0, 13), // "GenericWorker"
+QT_MOC_LITERAL(14, 4), // "kill"
+QT_MOC_LITERAL(19, 0), // ""
+QT_MOC_LITERAL(20, 13), // "goToEmergency"
+QT_MOC_LITERAL(34, 11), // "goToRestore"
+QT_MOC_LITERAL(46, 10), // "initialize"
+QT_MOC_LITERAL(57, 7), // "compute"
+QT_MOC_LITERAL(65, 9), // "emergency"
+QT_MOC_LITERAL(75, 7), // "restore"
+QT_MOC_LITERAL(83, 16), // "hibernationCheck"
+QT_MOC_LITERAL(100, 15) // "hibernationTick"
+
     },
-    "GenericWorker",
-    "kill",
-    "",
-    "goToEmergency",
-    "goToRestore",
-    "initialize",
-    "compute",
-    "emergency",
-    "restore",
-    "hibernationCheck",
-    "hibernationTick"
+    "GenericWorker\0kill\0\0goToEmergency\0"
+    "goToRestore\0initialize\0compute\0emergency\0"
+    "restore\0hibernationCheck\0hibernationTick"
 };
 #undef QT_MOC_LITERAL
-} // unnamed namespace
 
-Q_CONSTINIT static const uint qt_meta_data_GenericWorker[] = {
+static const uint qt_meta_data_GenericWorker[] = {
 
  // content:
       10,       // revision
@@ -114,37 +92,6 @@ Q_CONSTINIT static const uint qt_meta_data_GenericWorker[] = {
        0        // eod
 };
 
-Q_CONSTINIT const QMetaObject GenericWorker::staticMetaObject = { {
-    QMetaObject::SuperData::link<QWidget::staticMetaObject>(),
-    qt_meta_stringdata_GenericWorker.offsetsAndSizes,
-    qt_meta_data_GenericWorker,
-    qt_static_metacall,
-    nullptr,
-    qt_incomplete_metaTypeArray<qt_meta_stringdata_GenericWorker_t,
-        // Q_OBJECT / Q_GADGET
-        QtPrivate::TypeAndForceComplete<GenericWorker, std::true_type>,
-        // method 'kill'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        // method 'goToEmergency'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        // method 'goToRestore'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        // method 'initialize'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        // method 'compute'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        // method 'emergency'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        // method 'restore'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        // method 'hibernationCheck'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        // method 'hibernationTick'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>
-    >,
-    nullptr
-} };
-
 void GenericWorker::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, void **_a)
 {
     if (_c == QMetaObject::InvokeMetaMethod) {
@@ -166,21 +113,21 @@ void GenericWorker::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _i
         int *result = reinterpret_cast<int *>(_a[0]);
         {
             using _t = void (GenericWorker::*)();
-            if (_t _q_method = &GenericWorker::kill; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&GenericWorker::kill)) {
                 *result = 0;
                 return;
             }
         }
         {
             using _t = void (GenericWorker::*)();
-            if (_t _q_method = &GenericWorker::goToEmergency; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&GenericWorker::goToEmergency)) {
                 *result = 1;
                 return;
             }
         }
         {
             using _t = void (GenericWorker::*)();
-            if (_t _q_method = &GenericWorker::goToRestore; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
+            if (*reinterpret_cast<_t *>(_a[1]) == static_cast<_t>(&GenericWorker::goToRestore)) {
                 *result = 2;
                 return;
             }
@@ -188,6 +135,22 @@ void GenericWorker::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _i
     }
     (void)_a;
 }
+
+const QMetaObject GenericWorker::staticMetaObject = { {
+    QMetaObject::SuperData::link<QWidget::staticMetaObject>(),
+    qt_meta_stringdata_GenericWorker.offsetsAndSize,
+    qt_meta_data_GenericWorker,
+    qt_static_metacall,
+    nullptr,
+qt_incomplete_metaTypeArray<qt_meta_stringdata_GenericWorker_t
+, QtPrivate::TypeAndForceComplete<GenericWorker, std::true_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>
+, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>
+
+
+>,
+    nullptr
+} };
+
 
 const QMetaObject *GenericWorker::metaObject() const
 {

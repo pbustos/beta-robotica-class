@@ -223,9 +223,10 @@ class SpecificWorker : public GenericWorker
 	        float ASTAR_DISTANCE_FACTOR = 100.f;  // Multiply path distance in cells by this factor for max nodes
 
 	        // MRPT map offset to align with Webots world coordinates (in mm)
-	        float MRPT_MAP_OFFSET_X = 26100.7f;  // mm - X offset to apply to loaded map
-	        float MRPT_MAP_OFFSET_Y = 5600.f;  // mm - Y offset to apply to loaded map
-	        float MRPT_MAP_ROTATION = M_PI_2;   // radians - rotation to apply (90º left = PI/2)
+	        float MRPT_MAP_OFFSET_X = 12000.0f; //26100.7f;  // mm - X offset to apply to loaded map
+	        float MRPT_MAP_OFFSET_Y = -2500.0f;//5600.f;  // mm - Y offset to apply to loaded map
+	        float MRPT_MAP_ROTATION =  -M_PI_2;   // radians - rotation to apply (90º left = PI/2)
+	        bool MRPT_MAP_MIRROR_X = true;       // Mirror X axis (negate X before rotation) if map appears flipped
 	    };
 	    Params params;
 
