@@ -72,6 +72,14 @@ public:
     {
         Pose2D pose;
         double log_weight = 0.0;  // Log-weight for numerical stability
+
+        // Default constructor
+        Particle() = default;
+
+        // Get weight efficiently (intentionally inline for speed)
+        inline double getWeight() const {
+            return std::exp(log_weight);
+        }
     };
 
     // Odometry increment (can come from real odometry or simulated from absolute poses)
@@ -89,9 +97,9 @@ public:
     struct Params
     {
         // Particle count
-        size_t min_particles = 100;
-        size_t max_particles = 2000;
-        size_t initial_particles = 500;
+        size_t min_particles = 50;
+        size_t max_particles = 500;
+        size_t initial_particles = 100;
 
         // KLD-sampling parameters (adaptive sample size)
         float kld_bin_size_xy = 200.f;    // mm - spatial binning
@@ -120,7 +128,8 @@ public:
         float angle_stddev_threshold = 0.1f;      // rad
 
         // Visualization
-        bool draw_particles = true;
+        bool draw_particles = false;
+        bool draw_particles_enabled = false;  // Control para deshabilitar visualización
         float particle_size = 50.f;  // mm
     };
 

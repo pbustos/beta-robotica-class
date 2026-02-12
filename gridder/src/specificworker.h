@@ -208,7 +208,7 @@ class SpecificWorker : public GenericWorker
 	        int NUM_PATHS_TO_SEARCH = 3;
 	        float MIN_DISTANCE_BETWEEN_PATHS = 500; // mm
 	        bool DISPLAY = true ; //TODO: config file
-	        bool DRAW_LIDAR_POINTS = true;  // debug: draw LiDAR points (can impact performance)
+	        bool DRAW_LIDAR_POINTS = false;  // debug: draw LiDAR points (can impact performance)
 	        int MAX_LIDAR_DRAW_POINTS = 1500; // debug: limit number of points drawn
 
 	    	// Grid mode selection

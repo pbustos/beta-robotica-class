@@ -7,13 +7,28 @@
 #include "localizer.h"
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <numeric>
 #include <set>
+#include <unordered_set>
 #include <QBrush>
 #include <QPen>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
+// Hash function for std::tuple<int, int, int> (for KLD binning)
+namespace std {
+    template <>
+    struct hash<std::tuple<int, int, int>> {
+        size_t operator()(const std::tuple<int, int, int>& t) const {
+            size_t h1 = std::hash<int>()(std::get<0>(t));
+            size_t h2 = std::hash<int>()(std::get<1>(t));
+            size_t h3 = std::hash<int>()(std::get<2>(t));
+            return h1 ^ (h2 << 10) ^ (h3 << 20);
+        }
+    };
+}
 
 Localizer::~Localizer()
 {
@@ -117,17 +132,27 @@ std::optional<Localizer::Pose2D> Localizer::update(
         return std::nullopt;
     }
 
+    // Timing
+    auto t_start = std::chrono::high_resolution_clock::now();
+    auto t_phase = t_start;
+
     // 1. Prediction step: propagate particles through motion model
     predict(odometry);
+    auto t_predict = std::chrono::high_resolution_clock::now();
+    auto dt_predict = std::chrono::duration_cast<std::chrono::microseconds>(t_predict - t_phase).count();
 
     // 2. Correction step: weight particles by observation likelihood
     if (!lidar_points_local.empty())
     {
         correct(lidar_points_local);
     }
+    auto t_correct = std::chrono::high_resolution_clock::now();
+    auto dt_correct = std::chrono::duration_cast<std::chrono::microseconds>(t_correct - t_predict).count();
 
     // 3. Normalize weights
     normalizeWeights();
+    auto t_normalize = std::chrono::high_resolution_clock::now();
+    auto dt_normalize = std::chrono::duration_cast<std::chrono::microseconds>(t_normalize - t_correct).count();
 
     // 4. Resample if needed (based on ESS)
     double ess = getEffectiveSampleSize();
@@ -141,14 +166,38 @@ std::optional<Localizer::Pose2D> Localizer::update(
                      << ", new particle count:" << particles_.size();
         }
     }
+    auto t_resample = std::chrono::high_resolution_clock::now();
+    auto dt_resample = std::chrono::duration_cast<std::chrono::microseconds>(t_resample - t_normalize).count();
 
     // 5. Compute and return mean pose
     last_mean_pose_ = getMeanPose();
+    auto t_mean = std::chrono::high_resolution_clock::now();
+    auto dt_mean = std::chrono::duration_cast<std::chrono::microseconds>(t_mean - t_resample).count();
 
     // 6. Update visualization (every 5 frames to save CPU)
     static int viz_counter = 0;
     if (params_.draw_particles && ++viz_counter % 5 == 0)
         drawParticles();
+    auto t_viz = std::chrono::high_resolution_clock::now();
+    auto dt_viz = std::chrono::duration_cast<std::chrono::microseconds>(t_viz - t_mean).count();
+
+    // Total timing
+    auto t_end = std::chrono::high_resolution_clock::now();
+    auto dt_total = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count();
+
+    // Debug output (every 100 frames)
+    static int debug_counter = 0;
+    if (++debug_counter % 100 == 0)
+    {
+        qDebug() << "[Localizer] TIMING (μs):"
+                 << "predict=" << dt_predict
+                 << "correct=" << dt_correct
+                 << "normalize=" << dt_normalize
+                 << "resample=" << dt_resample
+                 << "mean=" << dt_mean
+                 << "viz=" << dt_viz
+                 << "TOTAL=" << dt_total;
+    }
 
     // Return pose only if converged
     if (isConverged())
@@ -220,13 +269,36 @@ void Localizer::correct(const std::vector<Eigen::Vector2f>& lidar_points_local)
 
     const size_t n_particles = particles_.size();
 
-    // OpenMP disabled for stability
-    // #pragma omp parallel for schedule(static)
+    // Compute likelihoods in parallel (no shared writes)
+    std::vector<double> likelihoods(n_particles);
+
+    #pragma omp parallel for schedule(dynamic)
     for (size_t i = 0; i < n_particles; ++i)
     {
-        double likelihood = computeLikelihood(particles_[i].pose, lidar_points_local);
-        particles_[i].log_weight += std::log(likelihood + 1e-300);
-        particles_[i].log_weight = std::max(particles_[i].log_weight, -100.0);
+        likelihoods[i] = computeLikelihood(particles_[i].pose, lidar_points_local);
+    }
+
+    // Update weights sequentially (numerical safety)
+    for (size_t i = 0; i < n_particles; ++i)
+    {
+        double likelihood = likelihoods[i];
+
+        // Clamp likelihood to valid range to avoid NaN/Inf
+        if (!std::isfinite(likelihood) || likelihood <= 0.0)
+            likelihood = 1e-300;
+
+        double log_likelihood = std::log(likelihood);
+
+        // Validate log-likelihood before updating
+        if (!std::isfinite(log_likelihood))
+        {
+            particles_[i].log_weight = -100.0;  // Particle effectively dead
+        }
+        else
+        {
+            particles_[i].log_weight += log_likelihood;
+            particles_[i].log_weight = std::max(particles_[i].log_weight, -100.0);  // Clamp to prevent underflow
+        }
     }
 }
 
@@ -311,7 +383,7 @@ double Localizer::getEffectiveSampleSize() const
     double sum_sq = 0.0;
     for (const auto& p : particles_)
     {
-        double w = std::exp(p.log_weight);
+        double w = p.getWeight();  // Use cached weight
         sum_sq += w * w;
     }
     return (sum_sq > 0) ? 1.0 / sum_sq : 0.0;
@@ -324,11 +396,11 @@ void Localizer::resample()
     std::vector<Particle> new_particles;
     new_particles.reserve(N);
 
-    // Build cumulative weight distribution
+    // Build cumulative weight distribution using cached weights
     std::vector<double> cumulative(N);
-    cumulative[0] = std::exp(particles_[0].log_weight);
+    cumulative[0] = particles_[0].getWeight();
     for (size_t i = 1; i < N; ++i)
-        cumulative[i] = cumulative[i-1] + std::exp(particles_[i].log_weight);
+        cumulative[i] = cumulative[i-1] + particles_[i].getWeight();
 
     // Low-variance resampling
     const double step = 1.0 / N;
@@ -355,17 +427,17 @@ void Localizer::resampleKLD()
     // See Fox, D. "KLD-Sampling: Adaptive Particle Filters"
 
     using Bin = std::tuple<int, int, int>;  // (x_bin, y_bin, theta_bin)
-    std::set<Bin> occupied_bins;
+    std::unordered_set<Bin> occupied_bins;  // O(1) insertion instead of O(log N)
 
     const size_t N = particles_.size();
     std::vector<Particle> new_particles;
     new_particles.reserve(params_.max_particles);
 
-    // Build cumulative weight distribution
+    // Build cumulative weight distribution using cached weights
     std::vector<double> cumulative(N);
-    cumulative[0] = std::exp(particles_[0].log_weight);
+    cumulative[0] = particles_[0].getWeight();
     for (size_t i = 1; i < N; ++i)
-        cumulative[i] = cumulative[i-1] + std::exp(particles_[i].log_weight);
+        cumulative[i] = cumulative[i-1] + particles_[i].getWeight();
 
     // Low-variance resampling with KLD stopping criterion
     const double step = 1.0 / params_.max_particles;
@@ -443,7 +515,7 @@ Localizer::Pose2D Localizer::getMeanPose() const
 
     for (const auto& p : particles_)
     {
-        double w = std::exp(p.log_weight);
+        double w = p.getWeight();  // Use cached weight
         sum_x += w * p.pose.x;
         sum_y += w * p.pose.y;
         sum_cos += w * std::cos(p.pose.theta);
@@ -466,7 +538,7 @@ void Localizer::getCovariance(Eigen::Matrix2f& pos_cov, float& theta_var) const
 
     for (const auto& p : particles_)
     {
-        double w = std::exp(p.log_weight);
+        double w = p.getWeight();  // Use cached weight
         double dx = p.pose.x - mean.x;
         double dy = p.pose.y - mean.y;
         double dtheta = Pose2D::normalizeAngle(p.pose.theta - mean.theta);
@@ -543,9 +615,10 @@ Localizer::OdometryDelta Localizer::addNoiseToOdometry(const OdometryDelta& odom
 
 void Localizer::drawParticles()
 {
-    if (!scene_) return;
+    if (!scene_ || !params_.draw_particles_enabled) return;
 
-    // Resize items vector if needed
+    // ...existing code...
+
     while (particle_items_.size() > particles_.size())
     {
         scene_->removeItem(particle_items_.back());
@@ -565,8 +638,8 @@ void Localizer::drawParticles()
     {
         const auto& p = particles_[i];
 
-        // Color based on weight (red = low, green = high)
-        double w = std::exp(p.log_weight);
+        // Color based on weight (red = low, green = high) - use cached weight
+        double w = p.getWeight();
         double w_normalized = std::clamp(w * particles_.size(), 0.0, 1.0);
         int r = static_cast<int>(255 * (1.0 - w_normalized));
         int g = static_cast<int>(255 * w_normalized);

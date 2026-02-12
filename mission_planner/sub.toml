@@ -34,6 +34,12 @@ cwd = "~/robocomp/components/robocomp-robolab/components/hardware/external_contr
 cmd = "bin/JoystickPublish etc/config_shadow"
 ice_name = "JoystickPublish:tcp -h localhost -p 11230"
 
+[[components]]
+name = "gridder"
+cwd = "~/robocomp/components/beta-robotica-class/gridder"
+cmd = "bin/gridder etc/config"
+ice_name = "gridder:tcp -h localhost -p 13541"
+
 #[[components]]
 #name = "mnist_detector"
 #cwd = "~/robocomp/components/beta-robotica-class/mnist_detector"
