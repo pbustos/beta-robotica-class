@@ -35,6 +35,7 @@
 #include "grid.h"
 #include "grid_esdf.h"
 #include "mrpt_map_loader.h"
+#include "localizer.h"
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include <Eigen/Eigen>
 #include "abstract_graphic_viewer/abstract_graphic_viewer.h"
@@ -217,23 +218,30 @@ class SpecificWorker : public GenericWorker
             // DENSE_ESDF: dense grid with ESDF optimization
             // SPARSE_ESDF: sparse grid, only obstacles stored (fastest, most memory efficient)
 	        bool USE_ESDF_MODE = false;  // kept for backward compatibility
+
 	        // Path planning safety factor: 0=shortest path (touch walls), 1=safest path (prefer center)
 	        float SAFETY_FACTOR = 1.0f;	// 0=touch walls, 1=prefer center
-	        size_t MAX_ASTAR_NODES = 50000;  // Maximum nodes to expand in A* before giving up
+	        size_t MAX_ASTAR_NODES = 100000;  // Maximum nodes to expand in A* before giving up
 	        float ASTAR_DISTANCE_FACTOR = 100.f;  // Multiply path distance in cells by this factor for max nodes
 
 	        // MRPT map offset to align with Webots world coordinates (in mm)
 	        float MRPT_MAP_OFFSET_X = 26100.7f;  // mm - X offset to apply to loaded map
 	        float MRPT_MAP_OFFSET_Y = 5600.f;  // mm - Y offset to apply to loaded map
 	        float MRPT_MAP_ROTATION = M_PI_2;   // radians - rotation to apply (90º left = PI/2)
+
+	        // Localizer parameters
+	        bool USE_LOCALIZER = true;  // Enable/disable AMCL localization
+	        size_t LOCALIZER_PARTICLES = 500;  // Number of particles
+	        float LOCALIZER_ODOM_NOISE = 0.1f;  // Noise factor for simulated odometry
 	    };
 	    Params params;
 
 	    // Timer
 	    rc::Timer<> clock;
 
-		// Sync Buffer
+		// Sync Buffer: robot pose, world points, local points
 		BufferSync<InOut<Eigen::Affine2f, Eigen::Affine2f>,
+				   InOut<std::vector<Eigen::Vector2f>, std::vector<Eigen::Vector2f>>,
 				   InOut<std::vector<Eigen::Vector2f>, std::vector<Eigen::Vector2f>>> buffer_sync;
 
 	    // Lidar Thread
@@ -244,6 +252,12 @@ class SpecificWorker : public GenericWorker
 	    // Grids (two implementations available)
 	    Grid grid;              // Dense grid (original)
 	    GridESDF grid_esdf;     // Sparse ESDF grid (VoxBlox-style)
+
+	    // Localizer (AMCL)
+	    Localizer localizer;
+	    Localizer::Pose2D last_ground_truth_pose;  // For simulating odometry
+	    bool localizer_initialized = false;
+	    std::optional<Localizer::Pose2D> update_localizer(const Eigen::Affine2f &robot_pos, const std::vector<Eigen::Vector2f> &points_local);
 
 	    // FPS
 	    FPSCounter fps;

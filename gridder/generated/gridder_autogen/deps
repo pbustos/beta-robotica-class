@@ -14,6 +14,8 @@ gridder_autogen/timestamp: \
 	/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid.h \
 	/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.cpp \
 	/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.h \
+	/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/localizer.cpp \
+	/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/localizer.h \
 	/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.cpp \
 	/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.h \
 	/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/specificworker.cpp \
@@ -1176,6 +1178,7 @@ gridder_autogen/timestamp: \
 	/usr/include/x86_64-linux-gnu/qt6/QtStateMachine/qtstatemachine-config.h \
 	/usr/include/x86_64-linux-gnu/qt6/QtStateMachine/qtstatemachineexports.h \
 	/usr/include/x86_64-linux-gnu/qt6/QtWidgets/QApplication \
+	/usr/include/x86_64-linux-gnu/qt6/QtWidgets/QGraphicsEllipseItem \
 	/usr/include/x86_64-linux-gnu/qt6/QtWidgets/QGraphicsPolygonItem \
 	/usr/include/x86_64-linux-gnu/qt6/QtWidgets/QGraphicsRectItem \
 	/usr/include/x86_64-linux-gnu/qt6/QtWidgets/QGraphicsScene \
@@ -1481,6 +1484,7 @@ gridder_autogen/timestamp: \
 	/usr/local/include/toml++/toml.hpp \
 	/usr/share/cmake-3.28/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake \
 	/usr/share/cmake-3.28/Modules/CMakeFindDependencyMacro.cmake \
+	/usr/share/cmake-3.28/Modules/CMakeParseImplicitLinkInfo.cmake \
 	/usr/share/cmake-3.28/Modules/CheckCSourceCompiles.cmake \
 	/usr/share/cmake-3.28/Modules/CheckCXXCompilerFlag.cmake \
 	/usr/share/cmake-3.28/Modules/CheckCXXSourceCompiles.cmake \
@@ -1489,6 +1493,7 @@ gridder_autogen/timestamp: \
 	/usr/share/cmake-3.28/Modules/FeatureSummary.cmake \
 	/usr/share/cmake-3.28/Modules/FindIce.cmake \
 	/usr/share/cmake-3.28/Modules/FindOpenGL.cmake \
+	/usr/share/cmake-3.28/Modules/FindOpenMP.cmake \
 	/usr/share/cmake-3.28/Modules/FindPackageHandleStandardArgs.cmake \
 	/usr/share/cmake-3.28/Modules/FindPackageMessage.cmake \
 	/usr/share/cmake-3.28/Modules/FindPkgConfig.cmake \

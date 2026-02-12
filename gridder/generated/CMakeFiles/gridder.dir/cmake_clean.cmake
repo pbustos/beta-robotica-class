@@ -14,6 +14,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/gridder.dir/__/src/grid.cpp.o.d"
   "CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o"
   "CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o.d"
+  "CMakeFiles/gridder.dir/__/src/localizer.cpp.o"
+  "CMakeFiles/gridder.dir/__/src/localizer.cpp.o.d"
   "CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.o"
   "CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.o.d"
   "CMakeFiles/gridder.dir/__/src/specificworker.cpp.o"

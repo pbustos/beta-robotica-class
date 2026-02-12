@@ -196,6 +196,10 @@
 		"/usr/lib/x86_64-linux-gnu/cmake/Qt6StateMachine/Qt6StateMachineAdditionalTargetInfo.cmake",
 		"/usr/lib/x86_64-linux-gnu/cmake/Qt6StateMachine/Qt6StateMachineVersionlessTargets.cmake",
 		"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/CMakeLists.txt",
+		"/usr/share/cmake-3.28/Modules/FindOpenMP.cmake",
+		"/usr/share/cmake-3.28/Modules/CMakeParseImplicitLinkInfo.cmake",
+		"/usr/share/cmake-3.28/Modules/FindPackageHandleStandardArgs.cmake",
+		"/usr/share/cmake-3.28/Modules/FindPackageMessage.cmake",
 		"/usr/share/cmake-3.28/Modules/FindIce.cmake",
 		"/usr/share/cmake-3.28/Modules/SelectLibraryConfigurations.cmake",
 		"/usr/share/cmake-3.28/Modules/SelectLibraryConfigurations.cmake",
@@ -241,6 +245,12 @@
 			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.h",
 			"MU",
 			"VNU7RW3YIC/moc_grid_esdf.cpp",
+			null
+		],
+		[
+			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/localizer.h",
+			"MU",
+			"VNU7RW3YIC/moc_localizer.cpp",
 			null
 		],
 		[
@@ -392,6 +402,11 @@
 		],
 		[
 			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.cpp",
+			"MU",
+			null
+		],
+		[
+			"/home/pbustos/robocomp/components/beta-robotica-class/gridder/src/localizer.cpp",
 			"MU",
 			null
 		],

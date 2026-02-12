@@ -379,6 +379,30 @@ __/src/grid_esdf.cpp.s:
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.s
 .PHONY : __/src/grid_esdf.cpp.s
 
+__/src/localizer.o: __/src/localizer.cpp.o
+.PHONY : __/src/localizer.o
+
+# target to build an object file
+__/src/localizer.cpp.o:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/localizer.cpp.o
+.PHONY : __/src/localizer.cpp.o
+
+__/src/localizer.i: __/src/localizer.cpp.i
+.PHONY : __/src/localizer.i
+
+# target to preprocess a source file
+__/src/localizer.cpp.i:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/localizer.cpp.i
+.PHONY : __/src/localizer.cpp.i
+
+__/src/localizer.s: __/src/localizer.cpp.s
+.PHONY : __/src/localizer.s
+
+# target to generate assembly for a file
+__/src/localizer.cpp.s:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/gridder.dir/build.make generated/CMakeFiles/gridder.dir/__/src/localizer.cpp.s
+.PHONY : __/src/localizer.cpp.s
+
 __/src/mrpt_map_loader.o: __/src/mrpt_map_loader.cpp.o
 .PHONY : __/src/mrpt_map_loader.o
 
@@ -677,6 +701,9 @@ help:
 	@echo "... __/src/grid_esdf.o"
 	@echo "... __/src/grid_esdf.i"
 	@echo "... __/src/grid_esdf.s"
+	@echo "... __/src/localizer.o"
+	@echo "... __/src/localizer.i"
+	@echo "... __/src/localizer.s"
 	@echo "... __/src/mrpt_map_loader.o"
 	@echo "... __/src/mrpt_map_loader.i"
 	@echo "... __/src/mrpt_map_loader.s"

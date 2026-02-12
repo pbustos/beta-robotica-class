@@ -8,6 +8,7 @@
   CMakeFiles/gridder.dir/__/src/grid.cpp.o \
   CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o \
   CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.o \
+  CMakeFiles/gridder.dir/__/src/localizer.cpp.o \
   CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o \
   CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o \
   CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o \
@@ -142,6 +143,8 @@ CMakeFiles/gridder.dir/__/src/grid.cpp.o:
 CMakeFiles/gridder.dir/__/src/grid_esdf.cpp.o:
 
 CMakeFiles/gridder.dir/__/src/mrpt_map_loader.cpp.o:
+
+CMakeFiles/gridder.dir/__/src/localizer.cpp.o:
 
 CMakeFiles/gridder.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o:
 

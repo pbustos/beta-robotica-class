@@ -23,6 +23,12 @@ INCLUDE($ENV{ROBOCOMP}/cmake/robocomp.cmake)
 INCLUDE($ENV{ROBOCOMP}/cmake/modules/qt.cmake)
 INCLUDE (../src/CMakeLists.txt)
 
+# OpenMP for parallel processing
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    message(STATUS "OpenMP found, enabling parallel processing")
+endif()
+
 ADD_DEFINITIONS ("-DICE_CPP11_MAPPING")
 FIND_PACKAGE( Ice REQUIRED COMPONENTS Ice++11 IceStorm++11)
 
@@ -36,6 +42,7 @@ SET (SOURCES
   main.cpp
   genericworker.cpp
   gridderI.cpp
+        ../src/localizer.h  # TODO: move this to src/CMakeLists.txt and include it in the sources list there
 )
 
 
@@ -49,6 +56,9 @@ set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 # Specify construction and link process
 ADD_EXECUTABLE( gridder ${SOURCES} ${MOC_SOURCES} ${RC_SOURCES} ${UI_HEADERS} )
 TARGET_LINK_LIBRARIES( gridder ${LIBS}  ${STATIC_LIBS} ${SPECIFIC_LIBS} ${QT_LIBRARIES} ${Ice_LIBRARIES} )
+if(OpenMP_CXX_FOUND)
+    TARGET_LINK_LIBRARIES(gridder OpenMP::OpenMP_CXX)
+endif()
 SET_TARGET_PROPERTIES(gridder
         PROPERTIES
         CXX_STANDARD ${CXX_STANDARD}

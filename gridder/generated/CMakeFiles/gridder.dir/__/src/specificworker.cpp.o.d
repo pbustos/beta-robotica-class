@@ -1185,6 +1185,7 @@ generated/CMakeFiles/gridder.dir/__/src/specificworker.cpp.o: \
  /usr/include/Eigen/src/Core/util/Macros.h \
  /usr/include/Eigen/src/Core/util/ConfigureVectorization.h \
  /usr/include/Eigen/src/Core/util/MKL_support.h \
+ /usr/lib/gcc/x86_64-linux-gnu/14/include/omp.h \
  /usr/include/Eigen/src/Core/util/Constants.h \
  /usr/include/Eigen/src/Core/util/Meta.h \
  /usr/include/Eigen/src/Core/util/ForwardDeclarations.h \
@@ -1367,6 +1368,8 @@ generated/CMakeFiles/gridder.dir/__/src/specificworker.cpp.o: \
  /usr/include/c++/14/bits/unordered_set.h /usr/include/c++/14/queue \
  /usr/include/c++/14/bits/stl_queue.h \
  /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.h \
+ /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/localizer.h \
+ /usr/include/x86_64-linux-gnu/qt6/QtWidgets/QGraphicsEllipseItem \
  /home/robocomp/robocomp/classes/doublebuffer_sync/doublebuffer_sync.h \
  /usr/include/c++/14/ranges /usr/include/c++/14/bits/elements_of.h \
  /usr/include/c++/14/shared_mutex \
