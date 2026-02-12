@@ -259,7 +259,8 @@ class SpecificWorker : public GenericWorker
 	    // Localizer (AMCL)
 	    Localizer localizer;
 	    Localizer::Pose2D last_ground_truth_pose;  // For simulating odometry
-	    bool localizer_initialized = false;
+	    std::atomic<bool> localizer_initialized{false};
+	    std::atomic<bool> map_ready_for_localization{false};  // Set after map is fully loaded
 	    std::optional<Localizer::Pose2D> update_localizer(const Eigen::Affine2f &robot_pos, const std::vector<Eigen::Vector2f> &points_local);
 
 	    // FPS

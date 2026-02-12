@@ -96,10 +96,10 @@ public:
 
     struct Params
     {
-        // Particle count
-        size_t min_particles = 50;
-        size_t max_particles = 500;
-        size_t initial_particles = 100;
+        // Particle count (balanced for precision and performance)
+        size_t min_particles = 100;
+        size_t max_particles = 1000;      // Increased back from 600
+        size_t initial_particles = 500;   // Increased back from 300
 
         // KLD-sampling parameters (adaptive sample size)
         float kld_bin_size_xy = 200.f;    // mm - spatial binning
@@ -118,7 +118,7 @@ public:
         float z_hit = 0.95f;         // Weight for hit model
         float z_rand = 0.05f;        // Weight for random model
         float max_range = 15000.f;   // mm - max LiDAR range
-        int lidar_subsample = 10;    // Use every N-th LiDAR point
+        int lidar_subsample = 15;    // Reverted from 25 to 15 for better precision
 
         // Resampling
         float resample_threshold = 0.5f;  // Resample when ESS < threshold * N
@@ -129,7 +129,7 @@ public:
 
         // Visualization
         bool draw_particles = false;
-        bool draw_particles_enabled = false;  // Control para deshabilitar visualización
+        bool draw_particles_enabled = false;
         float particle_size = 50.f;  // mm
     };
 
@@ -209,7 +209,10 @@ private:
     // KLD-adaptive resampling
     void resampleKLD();
 
-    // Normalize weights (convert from log-weights)
+    // Fused operation: normalize weights + compute ESS + compute mean pose (single pass)
+    void normalizeAndComputeStats();
+
+    // Normalize weights (convert from log-weights) - kept for compatibility
     void normalizeWeights();
 
     // Compute required number of samples for KLD
@@ -238,6 +241,10 @@ private:
     // State
     bool initialized_ = false;
     Pose2D last_mean_pose_;
+
+    // Cached statistics (computed in normalizeAndComputeStats)
+    double cached_ess_ = 0.0;
+    Pose2D cached_mean_pose_;
 };
 
 #endif // LOCALIZER_H

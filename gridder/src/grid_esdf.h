@@ -58,7 +58,7 @@ public:
         float log_odds_max = 4.0f;
         float occupancy_threshold = 2.0f;  // Reduced - need less confidence to be obstacle
         float free_threshold = -0.5f;      // log_odds < this → free
-        float max_esdf_distance = 3000.f;  // mm - max distance to propagate ESDF
+        float max_esdf_distance = 300.f;   // mm - reduced for faster localization (was 3000)
         int min_hits_to_confirm = 3;       // Reduced - fewer hits needed for visual
         // Visualization
         QString obstacle_color = "DarkRed";
@@ -103,6 +103,12 @@ public:
     // Fast distance query (no cache, thread-safe, for localization)
     float get_distance_fast(const Key &k) const;
     float get_distance_fast(float x, float y) const;
+
+    // Precomputed distance field for ultra-fast localization queries
+    void precompute_distance_field();  // Call after loading map
+    float get_distance_precomputed(const Key &k) const;  // O(1) lookup
+    float get_distance_precomputed(float x, float y) const;
+    bool has_precomputed_distances() const { return !precomputed_distances_.empty(); }
 
     // Key conversion
     Key point_to_key(const Eigen::Vector2f &p) const;
@@ -162,6 +168,12 @@ private:
     ObstacleMap obstacles_;
     ESDFCache esdf_cache_;
     QGraphicsScene *scene_ = nullptr;
+
+    // Precomputed distance field for fast localization
+    std::unordered_map<Key, float, boost::hash<Key>> precomputed_distances_;
+    int precomputed_min_x_ = 0, precomputed_max_x_ = 0;
+    int precomputed_min_y_ = 0, precomputed_max_y_ = 0;
+    float precomputed_max_dist_ = 500.f;  // Max distance stored (balanced)
 
     // ESDF propagation
     void propagate_esdf_from(const std::vector<Key> &seeds);

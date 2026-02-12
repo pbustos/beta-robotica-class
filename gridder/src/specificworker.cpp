@@ -72,7 +72,7 @@ void SpecificWorker::initialize()
 
 //chekpoint robocompUpdater
 	std::cout << "Initialize worker" << std::endl;
-    int period = 100;
+    const int period = 50;
 	setPeriod("Compute", period);
 	if(this->startup_check_flag)
 	{
@@ -118,13 +118,17 @@ void SpecificWorker::initialize()
             Localizer::Params loc_params;
             loc_params.initial_particles = params.LOCALIZER_PARTICLES;
             loc_params.min_particles = 100;
-            loc_params.max_particles = 2000;
+            loc_params.max_particles = 1000;  // Reduced from 2000 for performance
             loc_params.draw_particles = true;
-            loc_params.lidar_subsample = 5;  // Use every 5th LiDAR point
+            loc_params.lidar_subsample = 10;  // Use every 10th LiDAR point
             localizer.setParams(loc_params);
 
-            // Reset with Gaussian distribution around origin (will be updated on first pose)
-            // The actual initialization will happen when we get the first ground truth pose
+            // Precompute distance field for fast lookups
+            qInfo() << "[Localizer] Precomputing distance field...";
+            grid_esdf.precompute_distance_field();
+
+            // Mark map as ready for localization (after precomputation)
+            map_ready_for_localization.store(true);
             qInfo() << "[Localizer] Initialized, waiting for first pose...";
         }
 
@@ -326,7 +330,7 @@ void SpecificWorker::compute()
     float display_y = robot_pos.translation().y();
     float display_angle = std::atan2(robot_pos.linear()(1,0), robot_pos.linear()(0,0));
 
-    if (params.USE_LOCALIZER and external_map_loaded)
+    if (params.USE_LOCALIZER and external_map_loaded and map_ready_for_localization.load())
     {
         if (const auto estimated = update_localizer(robot_pos, points_local); estimated.has_value())
         {

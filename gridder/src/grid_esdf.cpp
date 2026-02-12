@@ -522,6 +522,123 @@ float GridESDF::get_distance_fast(float x, float y) const
     return get_distance_fast(point_to_key(Eigen::Vector2f(x, y)));
 }
 
+//////////////////////////////////////////////////////////////////////////////
+// Precomputed distance field (for ultra-fast localization)
+//////////////////////////////////////////////////////////////////////////////
+
+void GridESDF::precompute_distance_field()
+{
+    if (obstacles_.empty())
+    {
+        qWarning() << "[GridESDF] No obstacles to precompute distances from";
+        return;
+    }
+
+    // Find bounding box of obstacles with margin
+    precomputed_min_x_ = std::numeric_limits<int>::max();
+    precomputed_max_x_ = std::numeric_limits<int>::lowest();
+    precomputed_min_y_ = std::numeric_limits<int>::max();
+    precomputed_max_y_ = std::numeric_limits<int>::lowest();
+
+    for (const auto& [key, cell] : obstacles_)
+    {
+        if (cell.tile != nullptr)  // Only confirmed obstacles
+        {
+            precomputed_min_x_ = std::min(precomputed_min_x_, key.first);
+            precomputed_max_x_ = std::max(precomputed_max_x_, key.first);
+            precomputed_min_y_ = std::min(precomputed_min_y_, key.second);
+            precomputed_max_y_ = std::max(precomputed_max_y_, key.second);
+        }
+    }
+
+    // Add margin around bounding box (for robot positions outside obstacles)
+    const int margin = static_cast<int>(precomputed_max_dist_ / params_.tile_size) + 2;
+    precomputed_min_x_ -= margin * params_.tile_size;
+    precomputed_max_x_ += margin * params_.tile_size;
+    precomputed_min_y_ -= margin * params_.tile_size;
+    precomputed_max_y_ += margin * params_.tile_size;
+
+    // Precompute lookup table for hypot values
+    const int max_radius = static_cast<int>(std::ceil(precomputed_max_dist_ / params_.tile_size));
+    std::vector<std::vector<float>> hypot_table(2 * max_radius + 1, std::vector<float>(2 * max_radius + 1));
+    for (int dx = -max_radius; dx <= max_radius; ++dx)
+    {
+        for (int dy = -max_radius; dy <= max_radius; ++dy)
+        {
+            hypot_table[dx + max_radius][dy + max_radius] =
+                std::hypot(static_cast<float>(dx), static_cast<float>(dy)) * static_cast<float>(params_.tile_size);
+        }
+    }
+
+    // Clear old data and reserve space
+    precomputed_distances_.clear();
+    const int nx = (precomputed_max_x_ - precomputed_min_x_) / params_.tile_size + 1;
+    const int ny = (precomputed_max_y_ - precomputed_min_y_) / params_.tile_size + 1;
+    precomputed_distances_.reserve(nx * ny);
+
+    qInfo() << "[GridESDF] Precomputing distance field for" << nx << "x" << ny << "cells...";
+
+    // For each cell in the grid, compute distance to nearest obstacle
+    int cells_computed = 0;
+    for (int x = precomputed_min_x_; x <= precomputed_max_x_; x += params_.tile_size)
+    {
+        for (int y = precomputed_min_y_; y <= precomputed_max_y_; y += params_.tile_size)
+        {
+            Key k{x, y};
+
+            // Check if this cell is an obstacle
+            auto obs_it = obstacles_.find(k);
+            if (obs_it != obstacles_.end() && obs_it->second.tile != nullptr)
+            {
+                precomputed_distances_[k] = 0.0f;
+                cells_computed++;
+                continue;
+            }
+
+            // Find nearest obstacle using the hypot lookup table
+            float min_dist = precomputed_max_dist_;
+
+            for (int dx = -max_radius; dx <= max_radius && min_dist > 0; ++dx)
+            {
+                for (int dy = -max_radius; dy <= max_radius; ++dy)
+                {
+                    // Early termination: if we already found something closer than this cell could be
+                    float possible_dist = hypot_table[dx + max_radius][dy + max_radius];
+                    if (possible_dist >= min_dist)
+                        continue;
+
+                    Key neighbor{x + dx * params_.tile_size, y + dy * params_.tile_size};
+                    auto it = obstacles_.find(neighbor);
+                    if (it != obstacles_.end() && it->second.tile != nullptr)
+                    {
+                        min_dist = possible_dist;
+                    }
+                }
+            }
+
+            precomputed_distances_[k] = min_dist;
+            cells_computed++;
+        }
+    }
+
+    qInfo() << "[GridESDF] Precomputed" << cells_computed << "distance values";
+}
+
+float GridESDF::get_distance_precomputed(const Key &k) const
+{
+    auto it = precomputed_distances_.find(k);
+    if (it != precomputed_distances_.end())
+        return it->second;
+
+    // Outside precomputed area - return max distance
+    return precomputed_max_dist_;
+}
+
+float GridESDF::get_distance_precomputed(float x, float y) const
+{
+    return get_distance_precomputed(point_to_key(Eigen::Vector2f(x, y)));
+}
+
 float GridESDF::get_cost(const Key &k)
 {
     if (is_obstacle(k))

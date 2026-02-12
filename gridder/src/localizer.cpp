@@ -7,15 +7,11 @@
 #include "localizer.h"
 #include <algorithm>
 #include <cmath>
-#include <chrono>
 #include <numeric>
 #include <set>
 #include <unordered_set>
 #include <QBrush>
 #include <QPen>
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 // Hash function for std::tuple<int, int, int> (for KLD binning)
 namespace std {
@@ -132,72 +128,37 @@ std::optional<Localizer::Pose2D> Localizer::update(
         return std::nullopt;
     }
 
-    // Timing
-    auto t_start = std::chrono::high_resolution_clock::now();
-    auto t_phase = t_start;
-
     // 1. Prediction step: propagate particles through motion model
     predict(odometry);
-    auto t_predict = std::chrono::high_resolution_clock::now();
-    auto dt_predict = std::chrono::duration_cast<std::chrono::microseconds>(t_predict - t_phase).count();
 
     // 2. Correction step: weight particles by observation likelihood
     if (!lidar_points_local.empty())
     {
         correct(lidar_points_local);
     }
-    auto t_correct = std::chrono::high_resolution_clock::now();
-    auto dt_correct = std::chrono::duration_cast<std::chrono::microseconds>(t_correct - t_predict).count();
 
-    // 3. Normalize weights
-    normalizeWeights();
-    auto t_normalize = std::chrono::high_resolution_clock::now();
-    auto dt_normalize = std::chrono::duration_cast<std::chrono::microseconds>(t_normalize - t_correct).count();
+    // 3. Fused operation: normalize weights + compute ESS + compute mean pose (single pass)
+    normalizeAndComputeStats();
 
-    // 4. Resample if needed (based on ESS)
-    double ess = getEffectiveSampleSize();
-    if (ess < params_.resample_threshold * particles_.size())
+    // 4. Resample if needed (based on ESS from cached value)
+    if (cached_ess_ < params_.resample_threshold * particles_.size())
     {
         resampleKLD();
         static int resample_log_counter = 0;
-        if (++resample_log_counter % 20 == 0)  // Log every ~20 resamples
+        if (++resample_log_counter % 50 == 0)  // Log less frequently
         {
-            qDebug() << "[Localizer] Resampled, ESS was" << ess
+            qDebug() << "[Localizer] Resampled, ESS was" << cached_ess_
                      << ", new particle count:" << particles_.size();
         }
     }
-    auto t_resample = std::chrono::high_resolution_clock::now();
-    auto dt_resample = std::chrono::duration_cast<std::chrono::microseconds>(t_resample - t_normalize).count();
 
-    // 5. Compute and return mean pose
-    last_mean_pose_ = getMeanPose();
-    auto t_mean = std::chrono::high_resolution_clock::now();
-    auto dt_mean = std::chrono::duration_cast<std::chrono::microseconds>(t_mean - t_resample).count();
+    // 5. Update mean pose from cache
+    last_mean_pose_ = cached_mean_pose_;
 
-    // 6. Update visualization (every 5 frames to save CPU)
+    // 6. Update visualization (every 10 frames to save CPU)
     static int viz_counter = 0;
-    if (params_.draw_particles && ++viz_counter % 5 == 0)
+    if (params_.draw_particles && ++viz_counter % 10 == 0)
         drawParticles();
-    auto t_viz = std::chrono::high_resolution_clock::now();
-    auto dt_viz = std::chrono::duration_cast<std::chrono::microseconds>(t_viz - t_mean).count();
-
-    // Total timing
-    auto t_end = std::chrono::high_resolution_clock::now();
-    auto dt_total = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count();
-
-    // Debug output (every 100 frames)
-    static int debug_counter = 0;
-    if (++debug_counter % 100 == 0)
-    {
-        qDebug() << "[Localizer] TIMING (μs):"
-                 << "predict=" << dt_predict
-                 << "correct=" << dt_correct
-                 << "normalize=" << dt_normalize
-                 << "resample=" << dt_resample
-                 << "mean=" << dt_mean
-                 << "viz=" << dt_viz
-                 << "TOTAL=" << dt_total;
-    }
 
     // Return pose only if converged
     if (isConverged())
@@ -267,38 +228,16 @@ void Localizer::correct(const std::vector<Eigen::Vector2f>& lidar_points_local)
 {
     if (!map_) return;
 
-    const size_t n_particles = particles_.size();
-
-    // Compute likelihoods in parallel (no shared writes)
-    std::vector<double> likelihoods(n_particles);
-
-    #pragma omp parallel for schedule(dynamic)
-    for (size_t i = 0; i < n_particles; ++i)
+    for (auto& particle : particles_)
     {
-        likelihoods[i] = computeLikelihood(particles_[i].pose, lidar_points_local);
-    }
+        double likelihood = computeLikelihood(particle.pose, lidar_points_local);
 
-    // Update weights sequentially (numerical safety)
-    for (size_t i = 0; i < n_particles; ++i)
-    {
-        double likelihood = likelihoods[i];
-
-        // Clamp likelihood to valid range to avoid NaN/Inf
+        // Clamp likelihood to valid range
         if (!std::isfinite(likelihood) || likelihood <= 0.0)
             likelihood = 1e-300;
 
-        double log_likelihood = std::log(likelihood);
-
-        // Validate log-likelihood before updating
-        if (!std::isfinite(log_likelihood))
-        {
-            particles_[i].log_weight = -100.0;  // Particle effectively dead
-        }
-        else
-        {
-            particles_[i].log_weight += log_likelihood;
-            particles_[i].log_weight = std::max(particles_[i].log_weight, -100.0);  // Clamp to prevent underflow
-        }
+        particle.log_weight += std::log(likelihood);
+        particle.log_weight = std::max(particle.log_weight, -100.0);
     }
 }
 
@@ -311,12 +250,11 @@ double Localizer::computeLikelihood(const Pose2D& pose,
     // Precalculate constants for likelihood model
     const float c = std::cos(pose.theta);
     const float s = std::sin(pose.theta);
-    const float sigma_sq_2 = 2.0f * params_.sigma_hit * params_.sigma_hit;
-    const float inv_sigma_sq_2 = 1.0f / sigma_sq_2;
+    const float inv_sigma_sq_2 = 1.0f / (2.0f * params_.sigma_hit * params_.sigma_hit);
     const float p_rand = params_.z_rand / params_.max_range;
-    const float z_hit_norm = params_.z_hit / (params_.sigma_hit * 2.506628274631f); // sqrt(2*PI) ≈ 2.5066
+    const float z_hit_norm = params_.z_hit / (params_.sigma_hit * 2.506628274631f);
 
-    double total_log_likelihood = 0.0;
+    float total_log_likelihood = 0.0f;
     int count = 0;
 
     // Subsample LiDAR points for efficiency
@@ -332,21 +270,25 @@ double Localizer::computeLikelihood(const Pose2D& pose,
         const float p_world_x = pose.x + lx * c - ly * s;
         const float p_world_y = pose.y + lx * s + ly * c;
 
-        // Get distance to nearest obstacle
-        const float dist = map_->get_distance(map_->point_to_key(p_world_x, p_world_y));
+        // Get distance to nearest obstacle - use precomputed if available (O(1))
+        float dist;
+        if (map_->has_precomputed_distances())
+            dist = map_->get_distance_precomputed(p_world_x, p_world_y);
+        else
+            dist = map_->get_distance(map_->point_to_key(p_world_x, p_world_y));
 
         // Likelihood: Gaussian hit + uniform random
-        const float p_hit = z_hit_norm * std::exp(-dist * dist * inv_sigma_sq_2);
+        const float p_hit = z_hit_norm * std::expf(-dist * dist * inv_sigma_sq_2);
         const float p = p_hit + p_rand;
 
-        total_log_likelihood += std::log(p + 1e-30f);
+        total_log_likelihood += std::logf(p + 1e-30f);
         count++;
     }
 
     if (count > 0)
     {
-        double avg_log_likelihood = total_log_likelihood / count;
-        return std::exp(std::max(avg_log_likelihood, -20.0));
+        float avg_log_likelihood = total_log_likelihood / static_cast<float>(count);
+        return static_cast<double>(std::expf(std::max(avg_log_likelihood, -20.0f)));
     }
     return 1.0;
 }
@@ -354,6 +296,64 @@ double Localizer::computeLikelihood(const Pose2D& pose,
 //////////////////////////////////////////////////////////////////////////////
 // Resampling
 //////////////////////////////////////////////////////////////////////////////
+
+void Localizer::normalizeAndComputeStats()
+{
+    // FUSED OPERATION: normalize weights + compute ESS + compute mean pose
+    // This combines what was 3 separate passes into 1 pass
+
+    if (particles_.empty())
+    {
+        cached_ess_ = 0.0;
+        cached_mean_pose_ = {};
+        return;
+    }
+
+    // Pass 1: Find max log-weight for numerical stability
+    double max_log_w = particles_[0].log_weight;
+    for (const auto& p : particles_)
+        max_log_w = std::max(max_log_w, p.log_weight);
+
+    // Pass 2: Normalize, compute ESS, and compute weighted mean - ALL IN ONE PASS
+    double sum_weights = 0.0;
+    double sum_weights_sq = 0.0;
+    float sum_x = 0.0f, sum_y = 0.0f;
+    float sum_cos = 0.0f, sum_sin = 0.0f;
+
+    for (auto& p : particles_)
+    {
+        // Normalize weight
+        p.log_weight -= max_log_w;
+        const float w = static_cast<float>(std::exp(p.log_weight));
+        sum_weights += w;
+
+        // Accumulate for ESS
+        sum_weights_sq += w * w;
+
+        // Accumulate for mean pose (using unnormalized weights, will divide later)
+        sum_x += w * p.pose.x;
+        sum_y += w * p.pose.y;
+        sum_cos += w * std::cosf(p.pose.theta);
+        sum_sin += w * std::sinf(p.pose.theta);
+    }
+
+    // Finalize normalization (divide by sum)
+    const double log_sum = std::log(sum_weights);
+    for (auto& p : particles_)
+        p.log_weight -= log_sum;
+
+    // Compute ESS from normalized weights
+    const double normalized_sum_sq = sum_weights_sq / (sum_weights * sum_weights);
+    cached_ess_ = (normalized_sum_sq > 0) ? 1.0 / normalized_sum_sq : 0.0;
+
+    // Compute mean pose (divide by sum_weights to get weighted average)
+    const float inv_sum = 1.0f / static_cast<float>(sum_weights);
+    cached_mean_pose_ = {
+        sum_x * inv_sum,
+        sum_y * inv_sum,
+        std::atan2f(sum_sin, sum_cos)
+    };
+}
 
 void Localizer::normalizeWeights()
 {
@@ -379,14 +379,8 @@ void Localizer::normalizeWeights()
 
 double Localizer::getEffectiveSampleSize() const
 {
-    // ESS = 1 / sum(w_i^2)  where w_i are normalized weights
-    double sum_sq = 0.0;
-    for (const auto& p : particles_)
-    {
-        double w = p.getWeight();  // Use cached weight
-        sum_sq += w * w;
-    }
-    return (sum_sq > 0) ? 1.0 / sum_sq : 0.0;
+    // Return cached value if available (from normalizeAndComputeStats)
+    return cached_ess_;
 }
 
 void Localizer::resample()
@@ -506,42 +500,23 @@ size_t Localizer::computeKLDSampleCount(size_t num_bins) const
 
 Localizer::Pose2D Localizer::getMeanPose() const
 {
-    if (particles_.empty())
-        return {};
-
-    // Weighted mean (circular mean for angle)
-    double sum_x = 0, sum_y = 0;
-    double sum_cos = 0, sum_sin = 0;
-
-    for (const auto& p : particles_)
-    {
-        double w = p.getWeight();  // Use cached weight
-        sum_x += w * p.pose.x;
-        sum_y += w * p.pose.y;
-        sum_cos += w * std::cos(p.pose.theta);
-        sum_sin += w * std::sin(p.pose.theta);
-    }
-
-    return {
-        static_cast<float>(sum_x),
-        static_cast<float>(sum_y),
-        static_cast<float>(std::atan2(sum_sin, sum_cos))
-    };
+    // Return cached value (computed in normalizeAndComputeStats)
+    return cached_mean_pose_;
 }
 
 void Localizer::getCovariance(Eigen::Matrix2f& pos_cov, float& theta_var) const
 {
     Pose2D mean = getMeanPose();
 
-    double sum_xx = 0, sum_yy = 0, sum_xy = 0;
-    double sum_theta_sq = 0;
+    float sum_xx = 0.f, sum_yy = 0.f, sum_xy = 0.f;
+    float sum_theta_sq = 0.f;
 
     for (const auto& p : particles_)
     {
-        double w = p.getWeight();  // Use cached weight
-        double dx = p.pose.x - mean.x;
-        double dy = p.pose.y - mean.y;
-        double dtheta = Pose2D::normalizeAngle(p.pose.theta - mean.theta);
+        const float w = static_cast<float>(p.getWeight());
+        const float dx = p.pose.x - mean.x;
+        const float dy = p.pose.y - mean.y;
+        const float dtheta = Pose2D::normalizeAngle(p.pose.theta - mean.theta);
 
         sum_xx += w * dx * dx;
         sum_yy += w * dy * dy;
@@ -551,7 +526,7 @@ void Localizer::getCovariance(Eigen::Matrix2f& pos_cov, float& theta_var) const
 
     pos_cov << sum_xx, sum_xy,
                sum_xy, sum_yy;
-    theta_var = static_cast<float>(sum_theta_sq);
+    theta_var = sum_theta_sq;
 }
 
 bool Localizer::isConverged() const

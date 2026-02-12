@@ -33,13 +33,26 @@ module RoboCompGridder
 		string errorMsg;
 		bool valid;
 	};
+	struct TCell
+	{
+		int x;
+		int y;
+		byte cost;
+	};
+	sequence <TCell> TCellVector;
+	struct Map
+	{
+		int tileSize;
+		TCellVector cells;
+	};
 	interface Gridder
 	{
 		bool IsPathBlocked (TPath path);
 		bool LineOfSightToTarget (TPoint source, TPoint target, float robotRadius);
 		TPoint getClosestFreePoint (TPoint source);
 		TDimensions getDimensions ();
-		Result getPaths (TPoint source, TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman);
+		Map getMap ();
+		Result getPaths (TPoint source, TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor);
 		bool setGridDimensions (TDimensions dimensions);
 		Result setLocationAndGetPath (TPoint source, TPoint target, TPointVector freePoints, TPointVector obstaclePoints);
 	};
