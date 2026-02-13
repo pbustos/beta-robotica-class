@@ -260,6 +260,14 @@ class SpecificWorker : public GenericWorker
 	    std::atomic<bool> stop_lidar_thread{false};
 	    void read_lidar();
 
+	    // Localizer Thread
+	    std::thread localizer_th;
+	    std::atomic<bool> stop_localizer_thread{false};
+	    void run_localizer();
+
+	    // Double buffer for estimated robot pose (written by localizer thread, read by main thread)
+	    BufferSync<InOut<Eigen::Affine2f, Eigen::Affine2f>> buffer_estimated_pose;
+
 	    // Grids (two implementations available)
 	    Grid grid;              // Dense grid (original)
 	    GridESDF grid_esdf;     // Sparse ESDF grid (VoxBlox-style)
@@ -269,7 +277,6 @@ class SpecificWorker : public GenericWorker
 	    Localizer::Pose2D last_ground_truth_pose;  // For simulating odometry
 	    std::atomic<bool> localizer_initialized{false};
 	    std::atomic<bool> map_ready_for_localization{false};  // Set after map is fully loaded
-	    std::optional<Localizer::Pose2D> update_localizer(const Eigen::Affine2f &robot_pos, const std::vector<Eigen::Vector2f> &points_local);
 
 	    // FPS
 	    FPSCounter fps;
@@ -288,8 +295,6 @@ class SpecificWorker : public GenericWorker
 
 	    // ==================== Robot Pose Estimation ====================
 	    Eigen::Affine2f estimated_robot_pose;  // Current best estimate of robot pose
-	    Eigen::Affine2f update_robot_pose(const Eigen::Affine2f& ground_truth_pose,
-	                                       const std::vector<Eigen::Vector2f>& points_local);
 
 	    // ==================== MPPI Controller ====================
 	    MPPIController mppi_controller;

@@ -35,9 +35,12 @@ MPPIController::MPPIController()
 MPPIController::MPPIController(const Params& params)
     : params_(params)
     , rng_(std::random_device{}())
-    , noise_vx_(0.0f, params.sigma_vx)
-    , noise_vy_(0.0f, params.sigma_vy)
-    , noise_omega_(0.0f, params.sigma_omega)
+    , noise_vx_(0.0f, 1.0f)  // Standard normal, we scale by adaptive sigma
+    , noise_vy_(0.0f, 1.0f)
+    , noise_omega_(0.0f, 1.0f)
+    , adaptive_sigma_vx_(params.sigma_vx)
+    , adaptive_sigma_vy_(params.sigma_vy)
+    , adaptive_sigma_omega_(params.sigma_omega)
 {
     // Initialize previous controls to zero
     prev_controls_.resize(params_.T);
@@ -50,6 +53,11 @@ MPPIController::MPPIController(const Params& params)
     noise_buffer_vx_.resize(params_.K * params_.T);
     noise_buffer_vy_.resize(params_.K * params_.T);
     noise_buffer_omega_.resize(params_.K * params_.T);
+
+    // Pre-allocate AR(1) state buffers (one per trajectory)
+    ar1_state_vx_.resize(params_.K, 0.0f);
+    ar1_state_vy_.resize(params_.K, 0.0f);
+    ar1_state_omega_.resize(params_.K, 0.0f);
 }
 
 // ============================================================================
@@ -89,7 +97,8 @@ MPPIController::ControlCommand MPPIController::compute(
     }
 
     // =========================================================================
-    // OPTIMIZATION 1: Pre-generate all noise samples in batch
+    // NOISE GENERATION with adaptive covariance
+    // Using simple i.i.d. noise scaled by adaptive sigma (AR(1) was unstable)
     // =========================================================================
     const int total_samples = params_.K * params_.T;
     if (static_cast<int>(noise_buffer_vx_.size()) != total_samples)
@@ -99,15 +108,16 @@ MPPIController::ControlCommand MPPIController::compute(
         noise_buffer_omega_.resize(total_samples);
     }
 
+    // Generate i.i.d. noise scaled by adaptive sigma
     for (int i = 0; i < total_samples; ++i)
     {
-        noise_buffer_vx_[i] = noise_vx_(rng_);
-        noise_buffer_vy_[i] = noise_vy_(rng_);
-        noise_buffer_omega_[i] = noise_omega_(rng_);
+        noise_buffer_vx_[i] = noise_vx_(rng_) * adaptive_sigma_vx_;
+        noise_buffer_vy_[i] = noise_vy_(rng_) * adaptive_sigma_vy_;
+        noise_buffer_omega_[i] = noise_omega_(rng_) * adaptive_sigma_omega_;
     }
 
     // =========================================================================
-    // OPTIMIZATION 2: Pre-compute obstacle squared distances threshold
+    // Pre-compute obstacle squared distances threshold
     // =========================================================================
     const float robot_radius_sq = params_.robot_radius * params_.robot_radius;
     const float safety_margin_sq = params_.safety_margin * params_.safety_margin;
@@ -340,6 +350,21 @@ MPPIController::ControlCommand MPPIController::compute(
         if (std::isnan(optimal_controls[t].omega)) optimal_controls[t].omega = 0.0f;
     }
 
+    // =========================================================================
+    // ADAPTIVE COVARIANCE UPDATE - DISABLED FOR DEBUGGING
+    // The adaptive update was causing instability, using fixed sigmas
+    // =========================================================================
+    // Keep adaptive sigmas at their initial values (from params)
+    // This effectively disables adaptation while keeping the infrastructure
+
+    // Periodic debug: show current sigma values
+    static int cov_debug_counter = 0;
+    if (++cov_debug_counter % 200 == 0)
+    {
+        qDebug() << "[MPPI] Sigma (fixed): vx=" << adaptive_sigma_vx_
+                 << "vy=" << adaptive_sigma_vy_ << "omega=" << adaptive_sigma_omega_;
+    }
+
     // Store for next iteration (warm start)
     prev_controls_ = optimal_controls;
 
@@ -398,14 +423,30 @@ void MPPIController::reset()
         ctrl = ControlCommand{0.0f, 0.0f, 0.0f};
     }
     optimal_trajectory_.clear();
+
+    // Reset adaptive covariance to initial values
+    adaptive_sigma_vx_ = params_.sigma_vx;
+    adaptive_sigma_vy_ = params_.sigma_vy;
+    adaptive_sigma_omega_ = params_.sigma_omega;
+
+    // Reset AR(1) states
+    std::fill(ar1_state_vx_.begin(), ar1_state_vx_.end(), 0.0f);
+    std::fill(ar1_state_vy_.begin(), ar1_state_vy_.end(), 0.0f);
+    std::fill(ar1_state_omega_.begin(), ar1_state_omega_.end(), 0.0f);
 }
 
 void MPPIController::setParams(const Params& params)
 {
     params_ = params;
-    noise_vx_ = std::normal_distribution<float>(0.0f, params.sigma_vx);
-    noise_vy_ = std::normal_distribution<float>(0.0f, params.sigma_vy);
-    noise_omega_ = std::normal_distribution<float>(0.0f, params.sigma_omega);
+    // Use standard normal distributions (we scale by adaptive sigma)
+    noise_vx_ = std::normal_distribution<float>(0.0f, 1.0f);
+    noise_vy_ = std::normal_distribution<float>(0.0f, 1.0f);
+    noise_omega_ = std::normal_distribution<float>(0.0f, 1.0f);
+
+    // Initialize adaptive sigmas from params
+    adaptive_sigma_vx_ = params.sigma_vx;
+    adaptive_sigma_vy_ = params.sigma_vy;
+    adaptive_sigma_omega_ = params.sigma_omega;
 
     // Resize control sequence if horizon changed
     if (static_cast<int>(prev_controls_.size()) != params_.T)
@@ -415,6 +456,14 @@ void MPPIController::setParams(const Params& params)
         {
             ctrl = ControlCommand{0.0f, 0.0f, 0.0f};
         }
+    }
+
+    // Resize AR(1) state buffers if K changed
+    if (static_cast<int>(ar1_state_vx_.size()) != params_.K)
+    {
+        ar1_state_vx_.resize(params_.K, 0.0f);
+        ar1_state_vy_.resize(params_.K, 0.0f);
+        ar1_state_omega_.resize(params_.K, 0.0f);
     }
 }
 

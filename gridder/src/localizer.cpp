@@ -187,9 +187,11 @@ Localizer::Pose2D Localizer::sampleMotionModel(const Pose2D& pose, const Odometr
     const float delta_trans = std::hypot(odometry.delta_x, odometry.delta_y);
     const float delta_rot = std::abs(odometry.delta_theta);
 
-    // Add small noise proportional to motion
-    const float trans_noise_std = params_.alpha3 * delta_trans + params_.alpha4 * delta_rot + 1.f;  // 1mm minimum
-    const float rot_noise_std = params_.alpha1 * delta_rot + params_.alpha2 * delta_trans + 0.001f;  // ~0.06 deg minimum
+    // Add noise proportional to motion
+    // Translation noise in mm, rotation noise in radians
+    const float trans_noise_std = params_.alpha3 * delta_trans + params_.alpha4 * delta_rot * 100.f + 1.f;  // 1mm minimum
+    // alpha2 converts mm to radians: divide by 1000 to get meters, then small factor
+    const float rot_noise_std = params_.alpha1 * delta_rot + params_.alpha2 * delta_trans * 0.001f + 0.001f;  // ~0.06 deg minimum
 
     // Sample noise
     const float noise_x = normal_dist_(rng_) * trans_noise_std;

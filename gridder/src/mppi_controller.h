@@ -64,10 +64,22 @@ public:
         float dt = 0.1f;           // Time step (seconds) - larger for stability
         float lambda = 1.0f;       // Temperature parameter
 
-        // Control noise standard deviations
+        // Control noise standard deviations (initial values, adapted online)
         float sigma_vx = 80.0f;    // mm/s - lateral exploration
         float sigma_vy = 150.0f;   // mm/s - forward speed variation
         float sigma_omega = 0.3f;  // rad/s - rotation exploration
+
+        // Time-correlated noise (AR(1) process)
+        float noise_alpha = 0.9f;  // Temporal correlation factor [0.8, 0.95] - higher = smoother trajectories
+
+        // Adaptive covariance parameters
+        float cov_adaptation_rate = 0.05f;  // Beta: how fast covariance adapts [0.03, 0.1]
+        float sigma_min_vx = 20.0f;         // Minimum sigma for vx (mm/s)
+        float sigma_min_vy = 50.0f;         // Minimum sigma for vy (mm/s)
+        float sigma_min_omega = 0.05f;      // Minimum sigma for omega (rad/s)
+        float sigma_max_vx = 200.0f;        // Maximum sigma for vx (mm/s)
+        float sigma_max_vy = 400.0f;        // Maximum sigma for vy (mm/s)
+        float sigma_max_omega = 0.8f;       // Maximum sigma for omega (rad/s)
 
         // Robot limits
         float max_vx = 300.0f;     // mm/s - limited lateral
@@ -77,10 +89,10 @@ public:
         // Cost weights
         float w_path = 1.0f;           // Weight for path following (slightly higher to follow path better)
         float w_obstacle = 100.0f;     // Weight for obstacle avoidance (reduced from 200)
-        float w_goal = 2.0f;           // Weight for goal reaching
+        float w_goal = 3.0f;           // Weight for goal reaching
         float w_smoothness = 2.0f;     // Weight for control smoothness (increased for smoother motion)
         float w_speed = 0.1f;          // Weight for maintaining desired speed
-        float w_heading = 3.0f;        // Weight for heading alignment
+        float w_heading = 2.0f;        // Weight for heading alignment
 
         // Safety parameters
         float robot_radius = 250.0f;       // mm
@@ -169,6 +181,16 @@ private:
     mutable std::vector<float> noise_buffer_vx_;
     mutable std::vector<float> noise_buffer_vy_;
     mutable std::vector<float> noise_buffer_omega_;
+
+    // Adaptive covariance (diagonal) - updated online based on elite trajectories
+    float adaptive_sigma_vx_;
+    float adaptive_sigma_vy_;
+    float adaptive_sigma_omega_;
+
+    // AR(1) correlated noise state - one per trajectory sample
+    mutable std::vector<float> ar1_state_vx_;
+    mutable std::vector<float> ar1_state_vy_;
+    mutable std::vector<float> ar1_state_omega_;
 
     /**
      * @brief Simulate robot motion using kinematic model
