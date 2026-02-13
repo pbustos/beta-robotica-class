@@ -2,14 +2,20 @@
 SET ( SOURCES
   specificworker.cpp
   specificmonitor.cpp
-  grid.cpp
+  grid_esdf.cpp
+  localizer.cpp
+  mppi_controller.cpp
+  mrpt_map_loader.cpp
 )
 
 # Headers set
 SET ( HEADERS
   specificworker.h
   specificmonitor.h
-  grid.h
+  grid_esdf.h
+  localizer.h
+  mppi_controller.h
+  mrpt_map_loader.h
   /home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.h
 )
 

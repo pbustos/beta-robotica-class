@@ -1,7 +1,6 @@
 # Sources set
 LIST(APPEND SOURCES
   ../src/specificworker.cpp
-  ../src/grid.cpp
   ../src/grid_esdf.cpp
   ../src/mrpt_map_loader.cpp
   ../src/localizer.cpp
@@ -10,7 +9,6 @@ LIST(APPEND SOURCES
 # Headers set
 LIST(APPEND HEADERS
   ../src/specificworker.h
-  ../src/grid.h
   ../src/grid_esdf.h
   ../src/mrpt_map_loader.h
   ../src/localizer.h

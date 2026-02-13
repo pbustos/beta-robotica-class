@@ -103,8 +103,7 @@ void SpecificWorker::initialize()
         QRectF initial_view(-3000, -3000, 6000, 6000);  // 6m x 6m area centered on origin
         viewer->fitToScene(initial_view);
 
-        // Initialize grids (both available, selection via params.GRID_MODE)
-        grid.initialize(params.GRID_MAX_DIM, static_cast<int>(params.TILE_SIZE), &viewer->scene);
+        // Initialize Sparse ESDF grid (VoxBlox-style)
         grid_esdf.initialize(static_cast<int>(params.TILE_SIZE), &viewer->scene);
 
         // Configure A* parameters
@@ -195,25 +194,22 @@ void SpecificWorker::initialize()
 
             auto start_time = std::chrono::high_resolution_clock::now();
 
-            // Use appropriate grid based on mode
-            if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
-            {
-                // Sparse ESDF mode: use grid_esdf for path planning
-                // First check if there's line of sight to target
-                bool los_free = grid_esdf.is_line_of_sight_free(source, target, params.ROBOT_SEMI_WIDTH);
-                qInfo() << "[PATH] Source:" << source.x() << source.y()
-                        << "Target:" << target.x() << target.y()
-                        << "LOS free:" << los_free
-                        << "Robot width:" << params.ROBOT_SEMI_WIDTH;
+            // Use Sparse ESDF grid for path planning
+            // First check if there's line of sight to target
+            bool los_free = grid_esdf.is_line_of_sight_free(source, target, params.ROBOT_SEMI_WIDTH);
+            qInfo() << "[PATH] Source:" << source.x() << source.y()
+                    << "Target:" << target.x() << target.y()
+                    << "LOS free:" << los_free
+                    << "Robot width:" << params.ROBOT_SEMI_WIDTH;
 
-                if (los_free)
-                {
-                    // Direct path - line of sight is free
-                    // Interpolate points along the path for visibility
-                    const float step = params.TILE_SIZE;  // One point per tile
-                    const Eigen::Vector2f delta = target - source;
-                    const float length = delta.norm();
-                    const Eigen::Vector2f dir = delta.normalized();
+            if (los_free)
+            {
+                // Direct path - line of sight is free
+                // Interpolate points along the path for visibility
+                const float step = params.TILE_SIZE;  // One point per tile
+                const Eigen::Vector2f delta = target - source;
+                const float length = delta.norm();
+                const Eigen::Vector2f dir = delta.normalized();
 
                     path.push_back(source);
                     for (float t = step; t < length; t += step)
@@ -228,42 +224,6 @@ void SpecificWorker::initialize()
                     path = grid_esdf.compute_path(source, target, params.ROBOT_SEMI_WIDTH, params.SAFETY_FACTOR);
                     qInfo() << "A* path computed (ESDF), path size:" << path.size();
                 }
-            }
-            else
-            {
-                // Dense grid modes: use original grid for path planning
-                auto [success, msg, source_key, target_key] =
-                    grid.validate_source_target(source, 750, target, 750);
-                if (not success) return;
-
-                std::vector<std::vector<Eigen::Vector2f>> paths;
-
-                // First check if there's line of sight to target
-                if (grid.is_line_of_sigth_to_target_free(source_key, target_key, params.ROBOT_SEMI_WIDTH))
-                {
-                    // Direct path - line of sight is free
-                    auto direct_path = grid.compute_path_line_of_sight(source_key, target_key, params.ROBOT_SEMI_LENGTH);
-                    if (!direct_path.empty())
-                    {
-                        paths.push_back(direct_path);
-                        qInfo() << "Line of sight path found";
-                    }
-                }
-
-                // If no direct path, use Dijkstra/A*
-                if (paths.empty())
-                {
-                    paths = grid.compute_k_paths(source_key,
-                                                 target_key,
-                                                 std::clamp(3, 1, params.NUM_PATHS_TO_SEARCH),
-                                                 params.MIN_DISTANCE_BETWEEN_PATHS,
-                                                 true, true);
-                    qInfo() << "Dijkstra path computed";
-                }
-
-                if (!paths.empty())
-                    path = paths.front();
-            }
 
             auto end_time = std::chrono::high_resolution_clock::now();
             auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
@@ -278,16 +238,8 @@ void SpecificWorker::initialize()
 
                 // Calculate path cost (sum of costs along the path)
                 float path_cost = 0.f;
-                if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
-                {
-                    for (const auto &pt : path)
-                        path_cost += grid_esdf.get_cost(pt);
-                }
-                else
-                {
-                    for (const auto &pt : path)
-                        path_cost += grid.get_cost(pt);
-                }
+                for (const auto &pt : path)
+                    path_cost += grid_esdf.get_cost(pt);
 
                 // Update UI displays
                 lcdNumber_length->display(static_cast<double>(path_length / 1000.f));  // Show in meters
@@ -381,8 +333,7 @@ void SpecificWorker::compute()
     if (not external_map_loaded)
     {
         mutex_path.lock();
-        // SPARSE_ESDF mode: VoxBlox-style, only stores obstacles
-        grid.check_and_resize(points_world);
+        // VoxBlox-style ESDF: only stores obstacles
         grid_esdf.update(points_world, robot_pos.translation(), params.MAX_LIDAR_RANGE, timestamp);
         grid_esdf.update_visualization(true);  // Only update visualization when there are changes
         mutex_path.unlock();
@@ -1128,82 +1079,41 @@ RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint
     std::string msg;
     bool success = true;
 
-    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
-    {
-        // Sparse ESDF mode: use grid_esdf for path planning
-        const Eigen::Vector2f src{source.x, source.y};
-        const Eigen::Vector2f tgt{target.x, target.y};
+    // Use ESDF grid for path planning
+    const Eigen::Vector2f src{source.x, source.y};
+    const Eigen::Vector2f tgt{target.x, target.y};
 
-        // Check if source or target are obstacles
-        if (grid_esdf.is_obstacle(grid_esdf.point_to_key(src)))
-        {
-            success = false;
-            msg = "Source is blocked";
-        }
-        else if (grid_esdf.is_obstacle(grid_esdf.point_to_key(tgt)))
-        {
-            success = false;
-            msg = "Target is blocked";
-        }
-        else
-        {
-            // Check if line of sight is free
-            if (grid_esdf.is_line_of_sight_free(src, tgt, params.ROBOT_SEMI_WIDTH))
-            {
-                paths.push_back({src, tgt});
-                msg = "VLOS path (ESDF)";
-            }
-            else
-            {
-                // Use A* with ESDF cost and safety factor from parameter
-                auto path = grid_esdf.compute_path(src, tgt, params.ROBOT_SEMI_WIDTH, safetyFactor);
-                if (!path.empty())
-                {
-                    paths.push_back(path);
-                    msg = "A* path (ESDF)";
-                }
-                else
-                {
-                    msg = "A* path not found (ESDF)";
-                }
-            }
-        }
+    // Check if source or target are obstacles
+    if (grid_esdf.is_obstacle(grid_esdf.point_to_key(src)))
+    {
+        success = false;
+        msg = "Source is blocked";
+    }
+    else if (grid_esdf.is_obstacle(grid_esdf.point_to_key(tgt)))
+    {
+        success = false;
+        msg = "Target is blocked";
     }
     else
     {
-        // Dense grid modes
-        auto [val_success, val_msg, source_key, target_key] =
-                grid.validate_source_target(Eigen::Vector2f{source.x, source.y},
-                                            source.radius,
-                                            Eigen::Vector2f{target.x, target.y},
-                                            source.radius);
-        success = val_success;
-        msg = val_msg;
-
-        if (success)
+        // Check if line of sight is free
+        if (grid_esdf.is_line_of_sight_free(src, tgt, params.ROBOT_SEMI_WIDTH))
         {
-            //check if is line of sight to target free
-            if (grid.is_line_of_sigth_to_target_free(source_key,
-                                                     target_key,
-                                                     params.ROBOT_SEMI_WIDTH))
+            paths.push_back({src, tgt});
+            msg = "VLOS path (ESDF)";
+        }
+        else
+        {
+            // Use A* with ESDF cost and safety factor from parameter
+            auto path = grid_esdf.compute_path(src, tgt, params.ROBOT_SEMI_WIDTH, safetyFactor);
+            if (!path.empty())
             {
-                paths.emplace_back(grid.compute_path_line_of_sight(source_key, target_key, params.ROBOT_SEMI_LENGTH));
-                if(paths.empty())
-                    msg = "VLOS path not found";
-                else
-                    msg = "VLOS path";
+                paths.push_back(path);
+                msg = "A* path (ESDF)";
             }
             else
             {
-                paths = grid.compute_k_paths(source_key, target_key,
-                                             std::clamp(max_paths, 1, params.NUM_PATHS_TO_SEARCH),
-                                             params.MIN_DISTANCE_BETWEEN_PATHS,
-                                             tryClosestFreePoint,
-                                             targetIsHuman);
-                if(paths.empty())
-                    msg = "Djikstra path not found";
-                else
-                    msg = "Djikstra path";
+                msg = "A* path not found (ESDF)";
             }
         }
     }
@@ -1236,46 +1146,27 @@ RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint
 bool SpecificWorker::Gridder_LineOfSightToTarget(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, float robotRadius)
 {
     std::lock_guard<std::mutex> lock(mutex_path);
-
-    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
-    {
-        // Sparse ESDF mode: use grid_esdf for line of sight check
-        return grid_esdf.is_line_of_sight_free(
-            Eigen::Vector2f{source.x, source.y},
-            Eigen::Vector2f{target.x, target.y},
-            robotRadius);
-    }
-    else
-    {
-        // Dense grid modes
-        auto [success, msg, source_key, target_key] =
-                grid.validate_source_target(Eigen::Vector2f{source.x, source.y}, source.radius,
-                                            Eigen::Vector2f{target.x, target.y}, target.radius);
-
-        if(success)
-            return grid.is_line_of_sigth_to_target_free(source_key, target_key, robotRadius);
-        else
-            return false;
-    }
+    return grid_esdf.is_line_of_sight_free(
+        Eigen::Vector2f{source.x, source.y},
+        Eigen::Vector2f{target.x, target.y},
+        robotRadius);
 }
 RoboCompGridder::TPoint SpecificWorker::Gridder_getClosestFreePoint(RoboCompGridder::TPoint source)
 {
     std::lock_guard<std::mutex> lock(mutex_path);
 
-    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
-    {
-        // Sparse ESDF mode: in sparse grid, non-obstacle = free
-        // If source is not an obstacle, return source itself
-        const auto key = grid_esdf.point_to_key(source.x, source.y);
-        if (!grid_esdf.is_obstacle(key))
-            return source;
+    // In sparse grid, non-obstacle = free
+    // If source is not an obstacle, return source itself
+    const auto key = grid_esdf.point_to_key(source.x, source.y);
+    if (!grid_esdf.is_obstacle(key))
+        return source;
 
-        // Otherwise, search neighbors for closest free cell
-        const float tile_size = static_cast<float>(grid_esdf.params().tile_size);
-        for (int radius = 1; radius <= 10; ++radius)
+    // Otherwise, search neighbors for closest free cell
+    const float tile_size = static_cast<float>(grid_esdf.params().tile_size);
+    for (int radius = 1; radius <= 10; ++radius)
+    {
+        for (int dx = -radius; dx <= radius; ++dx)
         {
-            for (int dx = -radius; dx <= radius; ++dx)
-            {
                 for (int dy = -radius; dy <= radius; ++dy)
                 {
                     if (std::abs(dx) != radius && std::abs(dy) != radius) continue;  // Only check perimeter
@@ -1291,15 +1182,6 @@ RoboCompGridder::TPoint SpecificWorker::Gridder_getClosestFreePoint(RoboCompGrid
             }
         }
         return {0, 0};  // No free point found
-    }
-    else
-    {
-        // Dense grid modes
-        if(const auto &p = grid.closest_free({source.x, source.y}); p.has_value())
-            return {static_cast<float>(p->x()), static_cast<float>(p->y())};
-        else
-            return {0, 0};  // non valid closest point
-    }
 }
 RoboCompGridder::TDimensions SpecificWorker::Gridder_getDimensions()
 {
@@ -1310,49 +1192,24 @@ RoboCompGridder::TDimensions SpecificWorker::Gridder_getDimensions()
 }
 RoboCompGridder::Map SpecificWorker::Gridder_getMap()
 {
-    //qInfo() << __FUNCTION__ << " Requesting map. Current grid mode: " << (params.GRID_MODE == Params::GridMode::SPARSE_ESDF ? "SPARSE_ESDF" : (params.GRID_MODE == Params::GridMode::DENSE_ESDF ? "DENSE_ESDF" : "DENSE"));
     std::lock_guard<std::mutex> lock(mutex_path);
     RoboCompGridder::Map result;
 
-    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
+    // Serialize sparse ESDF grid
+    auto serialized = grid_esdf.serialize_map();
+    result.tileSize = serialized.tile_size;
+    result.cells.reserve(serialized.num_cells);
+
+    for (const auto &cell : serialized.cells)
     {
-        // Serialize sparse ESDF grid
-        auto serialized = grid_esdf.serialize_map();
-        result.tileSize = serialized.tile_size;
-        result.cells.reserve(serialized.num_cells);
-
-        for (const auto &cell : serialized.cells)
-        {
-            RoboCompGridder::TCell tc;
-            tc.x = cell.x;
-            tc.y = cell.y;
-            tc.cost = cell.cost;
-            result.cells.push_back(tc);
-        }
-
-        qInfo() << __FUNCTION__ << "Returning ESDF map with" << result.cells.size() << "cells";
-    }
-    else
-    {
-        // Serialize dense grid - only cells with cost > 0
-        result.tileSize = static_cast<int>(params.TILE_SIZE);
-
-        for (const auto &[key, cell] : grid)
-        {
-            if (cell.cost > 1.0f)  // Skip free cells (cost=1)
-            {
-                RoboCompGridder::TCell tc;
-                tc.x = key.first;
-                tc.y = key.second;
-                // Normalize cost to 0-255 range
-                tc.cost = static_cast<uint8_t>(std::min(255.f, cell.cost * 2.55f));
-                result.cells.push_back(tc);
-            }
-        }
-
-        qInfo() << __FUNCTION__ << "Returning dense map with" << result.cells.size() << "cells";
+        RoboCompGridder::TCell tc;
+        tc.x = cell.x;
+        tc.y = cell.y;
+        tc.cost = cell.cost;
+        result.cells.push_back(tc);
     }
 
+    qInfo() << __FUNCTION__ << "Returning ESDF map with" << result.cells.size() << "cells";
     return result;
 }
 bool SpecificWorker::Gridder_setGridDimensions(RoboCompGridder::TDimensions dimensions)
@@ -1364,77 +1221,24 @@ bool SpecificWorker::Gridder_setGridDimensions(RoboCompGridder::TDimensions dime
 }
 RoboCompGridder::Result SpecificWorker::Gridder_setLocationAndGetPath(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, RoboCompGridder::TPointVector freePoints, RoboCompGridder::TPointVector obstaclePoints)
 {
-
-    std::vector<std::tuple<std::pair<int, int>, Grid::T>> submap_copy;
-
-    //Lambda to get grid keys from TPointVector
-    auto get_key_vector = [this](const RoboCompGridder::TPointVector &v)
-    {
-        std::vector<std::tuple<Grid::Key, float>> keys;
-        for(const auto &p: v)
-            keys.push_back(std::make_tuple(grid.point_to_key(Eigen::Vector2f(p.x, p.y)), p.radius));
-        return keys;
-    };
-
-    //get keys from TPointVector
-    auto free_keys = get_key_vector(freePoints);
-    auto obstacle_keys = get_key_vector(obstaclePoints);
-
-    mutex_path.lock();
-    //Copy submap from actual grid
-    // iterate over free keys and obstacle keys to copy submap
-    for (auto &key: free_keys){
-        auto cells = grid.copy_submap(std::get<0>(key), std::get<1>(key));
-        std::move(cells.begin(), cells.end(), std::back_inserter(submap_copy));
-
-    }
-    for (auto &key: obstacle_keys){
-        auto cells = grid.copy_submap(std::get<0>(key), std::get<1>(key));
-        std::move(cells.begin(), cells.end(), std::back_inserter(submap_copy));
-
-    }
-
-    //Iterate over free keys and obstacle keys to set submap
-    for (auto &key: free_keys){
-        grid.set_submap(std::get<0>(key), std::get<1>(key), true);
-    }
-    for (auto &key: obstacle_keys){
-        grid.set_submap(std::get<0>(key), std::get<1>(key), false);
-    }
-
-    //get paths
-    auto result = Gridder_getPaths(source, target, 1, true, true, params.SAFETY_FACTOR);
-
-    //restore submap
-    grid.paste_submap(submap_copy);
-    mutex_path.unlock();
-
-    return result;
+    // Note: Dynamic grid modification not fully supported in sparse ESDF mode
+    // This function simply computes paths using the current static map
+    qWarning() << "[Gridder] setLocationAndGetPath: Dynamic grid modification not supported in ESDF mode. Using static map.";
+    return Gridder_getPaths(source, target, 1, true, true, params.SAFETY_FACTOR);
 }
 bool SpecificWorker::Gridder_IsPathBlocked(RoboCompGridder::TPath path)
 {
     std::lock_guard<std::mutex> lock(mutex_path);
 
-    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
+    // Check each segment of the path for obstacles
+    for (size_t i = 0; i + 1 < path.size(); ++i)
     {
-        // Sparse ESDF mode: check each segment of the path
-        for (size_t i = 0; i + 1 < path.size(); ++i)
-        {
-            const Eigen::Vector2f from{path[i].x, path[i].y};
-            const Eigen::Vector2f to{path[i + 1].x, path[i + 1].y};
-            if (!grid_esdf.is_line_of_sight_free(from, to, params.ROBOT_SEMI_WIDTH))
-                return true;  // Path is blocked
-        }
-        return false;  // Path is free
+        const Eigen::Vector2f from{path[i].x, path[i].y};
+        const Eigen::Vector2f to{path[i + 1].x, path[i + 1].y};
+        if (!grid_esdf.is_line_of_sight_free(from, to, params.ROBOT_SEMI_WIDTH))
+            return true;  // Path is blocked
     }
-    else
-    {
-        // Dense grid modes
-        std::vector<Eigen::Vector2f> path_;
-        for(const auto &p: path)
-            path_.emplace_back(p.x, p.y);
-        return grid.is_path_blocked(path_);
-    }
+    return false;  // Path is free
 }
 bool SpecificWorker::Gridder_loadMRPTMap(const std::string &filepath)
 {
@@ -1455,13 +1259,10 @@ bool SpecificWorker::Gridder_loadMRPTMap(const std::string &filepath)
 
     std::lock_guard<std::mutex> lock(mutex_path);
 
-    // Choose loading strategy based on grid mode
-    if (params.GRID_MODE == Params::GridMode::SPARSE_ESDF)
-    {
-        qInfo() << "[MRPT Loader] Loading into SPARSE_ESDF grid";
+    qInfo() << "[MRPT Loader] Loading into SPARSE_ESDF grid";
 
-        // Reinitialize grid with MRPT map resolution if different
-        int mrpt_resolution = static_cast<int>(load_result.metadata.resolution);
+    // Reinitialize grid with MRPT map resolution if different
+    int mrpt_resolution = static_cast<int>(load_result.metadata.resolution);
         if (mrpt_resolution > 0 && mrpt_resolution != static_cast<int>(params.TILE_SIZE))
         {
             qInfo() << "[MRPT Loader] Adjusting grid tile size from" << params.TILE_SIZE
@@ -1537,34 +1338,6 @@ bool SpecificWorker::Gridder_loadMRPTMap(const std::string &filepath)
             float collision_pct = 100.f * cells_collided / cells_processed;
             qWarning() << "[MRPT Loader] WARNING:" << collision_pct << "% cells lost due to resolution mismatch!";
         }
-    }
-    else
-    {
-        qInfo() << "[MRPT Loader] Loading into DENSE grid";
-        // Clear previous data
-        grid.reset();
-
-        // Convert MRPT cells to dense grid format
-        for (const auto &mrpt_cell : load_result.cells)
-        {
-            const Grid::Key key = grid.point_to_key(Eigen::Vector2f(
-                static_cast<float>(mrpt_cell.x), static_cast<float>(mrpt_cell.y)));
-
-            if (MRPTMapLoader::is_occupied(mrpt_cell.occupancy, 0.5f))
-            {
-                grid.set_occupied(key);
-                grid.set_cost(key, MRPTMapLoader::convert_occupancy_to_cost(mrpt_cell.occupancy));
-            }
-            else
-            {
-                grid.set_free(key);
-            }
-        }
-
-        // Update costs and visualization
-        grid.update_costs(params.ROBOT_SEMI_WIDTH, true);
-        qInfo() << "[MRPT Loader] DENSE grid loaded with" << grid.size() << "cells";
-    }
 
     return true;
 }

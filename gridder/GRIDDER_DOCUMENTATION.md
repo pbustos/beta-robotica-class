@@ -3,15 +3,13 @@
 ## Table of Contents
 
 1. [Introduction](#1-introduction)
-2. [Occupancy Grid Mathematics](#2-occupancy-grid-mathematics)
-3. [ESDF Construction](#3-esdf-construction)
-4. [Path Planning with ESDF](#4-path-planning-with-esdf)
-5. [Particle Filter Localization](#5-particle-filter-localization)
-6. [MPPI Controller](#6-mppi-controller)
-7. [Implementation Details](#7-implementation-details)
-8. [Optimizations](#8-optimizations)
-9. [Configuration Reference](#9-configuration-reference)
-10. [References](#10-references)
+2. [Sparse ESDF Grid](#2-sparse-esdf-grid)
+3. [Path Planning with ESDF](#3-path-planning-with-esdf)
+4. [Particle Filter Localization](#4-particle-filter-localization)
+5. [MPPI Controller](#5-mppi-controller)
+6. [Implementation Details](#6-implementation-details)
+7. [Configuration Reference](#7-configuration-reference)
+8. [References](#8-references)
 
 ---
 
@@ -19,46 +17,34 @@
 
 The **Gridder** component is a RoboComp module that creates and maintains a 2D occupancy grid from LiDAR sensor data. It provides:
 
-- **Occupancy grid mapping** using Binary Bayes Filter with log-odds
-- **Sparse ESDF** (Euclidean Signed Distance Field) for memory-efficient representation
+- **Sparse ESDF** (Euclidean Signed Distance Field) for memory-efficient map representation
 - **A\* path planning** with ESDF-based cost function
 - **Monte Carlo Localization** (AMCL) using particle filter
+- **MPPI Controller** for smooth trajectory optimization with covariance-aware obstacle avoidance
 
-### 1.1 Grid Building Techniques
+### 1.1 Grid Implementation: Sparse ESDF
 
-The component supports **two different grid construction approaches**, selectable at compile time:
+The component uses a **VoxBlox-inspired sparse representation**:
 
-| Technique | Class | Description | Default |
-|-----------|-------|-------------|---------|
-| **Sparse ESDF** | `GridESDF` | Only stores obstacle cells; free space is implicit | ✓ Yes |
-| **Dense Ray-Casting** | `Grid` | Traditional approach storing all cells with ray tracing | No |
-
-#### Sparse ESDF (Default - Recommended)
-
-The default implementation uses a **VoxBlox-inspired sparse representation**:
 - **Memory efficient**: Only obstacle cells are stored (typically 1-5% of total area)
-- **Fast updates**: No ray casting needed; directly updates hit cells
+- **Fast updates**: Direct obstacle updates without ray casting
 - **Built-in ESDF**: Distance field computed on-demand or precomputed for localization
-- **Best for**: Large environments, real-time applications, memory-constrained systems
+- **TSDF-style weights**: Observation confidence weighting for robust updates
 
-#### Dense Ray-Casting (Legacy)
+#### Key Features
 
-The traditional approach stores every cell in the grid:
-- **Complete representation**: All cells (free, occupied, unknown) explicitly stored
-- **Ray tracing**: Each LiDAR ray is traced from sensor to hit point, updating all cells along the path
-- **Higher accuracy**: Every cell along a ray is marked as free
-- **Best for**: Small environments, high-accuracy requirements, dense obstacle scenarios
-
-**Selection**: Set `GRID_MODE` in `specificworker.h`:
-```cpp
-enum class GridMode { DENSE, DENSE_ESDF, SPARSE_ESDF };
-GridMode GRID_MODE = GridMode::SPARSE_ESDF;  // Default
-```
+| Feature | Description |
+|---------|-------------|
+| **Sparse Storage** | Only obstacle cells stored in hash map |
+| **ESDF Distance Field** | Precomputed distance to nearest obstacle |
+| **ESDF Gradient** | Precomputed gradient for smooth navigation costs |
+| **Observation Weights** | Confidence-weighted obstacle updates |
+| **A* Path Planning** | Cost-aware shortest path computation |
 
 ### 1.2 Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────���────────┐
 │                          GRIDDER                                 │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌───────────────┐    ┌───────────────┐    ┌───────────────┐   │
@@ -71,33 +57,86 @@ GridMode GRID_MODE = GridMode::SPARSE_ESDF;  // Default
 │  │  Robot Pose   │    │ Path Planner  │    │   Localizer   │   │
 │  │    Buffer     │    │    (A*)       │    │    (AMCL)     │   │
 │  └───────────────┘    └───────────────┘    └───────────────┘   │
+│          │                    │                    │            │
+│          └────────────────────┼────────────────────┘            │
+│                               ▼                                  │
+│                    ┌───────────────────┐                        │
+│                    │  MPPI Controller  │                        │
+│                    │  (covariance-aware│                        │
+│                    │   navigation)     │                        │
+│                    └───────────────────┘                        │
 ├─────────────────────────────────────────────────────────────────┤
 │                       ICE Interface                              │
-│   getPaths() | getMap() | LineOfSightToTarget() | loadMRPTMap() │
+│   getPaths() | getMap() | getPose() | LineOfSightToTarget()     │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Occupancy Grid Mathematics
+## 2. Sparse ESDF Grid
 
-### 2.1 Fundamental Assumptions
+### 2.1 Data Structure
 
-The occupancy grid relies on three key assumptions:
+The sparse grid uses a hash map to store only occupied cells:
 
-1. **Binary discretization**: Each cell is either completely free or occupied
-2. **Static world**: Cells do not change state by themselves
-3. **Independence**: Cells are independent of each other
+```cpp
+using Key = std::pair<int, int>;  // (x, y) in grid coordinates
+struct Cell {
+    float esdf_distance;     // Distance to nearest obstacle
+    Eigen::Vector2f gradient; // Gradient of distance field
+    float weight;            // Observation confidence (TSDF-style)
+    QGraphicsRectItem* tile; // Visualization
+};
+std::unordered_map<Key, Cell> cells_;
+```
 
-### 2.2 Occupancy Variable
+### 2.2 TSDF-Style Weighted Updates
 
-Each cell $m$ is a **binary random variable**:
+Instead of binary Bayes filter, we use a **weighted averaging** approach inspired by TSDF:
 
 $$
-p(m) = \text{probability that the cell is occupied}
+w_{new} = w_{old} + w_{obs}
 $$
 $$
-p(\neg m) = 1 - p(m) = \text{probability that the cell is free}
+d_{new} = \frac{w_{old} \cdot d_{old} + w_{obs} \cdot d_{obs}}{w_{new}}
+$$
+
+Where:
+- $w_{obs}$: Observation weight (decreases with distance from sensor)
+- $d_{obs}$: Observed distance value
+- Weights are clamped to prevent overflow
+
+**Advantages over Binary Bayes:**
+- More stable obstacle boundaries
+- Natural handling of sensor noise
+- Better temporal consistency
+
+### 2.3 ESDF Computation
+
+The Euclidean Signed Distance Field is computed using **Brushfire algorithm**:
+
+1. **Initialize**: All obstacle cells have distance 0
+2. **Propagate**: BFS from obstacles, updating neighbor distances
+3. **Result**: Each cell contains distance to nearest obstacle
+
+**Distance update:**
+$$
+d(p) = \min_{q \in N(p)} \left( d(q) + \|p - q\| \right)
+$$
+
+### 2.4 ESDF Gradient
+
+The gradient points **away from obstacles** and is computed as:
+
+$$
+\nabla d(p) = \frac{p - p_{closest}}{\|p - p_{closest}\|}
+$$
+
+Where $p_{closest}$ is the nearest obstacle to point $p$.
+
+**Uses:**
+- Smooth obstacle avoidance costs in MPPI
+- Covariance-aware margin inflation
 $$
 
 **Without prior knowledge**: $p(m) = 0.5$
@@ -918,22 +957,202 @@ Where:
 2. **Limited horizon**: Does not guarantee global optimality
 3. **Computational cost**: Can be expensive for high-dimensional systems
 
+### 6.13 Time-Correlated Noise
+
+Standard MPPI uses **independent** Gaussian noise at each timestep. This produces jerky trajectories that oscillate rapidly. We use **temporally correlated noise** via an AR(1) process:
+
+$$
+\epsilon_{t+1} = \alpha \cdot \epsilon_t + \sqrt{1-\alpha^2} \cdot \eta_t
+$$
+
+Where:
+- $\alpha \in [0, 1]$ : correlation factor (typically 0.8-0.95)
+- $\eta_t \sim \mathcal{N}(0, \sigma^2)$ : innovation noise
+- $\sqrt{1-\alpha^2}$ : scaling to maintain variance
+
+**Effect:**
+- $\alpha = 0$ : Independent noise (standard MPPI)
+- $\alpha \to 1$ : Highly correlated, smooth trajectories
+
+**Benefits:**
+- Smoother sampled trajectories
+- Better exploration of solution space
+- Reduced jitter in optimal control
+
+### 6.14 Adaptive Covariance
+
+The exploration covariance $\Sigma$ is adapted online based on the **quality of sampled trajectories**:
+
+**Gating condition** (to prevent instability):
+```
+allow_adapt = (valid_ratio > 0.80) AND (ESS_ratio > 0.10)
+```
+
+Where:
+- `valid_ratio` = fraction of non-collision trajectories
+- `ESS_ratio` = Effective Sample Size / K
+
+**Update rule** (exponential moving average):
+$$
+\sigma_{new}^2 = (1-\beta) \cdot \sigma_{old}^2 + \beta \cdot \sigma_{weighted}^2
+$$
+
+Where $\sigma_{weighted}^2$ is the weighted variance of noise from successful trajectories.
+
+**Bounds:**
+```cpp
+sigma_vx ∈ [sigma_min_vx, sigma_max_vx]
+sigma_vy ∈ [sigma_min_vy, sigma_max_vy]  
+sigma_omega ∈ [sigma_min_omega, sigma_max_omega]
+```
+
+**Emergency shrink:** When `valid_ratio < 0.5`, covariance is reduced by 10% to escape difficult situations.
+
+### 6.15 ESDF-Based Obstacle Costs
+
+Instead of using raw LiDAR distances, we use the **ESDF distance field** for smooth obstacle costs:
+
+**Fused distance:**
+$$
+d_{fused} = \min(d_{ESDF}, d_{LiDAR})
+$$
+
+**Cost function (softplus barrier):**
+$$
+c_{obs} = w_{obs} \cdot \text{softplus}\left(\frac{m - d_{fused}}{\tau}\right)
+$$
+
+Where:
+- $m$ : safety margin (robot radius + buffer)
+- $\tau$ : decay parameter (controls steepness)
+- $\text{softplus}(x) = \log(1 + e^x)$
+
+**Advantages over LiDAR-only:**
+- Smooth gradients for optimization
+- No discontinuities at obstacle boundaries
+- Better handling of narrow passages
+
+### 6.16 Covariance-Aware Margin Inflation (Option A)
+
+When the robot's pose has uncertainty (from the localizer), we **inflate the safety margin** proportionally to pose uncertainty. This is the key innovation for robust navigation under localization uncertainty.
+
+#### Mathematical Derivation
+
+**Pose covariance:**
+$$
+\Sigma_\xi = \begin{bmatrix} \sigma_{xx}^2 & \sigma_{xy} & \sigma_{x\theta} \\ \sigma_{xy} & \sigma_{yy}^2 & \sigma_{y\theta} \\ \sigma_{x\theta} & \sigma_{y\theta} & \sigma_{\theta\theta}^2 \end{bmatrix}
+$$
+
+**ESDF gradient at point p:**
+$$
+\mathbf{g}(p) = \nabla d(p) = \begin{bmatrix} \partial d/\partial x \\ \partial d/\partial y \end{bmatrix}
+$$
+
+**Distance variance induced by pose uncertainty:**
+$$
+\sigma_d^2 = \mathbf{g}^T \Sigma_{xy} \mathbf{g}
+$$
+
+Where $\Sigma_{xy}$ is the 2×2 position covariance block.
+
+**Effective margin:**
+$$
+m_{eff} = m + z \cdot \sigma_d
+$$
+
+Where $z$ is a risk multiplier:
+- $z = 1.64$ : 95% one-sided confidence
+- $z = 2.33$ : 99% one-sided confidence
+
+**Penetration cost:**
+$$
+pen = \max(0, m_{eff} - d_{fused})
+$$
+
+$$
+c_{obs} = w_{obs} \cdot \left(\frac{pen}{m_{eff}}\right)^2
+$$
+
+#### Algorithm
+
+```
+For each trajectory state (x, y, θ):
+1. Query ESDF: d_esdf, gradient g
+2. Compute d_fused = min(d_esdf, d_lidar)
+3. If d_fused < gate × m:  // Only inflate near obstacles
+   a. Extract Σ_xy from pose covariance
+   b. Compute σ_d = sqrt(g^T × Σ_xy × g)
+   c. Clamp: σ_d = min(σ_d, σ_max_clamp × m)
+   d. Inflate: m_eff = m + z × σ_d
+4. Else: m_eff = m
+5. Compute penetration and cost
+```
+
+#### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `cov_z_score` | 1.64 | Risk multiplier (1.64=95%, 2.33=99%) |
+| `cov_inflation_gate` | 2.0 | Only inflate when d < gate × margin |
+| `cov_sigma_max_clamp` | 0.5 | Clamp σ_d to this fraction of margin |
+
+#### Effect
+
+- **High pose uncertainty** → Larger effective margin → More conservative
+- **Low pose uncertainty** → Normal margin → Efficient navigation
+- **Only near obstacles** → No overhead in open space
+
+### 6.17 MPPI Configuration Parameters
+
+```cpp
+struct Params {
+    // Sampling
+    int K = 512;                    // Number of trajectory samples
+    int T = 30;                     // Prediction horizon (steps)
+    float dt = 0.05f;               // Timestep (seconds)
+    float lambda = 1.0f;            // Temperature parameter
+    
+    // Time-correlated noise
+    bool use_time_correlated_noise = true;
+    float noise_alpha = 0.9f;       // Correlation factor
+    
+    // Adaptive covariance
+    bool use_adaptive_covariance = true;
+    float cov_adaptation_rate = 0.1f;
+    float sigma_vx = 50.0f;         // Initial sigma for vx (mm/s)
+    float sigma_vy = 150.0f;        // Initial sigma for vy (mm/s)
+    float sigma_omega = 0.3f;       // Initial sigma for omega (rad/s)
+    
+    // Robot limits
+    float max_vx = 300.0f;          // mm/s - lateral speed
+    float max_vy = 800.0f;          // mm/s - forward speed
+    float max_omega = 0.5f;         // rad/s - rotation
+    
+    // Cost weights
+    float w_path = 1.0f;            // Path following
+    float w_obstacle = 50.0f;       // Obstacle avoidance
+    float w_goal = 5.0f;            // Goal reaching
+    float w_smoothness = 1.0f;      // Control smoothness
+    float w_speed = 0.001f;         // Speed preference
+    
+    // Safety
+    float robot_radius = 250.0f;    // mm - collision threshold
+    float collision_buffer = 120.0f; // mm - soft penalty band
+    float safety_margin = 1000.0f;  // mm - outer cost zone
+    
+    // Covariance-aware margin inflation
+    bool use_covariance_inflation = true;
+    float cov_z_score = 1.64f;      // Risk multiplier
+    float cov_inflation_gate = 2.0f;
+    float cov_sigma_max_clamp = 0.5f;
+};
+```
+
 ---
 
 ## 7. Implementation Details
 
 ### 7.1 Data Structures
-
-#### Grid Cell (Dense)
-```cpp
-struct T {
-    uint32_t id;
-    bool free = true;
-    float cost = 1;
-    float log_odds = 0.0f;
-    QGraphicsRectItem *tile;
-};
-```
 
 #### Obstacle Cell (Sparse ESDF)
 ```cpp
@@ -966,21 +1185,14 @@ Key point_to_key(float x, float y) {
 }
 ```
 
-**Log-odds to Probability:**
-```cpp
-float probability(float log_odds) {
-    return 1.0f - 1.0f / (1.0f + std::exp(log_odds));
-}
-```
+### 7.3 Thread Architecture
 
-### 7.3 Thread Safety
-
-| Component | Thread | Synchronization |
-|-----------|--------|-----------------|
-| LiDAR reader | read_lidar_th | DoubleBuffer |
-| Grid update | main thread | mutex_path |
-| Localization | main thread | atomic flags |
-| Visualization | main thread | Qt event loop |
+| Thread | Function | Synchronization |
+|--------|----------|-----------------|
+| LiDAR reader | `read_lidar()` | DoubleBuffer |
+| Localizer | `run_localizer()` | atomic flags, buffer |
+| MPPI | `run_mppi()` | atomic flags, buffer |
+| Main (compute) | `compute()` | mutex, Qt event loop |
 
 ### 7.4 MRPT Map Loading
 

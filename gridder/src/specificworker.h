@@ -32,7 +32,6 @@
 //#define HIBERNATION_ENABLED
 
 #include <genericworker.h>
-#include "grid.h"
 #include "grid_esdf.h"
 #include "mrpt_map_loader.h"
 #include "localizer.h"
@@ -219,13 +218,6 @@ class SpecificWorker : public GenericWorker
 	        bool DRAW_LIDAR_POINTS = false;  // debug: draw LiDAR points (can impact performance)
 	        int MAX_LIDAR_DRAW_POINTS = 1500; // debug: limit number of points drawn
 
-	    	// Grid mode selection
-	        enum class GridMode { DENSE, DENSE_ESDF, SPARSE_ESDF };
-	        GridMode GRID_MODE = GridMode::SPARSE_ESDF;  // Options:
-            // DENSE: original ray casting (accurate, slow for large maps)
-            // DENSE_ESDF: dense grid with ESDF optimization
-            // SPARSE_ESDF: sparse grid, only obstacles stored (fastest, most memory efficient)
-	        bool USE_ESDF_MODE = false;  // kept for backward compatibility
 	        // Path planning safety factor: 0=shortest path (touch walls), 1=safest path (prefer center)
 	        float SAFETY_FACTOR = 1.0f;	// 0=touch walls, 1=prefer center
 	        size_t MAX_ASTAR_NODES = 100000;  // Maximum nodes to expand in A* before giving up
@@ -272,9 +264,8 @@ class SpecificWorker : public GenericWorker
 	    // Double buffer for estimated robot pose (written by localizer thread, read by main thread)
 	    BufferSync<InOut<Eigen::Affine2f, Eigen::Affine2f>> buffer_estimated_pose;
 
-	    // Grids (two implementations available)
-	    Grid grid;              // Dense grid (original)
-	    GridESDF grid_esdf;     // Sparse ESDF grid (VoxBlox-style)
+	    // Grid (Sparse ESDF - VoxBlox-style)
+	    GridESDF grid_esdf;
 
 	    // Localizer (AMCL)
 	    Localizer localizer;
