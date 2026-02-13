@@ -77,12 +77,12 @@ public:
         // Adaptive covariance parameters - CONSERVATIVE settings
         float cov_adaptation_rate = 0.01f;  // Beta: very slow adaptation for stability
         bool use_adaptive_covariance = true;  // Enable/disable covariance adaptation
-        float sigma_min_vx = 40.0f;         // Minimum sigma for vx (mm/s) - narrower range
+        float sigma_min_vx = 40.0f;         // Minimum sigma for vx (mm/s)
         float sigma_min_vy = 80.0f;         // Minimum sigma for vy (mm/s)
         float sigma_min_omega = 0.1f;       // Minimum sigma for omega (rad/s)
-        float sigma_max_vx = 120.0f;        // Maximum sigma for vx (mm/s) - narrower range
-        float sigma_max_vy = 250.0f;        // Maximum sigma for vy (mm/s)
-        float sigma_max_omega = 0.5f;       // Maximum sigma for omega (rad/s)
+        float sigma_max_vx = 100.0f;        // Maximum sigma for vx (mm/s) - reduced from 120
+        float sigma_max_vy = 180.0f;        // Maximum sigma for vy (mm/s) - reduced from 250
+        float sigma_max_omega = 0.4f;       // Maximum sigma for omega (rad/s) - reduced from 0.5
 
         // Robot limits
         float max_vx = 300.0f;     // mm/s - limited lateral

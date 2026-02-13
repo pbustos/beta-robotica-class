@@ -503,29 +503,44 @@ MPPIController::ControlCommand MPPIController::compute(
 
     // =========================================================================
     // Adaptive sigma based on valid rollout ratio AND ESS
-    // Only adapt when conditions are favorable to avoid "learning wrong sigma"
+    // Two-stage logic:
+    //   1. allow_adapt gate: only learn sigma when conditions are favorable
+    //   2. Emergency multipliers: always apply safety corrections
     // =========================================================================
     if (params_.use_adaptive_covariance)
     {
-        if (valid_ratio > 0.80f && ess_ratio > 0.10f)
+        // Gate: only allow covariance learning when conditions are favorable
+        // This prevents "learning wrong sigma" when obstacles dominate
+        const bool allow_adapt = (valid_ratio > 0.80f && ess_ratio > 0.10f);
+
+        if (allow_adapt)
         {
-            // Conditions favorable: allow normal covariance adaptation
-            if (valid_ratio > 0.90f)
+            // ✅ Conditions favorable: allow weighted sigma update
+            // Only increase exploration very slowly when very safe
+            if (valid_ratio > 0.95f && ess_ratio > 0.30f)
             {
-                // Plenty of valid rollouts -> we can afford more exploration
-                adaptive_sigma_vx_ *= 1.02f;
-                adaptive_sigma_vy_ *= 1.02f;
-                adaptive_sigma_omega_ *= 1.02f;
+                adaptive_sigma_vx_ *= 1.005f;
+                adaptive_sigma_vy_ *= 1.005f;
+                adaptive_sigma_omega_ *= 1.005f;
             }
         }
-        else if (valid_ratio < 0.70f)
+        // else: ❌ skip covariance learning this cycle
+
+        // Emergency multipliers: always apply regardless of allow_adapt
+        if (valid_ratio < 0.70f)
         {
-            // Too many collisions -> reduce exploration NOW (emergency)
-            adaptive_sigma_vx_ *= 0.80f;
-            adaptive_sigma_vy_ *= 0.80f;
-            adaptive_sigma_omega_ *= 0.80f;
+            // Too many collisions -> reduce exploration NOW
+            adaptive_sigma_vx_ *= 0.70f;
+            adaptive_sigma_vy_ *= 0.70f;
+            adaptive_sigma_omega_ *= 0.70f;
         }
-        // else: 0.70 <= valid_ratio <= 0.80 or low ESS -> skip adaptation this cycle
+        else if (valid_ratio < 0.80f)
+        {
+            // Warning zone -> gentle reduction
+            adaptive_sigma_vx_ *= 0.90f;
+            adaptive_sigma_vy_ *= 0.90f;
+            adaptive_sigma_omega_ *= 0.90f;
+        }
 
         // Always clamp to safe ranges
         adaptive_sigma_vx_ = std::clamp(adaptive_sigma_vx_, params_.sigma_min_vx, params_.sigma_max_vx);
@@ -625,8 +640,14 @@ MPPIController::ControlCommand MPPIController::compute(
     // =========================================================================
     // ADAPTIVE COVARIANCE UPDATE (Safe Diagonal Version with Horizon Averaging)
     // sigma_i^2 = (1 - beta) * sigma_i^2 + beta * (1/T) * sum_t sum_k w_k * epsilon_{t,i}^2
+    //
+    // GATE: Only update sigma from weighted noise when conditions are favorable.
+    // This prevents "σ jumps to max" moments caused by learning from poor distributions.
     // =========================================================================
-    if (params_.use_adaptive_covariance)
+    // Recompute allow_adapt gate (same logic as the multiplier section above)
+    const bool allow_weighted_sigma_update = (valid_ratio > 0.80f && ess_ratio > 0.10f);
+
+    if (params_.use_adaptive_covariance && allow_weighted_sigma_update)
     {
         float weighted_var_vx = 0.0f;
         float weighted_var_vy = 0.0f;
@@ -674,6 +695,7 @@ MPPIController::ControlCommand MPPIController::compute(
             adaptive_sigma_omega_ = std::clamp(new_sigma_omega, params_.sigma_min_omega, params_.sigma_max_omega);
         }
     }
+    // else: ❌ skip weighted covariance update this cycle (conditions unfavorable)
 
     // Periodic debug: show adaptive sigma values
     static int cov_debug_counter = 0;
