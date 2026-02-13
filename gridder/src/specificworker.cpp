@@ -71,6 +71,12 @@ SpecificWorker::~SpecificWorker()
 	if(localizer_th.joinable())
 		localizer_th.join();
 	std::cout << "Localizer thread stopped" << std::endl;
+
+	// Signal the MPPI thread to stop and wait for it
+	stop_mppi_thread = true;
+	if(mppi_th.joinable())
+		mppi_th.join();
+	std::cout << "MPPI thread stopped" << std::endl;
 }
 void SpecificWorker::initialize()
 {
@@ -155,6 +161,10 @@ void SpecificWorker::initialize()
         mppi_params.robot_radius = params.ROBOT_SEMI_WIDTH;
         mppi_controller.setParams(mppi_params);
 
+        // MPPI thread is created
+        mppi_th = std::thread(&SpecificWorker::run_mppi, this);
+        std::cout << __FUNCTION__ << " Started MPPI thread" << std::endl;
+
         // Initialize CPU usage tracking
         getrusage(RUSAGE_SELF, &last_usage);
         last_cpu_time = std::chrono::steady_clock::now();
@@ -166,7 +176,7 @@ void SpecificWorker::initialize()
         connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, [this](QPointF p)
         {
             qInfo() << "[MOUSE] New global target arrived:" << p;
-            std::lock_guard<std::mutex> lock(mutex_path);
+            std::lock_guard<std::mutex> lock(mutex_current_path);
 
             // Use current robot position in world coordinates as source
             const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -384,21 +394,31 @@ void SpecificWorker::compute()
     viewer->robot_poly()->setPos(display_x, display_y);
     viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
 
-    // ============ MPPI NAVIGATION ============
-    if (auto cmd = compute_mppi_control(estimated_robot_pose, points_world); cmd.has_value())
+    // ============ MPPI NAVIGATION (read from MPPI thread) ============
+    if (mppi_enabled.load())
     {
-        auto [vx, vy, omega] = cmd.value();
-        try
+        const auto& [mppi_out] = buffer_mppi_output.read(timestamp);
+        if (mppi_out.has_value() && mppi_out->valid)
         {
-            // MPPI returns: vx = sideways (X+ right), vy = forward (Y+), omega = rotation
-            // setSpeedBase expects same convention: (sideways, forward, rotation)
-            omnirobot_proxy->setSpeedBase(vx, vy, omega);
+            try
+            {
+                // MPPI returns: vx = sideways (X+ right), vy = forward (Y+), omega = rotation
+                // setSpeedBase expects same convention: (sideways, forward, rotation)
+                omnirobot_proxy->setSpeedBase(mppi_out->vx, mppi_out->vy, mppi_out->omega);
+            }
+            catch (const Ice::Exception &e)
+            {
+                static int error_count = 0;
+                if (++error_count % 100 == 1)
+                    qWarning() << "[MPPI] Failed to send speed to robot:" << e.what();
+            }
         }
-        catch (const Ice::Exception &e)
+
+        // Update MPPI trajectory visualization (from the thread's output)
         {
-            static int error_count = 0;
-            if (++error_count % 100 == 1)
-                qWarning() << "[MPPI] Failed to send speed to robot:" << e.what();
+            std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
+            if (!last_optimal_trajectory.empty())
+                draw_mppi_trajectory(last_optimal_trajectory);
         }
     }
 
@@ -672,53 +692,110 @@ void SpecificWorker::draw_paths(const std::vector<std::vector<Eigen::Vector2f>> 
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////
-// MPPI Navigation Methods
+// MPPI Thread - runs controller independently at its own rate
 //////////////////////////////////////////////////////////////////////////////////////////////
 
-std::optional<std::tuple<float, float, float>> SpecificWorker::compute_mppi_control(
-    const Eigen::Affine2f& robot_pose,
-    const std::vector<Eigen::Vector2f>& lidar_points)
+void SpecificWorker::run_mppi()
 {
-    // Check preconditions - return nullopt if MPPI should not run
-    if (not mppi_enabled.load())
-        return std::nullopt;
+    auto wait_period = std::chrono::milliseconds(30);  // ~33Hz for control
 
-    if (nav_state != NavigationState::NAVIGATING)
-        return std::nullopt;
-
-    if (current_path.empty())
-        return std::nullopt;
-
-    // Convert robot pose to MPPI state
-    MPPIController::State current_state;
-    current_state.x = robot_pose.translation().x();
-    current_state.y = robot_pose.translation().y();
-    current_state.theta = std::atan2(robot_pose.linear()(1,0), robot_pose.linear()(0,0));
-
-    // Check if goal reached
-    if (mppi_controller.goalReached(current_state, current_path.back()))
+    while (!stop_mppi_thread)
     {
-        nav_state = NavigationState::GOAL_REACHED;
-        qInfo() << "[MPPI] Goal reached!";
-        return std::make_tuple(0.f, 0.f, 0.f);  // Stop
+        // Check preconditions
+        if (!mppi_enabled.load() || nav_state.load() != NavigationState::NAVIGATING)
+        {
+            std::this_thread::sleep_for(wait_period);
+            continue;
+        }
+
+        const auto timestamp = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+
+        // Read current robot pose from estimated pose buffer
+        Eigen::Affine2f robot_pose;
+        {
+            const auto& [estimated] = buffer_estimated_pose.read(timestamp);
+            if (estimated.has_value())
+                robot_pose = estimated.value();
+            else
+            {
+                // Try to get from sync buffer as fallback
+                const auto& [robot, lw, ll] = buffer_sync.read(timestamp);
+                if (robot.has_value())
+                    robot_pose = robot.value();
+                else
+                {
+                    std::this_thread::sleep_for(wait_period);
+                    continue;
+                }
+            }
+        }
+
+        // Read LiDAR points for obstacle avoidance
+        std::vector<Eigen::Vector2f> lidar_points;
+        {
+            const auto& [robot, lw, ll] = buffer_sync.read(timestamp);
+            if (lw.has_value())
+                lidar_points = lw.value();
+        }
+
+        // Get current path (protected by mutex)
+        std::vector<Eigen::Vector2f> path_copy;
+        {
+            std::lock_guard<std::mutex> lock(mutex_current_path);
+            path_copy = current_path;
+        }
+
+        if (path_copy.empty())
+        {
+            std::this_thread::sleep_for(wait_period);
+            continue;
+        }
+
+        // Convert robot pose to MPPI state
+        MPPIController::State current_state;
+        current_state.x = robot_pose.translation().x();
+        current_state.y = robot_pose.translation().y();
+        current_state.theta = std::atan2(robot_pose.linear()(1,0), robot_pose.linear()(0,0));
+
+        // Check if goal reached
+        if (mppi_controller.goalReached(current_state, path_copy.back()))
+        {
+            nav_state.store(NavigationState::GOAL_REACHED);
+            qInfo() << "[MPPI] Goal reached!";
+
+            // Send stop command
+            MPPIOutput out{0.f, 0.f, 0.f, true};
+            buffer_mppi_output.put<0>(std::move(out), timestamp);
+            std::this_thread::sleep_for(wait_period);
+            continue;
+        }
+
+        // Compute control command using MPPI
+        auto cmd = mppi_controller.compute(current_state, path_copy, lidar_points);
+
+        // Log command periodically
+        static int log_counter = 0;
+        if (++log_counter % 50 == 0)
+        {
+            qDebug() << "[MPPI Thread] Command: vx=" << cmd.vx << "mm/s, vy=" << cmd.vy
+                     << "mm/s, omega=" << cmd.omega << "rad/s";
+        }
+
+        // Write to output buffer
+        MPPIOutput out{cmd.vx, cmd.vy, cmd.omega, true};
+        buffer_mppi_output.put<0>(std::move(out), timestamp);
+
+        // Copy trajectory for visualization (protected by mutex)
+        {
+            std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
+            last_optimal_trajectory = mppi_controller.getOptimalTrajectory();
+        }
+
+        std::this_thread::sleep_for(wait_period);
     }
-
-    // Compute control command using MPPI
-    auto cmd = mppi_controller.compute(current_state, current_path, lidar_points);
-
-    // Log command periodically
-    static int log_counter = 0;
-    if (++log_counter % 50 == 0)
-    {
-        qDebug() << "[MPPI] Command: vx=" << cmd.vx << "mm/s, vy=" << cmd.vy
-                 << "mm/s, omega=" << cmd.omega << "rad/s";
-    }
-
-    // Draw MPPI predicted trajectory
-    draw_mppi_trajectory(mppi_controller.getOptimalTrajectory());
-
-    // Return velocities (vx, vy in mm/s, omega in rad/s)
-    return std::make_tuple(cmd.vx, cmd.vy, cmd.omega);
+    qInfo() << "[MPPI Thread] Stopped";
 }
 
 void SpecificWorker::draw_mppi_trajectory(const std::vector<MPPIController::State>& trajectory)

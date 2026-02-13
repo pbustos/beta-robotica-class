@@ -300,21 +300,33 @@ class SpecificWorker : public GenericWorker
 	    MPPIController mppi_controller;
 	    std::atomic<bool> mppi_enabled{false};
 
+	    // MPPI Thread
+	    std::thread mppi_th;
+	    std::atomic<bool> stop_mppi_thread{false};
+	    void run_mppi();
+
+	    // Double buffer for MPPI control output (written by MPPI thread, read by main thread)
+	    // Stores (vx, vy, omega, valid) - valid indicates if the command is fresh
+	    struct MPPIOutput {
+	        float vx = 0.f;
+	        float vy = 0.f;
+	        float omega = 0.f;
+	        bool valid = false;
+	    };
+	    BufferSync<InOut<MPPIOutput, MPPIOutput>> buffer_mppi_output;
+
 	    // Navigation state
 	    enum class NavigationState { IDLE, NAVIGATING, GOAL_REACHED, BLOCKED };
-	    NavigationState nav_state = NavigationState::IDLE;
+	    std::atomic<NavigationState> nav_state{NavigationState::IDLE};
 	    std::vector<Eigen::Vector2f> current_path;
+	    std::mutex mutex_current_path;  // Protects current_path access
 	    Eigen::Vector2f current_target;
 
 	    // MPPI visualization
 	    std::vector<QGraphicsItem*> mppi_trajectory_items;
 	    void draw_mppi_trajectory(const std::vector<MPPIController::State>& trajectory);
-
-	    // Navigation methods - returns optional (vx, vy, omega) velocities
-	    // Returns nullopt if MPPI is disabled or not navigating
-	    std::optional<std::tuple<float, float, float>> compute_mppi_control(
-	        const Eigen::Affine2f& robot_pose,
-	        const std::vector<Eigen::Vector2f>& lidar_points);
+	    std::mutex mutex_mppi_trajectory;  // Protects trajectory visualization data
+	    std::vector<MPPIController::State> last_optimal_trajectory;  // For visualization from main thread
 
 	    // CPU usage tracking
 	    float get_cpu_usage();
