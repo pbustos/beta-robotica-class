@@ -41,6 +41,7 @@ MPPIController::MPPIController(const Params& params)
     , adaptive_sigma_vx_(params.sigma_vx)
     , adaptive_sigma_vy_(params.sigma_vy)
     , adaptive_sigma_omega_(params.sigma_omega)
+    , adaptive_lambda_(params.lambda)
 {
     // Initialize previous controls to zero
     prev_controls_.resize(params_.T);
@@ -97,8 +98,9 @@ MPPIController::ControlCommand MPPIController::compute(
     }
 
     // =========================================================================
-    // NOISE GENERATION with adaptive covariance
-    // Using simple i.i.d. noise scaled by adaptive sigma (AR(1) was unstable)
+    // NOISE GENERATION: AR(1) time-correlated OR i.i.d. (configurable)
+    // AR(1): epsilon_t = alpha * epsilon_{t-1} + eta_t
+    // eta_t ~ N(0, (1-alpha^2) * sigma^2) to preserve marginal variance
     // =========================================================================
     const int total_samples = params_.K * params_.T;
     if (static_cast<int>(noise_buffer_vx_.size()) != total_samples)
@@ -108,12 +110,43 @@ MPPIController::ControlCommand MPPIController::compute(
         noise_buffer_omega_.resize(total_samples);
     }
 
-    // Generate i.i.d. noise scaled by adaptive sigma
-    for (int i = 0; i < total_samples; ++i)
+    if (params_.use_time_correlated_noise)
     {
-        noise_buffer_vx_[i] = noise_vx_(rng_) * adaptive_sigma_vx_;
-        noise_buffer_vy_[i] = noise_vy_(rng_) * adaptive_sigma_vy_;
-        noise_buffer_omega_[i] = noise_omega_(rng_) * adaptive_sigma_omega_;
+        // AR(1) correlated noise generation
+        const float alpha = params_.noise_alpha;
+        const float innovation_scale = std::sqrt(std::max(0.0f, 1.0f - alpha * alpha));
+
+        for (int k = 0; k < params_.K; ++k)
+        {
+            // Initialize AR(1) state for this trajectory
+            float eps_vx = noise_vx_(rng_) * adaptive_sigma_vx_;
+            float eps_vy = noise_vy_(rng_) * adaptive_sigma_vy_;
+            float eps_omega = noise_omega_(rng_) * adaptive_sigma_omega_;
+
+            const int noise_base = k * params_.T;
+            for (int t = 0; t < params_.T; ++t)
+            {
+                // Store current noise value
+                noise_buffer_vx_[noise_base + t] = eps_vx;
+                noise_buffer_vy_[noise_base + t] = eps_vy;
+                noise_buffer_omega_[noise_base + t] = eps_omega;
+
+                // AR(1) update for next timestep
+                eps_vx = alpha * eps_vx + innovation_scale * adaptive_sigma_vx_ * noise_vx_(rng_);
+                eps_vy = alpha * eps_vy + innovation_scale * adaptive_sigma_vy_ * noise_vy_(rng_);
+                eps_omega = alpha * eps_omega + innovation_scale * adaptive_sigma_omega_ * noise_omega_(rng_);
+            }
+        }
+    }
+    else
+    {
+        // Standard i.i.d. noise (fallback)
+        for (int i = 0; i < total_samples; ++i)
+        {
+            noise_buffer_vx_[i] = noise_vx_(rng_) * adaptive_sigma_vx_;
+            noise_buffer_vy_[i] = noise_vy_(rng_) * adaptive_sigma_vy_;
+            noise_buffer_omega_[i] = noise_omega_(rng_) * adaptive_sigma_omega_;
+        }
     }
 
     // =========================================================================
@@ -158,6 +191,17 @@ MPPIController::ControlCommand MPPIController::compute(
     const float cos_theta_init = std::cos(current_state.theta);
     const float sin_theta_init = std::sin(current_state.theta);
 
+    // Cost breakdown structure for debug
+    struct CostBreakdown {
+        float path_cost = 0.f;
+        float obstacle_cost = 0.f;
+        float smoothness_cost = 0.f;
+        float speed_cost = 0.f;
+        float goal_cost = 0.f;
+        float total() const { return path_cost + obstacle_cost + smoothness_cost + speed_cost + goal_cost; }
+    };
+    std::vector<CostBreakdown> cost_breakdowns(params_.K);
+
     // Sample K trajectories
     for (int k = 0; k < params_.K; ++k)
     {
@@ -172,6 +216,7 @@ MPPIController::ControlCommand MPPIController::compute(
 
         bool collision = false;
         float traj_cost = 0.0f;
+        CostBreakdown& breakdown = cost_breakdowns[k];
 
         // Generate control sequence with noise
         const int noise_base = k * params_.T;
@@ -235,7 +280,9 @@ MPPIController::ControlCommand MPPIController::compute(
                     float min_dist = std::sqrt(min_dist_sq);
                     float penetration = params_.safety_margin - min_dist;
                     // Quadratic + exponential for very aggressive avoidance
-                    traj_cost += params_.w_obstacle * (penetration * penetration / 1000.0f + std::exp(penetration / params_.obstacle_decay));
+                    float obs_c = params_.w_obstacle * (penetration * penetration / 1000.0f + std::exp(penetration / params_.obstacle_decay));
+                    traj_cost += obs_c;
+                    breakdown.obstacle_cost += obs_c;
                 }
 
                 // =========================================================================
@@ -250,7 +297,9 @@ MPPIController::ControlCommand MPPIController::compute(
                     if (d_sq < path_min_dist_sq) path_min_dist_sq = d_sq;
                 }
                 // Use linear distance to avoid dominating obstacle cost
-                traj_cost += params_.w_path * std::sqrt(path_min_dist_sq);
+                float path_c = params_.w_path * std::sqrt(path_min_dist_sq);
+                traj_cost += path_c;
+                breakdown.path_cost += path_c;
 
                 // Smoothness cost
                 if (t > 0)
@@ -258,14 +307,18 @@ MPPIController::ControlCommand MPPIController::compute(
                     float dvx = (ctrl.vx - controls[t-1].vx) / params_.max_vx;
                     float dvy = (ctrl.vy - controls[t-1].vy) / params_.max_vy;
                     float domega = (ctrl.omega - controls[t-1].omega) / params_.max_omega;
-                    traj_cost += params_.w_smoothness * (dvx*dvx + dvy*dvy + domega*domega);
+                    float smooth_c = params_.w_smoothness * (dvx*dvx + dvy*dvy + domega*domega);
+                    traj_cost += smooth_c;
+                    breakdown.smoothness_cost += smooth_c;
                 }
 
                 // Speed cost
                 float speed_sq = ctrl.vx * ctrl.vx + ctrl.vy * ctrl.vy;
                 float desired_speed = params_.max_vy * 0.5f;
                 float speed_diff = std::sqrt(speed_sq) - desired_speed;
-                traj_cost += params_.w_speed * speed_diff * speed_diff;
+                float speed_c = params_.w_speed * speed_diff * speed_diff;
+                traj_cost += speed_c;
+                breakdown.speed_cost += speed_c;
             }
         }
 
@@ -275,12 +328,15 @@ MPPIController::ControlCommand MPPIController::compute(
             const Eigen::Vector2f& goal = path.back();
             float dx = state.x - goal.x();
             float dy = state.y - goal.y();
-            traj_cost += params_.w_goal * std::sqrt(dx * dx + dy * dy);
+            float goal_c = params_.w_goal * std::sqrt(dx * dx + dy * dy);
+            traj_cost += goal_c;
+            breakdown.goal_cost += goal_c;
         }
 
         all_controls[k] = std::move(controls);
         all_trajectories[k] = std::move(trajectory);
-        costs[k] = collision ? std::numeric_limits<float>::infinity() : traj_cost;
+        // Apply cost scaling to get values in MPPI-friendly range (10-1000 instead of 10k-1M)
+        costs[k] = collision ? std::numeric_limits<float>::infinity() : (traj_cost / params_.cost_scale);
     }
 
     // Find minimum cost for numerical stability
@@ -299,9 +355,13 @@ MPPIController::ControlCommand MPPIController::compute(
     // =========================================================================
     // OPTIMIZATION 9: Fused weight computation and normalization
     // =========================================================================
-    const float inv_lambda = -1.0f / params_.lambda;
+    const float inv_lambda = -1.0f / adaptive_lambda_;
     float weight_sum = 0.0f;
     std::vector<float> weights(params_.K);
+
+    // Track statistics for debug
+    float max_cost = min_cost;
+    int valid_count = 0;
 
     for (int k = 0; k < params_.K; ++k)
     {
@@ -313,6 +373,8 @@ MPPIController::ControlCommand MPPIController::compute(
         {
             weights[k] = std::exp(inv_lambda * (costs[k] - min_cost));
             weight_sum += weights[k];
+            if (costs[k] > max_cost) max_cost = costs[k];
+            valid_count++;
         }
     }
 
@@ -322,6 +384,99 @@ MPPIController::ControlCommand MPPIController::compute(
     }
 
     const float inv_weight_sum = 1.0f / weight_sum;
+
+    // =========================================================================
+    // Compute Effective Sample Size (ESS) = 1 / sum(w_i^2)
+    // ESS close to 1 means one trajectory dominates (bad)
+    // ESS close to K means uniform weights (good exploration)
+    // =========================================================================
+    float sum_w_squared = 0.0f;
+    for (int k = 0; k < params_.K; ++k)
+    {
+        float w_norm = weights[k] * inv_weight_sum;
+        sum_w_squared += w_norm * w_norm;
+    }
+    const float ess = (sum_w_squared > 1e-10f) ? (1.0f / sum_w_squared) : static_cast<float>(valid_count);
+
+    // Adaptive lambda: if ESS is too low, increase lambda to flatten the distribution
+    // ESS < 5% of valid samples indicates poor diversity
+    const float ess_ratio = ess / static_cast<float>(std::max(1, valid_count));
+
+    if (params_.use_adaptive_covariance)  // Use same flag for adaptive lambda
+    {
+        if (ess_ratio < 0.05f && adaptive_lambda_ < 20.0f * params_.lambda)
+        {
+            // ESS very low (<5%) - increase lambda more aggressively
+            adaptive_lambda_ *= 1.2f;
+        }
+        else if (ess_ratio > 0.2f && adaptive_lambda_ > params_.lambda)
+        {
+            // ESS healthy (>20%) - slowly restore original lambda
+            adaptive_lambda_ *= 0.95f;
+        }
+    }
+
+    // Debug: show cost, weight, and ESS statistics
+    static int stats_counter = 0;
+    if (++stats_counter % 100 == 0)
+    {
+        // Find min/max normalized weights and best trajectory index
+        float min_weight = std::numeric_limits<float>::max();
+        float max_weight = 0.0f;
+        int best_idx = -1;
+        int median_idx = -1;
+
+        // Find best (lowest cost) and a typical (median cost) trajectory
+        std::vector<std::pair<float, int>> valid_costs;
+        for (int k = 0; k < params_.K; ++k)
+        {
+            float w = weights[k] * inv_weight_sum;
+            if (w > 1e-10f)
+            {
+                if (w < min_weight) min_weight = w;
+                if (w > max_weight) max_weight = w;
+            }
+            if (!std::isinf(costs[k]))
+            {
+                valid_costs.push_back({costs[k], k});
+            }
+        }
+
+        if (!valid_costs.empty())
+        {
+            std::sort(valid_costs.begin(), valid_costs.end());
+            best_idx = valid_costs.front().second;
+            median_idx = valid_costs[valid_costs.size() / 2].second;
+        }
+
+        qDebug() << "[MPPI Stats] Costs(scaled): min=" << min_cost << "max=" << max_cost
+                 << "| ESS:" << ess << "/" << valid_count << "(" << (ess_ratio * 100) << "%)"
+                 << "| lambda:" << adaptive_lambda_
+                 << "| Valid:" << valid_count << "/" << params_.K;
+
+        // Print cost breakdown for best and median trajectories (scaled)
+        const float inv_scale = 1.0f / params_.cost_scale;
+        if (best_idx >= 0)
+        {
+            const auto& best = cost_breakdowns[best_idx];
+            qDebug() << "[MPPI Best ] path=" << (best.path_cost * inv_scale)
+                     << "obs=" << (best.obstacle_cost * inv_scale)
+                     << "smooth=" << (best.smoothness_cost * inv_scale)
+                     << "speed=" << (best.speed_cost * inv_scale)
+                     << "goal=" << (best.goal_cost * inv_scale)
+                     << "TOTAL=" << (best.total() * inv_scale);
+        }
+        if (median_idx >= 0 && median_idx != best_idx)
+        {
+            const auto& med = cost_breakdowns[median_idx];
+            qDebug() << "[MPPI Med  ] path=" << (med.path_cost * inv_scale)
+                     << "obs=" << (med.obstacle_cost * inv_scale)
+                     << "smooth=" << (med.smoothness_cost * inv_scale)
+                     << "speed=" << (med.speed_cost * inv_scale)
+                     << "goal=" << (med.goal_cost * inv_scale)
+                     << "TOTAL=" << (med.total() * inv_scale);
+        }
+    }
 
     // =========================================================================
     // OPTIMIZATION 10: Fused weight normalization and control averaging
@@ -351,18 +506,66 @@ MPPIController::ControlCommand MPPIController::compute(
     }
 
     // =========================================================================
-    // ADAPTIVE COVARIANCE UPDATE - DISABLED FOR DEBUGGING
-    // The adaptive update was causing instability, using fixed sigmas
+    // ADAPTIVE COVARIANCE UPDATE (Safe Diagonal Version with Horizon Averaging)
+    // sigma_i^2 = (1 - beta) * sigma_i^2 + beta * (1/T) * sum_t sum_k w_k * epsilon_{t,i}^2
     // =========================================================================
-    // Keep adaptive sigmas at their initial values (from params)
-    // This effectively disables adaptation while keeping the infrastructure
+    if (params_.use_adaptive_covariance)
+    {
+        float weighted_var_vx = 0.0f;
+        float weighted_var_vy = 0.0f;
+        float weighted_var_omega = 0.0f;
+        float total_weight = 0.0f;
 
-    // Periodic debug: show current sigma values
+        for (int k = 0; k < params_.K; ++k)
+        {
+            const float w = weights[k] * inv_weight_sum;
+            if (w > 1e-10f)
+            {
+                const int noise_base = k * params_.T;
+                for (int t = 0; t < params_.T; ++t)
+                {
+                    float eps_vx = noise_buffer_vx_[noise_base + t];
+                    float eps_vy = noise_buffer_vy_[noise_base + t];
+                    float eps_omega = noise_buffer_omega_[noise_base + t];
+
+                    weighted_var_vx += w * eps_vx * eps_vx;
+                    weighted_var_vy += w * eps_vy * eps_vy;
+                    weighted_var_omega += w * eps_omega * eps_omega;
+                }
+                total_weight += w * params_.T;
+            }
+        }
+
+        // Horizon averaging for stability
+        if (total_weight > 1e-10f)
+        {
+            weighted_var_vx /= static_cast<float>(params_.T);
+            weighted_var_vy /= static_cast<float>(params_.T);
+            weighted_var_omega /= static_cast<float>(params_.T);
+
+            // Update adaptive sigmas with very slow exponential moving average (safe version)
+            const float beta = params_.cov_adaptation_rate;  // 0.01 = very slow
+            const float one_minus_beta = 1.0f - beta;
+
+            float new_sigma_vx = std::sqrt(one_minus_beta * adaptive_sigma_vx_ * adaptive_sigma_vx_ + beta * weighted_var_vx);
+            float new_sigma_vy = std::sqrt(one_minus_beta * adaptive_sigma_vy_ * adaptive_sigma_vy_ + beta * weighted_var_vy);
+            float new_sigma_omega = std::sqrt(one_minus_beta * adaptive_sigma_omega_ * adaptive_sigma_omega_ + beta * weighted_var_omega);
+
+            // Critical: clamp to safe range (narrower bounds for stability)
+            adaptive_sigma_vx_ = std::clamp(new_sigma_vx, params_.sigma_min_vx, params_.sigma_max_vx);
+            adaptive_sigma_vy_ = std::clamp(new_sigma_vy, params_.sigma_min_vy, params_.sigma_max_vy);
+            adaptive_sigma_omega_ = std::clamp(new_sigma_omega, params_.sigma_min_omega, params_.sigma_max_omega);
+        }
+    }
+
+    // Periodic debug: show adaptive sigma values
     static int cov_debug_counter = 0;
     if (++cov_debug_counter % 200 == 0)
     {
-        qDebug() << "[MPPI] Sigma (fixed): vx=" << adaptive_sigma_vx_
-                 << "vy=" << adaptive_sigma_vy_ << "omega=" << adaptive_sigma_omega_;
+        qDebug() << "[MPPI] Adaptive sigma: vx=" << adaptive_sigma_vx_
+                 << "vy=" << adaptive_sigma_vy_ << "omega=" << adaptive_sigma_omega_
+                 << "(AR1=" << params_.use_time_correlated_noise
+                 << ", adapt=" << params_.use_adaptive_covariance << ")";
     }
 
     // Store for next iteration (warm start)
@@ -429,6 +632,9 @@ void MPPIController::reset()
     adaptive_sigma_vy_ = params_.sigma_vy;
     adaptive_sigma_omega_ = params_.sigma_omega;
 
+    // Reset adaptive lambda
+    adaptive_lambda_ = params_.lambda;
+
     // Reset AR(1) states
     std::fill(ar1_state_vx_.begin(), ar1_state_vx_.end(), 0.0f);
     std::fill(ar1_state_vy_.begin(), ar1_state_vy_.end(), 0.0f);
@@ -447,6 +653,9 @@ void MPPIController::setParams(const Params& params)
     adaptive_sigma_vx_ = params.sigma_vx;
     adaptive_sigma_vy_ = params.sigma_vy;
     adaptive_sigma_omega_ = params.sigma_omega;
+
+    // Initialize adaptive lambda
+    adaptive_lambda_ = params.lambda;
 
     // Resize control sequence if horizon changed
     if (static_cast<int>(prev_controls_.size()) != params_.T)

@@ -62,36 +62,39 @@ public:
         int K = 100;               // Number of sampled trajectories
         int T = 50;                // Prediction horizon (time steps)
         float dt = 0.1f;           // Time step (seconds) - larger for stability
-        float lambda = 1.0f;       // Temperature parameter
+        float lambda = 50.0f;      // Temperature - should be ~10-100 after cost rescaling
+        float cost_scale = 1000.0f; // Divide all costs by this to get totals in range 10-1000
 
         // Control noise standard deviations (initial values, adapted online)
         float sigma_vx = 80.0f;    // mm/s - lateral exploration
         float sigma_vy = 150.0f;   // mm/s - forward speed variation
         float sigma_omega = 0.3f;  // rad/s - rotation exploration
 
-        // Time-correlated noise (AR(1) process)
-        float noise_alpha = 0.9f;  // Temporal correlation factor [0.8, 0.95] - higher = smoother trajectories
+        // Time-correlated noise (AR(1) process) - CONSERVATIVE settings
+        float noise_alpha = 0.6f;  // Temporal correlation [0.5-0.7] - lower = more reactive
+        bool use_time_correlated_noise = true;  // Enable/disable AR(1) noise
 
-        // Adaptive covariance parameters
-        float cov_adaptation_rate = 0.05f;  // Beta: how fast covariance adapts [0.03, 0.1]
-        float sigma_min_vx = 20.0f;         // Minimum sigma for vx (mm/s)
-        float sigma_min_vy = 50.0f;         // Minimum sigma for vy (mm/s)
-        float sigma_min_omega = 0.05f;      // Minimum sigma for omega (rad/s)
-        float sigma_max_vx = 200.0f;        // Maximum sigma for vx (mm/s)
-        float sigma_max_vy = 400.0f;        // Maximum sigma for vy (mm/s)
-        float sigma_max_omega = 0.8f;       // Maximum sigma for omega (rad/s)
+        // Adaptive covariance parameters - CONSERVATIVE settings
+        float cov_adaptation_rate = 0.01f;  // Beta: very slow adaptation for stability
+        bool use_adaptive_covariance = true;  // Enable/disable covariance adaptation
+        float sigma_min_vx = 40.0f;         // Minimum sigma for vx (mm/s) - narrower range
+        float sigma_min_vy = 80.0f;         // Minimum sigma for vy (mm/s)
+        float sigma_min_omega = 0.1f;       // Minimum sigma for omega (rad/s)
+        float sigma_max_vx = 120.0f;        // Maximum sigma for vx (mm/s) - narrower range
+        float sigma_max_vy = 250.0f;        // Maximum sigma for vy (mm/s)
+        float sigma_max_omega = 0.5f;       // Maximum sigma for omega (rad/s)
 
         // Robot limits
         float max_vx = 300.0f;     // mm/s - limited lateral
         float max_vy = 800.0f;     // mm/s - main forward speed
         float max_omega = 0.5f;    // rad/s - smooth turning
 
-        // Cost weights
-        float w_path = 1.0f;           // Weight for path following (slightly higher to follow path better)
-        float w_obstacle = 100.0f;     // Weight for obstacle avoidance (reduced from 200)
-        float w_goal = 3.0f;           // Weight for goal reaching
-        float w_smoothness = 2.0f;     // Weight for control smoothness (increased for smoother motion)
-        float w_speed = 0.1f;          // Weight for maintaining desired speed
+        // Cost weights (TUNED based on cost breakdown analysis)
+        float w_path = 1.0f;           // Weight for path following
+        float w_obstacle = 50.0f;      // Weight for obstacle avoidance (reduced - was dominating)
+        float w_goal = 5.0f;           // Weight for goal reaching (increased)
+        float w_smoothness = 1.0f;     // Weight for control smoothness
+        float w_speed = 0.001f;        // Weight for speed - VERY LOW (was dominating total cost)
         float w_heading = 2.0f;        // Weight for heading alignment
 
         // Safety parameters
@@ -186,6 +189,9 @@ private:
     float adaptive_sigma_vx_;
     float adaptive_sigma_vy_;
     float adaptive_sigma_omega_;
+
+    // Adaptive lambda (temperature) - adjusted based on ESS
+    float adaptive_lambda_;
 
     // AR(1) correlated noise state - one per trajectory sample
     mutable std::vector<float> ar1_state_vx_;

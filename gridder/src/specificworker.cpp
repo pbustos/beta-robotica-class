@@ -292,6 +292,21 @@ void SpecificWorker::initialize()
                         << path_length/1000.f << "m, cost:" << path_cost << ", time:" << elapsed_sec << "s";
                 draw_path(path, &viewer->scene);
 
+                // Draw target marker (solid circle)
+                static QGraphicsEllipseItem* target_marker = nullptr;
+                if (target_marker)
+                {
+                    viewer->scene.removeItem(target_marker);
+                    delete target_marker;
+                }
+                const float marker_size = 200.f;  // mm
+                target_marker = viewer->scene.addEllipse(
+                    -marker_size/2, -marker_size/2, marker_size, marker_size,
+                    QPen(QColor("Red"), 30),
+                    QBrush(QColor(255, 0, 0, 150)));  // Semi-transparent red fill
+                target_marker->setPos(target.x(), target.y());
+                target_marker->setZValue(20);  // On top of everything
+
                 // Update MPPI navigation target and path
                 current_path = path;
                 current_target = target;
@@ -357,31 +372,25 @@ void SpecificWorker::compute()
     // Note: lidar_local is used by the localizer thread via buffer_sync
 
     /// Update grid with world coordinates (only if no external map loaded)
-    mutex_path.lock();
     if (not external_map_loaded)
     {
+        mutex_path.lock();
         // SPARSE_ESDF mode: VoxBlox-style, only stores obstacles
         grid.check_and_resize(points_world);
         grid_esdf.update(points_world, robot_pos.translation(), params.MAX_LIDAR_RANGE, timestamp);
         grid_esdf.update_visualization(true);  // Only update visualization when there are changes
+        mutex_path.unlock();
     }
-    // When external_map_loaded, visualization is static - no need to update
-    mutex_path.unlock();
 
     // ============ UPDATE ROBOT POSE (from Localizer thread or Ground Truth) ============
     if (params.USE_LOCALIZER and external_map_loaded)
-    {
         // Try to read from localizer thread's buffer
-        const auto& [estimated] = buffer_estimated_pose.read(timestamp);
-        if (estimated.has_value())
+        if (const auto& [estimated] = buffer_estimated_pose.read(timestamp); estimated.has_value())
             estimated_robot_pose = estimated.value();
         else
             estimated_robot_pose = robot_pos;  // Fallback to ground truth
-    }
     else
-    {
         estimated_robot_pose = robot_pos;  // Use ground truth directly
-    }
 
     // ============ Debug: draw lidar points to inspect noise
     if(params.DRAW_LIDAR_POINTS)
@@ -399,7 +408,6 @@ void SpecificWorker::compute()
     {
         const auto& [mppi_out] = buffer_mppi_output.read(timestamp);
         if (mppi_out.has_value() && mppi_out->valid)
-        {
             try
             {
                 // MPPI returns: vx = sideways (X+ right), vy = forward (Y+), omega = rotation
@@ -412,14 +420,11 @@ void SpecificWorker::compute()
                 if (++error_count % 100 == 1)
                     qWarning() << "[MPPI] Failed to send speed to robot:" << e.what();
             }
-        }
 
         // Update MPPI trajectory visualization (from the thread's output)
-        {
-            std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
-            if (!last_optimal_trajectory.empty())
-                draw_mppi_trajectory(last_optimal_trajectory);
-        }
+        std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
+        if (!last_optimal_trajectory.empty())
+            draw_mppi_trajectory(last_optimal_trajectory);
     }
 
     // ============ UPDATE UI ============
@@ -427,7 +432,7 @@ void SpecificWorker::compute()
     this->lcdNumber_hz->display(this->hz);
 
     // Update CPU usage with exponential moving average to reduce flickering
-    float current_cpu = get_cpu_usage();
+    const float current_cpu = get_cpu_usage();
     cpu_usage_avg = CPU_AVG_ALPHA * current_cpu + (1.0f - CPU_AVG_ALPHA) * cpu_usage_avg;
     this->lcdNumber_cpu->display(static_cast<int>(cpu_usage_avg));
 }
@@ -551,7 +556,7 @@ void SpecificWorker::read_lidar()
 /////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::run_localizer()
 {
-    auto wait_period = std::chrono::milliseconds(50);  // 20Hz for localization
+    const auto wait_period = std::chrono::milliseconds(params.LOCALIZER_PERIOD_MS);
 
     while (!stop_localizer_thread)
     {
@@ -697,7 +702,7 @@ void SpecificWorker::draw_paths(const std::vector<std::vector<Eigen::Vector2f>> 
 
 void SpecificWorker::run_mppi()
 {
-    auto wait_period = std::chrono::milliseconds(30);  // ~33Hz for control
+    const auto wait_period = std::chrono::milliseconds(params.MPPI_PERIOD_MS);
 
     while (!stop_mppi_thread)
     {

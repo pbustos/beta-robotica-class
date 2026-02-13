@@ -240,10 +240,14 @@ class SpecificWorker : public GenericWorker
 	        bool USE_LOCALIZER = true;  // Enable/disable AMCL localization
 	        size_t LOCALIZER_PARTICLES = 500;  // Number of particles
 	        float LOCALIZER_ODOM_NOISE = 0.1f;  // Noise factor for simulated odometry
+	        int LOCALIZER_PERIOD_MS = 50;       // ms - Localizer thread period (20 Hz)
 	        float MRPT_MAP_OFFSET_X = 12000.0f; //26100.7f;  // mm - X offset to apply to loaded map
 	        float MRPT_MAP_OFFSET_Y = -2500.0f;//5600.f;  // mm - Y offset to apply to loaded map
 	        float MRPT_MAP_ROTATION =  -M_PI_2;   // radians - rotation to apply (90º left = PI/2)
 	        bool MRPT_MAP_MIRROR_X = true;       // Mirror X axis (negate X before rotation) if map appears flipped
+
+	        // MPPI controller parameters
+	        int MPPI_PERIOD_MS = 50;            // ms - MPPI thread period (~33 Hz)
 	    };
 	    Params params;
 
