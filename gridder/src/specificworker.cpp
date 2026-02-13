@@ -1451,8 +1451,22 @@ std::string SpecificWorker::Gridder_loadAndInitializeMap(const std::string &file
 }
 RoboCompGridder::Pose SpecificWorker::Gridder_getPose()
 {
-    RoboCompGridder::Pose ret{};  //TODO: fill ret with actual pose data
-    //implementCODE
+    RoboCompGridder::Pose ret{};
+
+    // Read from thread-safe buffer
+    const auto timestamp = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    const auto& [estimated] = buffer_estimated_pose.read(timestamp);
+    if (estimated.has_value())
+    {
+        const auto& pose = estimated.value();
+        ret.x = pose.translation().x();
+        ret.y = pose.translation().y();
+        ret.theta = std::atan2(pose.linear()(1, 0), pose.linear()(0, 0));
+    }
+    // else: returns default (0, 0, 0) if no pose available yet
 
     return ret;
 }

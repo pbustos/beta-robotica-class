@@ -297,8 +297,8 @@ class SpecificWorker : public GenericWorker
 		Eigen::Affine2f get_robot_pose();
 	    float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
 
-	    // ==================== Robot Pose Estimation ====================
-	    Eigen::Affine2f estimated_robot_pose;  // Current best estimate of robot pose
+    // ==================== Robot Pose Estimation ====================
+    Eigen::Affine2f estimated_robot_pose;  // Current best estimate of robot pose
 
 	    // ==================== MPPI Controller ====================
 	    MPPIController mppi_controller;
