@@ -153,7 +153,8 @@ MPPIController::ControlCommand MPPIController::compute(
     // Pre-compute obstacle squared distances threshold
     // =========================================================================
     const float robot_radius_sq = params_.robot_radius * params_.robot_radius;
-    const float safety_margin_sq = params_.safety_margin * params_.safety_margin;
+    const float buffer_radius = params_.robot_radius + params_.collision_buffer;
+    const float buffer_radius_sq = buffer_radius * buffer_radius;
 
     // =========================================================================
     // OPTIMIZATION 3: Subsample obstacles for faster collision checking
@@ -253,40 +254,104 @@ MPPIController::ControlCommand MPPIController::compute(
             trajectory.push_back(state);
 
             // =========================================================================
-            // OPTIMIZATION 7: Early termination on collision (inline obstacle check)
+            // Smooth obstacle distance using softmin over k nearest points
+            // d_softmin = -1/β * log(Σ exp(-β * d_i))
+            // This reduces discontinuities from raw LiDAR point min
             // =========================================================================
-            float min_dist_sq = std::numeric_limits<float>::max();
+            constexpr int k_nearest = 10;  // Number of nearest points for softmin
+            constexpr float softmin_beta = 0.02f;  // Smoothing parameter (1/mm scale)
+
+            // Collect distances to all obstacles (squared for efficiency)
+            thread_local std::vector<float> distances_sq;
+            distances_sq.clear();
+            distances_sq.reserve(obs_to_use.size());
+
+            bool hard_collision = false;
+            bool in_buffer_zone = false;
+            float min_dist_sq_raw = std::numeric_limits<float>::max();
+
             for (const auto& obs : obs_to_use)
             {
                 float dx = state.x - obs.x();
                 float dy = state.y - obs.y();
                 float dist_sq = dx * dx + dy * dy;
-                if (dist_sq < min_dist_sq) min_dist_sq = dist_sq;
+                distances_sq.push_back(dist_sq);
 
-                // Early exit if collision detected
+                if (dist_sq < min_dist_sq_raw)
+                    min_dist_sq_raw = dist_sq;
+
+                // Hard collision: d < robot_radius → invalid
                 if (dist_sq < robot_radius_sq)
                 {
-                    collision = true;
+                    hard_collision = true;
                     break;
+                }
+                // Buffer zone: robot_radius < d < robot_radius + buffer → huge finite cost
+                else if (dist_sq < buffer_radius_sq)
+                {
+                    in_buffer_zone = true;
                 }
             }
 
-            if (!collision)
+            if (hard_collision)
             {
-                // Obstacle cost (only if within safety margin)
-                // Use very aggressive exponential penalty
-                if (min_dist_sq < safety_margin_sq)
+                collision = true;
+            }
+            else if (!distances_sq.empty())
+            {
+                // Add huge cost if in buffer zone (but still valid)
+                if (in_buffer_zone)
                 {
-                    float min_dist = std::sqrt(min_dist_sq);
-                    float penetration = params_.safety_margin - min_dist;
-                    // Quadratic + exponential for very aggressive avoidance
-                    float obs_c = params_.w_obstacle * (penetration * penetration / 1000.0f + std::exp(penetration / params_.obstacle_decay));
+                    float min_dist = std::sqrt(min_dist_sq_raw);
+                    float buffer_pen = buffer_radius - min_dist;  // How deep into buffer
+                    // Exponential cost that grows rapidly as we approach robot_radius
+                    float buffer_cost = params_.w_obstacle * 50.0f * std::exp(buffer_pen / 30.0f);
+                    traj_cost += buffer_cost;
+                    breakdown.obstacle_cost += buffer_cost;
+                }
+
+                // Partial sort to get k smallest distances
+                int k = std::min(k_nearest, static_cast<int>(distances_sq.size()));
+                std::partial_sort(distances_sq.begin(), distances_sq.begin() + k, distances_sq.end());
+
+                // Compute softmin: d_softmin = -1/β * log(Σ exp(-β * d_i))
+                // For numerical stability, factor out the minimum:
+                // softmin = d_min - 1/β * log(Σ exp(-β * (d_i - d_min)))
+                float d_min = std::sqrt(distances_sq[0]);
+                float sum_exp = 0.0f;
+                for (int i = 0; i < k; ++i)
+                {
+                    float d_i = std::sqrt(distances_sq[i]);
+                    sum_exp += std::exp(-softmin_beta * (d_i - d_min));
+                }
+                float softmin_dist = d_min - (1.0f / softmin_beta) * std::log(sum_exp);
+
+                // Use softmin distance for obstacle cost
+                if (softmin_dist < params_.safety_margin)
+                {
+                    float pen = params_.safety_margin - softmin_dist;
+                    pen = std::clamp(pen, 0.f, params_.safety_margin - params_.robot_radius);
+
+                    // Softplus with zero baseline: k_sp * (softplus(x) - log(2))
+                    // This makes obstacle cost = 0 at pen = 0
+                    float x = pen / params_.obstacle_decay;
+                    float sp = std::log1p(std::exp(std::min(x, 20.0f)));
+                    constexpr float sp0 = 0.693147f;  // log(2)
+                    constexpr float k_sp = 1.44f;
+                    float softplus_term = k_sp * (sp - sp0);  // 0 at pen=0
+
+                    float obs_c = params_.w_obstacle * (pen * pen / 1000.0f + softplus_term);
                     traj_cost += obs_c;
                     breakdown.obstacle_cost += obs_c;
                 }
+            }
 
+            // Other costs (only if no collision)
+            if (!collision)
+            {
                 // =========================================================================
                 // Path following cost - use LINEAR distance, not squared
+                // =========================================================================
                 // =========================================================================
                 float path_min_dist_sq = std::numeric_limits<float>::max();
                 for (const auto& wp : path)
@@ -336,21 +401,49 @@ MPPIController::ControlCommand MPPIController::compute(
         all_controls[k] = std::move(controls);
         all_trajectories[k] = std::move(trajectory);
         // Apply cost scaling to get values in MPPI-friendly range (10-1000 instead of 10k-1M)
+        // Mark collisions with infinity temporarily - will be reassigned after finding min valid
         costs[k] = collision ? std::numeric_limits<float>::infinity() : (traj_cost / params_.cost_scale);
     }
 
-    // Find minimum cost for numerical stability
-    float min_cost = std::numeric_limits<float>::max();
+    // =========================================================================
+    // Finite penalty for invalid (collision) rollouts
+    // Instead of infinity, use: S_invalid = S_min_valid + c * lambda
+    // This keeps invalids strongly worse but doesn't destroy numeric scale
+    // =========================================================================
+
+    // First pass: find minimum valid cost
+    float min_valid_cost = std::numeric_limits<float>::max();
+    int num_invalid = 0;
     for (int k = 0; k < params_.K; ++k)
     {
-        if (costs[k] < min_cost) min_cost = costs[k];
+        if (std::isinf(costs[k]))
+            num_invalid++;
+        else if (costs[k] < min_valid_cost)
+            min_valid_cost = costs[k];
     }
 
-    // If all costs are infinite, return zero control
-    if (std::isinf(min_cost))
+    // If all are invalid, return zero control
+    if (std::isinf(min_valid_cost))
     {
         return ControlCommand{0.0f, 0.0f, 0.0f};
     }
+
+    // Compute valid ratio for later use in adaptive sigma
+    const float valid_ratio = static_cast<float>(params_.K - num_invalid) / static_cast<float>(params_.K);
+
+    // Second pass: assign finite penalty to invalid rollouts
+    // invalid_bonus = c * lambda, where c=30 makes invalids ~exp(-30) ≈ 0 weight relative to best
+    constexpr float invalid_cost_multiplier = 30.0f;
+    const float invalid_cost = min_valid_cost + invalid_cost_multiplier * adaptive_lambda_;
+
+    for (int k = 0; k < params_.K; ++k)
+    {
+        if (std::isinf(costs[k]))
+            costs[k] = invalid_cost;
+    }
+
+    // Now min_cost is min_valid_cost (all costs are finite)
+    float min_cost = min_valid_cost;
 
     // =========================================================================
     // OPTIMIZATION 9: Fused weight computation and normalization
@@ -361,21 +454,13 @@ MPPIController::ControlCommand MPPIController::compute(
 
     // Track statistics for debug
     float max_cost = min_cost;
-    int valid_count = 0;
+    int valid_count = params_.K - num_invalid;  // Already computed above
 
     for (int k = 0; k < params_.K; ++k)
     {
-        if (std::isinf(costs[k]))
-        {
-            weights[k] = 0.0f;
-        }
-        else
-        {
-            weights[k] = std::exp(inv_lambda * (costs[k] - min_cost));
-            weight_sum += weights[k];
-            if (costs[k] > max_cost) max_cost = costs[k];
-            valid_count++;
-        }
+        weights[k] = std::exp(inv_lambda * (costs[k] - min_cost));
+        weight_sum += weights[k];
+        if (costs[k] > max_cost) max_cost = costs[k];
     }
 
     if (weight_sum < 1e-10f)
@@ -416,6 +501,38 @@ MPPIController::ControlCommand MPPIController::compute(
         }
     }
 
+    // =========================================================================
+    // Adaptive sigma based on valid rollout ratio AND ESS
+    // Only adapt when conditions are favorable to avoid "learning wrong sigma"
+    // =========================================================================
+    if (params_.use_adaptive_covariance)
+    {
+        if (valid_ratio > 0.80f && ess_ratio > 0.10f)
+        {
+            // Conditions favorable: allow normal covariance adaptation
+            if (valid_ratio > 0.90f)
+            {
+                // Plenty of valid rollouts -> we can afford more exploration
+                adaptive_sigma_vx_ *= 1.02f;
+                adaptive_sigma_vy_ *= 1.02f;
+                adaptive_sigma_omega_ *= 1.02f;
+            }
+        }
+        else if (valid_ratio < 0.70f)
+        {
+            // Too many collisions -> reduce exploration NOW (emergency)
+            adaptive_sigma_vx_ *= 0.80f;
+            adaptive_sigma_vy_ *= 0.80f;
+            adaptive_sigma_omega_ *= 0.80f;
+        }
+        // else: 0.70 <= valid_ratio <= 0.80 or low ESS -> skip adaptation this cycle
+
+        // Always clamp to safe ranges
+        adaptive_sigma_vx_ = std::clamp(adaptive_sigma_vx_, params_.sigma_min_vx, params_.sigma_max_vx);
+        adaptive_sigma_vy_ = std::clamp(adaptive_sigma_vy_, params_.sigma_min_vy, params_.sigma_max_vy);
+        adaptive_sigma_omega_ = std::clamp(adaptive_sigma_omega_, params_.sigma_min_omega, params_.sigma_max_omega);
+    }
+
     // Debug: show cost, weight, and ESS statistics
     static int stats_counter = 0;
     if (++stats_counter % 100 == 0)
@@ -452,7 +569,7 @@ MPPIController::ControlCommand MPPIController::compute(
         qDebug() << "[MPPI Stats] Costs(scaled): min=" << min_cost << "max=" << max_cost
                  << "| ESS:" << ess << "/" << valid_count << "(" << (ess_ratio * 100) << "%)"
                  << "| lambda:" << adaptive_lambda_
-                 << "| Valid:" << valid_count << "/" << params_.K;
+                 << "| Valid:" << valid_count << "/" << params_.K << "(" << (valid_ratio * 100) << "%)";
 
         // Print cost breakdown for best and median trajectories (scaled)
         const float inv_scale = 1.0f / params_.cost_scale;

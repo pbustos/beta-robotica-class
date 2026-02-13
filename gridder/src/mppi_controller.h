@@ -71,7 +71,7 @@ public:
         float sigma_omega = 0.3f;  // rad/s - rotation exploration
 
         // Time-correlated noise (AR(1) process) - CONSERVATIVE settings
-        float noise_alpha = 0.6f;  // Temporal correlation [0.5-0.7] - lower = more reactive
+        float noise_alpha = 0.8f;  // Temporal correlation [0.5-0.7] - lower = more reactive
         bool use_time_correlated_noise = true;  // Enable/disable AR(1) noise
 
         // Adaptive covariance parameters - CONSERVATIVE settings
@@ -98,9 +98,10 @@ public:
         float w_heading = 2.0f;        // Weight for heading alignment
 
         // Safety parameters
-        float robot_radius = 250.0f;       // mm
-        float safety_margin = 1000.0f;     // mm - reduced from 1200
-        float obstacle_decay = 80.0f;      // mm - increased from 50 for less aggressive decay
+        float robot_radius = 250.0f;       // mm - hard collision threshold
+        float collision_buffer = 120.0f;   // mm - soft penalty band before collision
+        float safety_margin = 1000.0f;     // mm - outer cost zone
+        float obstacle_decay = 100.0f;     // mm - softplus decay parameter
 
         // Path following
         float lookahead_distance = 500.0f; // mm - how far ahead to look on path
