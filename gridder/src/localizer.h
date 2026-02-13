@@ -108,10 +108,10 @@ public:
         float kld_epsilon = 0.02f;        // KL-distance bound
 
         // Motion model noise (proportional to movement)
-        float alpha1 = 0.1f;   // Rotation noise from rotation
-        float alpha2 = 0.05f;  // Rotation noise from translation
-        float alpha3 = 0.1f;   // Translation noise from translation
-        float alpha4 = 0.05f;  // Translation noise from rotation
+        float alpha1 = 0.3f;   // Rotation noise from rotation (was 0.1)
+        float alpha2 = 0.15f;  // Rotation noise from translation (was 0.05)
+        float alpha3 = 0.3f;   // Translation noise from translation (was 0.1)
+        float alpha4 = 0.15f;  // Translation noise from rotation (was 0.05)
 
         // Observation model
         float sigma_hit = 100.f;     // mm - std dev for hit model
@@ -129,7 +129,6 @@ public:
 
         // Visualization
         bool draw_particles = false;
-        bool draw_particles_enabled = false;
         float particle_size = 50.f;  // mm
     };
 
@@ -167,6 +166,9 @@ public:
     // Get pose covariance (2x2 for position, separate for theta)
     void getCovariance(Eigen::Matrix2f& pos_cov, float& theta_var) const;
 
+    // Get full 3x3 covariance matrix as vector [xx, xy, xθ, yy, yθ, θθ] (upper triangular)
+    std::vector<float> getCovarianceVector() const;
+
     // Check if localization has converged
     bool isConverged() const;
 
@@ -176,8 +178,12 @@ public:
     // Get current particle count
     size_t getParticleCount() const { return particles_.size(); }
 
-    // Visualization
+    // Get copy of particles for visualization (thread-safe, call from main thread)
+    std::vector<Particle> getParticlesCopy() const { return particles_; }
+
+    // Visualization (must be called from Qt main thread!)
     void drawParticles();
+    void clearParticleVisualization();  // Clear all particle graphics from scene
     void clearVisualization();
 
     //////////////////////////////////////////////////////////////////////////

@@ -110,6 +110,22 @@ public:
     float get_distance_precomputed(float x, float y) const;
     bool has_precomputed_distances() const { return !precomputed_distances_.empty(); }
 
+    // ESDF query result with distance and gradient
+    struct ESDFQuery
+    {
+        float distance = std::numeric_limits<float>::max();  // Distance to nearest obstacle (mm)
+        Eigen::Vector2f gradient{0.f, 0.f};                  // Gradient pointing away from obstacles (normalized)
+        bool valid = false;                                   // True if query is within map bounds
+    };
+
+    // Query ESDF with gradient (for MPPI obstacle costs)
+    ESDFQuery query_esdf(float x, float y) const;
+    ESDFQuery query_esdf(const Eigen::Vector2f &p) const { return query_esdf(p.x(), p.y()); }
+
+    // Batch query for multiple footprint points (returns minimum distance and averaged gradient)
+    ESDFQuery query_esdf_footprint(const Eigen::Vector2f &center, float theta,
+                                    const std::vector<Eigen::Vector2f> &footprint_local) const;
+
     // Key conversion
     Key point_to_key(const Eigen::Vector2f &p) const;
     Key point_to_key(float x, float y) const;
@@ -171,6 +187,7 @@ private:
 
     // Precomputed distance field for fast localization
     std::unordered_map<Key, float, boost::hash<Key>> precomputed_distances_;
+    std::unordered_map<Key, Eigen::Vector2f, boost::hash<Key>> precomputed_gradients_;  // Gradient at each cell
     int precomputed_min_x_ = 0, precomputed_max_x_ = 0;
     int precomputed_min_y_ = 0, precomputed_max_y_ = 0;
     float precomputed_max_dist_ = 500.f;  // Max distance stored (balanced)

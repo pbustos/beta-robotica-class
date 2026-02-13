@@ -18,6 +18,7 @@
  */
 
 #include "mppi_controller.h"
+#include "grid_esdf.h"  // For ESDF-based obstacle costs
 #include <iostream>
 #include <QDebug>     // For debug output
 #include <algorithm>  // For std::shuffle, std::partial_sort
@@ -722,6 +723,496 @@ MPPIController::ControlCommand MPPIController::compute(
     }
 
     // Return first control command
+    return optimal_controls[0];
+}
+
+// ============================================================================
+// ESDF-based compute (smooth obstacle costs)
+// ============================================================================
+
+MPPIController::ControlCommand MPPIController::compute(
+    const State& current_state,
+    const std::vector<Eigen::Vector2f>& path,
+    const std::vector<Eigen::Vector2f>& obstacles,
+    const GridESDF* esdf)
+{
+    // Fallback to LiDAR-only version if no ESDF available
+    if (esdf == nullptr || !esdf->has_precomputed_distances())
+    {
+        return compute(current_state, path, obstacles);
+    }
+
+    // If no path, return zero control
+    if (path.empty())
+        return ControlCommand{0.0f, 0.0f, 0.0f};
+
+    // Check if goal reached
+    if (goalReached(current_state, path.back()))
+        return ControlCommand{0.0f, 0.0f, 0.0f};
+
+    // Compute nominal control towards the path
+    ControlCommand nominal_control = computeNominalControl(current_state, path);
+
+    // Warm start: shift previous control sequence
+    warmStart();
+
+    // Blend warm-started controls with nominal control
+    for (int t = 0; t < params_.T; ++t)
+    {
+        prev_controls_[t].vx = 0.2f * prev_controls_[t].vx + 0.8f * nominal_control.vx;
+        prev_controls_[t].vy = 0.5f * prev_controls_[t].vy + 0.5f * nominal_control.vy;
+        prev_controls_[t].omega = 0.5f * prev_controls_[t].omega + 0.5f * nominal_control.omega;
+    }
+
+    // Generate noise (same as original)
+    const int total_samples = params_.K * params_.T;
+    if (static_cast<int>(noise_buffer_vx_.size()) != total_samples)
+    {
+        noise_buffer_vx_.resize(total_samples);
+        noise_buffer_vy_.resize(total_samples);
+        noise_buffer_omega_.resize(total_samples);
+    }
+
+    if (params_.use_time_correlated_noise)
+    {
+        const float alpha = params_.noise_alpha;
+        const float innovation_scale = std::sqrt(std::max(0.0f, 1.0f - alpha * alpha));
+
+        for (int k = 0; k < params_.K; ++k)
+        {
+            float eps_vx = noise_vx_(rng_) * adaptive_sigma_vx_;
+            float eps_vy = noise_vy_(rng_) * adaptive_sigma_vy_;
+            float eps_omega = noise_omega_(rng_) * adaptive_sigma_omega_;
+
+            const int noise_base = k * params_.T;
+            for (int t = 0; t < params_.T; ++t)
+            {
+                noise_buffer_vx_[noise_base + t] = eps_vx;
+                noise_buffer_vy_[noise_base + t] = eps_vy;
+                noise_buffer_omega_[noise_base + t] = eps_omega;
+
+                eps_vx = alpha * eps_vx + innovation_scale * adaptive_sigma_vx_ * noise_vx_(rng_);
+                eps_vy = alpha * eps_vy + innovation_scale * adaptive_sigma_vy_ * noise_vy_(rng_);
+                eps_omega = alpha * eps_omega + innovation_scale * adaptive_sigma_omega_ * noise_omega_(rng_);
+            }
+        }
+    }
+    else
+    {
+        for (int i = 0; i < total_samples; ++i)
+        {
+            noise_buffer_vx_[i] = noise_vx_(rng_) * adaptive_sigma_vx_;
+            noise_buffer_vy_[i] = noise_vy_(rng_) * adaptive_sigma_vy_;
+            noise_buffer_omega_[i] = noise_omega_(rng_) * adaptive_sigma_omega_;
+        }
+    }
+
+    // Pre-compute for LiDAR hard collision check
+    const float robot_radius_sq = params_.robot_radius * params_.robot_radius;
+
+    // Subsample obstacles for faster collision checking
+    std::vector<Eigen::Vector2f> subsampled_obstacles;
+    const size_t max_obstacles = 200;
+    if (obstacles.size() > max_obstacles)
+    {
+        subsampled_obstacles.reserve(max_obstacles);
+        const size_t step = obstacles.size() / max_obstacles;
+        for (size_t i = 0; i < obstacles.size(); i += step)
+            subsampled_obstacles.push_back(obstacles[i]);
+    }
+    const auto& obs_to_use = (obstacles.size() > max_obstacles) ? subsampled_obstacles : obstacles;
+
+    // Storage for trajectories and costs
+    std::vector<std::vector<ControlCommand>> all_controls(params_.K);
+    std::vector<std::vector<State>> all_trajectories(params_.K);
+    std::vector<float> costs(params_.K);
+
+    // Precompute sin/cos for initial state
+    const float cos_theta_init = std::cos(current_state.theta);
+    const float sin_theta_init = std::sin(current_state.theta);
+
+    // Cost breakdown for debug
+    struct CostBreakdown {
+        float path_cost = 0.f;
+        float obstacle_cost = 0.f;
+        float smoothness_cost = 0.f;
+        float speed_cost = 0.f;
+        float goal_cost = 0.f;
+        float total() const { return path_cost + obstacle_cost + smoothness_cost + speed_cost + goal_cost; }
+    };
+    std::vector<CostBreakdown> cost_breakdowns(params_.K);
+
+    // ========================================================================
+    // SAMPLE K TRAJECTORIES WITH ESDF-BASED OBSTACLE COSTS
+    // ========================================================================
+    for (int k = 0; k < params_.K; ++k)
+    {
+        std::vector<ControlCommand> controls(params_.T);
+        std::vector<State> trajectory;
+        trajectory.reserve(params_.T + 1);
+        trajectory.push_back(current_state);
+
+        State state = current_state;
+        float cos_theta = cos_theta_init;
+        float sin_theta = sin_theta_init;
+
+        bool collision = false;
+        float traj_cost = 0.0f;
+        CostBreakdown& breakdown = cost_breakdowns[k];
+
+        const int noise_base = k * params_.T;
+        for (int t = 0; t < params_.T && !collision; ++t)
+        {
+            // Add noise to controls
+            ControlCommand ctrl;
+            ctrl.vx = std::clamp(prev_controls_[t].vx + noise_buffer_vx_[noise_base + t],
+                                 -params_.max_vx, params_.max_vx);
+            ctrl.vy = std::clamp(prev_controls_[t].vy + noise_buffer_vy_[noise_base + t],
+                                 -params_.max_vy, params_.max_vy);
+            ctrl.omega = std::clamp(prev_controls_[t].omega + noise_buffer_omega_[noise_base + t],
+                                    -params_.max_omega, params_.max_omega);
+            controls[t] = ctrl;
+
+            // Simulate step
+            float vx_world = ctrl.vx * cos_theta - ctrl.vy * sin_theta;
+            float vy_world = ctrl.vx * sin_theta + ctrl.vy * cos_theta;
+
+            state.x += vx_world * params_.dt;
+            state.y += vy_world * params_.dt;
+            state.theta -= ctrl.omega * params_.dt;
+
+            if (state.theta > M_PI) state.theta -= 2.0f * M_PI;
+            else if (state.theta < -M_PI) state.theta += 2.0f * M_PI;
+
+            cos_theta = std::cos(state.theta);
+            sin_theta = std::sin(state.theta);
+
+            trajectory.push_back(state);
+
+            // ==============================================================
+            // HARD COLLISION CHECK (LiDAR safety layer)
+            // Also compute minimum LiDAR distance for cost fusion
+            // ==============================================================
+            float min_lidar_dist_sq = std::numeric_limits<float>::max();
+            for (const auto& obs : obs_to_use)
+            {
+                float dx = state.x - obs.x();
+                float dy = state.y - obs.y();
+                float dist_sq = dx * dx + dy * dy;
+
+                // Hard collision check
+                if (dist_sq < robot_radius_sq)
+                {
+                    collision = true;
+                    break;
+                }
+
+                // Track minimum distance for cost fusion
+                if (dist_sq < min_lidar_dist_sq)
+                    min_lidar_dist_sq = dist_sq;
+            }
+
+            if (collision)
+                break;
+
+            // ==============================================================
+            // FUSED OBSTACLE COST: d_fused = min(d_esdf, d_lidar)
+            // - ESDF: smooth field from static map
+            // - LiDAR: detects dynamic/unmapped obstacles
+            // ==============================================================
+            float d_esdf = std::numeric_limits<float>::max();
+            GridESDF::ESDFQuery esdf_query = esdf->query_esdf(state.x, state.y);
+            if (esdf_query.valid)
+                d_esdf = esdf_query.distance;
+
+            float d_lidar = std::sqrt(min_lidar_dist_sq);
+
+            // Fused distance: conservative (minimum of both)
+            const float d_fused = std::min(d_esdf, d_lidar);
+
+            // Quadratic hinge cost: c = w * max(0, margin - d)^2
+            if (d_fused < params_.safety_margin)
+            {
+                float pen = params_.safety_margin - d_fused;
+                // Normalize penetration to get reasonable cost values
+                float pen_normalized = pen / params_.safety_margin;
+                float obs_c = params_.w_obstacle * pen_normalized * pen_normalized * 100.0f;
+                traj_cost += obs_c;
+                breakdown.obstacle_cost += obs_c;
+            }
+
+            // Extra penalty when very close to collision
+            if (d_fused < params_.robot_radius + params_.collision_buffer)
+            {
+                float critical_pen = (params_.robot_radius + params_.collision_buffer) - d_fused;
+                float critical_c = params_.w_obstacle * 10.0f * std::exp(critical_pen / 50.0f);
+                traj_cost += critical_c;
+                breakdown.obstacle_cost += critical_c;
+            }
+
+            // ==============================================================
+            // PATH FOLLOWING COST (linear distance)
+            // ==============================================================
+            float path_min_dist_sq = std::numeric_limits<float>::max();
+            for (const auto& wp : path)
+            {
+                float dx = state.x - wp.x();
+                float dy = state.y - wp.y();
+                float d_sq = dx * dx + dy * dy;
+                if (d_sq < path_min_dist_sq) path_min_dist_sq = d_sq;
+            }
+            float path_c = params_.w_path * std::sqrt(path_min_dist_sq);
+            traj_cost += path_c;
+            breakdown.path_cost += path_c;
+
+            // ==============================================================
+            // SMOOTHNESS COST
+            // ==============================================================
+            if (t > 0)
+            {
+                float dvx = (ctrl.vx - controls[t-1].vx) / params_.max_vx;
+                float dvy = (ctrl.vy - controls[t-1].vy) / params_.max_vy;
+                float domega = (ctrl.omega - controls[t-1].omega) / params_.max_omega;
+                float smooth_c = params_.w_smoothness * (dvx*dvx + dvy*dvy + domega*domega);
+                traj_cost += smooth_c;
+                breakdown.smoothness_cost += smooth_c;
+            }
+
+            // ==============================================================
+            // SPEED COST
+            // ==============================================================
+            float speed_sq = ctrl.vx * ctrl.vx + ctrl.vy * ctrl.vy;
+            float desired_speed = params_.max_vy * 0.5f;
+            float speed_diff = std::sqrt(speed_sq) - desired_speed;
+            float speed_c = params_.w_speed * speed_diff * speed_diff;
+            traj_cost += speed_c;
+            breakdown.speed_cost += speed_c;
+        }
+
+        // Goal cost for final state
+        if (!collision)
+        {
+            const Eigen::Vector2f& goal = path.back();
+            float dx = state.x - goal.x();
+            float dy = state.y - goal.y();
+            float goal_c = params_.w_goal * std::sqrt(dx * dx + dy * dy);
+            traj_cost += goal_c;
+            breakdown.goal_cost += goal_c;
+        }
+
+        all_controls[k] = std::move(controls);
+        all_trajectories[k] = std::move(trajectory);
+        costs[k] = collision ? std::numeric_limits<float>::infinity() : (traj_cost / params_.cost_scale);
+    }
+
+    // ========================================================================
+    // WEIGHT COMPUTATION (same as original)
+    // ========================================================================
+    float min_valid_cost = std::numeric_limits<float>::max();
+    int num_invalid = 0;
+    for (int k = 0; k < params_.K; ++k)
+    {
+        if (std::isinf(costs[k]))
+            num_invalid++;
+        else if (costs[k] < min_valid_cost)
+            min_valid_cost = costs[k];
+    }
+
+    if (std::isinf(min_valid_cost))
+        return ControlCommand{0.0f, 0.0f, 0.0f};
+
+    const float valid_ratio = static_cast<float>(params_.K - num_invalid) / static_cast<float>(params_.K);
+
+    constexpr float invalid_cost_multiplier = 30.0f;
+    const float invalid_cost = min_valid_cost + invalid_cost_multiplier * adaptive_lambda_;
+
+    for (int k = 0; k < params_.K; ++k)
+    {
+        if (std::isinf(costs[k]))
+            costs[k] = invalid_cost;
+    }
+
+    float min_cost = min_valid_cost;
+    const float inv_lambda = -1.0f / adaptive_lambda_;
+    float weight_sum = 0.0f;
+    std::vector<float> weights(params_.K);
+
+    float max_cost = min_cost;
+    int valid_count = params_.K - num_invalid;
+
+    for (int k = 0; k < params_.K; ++k)
+    {
+        weights[k] = std::exp(inv_lambda * (costs[k] - min_cost));
+        weight_sum += weights[k];
+        if (costs[k] > max_cost) max_cost = costs[k];
+    }
+
+    if (weight_sum < 1e-10f)
+        return ControlCommand{0.0f, 0.0f, 0.0f};
+
+    const float inv_weight_sum = 1.0f / weight_sum;
+
+    // ESS computation
+    float sum_w_squared = 0.0f;
+    for (int k = 0; k < params_.K; ++k)
+    {
+        float w_norm = weights[k] * inv_weight_sum;
+        sum_w_squared += w_norm * w_norm;
+    }
+    const float ess = (sum_w_squared > 1e-10f) ? (1.0f / sum_w_squared) : static_cast<float>(valid_count);
+    const float ess_ratio = ess / static_cast<float>(std::max(1, valid_count));
+
+    // Adaptive lambda
+    if (params_.use_adaptive_covariance)
+    {
+        if (ess_ratio < 0.05f && adaptive_lambda_ < 20.0f * params_.lambda)
+            adaptive_lambda_ *= 1.2f;
+        else if (ess_ratio > 0.2f && adaptive_lambda_ > params_.lambda)
+            adaptive_lambda_ *= 0.95f;
+    }
+
+    // Adaptive sigma
+    if (params_.use_adaptive_covariance)
+    {
+        const bool allow_adapt = (valid_ratio > 0.80f && ess_ratio > 0.10f);
+
+        if (allow_adapt)
+        {
+            if (valid_ratio > 0.95f && ess_ratio > 0.30f)
+            {
+                adaptive_sigma_vx_ *= 1.005f;
+                adaptive_sigma_vy_ *= 1.005f;
+                adaptive_sigma_omega_ *= 1.005f;
+            }
+        }
+
+        if (valid_ratio < 0.70f)
+        {
+            adaptive_sigma_vx_ *= 0.70f;
+            adaptive_sigma_vy_ *= 0.70f;
+            adaptive_sigma_omega_ *= 0.70f;
+        }
+        else if (valid_ratio < 0.80f)
+        {
+            adaptive_sigma_vx_ *= 0.90f;
+            adaptive_sigma_vy_ *= 0.90f;
+            adaptive_sigma_omega_ *= 0.90f;
+        }
+
+        adaptive_sigma_vx_ = std::clamp(adaptive_sigma_vx_, params_.sigma_min_vx, params_.sigma_max_vx);
+        adaptive_sigma_vy_ = std::clamp(adaptive_sigma_vy_, params_.sigma_min_vy, params_.sigma_max_vy);
+        adaptive_sigma_omega_ = std::clamp(adaptive_sigma_omega_, params_.sigma_min_omega, params_.sigma_max_omega);
+    }
+
+    // ========================================================================
+    // COMPUTE OPTIMAL CONTROLS
+    // ========================================================================
+    std::vector<ControlCommand> optimal_controls(params_.T, ControlCommand{0.0f, 0.0f, 0.0f});
+
+    for (int k = 0; k < params_.K; ++k)
+    {
+        const float w = weights[k] * inv_weight_sum;
+        if (w > 1e-10f)
+        {
+            for (int t = 0; t < params_.T; ++t)
+            {
+                optimal_controls[t].vx += w * all_controls[k][t].vx;
+                optimal_controls[t].vy += w * all_controls[k][t].vy;
+                optimal_controls[t].omega += w * all_controls[k][t].omega;
+            }
+        }
+    }
+
+    // NaN check
+    for (int t = 0; t < params_.T; ++t)
+    {
+        if (std::isnan(optimal_controls[t].vx)) optimal_controls[t].vx = 0.0f;
+        if (std::isnan(optimal_controls[t].vy)) optimal_controls[t].vy = 0.0f;
+        if (std::isnan(optimal_controls[t].omega)) optimal_controls[t].omega = 0.0f;
+    }
+
+    // Adaptive covariance update (gated)
+    const bool allow_weighted_sigma_update = (valid_ratio > 0.80f && ess_ratio > 0.10f);
+    if (params_.use_adaptive_covariance && allow_weighted_sigma_update)
+    {
+        float weighted_var_vx = 0.0f;
+        float weighted_var_vy = 0.0f;
+        float weighted_var_omega = 0.0f;
+        float total_weight = 0.0f;
+
+        for (int k = 0; k < params_.K; ++k)
+        {
+            const float w = weights[k] * inv_weight_sum;
+            if (w > 1e-10f)
+            {
+                const int noise_base = k * params_.T;
+                for (int t = 0; t < params_.T; ++t)
+                {
+                    float eps_vx = noise_buffer_vx_[noise_base + t];
+                    float eps_vy = noise_buffer_vy_[noise_base + t];
+                    float eps_omega = noise_buffer_omega_[noise_base + t];
+
+                    weighted_var_vx += w * eps_vx * eps_vx;
+                    weighted_var_vy += w * eps_vy * eps_vy;
+                    weighted_var_omega += w * eps_omega * eps_omega;
+                }
+                total_weight += w * params_.T;
+            }
+        }
+
+        if (total_weight > 1e-10f)
+        {
+            weighted_var_vx /= static_cast<float>(params_.T);
+            weighted_var_vy /= static_cast<float>(params_.T);
+            weighted_var_omega /= static_cast<float>(params_.T);
+
+            const float beta = params_.cov_adaptation_rate;
+            const float one_minus_beta = 1.0f - beta;
+
+            float new_sigma_vx = std::sqrt(one_minus_beta * adaptive_sigma_vx_ * adaptive_sigma_vx_ + beta * weighted_var_vx);
+            float new_sigma_vy = std::sqrt(one_minus_beta * adaptive_sigma_vy_ * adaptive_sigma_vy_ + beta * weighted_var_vy);
+            float new_sigma_omega = std::sqrt(one_minus_beta * adaptive_sigma_omega_ * adaptive_sigma_omega_ + beta * weighted_var_omega);
+
+            adaptive_sigma_vx_ = std::clamp(new_sigma_vx, params_.sigma_min_vx, params_.sigma_max_vx);
+            adaptive_sigma_vy_ = std::clamp(new_sigma_vy, params_.sigma_min_vy, params_.sigma_max_vy);
+            adaptive_sigma_omega_ = std::clamp(new_sigma_omega, params_.sigma_min_omega, params_.sigma_max_omega);
+        }
+    }
+
+    // Store for warm start
+    prev_controls_ = optimal_controls;
+
+    // Compute optimal trajectory for visualization
+    optimal_trajectory_.clear();
+    optimal_trajectory_.reserve(params_.T + 1);
+    State state = current_state;
+    optimal_trajectory_.push_back(state);
+    for (int t = 0; t < params_.T; ++t)
+    {
+        state = simulateStep(state, optimal_controls[t]);
+        optimal_trajectory_.push_back(state);
+    }
+
+    // Store trajectories for visualization
+    best_trajectories_.clear();
+    if (params_.num_trajectories_to_draw > 0)
+    {
+        std::vector<int> valid_indices;
+        valid_indices.reserve(params_.K);
+        for (int k = 0; k < params_.K; ++k)
+        {
+            if (!std::isinf(costs[k]) && !all_trajectories[k].empty())
+                valid_indices.push_back(k);
+        }
+
+        std::shuffle(valid_indices.begin(), valid_indices.end(), rng_);
+        const int n_to_draw = std::min(params_.num_trajectories_to_draw, static_cast<int>(valid_indices.size()));
+
+        best_trajectories_.reserve(n_to_draw);
+        for (int i = 0; i < n_to_draw; ++i)
+            best_trajectories_.push_back(std::move(all_trajectories[valid_indices[i]]));
+    }
+
     return optimal_controls[0];
 }
 

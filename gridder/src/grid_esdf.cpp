@@ -622,6 +622,49 @@ void GridESDF::precompute_distance_field()
     }
 
     qInfo() << "[GridESDF] Precomputed" << cells_computed << "distance values";
+
+    // ========================================================================
+    // Second pass: compute gradients using central differences
+    // gradient = (d(x+1,y) - d(x-1,y), d(x,y+1) - d(x,y-1)) / (2 * tile_size)
+    // Normalized to unit vector pointing away from obstacles
+    // ========================================================================
+    precomputed_gradients_.clear();
+    precomputed_gradients_.reserve(precomputed_distances_.size());
+
+    const float inv_2h = 1.0f / (2.0f * static_cast<float>(params_.tile_size));
+    int gradients_computed = 0;
+
+    for (const auto& [key, dist] : precomputed_distances_)
+    {
+        const int x = key.first;
+        const int y = key.second;
+
+        // Get neighboring distances (use current value if neighbor doesn't exist)
+        auto get_dist = [this, dist](int nx, int ny) -> float {
+            auto it = precomputed_distances_.find(Key{nx, ny});
+            return (it != precomputed_distances_.end()) ? it->second : dist;
+        };
+
+        const float d_xp = get_dist(x + params_.tile_size, y);  // d(x+1, y)
+        const float d_xm = get_dist(x - params_.tile_size, y);  // d(x-1, y)
+        const float d_yp = get_dist(x, y + params_.tile_size);  // d(x, y+1)
+        const float d_ym = get_dist(x, y - params_.tile_size);  // d(x, y-1)
+
+        // Central difference gradient (points in direction of increasing distance = away from obstacles)
+        Eigen::Vector2f grad((d_xp - d_xm) * inv_2h, (d_yp - d_ym) * inv_2h);
+
+        // Normalize gradient (avoid division by zero)
+        const float grad_norm = grad.norm();
+        if (grad_norm > 1e-6f)
+            grad /= grad_norm;
+        else
+            grad = Eigen::Vector2f::Zero();
+
+        precomputed_gradients_[key] = grad;
+        gradients_computed++;
+    }
+
+    qInfo() << "[GridESDF] Precomputed" << gradients_computed << "gradient values";
 }
 
 float GridESDF::get_distance_precomputed(const Key &k) const
@@ -637,6 +680,151 @@ float GridESDF::get_distance_precomputed(const Key &k) const
 float GridESDF::get_distance_precomputed(float x, float y) const
 {
     return get_distance_precomputed(point_to_key(Eigen::Vector2f(x, y)));
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// ESDF Query with gradient (for MPPI)
+//////////////////////////////////////////////////////////////////////////////
+
+GridESDF::ESDFQuery GridESDF::query_esdf(float x, float y) const
+{
+    ESDFQuery result;
+
+    // Check if we have precomputed data
+    if (precomputed_distances_.empty())
+    {
+        result.valid = false;
+        return result;
+    }
+
+    // Get the cell key for nearest-neighbor lookup
+    const Key k = point_to_key(Eigen::Vector2f(x, y));
+
+    // Check bounds
+    if (k.first < precomputed_min_x_ || k.first > precomputed_max_x_ ||
+        k.second < precomputed_min_y_ || k.second > precomputed_max_y_)
+    {
+        result.valid = false;
+        result.distance = precomputed_max_dist_;
+        return result;
+    }
+
+    // ========================================================================
+    // Bilinear interpolation for smooth distance and gradient
+    // ========================================================================
+    const float tile_f = static_cast<float>(params_.tile_size);
+
+    // Get the four corners of the cell containing (x, y)
+    const int x0 = static_cast<int>(std::floor(x / tile_f)) * params_.tile_size;
+    const int y0 = static_cast<int>(std::floor(y / tile_f)) * params_.tile_size;
+    const int x1 = x0 + params_.tile_size;
+    const int y1 = y0 + params_.tile_size;
+
+    // Interpolation weights
+    const float tx = (x - static_cast<float>(x0)) / tile_f;
+    const float ty = (y - static_cast<float>(y0)) / tile_f;
+
+    // Get distances at corners (with fallback to max distance)
+    auto get_dist = [this](int cx, int cy) -> float {
+        auto it = precomputed_distances_.find(Key{cx, cy});
+        return (it != precomputed_distances_.end()) ? it->second : precomputed_max_dist_;
+    };
+
+    const float d00 = get_dist(x0, y0);
+    const float d10 = get_dist(x1, y0);
+    const float d01 = get_dist(x0, y1);
+    const float d11 = get_dist(x1, y1);
+
+    // Bilinear interpolation for distance
+    result.distance = (1.f - tx) * (1.f - ty) * d00 +
+                      tx * (1.f - ty) * d10 +
+                      (1.f - tx) * ty * d01 +
+                      tx * ty * d11;
+
+    // Get gradients at corners
+    auto get_grad = [this](int cx, int cy) -> Eigen::Vector2f {
+        auto it = precomputed_gradients_.find(Key{cx, cy});
+        return (it != precomputed_gradients_.end()) ? it->second : Eigen::Vector2f::Zero();
+    };
+
+    const Eigen::Vector2f g00 = get_grad(x0, y0);
+    const Eigen::Vector2f g10 = get_grad(x1, y0);
+    const Eigen::Vector2f g01 = get_grad(x0, y1);
+    const Eigen::Vector2f g11 = get_grad(x1, y1);
+
+    // Bilinear interpolation for gradient
+    result.gradient = (1.f - tx) * (1.f - ty) * g00 +
+                      tx * (1.f - ty) * g10 +
+                      (1.f - tx) * ty * g01 +
+                      tx * ty * g11;
+
+    // Re-normalize gradient after interpolation
+    const float grad_norm = result.gradient.norm();
+    if (grad_norm > 1e-6f)
+        result.gradient /= grad_norm;
+
+    result.valid = true;
+    return result;
+}
+
+GridESDF::ESDFQuery GridESDF::query_esdf_footprint(
+    const Eigen::Vector2f &center,
+    float theta,
+    const std::vector<Eigen::Vector2f> &footprint_local) const
+{
+    ESDFQuery result;
+    result.valid = true;
+    result.distance = std::numeric_limits<float>::max();
+    result.gradient = Eigen::Vector2f::Zero();
+
+    if (footprint_local.empty())
+    {
+        // No footprint defined, just query center
+        return query_esdf(center.x(), center.y());
+    }
+
+    // Rotation matrix for body to world transform
+    const float cos_th = std::cos(theta);
+    const float sin_th = std::sin(theta);
+
+    Eigen::Vector2f grad_sum = Eigen::Vector2f::Zero();
+    int valid_queries = 0;
+
+    for (const auto& p_local : footprint_local)
+    {
+        // Transform footprint point to world frame
+        const float p_world_x = center.x() + cos_th * p_local.x() - sin_th * p_local.y();
+        const float p_world_y = center.y() + sin_th * p_local.x() + cos_th * p_local.y();
+
+        // Query ESDF at this point
+        ESDFQuery q = query_esdf(p_world_x, p_world_y);
+
+        if (q.valid)
+        {
+            // Use minimum distance (most conservative)
+            if (q.distance < result.distance)
+                result.distance = q.distance;
+
+            // Accumulate gradients (will average later)
+            grad_sum += q.gradient;
+            valid_queries++;
+        }
+    }
+
+    if (valid_queries > 0)
+    {
+        // Average gradient direction
+        result.gradient = grad_sum / static_cast<float>(valid_queries);
+        const float grad_norm = result.gradient.norm();
+        if (grad_norm > 1e-6f)
+            result.gradient /= grad_norm;
+    }
+    else
+    {
+        result.valid = false;
+    }
+
+    return result;
 }
 
 float GridESDF::get_cost(const Key &k)

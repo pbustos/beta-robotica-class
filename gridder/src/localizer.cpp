@@ -155,10 +155,8 @@ std::optional<Localizer::Pose2D> Localizer::update(
     // 5. Update mean pose from cache
     last_mean_pose_ = cached_mean_pose_;
 
-    // 6. Update visualization (every 10 frames to save CPU)
-    static int viz_counter = 0;
-    if (params_.draw_particles && ++viz_counter % 10 == 0)
-        drawParticles();
+    // NOTE: Visualization is now handled by main thread calling drawParticles()
+    // to avoid Qt thread-safety issues
 
     // Return pose only if converged
     if (isConverged())
@@ -531,6 +529,53 @@ void Localizer::getCovariance(Eigen::Matrix2f& pos_cov, float& theta_var) const
     theta_var = sum_theta_sq;
 }
 
+std::vector<float> Localizer::getCovarianceVector() const
+{
+    Pose2D mean = getMeanPose();
+
+    // Compute full 3x3 covariance matrix weighted by particle weights
+    float sum_xx = 0.f, sum_yy = 0.f, sum_tt = 0.f;
+    float sum_xy = 0.f, sum_xt = 0.f, sum_yt = 0.f;
+    float total_weight = 0.f;
+
+    for (const auto& p : particles_)
+    {
+        const float w = static_cast<float>(p.getWeight());
+        const float dx = p.pose.x - mean.x;
+        const float dy = p.pose.y - mean.y;
+        const float dt = Pose2D::normalizeAngle(p.pose.theta - mean.theta);
+
+        sum_xx += w * dx * dx;
+        sum_yy += w * dy * dy;
+        sum_tt += w * dt * dt;
+        sum_xy += w * dx * dy;
+        sum_xt += w * dx * dt;
+        sum_yt += w * dy * dt;
+        total_weight += w;
+    }
+
+    // Normalize if weights don't sum to 1
+    if (total_weight > 1e-10f)
+    {
+        float inv_w = 1.0f / total_weight;
+        sum_xx *= inv_w;
+        sum_yy *= inv_w;
+        sum_tt *= inv_w;
+        sum_xy *= inv_w;
+        sum_xt *= inv_w;
+        sum_yt *= inv_w;
+    }
+
+    // Return upper triangular: [xx, xy, xθ, yy, yθ, θθ]
+    // Debug output
+    static int cov_debug_count = 0;
+    if (++cov_debug_count % 100 == 0)
+        qDebug() << "[Localizer] Covariance: σx=" << std::sqrt(sum_xx)
+                 << "mm, σy=" << std::sqrt(sum_yy) << "mm, σθ=" << std::sqrt(sum_tt) << "rad";
+
+    return {sum_xx, sum_xy, sum_xt, sum_yy, sum_yt, sum_tt};
+}
+
 bool Localizer::isConverged() const
 {
     Eigen::Matrix2f pos_cov;
@@ -592,59 +637,58 @@ Localizer::OdometryDelta Localizer::addNoiseToOdometry(const OdometryDelta& odom
 
 void Localizer::drawParticles()
 {
-    if (!scene_ || !params_.draw_particles_enabled) return;
-
-    // ...existing code...
-
-    while (particle_items_.size() > particles_.size())
+    if (!scene_)
     {
-        scene_->removeItem(particle_items_.back());
-        delete particle_items_.back();
-        particle_items_.pop_back();
+        qDebug() << "[Localizer::drawParticles] No scene!";
+        return;
+    }
+    if (!params_.draw_particles)
+    {
+        qDebug() << "[Localizer::drawParticles] draw_particles is false";
+        return;
+    }
+    if (particles_.empty())
+    {
+        qDebug() << "[Localizer::drawParticles] No particles!";
+        return;
     }
 
-    const float s = params_.particle_size;  // Original size
-    static const QPen pen(Qt::NoPen);
+    // Debug: show particle count and first particle position
+    static int dbg_count = 0;
+    if (++dbg_count % 50 == 0)
+        qDebug() << "[Localizer::drawParticles] Drawing" << particles_.size()
+                 << "particles, first at:" << particles_[0].pose.x << particles_[0].pose.y;
+
+    // Clear all existing items to recreate with correct parameters
+    for (auto* item : particle_items_)
+    {
+        scene_->removeItem(item);
+        delete item;
+    }
+    particle_items_.clear();
+
+    const float s = 150.f;  // Larger size for visibility
+    static const QPen pen(QColor("black"), 2);  // Black border for visibility
 
     // Only draw a subset of particles if there are too many
     const size_t max_draw = 500;
     const size_t step = std::max(size_t(1), particles_.size() / max_draw);
 
-    size_t item_idx = 0;
     for (size_t i = 0; i < particles_.size(); i += step)
     {
         const auto& p = particles_[i];
 
-        // Color based on weight (red = low, green = high) - use cached weight
+        // Color based on weight (red = low, green = high)
         double w = p.getWeight();
         double w_normalized = std::clamp(w * particles_.size(), 0.0, 1.0);
         int r = static_cast<int>(255 * (1.0 - w_normalized));
         int g = static_cast<int>(255 * w_normalized);
-        QBrush brush(QColor(r, g, 0, 150));  // Original transparency
+        QBrush brush(QColor(r, g, 0, 200));
 
-        if (item_idx < particle_items_.size())
-        {
-            // Update existing item
-            particle_items_[item_idx]->setPos(p.pose.x, p.pose.y);
-            particle_items_[item_idx]->setBrush(brush);
-        }
-        else
-        {
-            // Create new item
-            auto* item = scene_->addEllipse(-s/2, -s/2, s, s, pen, brush);
-            item->setPos(p.pose.x, p.pose.y);
-            item->setZValue(2);  // Below obstacles, below robot
-            particle_items_.push_back(item);
-        }
-        item_idx++;
-    }
-
-    // Remove excess items
-    while (particle_items_.size() > item_idx)
-    {
-        scene_->removeItem(particle_items_.back());
-        delete particle_items_.back();
-        particle_items_.pop_back();
+        auto* item = scene_->addEllipse(-s/2, -s/2, s, s, pen, brush);
+        item->setPos(p.pose.x, p.pose.y);
+        item->setZValue(60);  // Above robot (robot is 55)
+        particle_items_.push_back(item);
     }
 }
 
@@ -659,3 +703,9 @@ void Localizer::clearVisualization()
     }
     particle_items_.clear();
 }
+
+void Localizer::clearParticleVisualization()
+{
+    clearVisualization();
+}
+

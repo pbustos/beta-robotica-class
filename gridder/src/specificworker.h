@@ -339,8 +339,26 @@ class SpecificWorker : public GenericWorker
 	    float cpu_usage_avg = 0.0f;  // Exponential moving average
 	    static constexpr float CPU_AVG_ALPHA = 0.1f;  // Smoothing factor (0.1 = slow, 0.5 = fast)
 
+	    // Thread FPS tracking
+	    std::atomic<int> localizer_hz{0};
+	    std::atomic<int> mppi_hz{0};
+
+	    // Visualization flags (controlled by UI checkboxes)
+	    std::atomic<bool> show_lidar_points{false};
+	    std::atomic<bool> show_particles{false};
+	    std::atomic<bool> show_trajectories{true};
+	    std::atomic<bool> show_covariance{false};
+
+	    // Covariance ellipse visualization
+	    QGraphicsEllipseItem* covariance_ellipse = nullptr;
+	    void draw_covariance_ellipse();
+
 	    // UI slots
 	    void slot_mppi_button_toggled(bool checked);
+	    void slot_lidar_checkbox_toggled(bool checked);
+	    void slot_particles_checkbox_toggled(bool checked);
+	    void slot_trajectories_checkbox_toggled(bool checked);
+	    void slot_covariance_checkbox_toggled(bool checked);
 
 };
 

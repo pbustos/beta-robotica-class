@@ -11,6 +11,7 @@
 
 #include <QtCore/QVariant>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QCheckBox>
 #include <QtWidgets/QFrame>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLCDNumber>
@@ -31,6 +32,12 @@ public:
     QHBoxLayout *horizontalLayout;
     QLabel *label;
     QLCDNumber *lcdNumber_hz;
+    QHBoxLayout *horizontalLayout_loc;
+    QLabel *label_loc;
+    QLCDNumber *lcdNumber_loc_hz;
+    QHBoxLayout *horizontalLayout_mppi_hz;
+    QLabel *label_mppi_hz;
+    QLCDNumber *lcdNumber_mppi_hz;
     QSpacerItem *horizontalSpacer;
     QHBoxLayout *horizontalLayout_2;
     QLabel *label_2;
@@ -44,6 +51,10 @@ public:
     QHBoxLayout *horizontalLayout_6;
     QLabel *label_cpu;
     QLCDNumber *lcdNumber_cpu;
+    QCheckBox *checkBox_lidar;
+    QCheckBox *checkBox_particles;
+    QCheckBox *checkBox_trajectories;
+    QCheckBox *checkBox_covariance;
     QPushButton *pushButton_mppi;
     QFrame *frame;
 
@@ -51,7 +62,7 @@ public:
     {
         if (guiDlg->objectName().isEmpty())
             guiDlg->setObjectName("guiDlg");
-        guiDlg->resize(819, 600);
+        guiDlg->resize(1000, 600);
         verticalLayout_2 = new QVBoxLayout(guiDlg);
         verticalLayout_2->setObjectName("verticalLayout_2");
         verticalLayout = new QVBoxLayout();
@@ -78,6 +89,40 @@ public:
 
 
         horizontalLayout_4->addLayout(horizontalLayout);
+
+        horizontalLayout_loc = new QHBoxLayout();
+        horizontalLayout_loc->setObjectName("horizontalLayout_loc");
+        label_loc = new QLabel(guiDlg);
+        label_loc->setObjectName("label_loc");
+        label_loc->setFrameShape(QFrame::StyledPanel);
+
+        horizontalLayout_loc->addWidget(label_loc);
+
+        lcdNumber_loc_hz = new QLCDNumber(guiDlg);
+        lcdNumber_loc_hz->setObjectName("lcdNumber_loc_hz");
+        lcdNumber_loc_hz->setFont(font);
+
+        horizontalLayout_loc->addWidget(lcdNumber_loc_hz);
+
+
+        horizontalLayout_4->addLayout(horizontalLayout_loc);
+
+        horizontalLayout_mppi_hz = new QHBoxLayout();
+        horizontalLayout_mppi_hz->setObjectName("horizontalLayout_mppi_hz");
+        label_mppi_hz = new QLabel(guiDlg);
+        label_mppi_hz->setObjectName("label_mppi_hz");
+        label_mppi_hz->setFrameShape(QFrame::StyledPanel);
+
+        horizontalLayout_mppi_hz->addWidget(label_mppi_hz);
+
+        lcdNumber_mppi_hz = new QLCDNumber(guiDlg);
+        lcdNumber_mppi_hz->setObjectName("lcdNumber_mppi_hz");
+        lcdNumber_mppi_hz->setFont(font);
+
+        horizontalLayout_mppi_hz->addWidget(lcdNumber_mppi_hz);
+
+
+        horizontalLayout_4->addLayout(horizontalLayout_mppi_hz);
 
         horizontalSpacer = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
 
@@ -153,6 +198,30 @@ public:
 
         horizontalLayout_4->addLayout(horizontalLayout_6);
 
+        checkBox_lidar = new QCheckBox(guiDlg);
+        checkBox_lidar->setObjectName("checkBox_lidar");
+        checkBox_lidar->setChecked(false);
+
+        horizontalLayout_4->addWidget(checkBox_lidar);
+
+        checkBox_particles = new QCheckBox(guiDlg);
+        checkBox_particles->setObjectName("checkBox_particles");
+        checkBox_particles->setChecked(false);
+
+        horizontalLayout_4->addWidget(checkBox_particles);
+
+        checkBox_trajectories = new QCheckBox(guiDlg);
+        checkBox_trajectories->setObjectName("checkBox_trajectories");
+        checkBox_trajectories->setChecked(true);
+
+        horizontalLayout_4->addWidget(checkBox_trajectories);
+
+        checkBox_covariance = new QCheckBox(guiDlg);
+        checkBox_covariance->setObjectName("checkBox_covariance");
+        checkBox_covariance->setChecked(false);
+
+        horizontalLayout_4->addWidget(checkBox_covariance);
+
         pushButton_mppi = new QPushButton(guiDlg);
         pushButton_mppi->setObjectName("pushButton_mppi");
         pushButton_mppi->setCheckable(true);
@@ -188,10 +257,16 @@ public:
     {
         guiDlg->setWindowTitle(QCoreApplication::translate("guiDlg", "gridder", nullptr));
         label->setText(QCoreApplication::translate("guiDlg", "Hz", nullptr));
+        label_loc->setText(QCoreApplication::translate("guiDlg", "Loc", nullptr));
+        label_mppi_hz->setText(QCoreApplication::translate("guiDlg", "MPPI", nullptr));
         label_2->setText(QCoreApplication::translate("guiDlg", "Path length", nullptr));
         label_3->setText(QCoreApplication::translate("guiDlg", "Path cost", nullptr));
         label_4->setText(QCoreApplication::translate("guiDlg", "Elapsed", nullptr));
         label_cpu->setText(QCoreApplication::translate("guiDlg", "CPU %", nullptr));
+        checkBox_lidar->setText(QCoreApplication::translate("guiDlg", "LiDAR", nullptr));
+        checkBox_particles->setText(QCoreApplication::translate("guiDlg", "Particles", nullptr));
+        checkBox_trajectories->setText(QCoreApplication::translate("guiDlg", "Traj", nullptr));
+        checkBox_covariance->setText(QCoreApplication::translate("guiDlg", "Cov", nullptr));
         pushButton_mppi->setText(QCoreApplication::translate("guiDlg", "MPPI OFF", nullptr));
     } // retranslateUi
 

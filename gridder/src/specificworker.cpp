@@ -94,7 +94,7 @@ void SpecificWorker::initialize()
 	{
         // Viewer
         viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM, false);
-        viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 100, QColor("Blue"));
+        viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 100, QColor("LightBlue"));
         // Don't limit sceneRect - allow unlimited panning
         // viewer->setSceneRect(params.GRID_MAX_DIM);
         viewer->show();
@@ -130,9 +130,9 @@ void SpecificWorker::initialize()
             Localizer::Params loc_params;
             loc_params.initial_particles = params.LOCALIZER_PARTICLES;
             loc_params.min_particles = 100;
-            loc_params.max_particles = 1000;  // Reduced from 2000 for performance
-            loc_params.draw_particles = true;
-            loc_params.lidar_subsample = 10;  // Use every 10th LiDAR point
+            loc_params.max_particles = 1000;
+            loc_params.draw_particles = false;  // Controlled by UI checkbox
+            loc_params.lidar_subsample = 10;
             localizer.setParams(loc_params);
 
             // Precompute distance field for fast lookups
@@ -171,6 +171,12 @@ void SpecificWorker::initialize()
 
         // Connect MPPI button
         connect(pushButton_mppi, &QPushButton::toggled, this, &SpecificWorker::slot_mppi_button_toggled);
+
+        // Connect visualization checkboxes
+        connect(checkBox_lidar, &QCheckBox::toggled, this, &SpecificWorker::slot_lidar_checkbox_toggled);
+        connect(checkBox_particles, &QCheckBox::toggled, this, &SpecificWorker::slot_particles_checkbox_toggled);
+        connect(checkBox_trajectories, &QCheckBox::toggled, this, &SpecificWorker::slot_trajectories_checkbox_toggled);
+        connect(checkBox_covariance, &QCheckBox::toggled, this, &SpecificWorker::slot_covariance_checkbox_toggled);
 
         // mouse
         connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, [this](QPointF p)
@@ -392,9 +398,17 @@ void SpecificWorker::compute()
     else
         estimated_robot_pose = robot_pos;  // Use ground truth directly
 
-    // ============ Debug: draw lidar points to inspect noise
-    if(params.DRAW_LIDAR_POINTS)
+    // ============ Debug: draw lidar points (controlled by UI checkbox)
+    if (show_lidar_points.load())
         draw_lidar_points(points_world);
+
+    // ============ Draw localizer particles (must be in main Qt thread)
+    if (show_particles.load() && params.USE_LOCALIZER)
+        localizer.drawParticles();
+
+    // ============ Draw covariance ellipse (must be in main Qt thread)
+    if (show_covariance.load() && params.USE_LOCALIZER && localizer_initialized.load())
+        draw_covariance_ellipse();
 
     // ============ Update robot visualization in the viewer using estimated pose
     const float display_x = estimated_robot_pose.translation().x();
@@ -421,15 +435,20 @@ void SpecificWorker::compute()
                     qWarning() << "[MPPI] Failed to send speed to robot:" << e.what();
             }
 
-        // Update MPPI trajectory visualization (from the thread's output)
-        std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
-        if (!last_optimal_trajectory.empty())
-            draw_mppi_trajectory(last_optimal_trajectory);
+        // Update MPPI trajectory visualization (from the thread's output) if enabled
+        if (show_trajectories.load())
+        {
+            std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
+            if (!last_optimal_trajectory.empty())
+                draw_mppi_trajectory(last_optimal_trajectory);
+        }
     }
 
     // ============ UPDATE UI ============
     this->hz = fps.print("FPS:", 3000);
     this->lcdNumber_hz->display(this->hz);
+    this->lcdNumber_loc_hz->display(localizer_hz.load());
+    this->lcdNumber_mppi_hz->display(mppi_hz.load());
 
     // Update CPU usage with exponential moving average to reduce flickering
     const float current_cpu = get_cpu_usage();
@@ -478,6 +497,75 @@ void SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &point
         }
     }
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::draw_covariance_ellipse()
+{
+    // Get covariance from localizer: [xx, xy, xθ, yy, yθ, θθ]
+    auto cov = localizer.getCovarianceVector();
+    if (cov.size() < 6) return;
+
+    const float var_xx = cov[0];  // σ²_x
+    const float var_xy = cov[1];  // σ_xy
+    const float var_yy = cov[3];  // σ²_y
+
+    // Compute eigenvalues and eigenvectors of 2x2 covariance matrix
+    // | var_xx  var_xy |
+    // | var_xy  var_yy |
+
+    // Eigenvalues: λ = (trace ± sqrt(trace² - 4*det)) / 2
+    const float trace = var_xx + var_yy;
+    const float det = var_xx * var_yy - var_xy * var_xy;
+    const float discriminant = trace * trace - 4.0f * det;
+
+    if (discriminant < 0) return;  // Should not happen for valid covariance
+
+    const float sqrt_disc = std::sqrt(discriminant);
+    const float lambda1 = (trace + sqrt_disc) / 2.0f;  // Larger eigenvalue
+    const float lambda2 = (trace - sqrt_disc) / 2.0f;  // Smaller eigenvalue
+
+    // Standard deviations (sqrt of eigenvalues) scaled by 6 for visibility
+    // Also apply minimum size so ellipse is always visible
+    const float scale = 6.0f;  // 6-sigma for better visibility
+    const float min_size = 200.0f;  // Minimum size in mm for visibility
+    float sigma1 = scale * std::sqrt(std::max(0.0f, lambda1));
+    float sigma2 = scale * std::sqrt(std::max(0.0f, lambda2));
+
+    // Ensure minimum visible size
+    sigma1 = std::max(sigma1, min_size);
+    sigma2 = std::max(sigma2, min_size);
+
+    // Angle of the principal axis (eigenvector of larger eigenvalue)
+    float ellipse_angle = 0.0f;
+    if (std::abs(var_xy) > 1e-6f)
+        ellipse_angle = 0.5f * std::atan2(2.0f * var_xy, var_xx - var_yy);
+    else if (var_yy > var_xx)
+        ellipse_angle = M_PI_2;
+
+    // Get robot pose for positioning the ellipse
+    const float robot_x = estimated_robot_pose.translation().x();
+    const float robot_y = estimated_robot_pose.translation().y();
+
+    // Create or update ellipse
+    if (!covariance_ellipse)
+    {
+        covariance_ellipse = viewer->scene.addEllipse(
+            -sigma1, -sigma2, 2.0f * sigma1, 2.0f * sigma2,
+            QPen(QColor(255, 0, 255, 255), 5),  // Magenta border, thicker
+            QBrush(QColor(255, 0, 255, 80))     // Semi-transparent fill
+        );
+        covariance_ellipse->setZValue(100);  // On top of everything
+    }
+    else
+    {
+        covariance_ellipse->setRect(-sigma1, -sigma2, 2.0f * sigma1, 2.0f * sigma2);
+    }
+
+    // Position and rotate ellipse
+    covariance_ellipse->setPos(robot_x, robot_y);
+    covariance_ellipse->setRotation(qRadiansToDegrees(ellipse_angle));
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////
 Eigen::Affine2f SpecificWorker::get_robot_pose()
 {
@@ -556,10 +644,14 @@ void SpecificWorker::read_lidar()
 /////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::run_localizer()
 {
-    const auto wait_period = std::chrono::milliseconds(params.LOCALIZER_PERIOD_MS);
+    const auto target_period = std::chrono::milliseconds(params.LOCALIZER_PERIOD_MS);
+    auto last_fps_time = std::chrono::steady_clock::now();
+    int frame_count = 0;
 
     while (!stop_localizer_thread)
     {
+        const auto loop_start = std::chrono::steady_clock::now();
+
         // Wait until map is ready
         if (!map_ready_for_localization.load())
         {
@@ -575,7 +667,7 @@ void SpecificWorker::run_localizer()
         const auto& [robot, lidar_world, lidar_local] = buffer_sync.read(timestamp);
         if (!robot.has_value() || !lidar_local.has_value())
         {
-            std::this_thread::sleep_for(wait_period);
+            std::this_thread::sleep_for(target_period);
             continue;
         }
 
@@ -624,6 +716,17 @@ void SpecificWorker::run_localizer()
             buffer_estimated_pose.put<0>(std::move(result), timestamp);
         }
 
+        // Update FPS counter
+        frame_count++;
+        const auto now = std::chrono::steady_clock::now();
+        const auto fps_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_fps_time).count();
+        if (fps_elapsed >= 1000)
+        {
+            localizer_hz.store(frame_count);
+            frame_count = 0;
+            last_fps_time = now;
+        }
+
         // Periodic debug
         static int debug_counter = 0;
         if (++debug_counter % 100 == 0)
@@ -636,7 +739,12 @@ void SpecificWorker::run_localizer()
                     << "| ESS:" << static_cast<int>(localizer.getEffectiveSampleSize());
         }
 
-        std::this_thread::sleep_for(wait_period);
+        // Adaptive sleep: only sleep for remaining time to maintain target frequency
+        const auto loop_end = std::chrono::steady_clock::now();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(loop_end - loop_start);
+        if (elapsed < target_period)
+            std::this_thread::sleep_for(target_period - elapsed);
+        // else: loop took longer than target, don't sleep (run as fast as possible)
     }
     qInfo() << "[Localizer Thread] Stopped";
 } // Thread to run localizer
@@ -644,15 +752,15 @@ void SpecificWorker::run_localizer()
 void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f> &path, QGraphicsScene *scene, bool erase_only)
 {
     static std::vector<QGraphicsEllipseItem*> points;
-    static const QColor color("green");
+    static const QColor color("blue");
     static const QPen pen(color);
     static const QBrush brush(color);
-    static constexpr float s = 100;
+    static constexpr float s = 50;  // Smaller dots for thinner path
 
     for(auto p : points)
     {
         scene->removeItem(p);
-        delete p;  // Fix memory leak
+        delete p;
     }
     points.clear();
 
@@ -663,7 +771,7 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f> &path, QGraphi
     {
         auto ptr = scene->addEllipse(-s/2, -s/2, s, s, pen, brush);
         ptr->setPos(p.x(), p.y());
-        ptr->setZValue(10);  // Draw on top of grid, obstacles, and robot
+        ptr->setZValue(10);
         points.push_back(ptr);
     }
 }
@@ -702,14 +810,18 @@ void SpecificWorker::draw_paths(const std::vector<std::vector<Eigen::Vector2f>> 
 
 void SpecificWorker::run_mppi()
 {
-    const auto wait_period = std::chrono::milliseconds(params.MPPI_PERIOD_MS);
+    const auto target_period = std::chrono::milliseconds(params.MPPI_PERIOD_MS);
+    auto last_fps_time = std::chrono::steady_clock::now();
+    int frame_count = 0;
 
     while (!stop_mppi_thread)
     {
+        const auto loop_start = std::chrono::steady_clock::now();
+
         // Check preconditions
         if (!mppi_enabled.load() || nav_state.load() != NavigationState::NAVIGATING)
         {
-            std::this_thread::sleep_for(wait_period);
+            std::this_thread::sleep_for(target_period);
             continue;
         }
 
@@ -731,7 +843,7 @@ void SpecificWorker::run_mppi()
                     robot_pose = robot.value();
                 else
                 {
-                    std::this_thread::sleep_for(wait_period);
+                    std::this_thread::sleep_for(target_period);
                     continue;
                 }
             }
@@ -754,7 +866,7 @@ void SpecificWorker::run_mppi()
 
         if (path_copy.empty())
         {
-            std::this_thread::sleep_for(wait_period);
+            std::this_thread::sleep_for(target_period);
             continue;
         }
 
@@ -773,12 +885,13 @@ void SpecificWorker::run_mppi()
             // Send stop command
             MPPIOutput out{0.f, 0.f, 0.f, true};
             buffer_mppi_output.put<0>(std::move(out), timestamp);
-            std::this_thread::sleep_for(wait_period);
+            std::this_thread::sleep_for(target_period);
             continue;
         }
 
-        // Compute control command using MPPI
-        auto cmd = mppi_controller.compute(current_state, path_copy, lidar_points);
+        // Compute control command using MPPI with ESDF-based smooth obstacle costs
+        // LiDAR points are still used for hard collision detection (safety layer)
+        auto cmd = mppi_controller.compute(current_state, path_copy, lidar_points, &grid_esdf);
 
         // Log command periodically
         static int log_counter = 0;
@@ -798,7 +911,23 @@ void SpecificWorker::run_mppi()
             last_optimal_trajectory = mppi_controller.getOptimalTrajectory();
         }
 
-        std::this_thread::sleep_for(wait_period);
+        // Update FPS counter
+        frame_count++;
+        const auto now = std::chrono::steady_clock::now();
+        const auto fps_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_fps_time).count();
+        if (fps_elapsed >= 1000)
+        {
+            mppi_hz.store(frame_count);
+            frame_count = 0;
+            last_fps_time = now;
+        }
+
+        // Adaptive sleep: only sleep for remaining time to maintain target frequency
+        const auto loop_end = std::chrono::steady_clock::now();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(loop_end - loop_start);
+        if (elapsed < target_period)
+            std::this_thread::sleep_for(target_period - elapsed);
+        // else: loop took longer than target, don't sleep (run as fast as possible)
     }
     qInfo() << "[MPPI Thread] Stopped";
 }
@@ -921,6 +1050,51 @@ void SpecificWorker::slot_mppi_button_toggled(bool checked)
         }
         nav_state = NavigationState::IDLE;
         qInfo() << "[MPPI] Controller DISABLED";
+    }
+}
+
+void SpecificWorker::slot_lidar_checkbox_toggled(bool checked)
+{
+    show_lidar_points.store(checked);
+    if (!checked)
+    {
+        // Clear existing lidar points from scene
+        draw_lidar_points({});
+    }
+}
+
+void SpecificWorker::slot_particles_checkbox_toggled(bool checked)
+{
+    show_particles.store(checked);
+    localizer.params().draw_particles = checked;
+
+    if (!checked)
+        localizer.clearParticleVisualization();
+}
+
+void SpecificWorker::slot_trajectories_checkbox_toggled(bool checked)
+{
+    show_trajectories.store(checked);
+    if (!checked)
+    {
+        // Clear existing trajectory items
+        for (auto* item : mppi_trajectory_items)
+        {
+            viewer->scene.removeItem(item);
+            delete item;
+        }
+        mppi_trajectory_items.clear();
+    }
+}
+
+void SpecificWorker::slot_covariance_checkbox_toggled(bool checked)
+{
+    show_covariance.store(checked);
+    if (!checked && covariance_ellipse)
+    {
+        viewer->scene.removeItem(covariance_ellipse);
+        delete covariance_ellipse;
+        covariance_ellipse = nullptr;
     }
 }
 
@@ -1465,8 +1639,12 @@ RoboCompGridder::Pose SpecificWorker::Gridder_getPose()
         ret.x = pose.translation().x();
         ret.y = pose.translation().y();
         ret.theta = std::atan2(pose.linear()(1, 0), pose.linear()(0, 0));
+
+        // Get covariance from localizer if available
+        if (params.USE_LOCALIZER && localizer_initialized.load())
+            ret.cov = localizer.getCovarianceVector();  // [xx, xy, xθ, yy, yθ, θθ] symmetric
     }
-    // else: returns default (0, 0, 0) if no pose available yet
+    // else: returns default (0, 0, 0) with empty covariance if no pose available
 
     return ret;
 }

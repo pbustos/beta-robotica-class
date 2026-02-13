@@ -27,6 +27,9 @@
 #include <cmath>
 #include <limits>
 
+// Forward declaration
+class GridESDF;
+
 /**
  * @brief MPPI (Model Predictive Path Integral) Controller for omnidirectional robot
  *
@@ -124,12 +127,28 @@ public:
      * @brief Compute optimal control command
      * @param current_state Current robot state (x, y, theta) in world frame
      * @param path Path to follow as vector of waypoints (world frame, mm)
-     * @param obstacles Obstacle points from lidar (world frame, mm)
+     * @param obstacles Obstacle points from lidar (world frame, mm) - used for hard collision check
      * @return Optimal control command (vx, vy, omega)
      */
     ControlCommand compute(const State& current_state,
                           const std::vector<Eigen::Vector2f>& path,
                           const std::vector<Eigen::Vector2f>& obstacles);
+
+    /**
+     * @brief Compute optimal control command using ESDF for smooth obstacle costs
+     * @param current_state Current robot state (x, y, theta) in world frame
+     * @param path Path to follow as vector of waypoints (world frame, mm)
+     * @param obstacles Obstacle points from lidar (world frame, mm) - used for hard collision check only
+     * @param esdf Grid ESDF for smooth obstacle cost computation
+     * @return Optimal control command (vx, vy, omega)
+     *
+     * This version uses the ESDF distance field for smooth obstacle costs while
+     * keeping LiDAR points for hard collision detection (safety layer).
+     */
+    ControlCommand compute(const State& current_state,
+                          const std::vector<Eigen::Vector2f>& path,
+                          const std::vector<Eigen::Vector2f>& obstacles,
+                          const GridESDF* esdf);
 
     /**
      * @brief Check if the goal has been reached

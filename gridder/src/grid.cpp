@@ -143,10 +143,10 @@ void Grid::initialize(  QRectF dim_,
         }
 
     // draw bounding box
-    this->bounding_box = scene->addRect(dim, QPen(QColor("Grey"), 40));
-    this->bounding_box->setPos(grid_center);
-    this->bounding_box->setZValue(12);
-    this->bounding_box->setRotation(qRadiansToDegrees(grid_angle));
+    // this->bounding_box = scene->addRect(dim, QPen(QColor("Grey"), 40));
+    // this->bounding_box->setPos(grid_center);
+    // this->bounding_box->setZValue(12);
+    // this->bounding_box->setRotation(qRadiansToDegrees(grid_angle));
 
     qInfo() << __FUNCTION__ <<  "Grid parameters: ";
     qInfo() << "    " << "Dim left corner:" << dim.left();
