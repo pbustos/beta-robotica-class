@@ -889,9 +889,14 @@ void SpecificWorker::run_mppi()
             continue;
         }
 
-        // Compute control command using MPPI with ESDF-based smooth obstacle costs
+        // Get pose covariance from localizer (if available)
+        std::vector<float> pose_cov;
+        if (params.USE_LOCALIZER && localizer_initialized.load())
+            pose_cov = localizer.getCovarianceVector();
+
+        // Compute control command using MPPI with covariance-aware ESDF obstacle costs
         // LiDAR points are still used for hard collision detection (safety layer)
-        auto cmd = mppi_controller.compute(current_state, path_copy, lidar_points, &grid_esdf);
+        auto cmd = mppi_controller.compute(current_state, path_copy, lidar_points, &grid_esdf, pose_cov);
 
         // Log command periodically
         static int log_counter = 0;

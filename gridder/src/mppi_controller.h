@@ -35,8 +35,9 @@ class GridESDF;
  *
  * This controller generates optimal velocity commands (vx, vy, omega) by:
  * 1. Sampling K trajectories with random control perturbations
- * 2. Evaluating each trajectory with a cost function
- * 3. Computing weighted average of controls based on trajectory costs
+ * 2. Each trajectory propagates the robot mean pose and covariance
+ * 3. To answer the question: What is the cost when my state is uncertain?
+ * 4. Computing weighted average of controls based on trajectory costs
  */
 class MPPIController
 {
@@ -105,6 +106,12 @@ public:
         float safety_margin = 1000.0f;     // mm - outer cost zone
         float obstacle_decay = 100.0f;     // mm - softplus decay parameter
 
+        // Covariance-aware margin inflation (Option A)
+        bool use_covariance_inflation = true;   // Enable covariance-aware margin inflation
+        float cov_z_score = 1.64f;              // Risk multiplier (1.64 = 95%, 2.33 = 99%)
+        float cov_inflation_gate = 2.0f;        // Only inflate when d < gate * safety_margin
+        float cov_sigma_max_clamp = 0.5f;       // Clamp sigma_max to this fraction of safety_margin
+
         // Path following
         float lookahead_distance = 500.0f; // mm - how far ahead to look on path
         float goal_tolerance = 200.0f;     // mm - consider goal reached
@@ -149,6 +156,24 @@ public:
                           const std::vector<Eigen::Vector2f>& path,
                           const std::vector<Eigen::Vector2f>& obstacles,
                           const GridESDF* esdf);
+
+    /**
+     * @brief Compute optimal control command using ESDF with covariance-aware margin inflation
+     * @param current_state Current robot state (x, y, theta) in world frame
+     * @param path Path to follow as vector of waypoints (world frame, mm)
+     * @param obstacles Obstacle points from lidar (world frame, mm) - used for hard collision check only
+     * @param esdf Grid ESDF for smooth obstacle cost computation
+     * @param pose_cov Pose covariance [σ²_xx, σ_xy, σ_xθ, σ²_yy, σ_yθ, σ²_θθ] (upper triangular 3x3)
+     * @return Optimal control command (vx, vy, omega)
+     *
+     * This version inflates the safety margin based on pose uncertainty using the ESDF gradient.
+     * Higher pose uncertainty → larger effective safety margin → more conservative behavior.
+     */
+    ControlCommand compute(const State& current_state,
+                          const std::vector<Eigen::Vector2f>& path,
+                          const std::vector<Eigen::Vector2f>& obstacles,
+                          const GridESDF* esdf,
+                          const std::vector<float>& pose_cov);
 
     /**
      * @brief Check if the goal has been reached
