@@ -95,7 +95,6 @@ public:
         float w_goal = 5.0f;           // Weight for goal reaching (increased)
         float w_smoothness = 1.0f;     // Weight for control smoothness
         float w_speed = 0.001f;        // Weight for speed - VERY LOW (was dominating total cost)
-        float w_heading = 2.0f;        // Weight for heading alignment
 
         // Safety parameters
         float robot_radius = 250.0f;       // mm - hard collision threshold
@@ -194,11 +193,6 @@ private:
     // Adaptive lambda (temperature) - adjusted based on ESS
     float adaptive_lambda_;
 
-    // AR(1) correlated noise state - one per trajectory sample
-    mutable std::vector<float> ar1_state_vx_;
-    mutable std::vector<float> ar1_state_vy_;
-    mutable std::vector<float> ar1_state_omega_;
-
     /**
      * @brief Simulate robot motion using kinematic model
      * @param state Current state
@@ -208,58 +202,11 @@ private:
     State simulateStep(const State& state, const ControlCommand& control) const;
 
     /**
-     * @brief Compute trajectory cost
-     * @param trajectory Sequence of states
-     * @param controls Sequence of controls
-     * @param path Target path
-     * @param obstacles Obstacle points
-     * @return Total cost of the trajectory
-     */
-    float computeTrajectoryCost(const std::vector<State>& trajectory,
-                                const std::vector<ControlCommand>& controls,
-                                const std::vector<Eigen::Vector2f>& path,
-                                const std::vector<Eigen::Vector2f>& obstacles) const;
-
-    /**
-     * @brief Compute cost for path following
-     */
-    float pathFollowingCost(const State& state,
-                           const std::vector<Eigen::Vector2f>& path) const;
-
-    /**
-     * @brief Compute cost for obstacle avoidance
-     */
-    float obstacleCost(const State& state,
-                      const std::vector<Eigen::Vector2f>& obstacles) const;
-
-    /**
-     * @brief Compute cost for reaching the goal
-     */
-    float goalCost(const State& state,
-                  const std::vector<Eigen::Vector2f>& path) const;
-
-    /**
-     * @brief Compute cost for control smoothness
-     */
-    float smoothnessCost(const ControlCommand& control,
-                        const ControlCommand& prev_control) const;
-
-    /**
      * @brief Find closest point on path and compute distance
      */
     std::pair<float, size_t> distanceToPath(const State& state,
                                             const std::vector<Eigen::Vector2f>& path) const;
 
-    /**
-     * @brief Find minimum distance to any obstacle
-     */
-    float minDistanceToObstacles(const State& state,
-                                 const std::vector<Eigen::Vector2f>& obstacles) const;
-
-    /**
-     * @brief Clamp control to robot limits
-     */
-    ControlCommand clampControl(const ControlCommand& control) const;
 
     /**
      * @brief Shift previous controls for warm-starting

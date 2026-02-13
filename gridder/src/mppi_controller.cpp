@@ -19,9 +19,8 @@
 
 #include "mppi_controller.h"
 #include <iostream>
-#include <execution>  // For parallel execution policies
 #include <QDebug>     // For debug output
-#include <algorithm>  // For std::shuffle
+#include <algorithm>  // For std::shuffle, std::partial_sort
 
 // ============================================================================
 // Constructors
@@ -54,11 +53,6 @@ MPPIController::MPPIController(const Params& params)
     noise_buffer_vx_.resize(params_.K * params_.T);
     noise_buffer_vy_.resize(params_.K * params_.T);
     noise_buffer_omega_.resize(params_.K * params_.T);
-
-    // Pre-allocate AR(1) state buffers (one per trajectory)
-    ar1_state_vx_.resize(params_.K, 0.0f);
-    ar1_state_vy_.resize(params_.K, 0.0f);
-    ar1_state_omega_.resize(params_.K, 0.0f);
 }
 
 // ============================================================================
@@ -177,18 +171,7 @@ MPPIController::ControlCommand MPPIController::compute(
     std::vector<std::vector<State>> all_trajectories(params_.K);
     std::vector<float> costs(params_.K);
 
-    // =========================================================================
-    // OPTIMIZATION 4: Cache path distances for faster lookup
-    // =========================================================================
-    std::vector<float> path_cumulative_dist(path.size(), 0.0f);
-    for (size_t i = 1; i < path.size(); ++i)
-    {
-        path_cumulative_dist[i] = path_cumulative_dist[i-1] + (path[i] - path[i-1]).norm();
-    }
-
-    // =========================================================================
-    // OPTIMIZATION 5: Precompute sin/cos for prev_controls theta updates
-    // =========================================================================
+    // Precompute sin/cos for initial state
     const float cos_theta_init = std::cos(current_state.theta);
     const float sin_theta_init = std::sin(current_state.theta);
 
@@ -552,25 +535,16 @@ MPPIController::ControlCommand MPPIController::compute(
     static int stats_counter = 0;
     if (++stats_counter % 100 == 0)
     {
-        // Find min/max normalized weights and best trajectory index
-        float min_weight = std::numeric_limits<float>::max();
-        float max_weight = 0.0f;
+        // Find best (lowest cost) and a typical (median cost) trajectory for debug breakdown
         int best_idx = -1;
         int median_idx = -1;
 
-        // Find best (lowest cost) and a typical (median cost) trajectory
         std::vector<std::pair<float, int>> valid_costs;
         for (int k = 0; k < params_.K; ++k)
         {
-            float w = weights[k] * inv_weight_sum;
-            if (w > 1e-10f)
-            {
-                if (w < min_weight) min_weight = w;
-                if (w > max_weight) max_weight = w;
-            }
             if (!std::isinf(costs[k]))
             {
-                valid_costs.push_back({costs[k], k});
+                valid_costs.emplace_back(costs[k], k);
             }
         }
 
@@ -773,11 +747,6 @@ void MPPIController::reset()
 
     // Reset adaptive lambda
     adaptive_lambda_ = params_.lambda;
-
-    // Reset AR(1) states
-    std::fill(ar1_state_vx_.begin(), ar1_state_vx_.end(), 0.0f);
-    std::fill(ar1_state_vy_.begin(), ar1_state_vy_.end(), 0.0f);
-    std::fill(ar1_state_omega_.begin(), ar1_state_omega_.end(), 0.0f);
 }
 
 void MPPIController::setParams(const Params& params)
@@ -804,14 +773,6 @@ void MPPIController::setParams(const Params& params)
         {
             ctrl = ControlCommand{0.0f, 0.0f, 0.0f};
         }
-    }
-
-    // Resize AR(1) state buffers if K changed
-    if (static_cast<int>(ar1_state_vx_.size()) != params_.K)
-    {
-        ar1_state_vx_.resize(params_.K, 0.0f);
-        ar1_state_vy_.resize(params_.K, 0.0f);
-        ar1_state_omega_.resize(params_.K, 0.0f);
     }
 }
 
@@ -851,106 +812,6 @@ MPPIController::State MPPIController::simulateStep(const State& state, const Con
     return next;
 }
 
-float MPPIController::computeTrajectoryCost(
-    const std::vector<State>& trajectory,
-    const std::vector<ControlCommand>& controls,
-    const std::vector<Eigen::Vector2f>& path,
-    const std::vector<Eigen::Vector2f>& obstacles) const
-{
-    float total_cost = 0.0f;
-
-    for (size_t t = 0; t < trajectory.size(); ++t)
-    {
-        const State& state = trajectory[t];
-
-        // Path following cost
-        total_cost += params_.w_path * pathFollowingCost(state, path);
-
-        // Obstacle avoidance cost
-        float obs_cost = obstacleCost(state, obstacles);
-        if (std::isinf(obs_cost))
-        {
-            return std::numeric_limits<float>::infinity();
-        }
-        total_cost += params_.w_obstacle * obs_cost;
-
-        // Goal cost (only for last state, weighted more)
-        if (t == trajectory.size() - 1)
-        {
-            total_cost += params_.w_goal * goalCost(state, path);
-        }
-
-        // Smoothness cost
-        if (t < controls.size())
-        {
-            ControlCommand prev_ctrl = (t > 0) ? controls[t - 1] : ControlCommand{0.0f, 0.0f, 0.0f};
-            total_cost += params_.w_smoothness * smoothnessCost(controls[t], prev_ctrl);
-
-            // Speed cost - encourage maintaining some forward speed
-            float speed = std::sqrt(controls[t].vx * controls[t].vx + controls[t].vy * controls[t].vy);
-            float desired_speed = params_.max_vx * 0.5f; // 50% of max speed
-            total_cost += params_.w_speed * std::pow(speed - desired_speed, 2);
-        }
-    }
-
-    return total_cost;
-}
-
-float MPPIController::pathFollowingCost(const State& state,
-                                        const std::vector<Eigen::Vector2f>& path) const
-{
-    auto [dist, _] = distanceToPath(state, path);
-    return dist * dist; // Quadratic cost
-}
-
-float MPPIController::obstacleCost(const State& state,
-                                   const std::vector<Eigen::Vector2f>& obstacles) const
-{
-    float min_dist = minDistanceToObstacles(state, obstacles);
-
-    // Collision - infinite cost
-    if (min_dist < params_.robot_radius)
-    {
-        return std::numeric_limits<float>::infinity();
-    }
-
-    // Within safety margin - exponential penalty
-    if (min_dist < params_.safety_margin)
-    {
-        float penetration = params_.safety_margin - min_dist;
-        return std::exp(penetration / params_.obstacle_decay);
-    }
-
-    // Safe - no cost
-    return 0.0f;
-}
-
-float MPPIController::goalCost(const State& state,
-                               const std::vector<Eigen::Vector2f>& path) const
-{
-    if (path.empty()) return 0.0f;
-
-    const Eigen::Vector2f& goal = path.back();
-    float dx = state.x - goal.x();
-    float dy = state.y - goal.y();
-    return std::sqrt(dx * dx + dy * dy);
-}
-
-float MPPIController::smoothnessCost(const ControlCommand& control,
-                                     const ControlCommand& prev_control) const
-{
-    float dvx = control.vx - prev_control.vx;
-    float dvy = control.vy - prev_control.vy;
-    float domega = control.omega - prev_control.omega;
-
-    // Normalize by max values
-    dvx /= params_.max_vx;
-    dvy /= params_.max_vy;
-    domega /= params_.max_omega;
-
-    return dvx * dvx + dvy * dvy + domega * domega;
-}
-
 std::pair<float, size_t> MPPIController::distanceToPath(
     const State& state,
     const std::vector<Eigen::Vector2f>& path) const
@@ -973,25 +834,6 @@ std::pair<float, size_t> MPPIController::distanceToPath(
     return {min_dist, closest_idx};
 }
 
-float MPPIController::minDistanceToObstacles(const State& state,
-                                              const std::vector<Eigen::Vector2f>& obstacles) const
-{
-    if (obstacles.empty())
-    {
-        return std::numeric_limits<float>::max();
-    }
-
-    float min_dist = std::numeric_limits<float>::max();
-    Eigen::Vector2f pos(state.x, state.y);
-
-    for (const auto& obs : obstacles)
-    {
-        float dist = (pos - obs).norm();
-        min_dist = std::min(min_dist, dist);
-    }
-
-    return min_dist;
-}
 
 MPPIController::ControlCommand MPPIController::computeNominalControl(
     const State& current_state,
@@ -1086,14 +928,6 @@ MPPIController::ControlCommand MPPIController::computeNominalControl(
     return nominal;
 }
 
-MPPIController::ControlCommand MPPIController::clampControl(const ControlCommand& control) const
-{
-    ControlCommand clamped;
-    clamped.vx = std::clamp(control.vx, -params_.max_vx, params_.max_vx);
-    clamped.vy = std::clamp(control.vy, -params_.max_vy, params_.max_vy);
-    clamped.omega = std::clamp(control.omega, -params_.max_omega, params_.max_omega);
-    return clamped;
-}
 
 void MPPIController::warmStart()
 {
