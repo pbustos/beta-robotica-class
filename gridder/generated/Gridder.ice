@@ -45,6 +45,14 @@ module RoboCompGridder
 		int tileSize;
 		TCellVector cells;
 	};
+	sequence <float> Covariance;
+	struct Pose
+	{
+		float x;
+		float y;
+		float theta;
+		Covariance cov;
+	};
 	interface Gridder
 	{
 		bool IsPathBlocked (TPath path);
@@ -53,6 +61,7 @@ module RoboCompGridder
 		TDimensions getDimensions ();
 		Map getMap ();
 		Result getPaths (TPoint source, TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor);
+		Pose getPose ();
 		bool setGridDimensions (TDimensions dimensions);
 		Result setLocationAndGetPath (TPoint source, TPoint target, TPointVector freePoints, TPointVector obstaclePoints);
 	};

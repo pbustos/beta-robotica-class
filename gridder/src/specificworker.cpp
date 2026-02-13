@@ -81,7 +81,7 @@ void SpecificWorker::initialize()
 	else
 	{
         // Viewer
-        viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM);
+        viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM, false);
         viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 100, QColor("Blue"));
         // Don't limit sceneRect - allow unlimited panning
         // viewer->setSceneRect(params.GRID_MAX_DIM);
@@ -135,6 +135,26 @@ void SpecificWorker::initialize()
         // Lidar thread is created
         read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
         std::cout << __FUNCTION__ << " Started lidar reader" << std::endl;
+
+        // Initialize MPPI controller with custom parameters
+        MPPIController::Params mppi_params;
+        mppi_params.K = 500;              // Number of samples (reduced for CPU efficiency)
+        mppi_params.T = 20;               // Prediction horizon
+        mppi_params.dt = 0.1f;            // Time step
+        mppi_params.max_vx = 800.0f;      // Max forward speed (mm/s)
+        mppi_params.max_vy = 800.0f;      // Max lateral speed (mm/s)
+        mppi_params.max_omega = 0.8f;     // Max angular speed (rad/s)
+        mppi_params.robot_radius = params.ROBOT_SEMI_WIDTH;
+        mppi_params.safety_margin = 500.0f;
+        mppi_params.goal_tolerance = 300.0f;
+        mppi_controller.setParams(mppi_params);
+
+        // Initialize CPU usage tracking
+        getrusage(RUSAGE_SELF, &last_usage);
+        last_cpu_time = std::chrono::steady_clock::now();
+
+        // Connect MPPI button
+        connect(pushButton_mppi, &QPushButton::toggled, this, &SpecificWorker::slot_mppi_button_toggled);
 
         // mouse
         connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, [this](QPointF p)
@@ -255,6 +275,12 @@ void SpecificWorker::initialize()
                 qInfo() << "Path found with" << path.size() << "waypoints, length:"
                         << path_length/1000.f << "m, cost:" << path_cost << ", time:" << elapsed_sec << "s";
                 draw_path(path, &viewer->scene);
+
+                // Update MPPI navigation target and path
+                current_path = path;
+                current_target = target;
+                nav_state = NavigationState::NAVIGATING;
+                mppi_controller.reset();  // Reset for new path
             }
             else
             {
@@ -263,6 +289,7 @@ void SpecificWorker::initialize()
                 lcdNumber_cost->display(0);
                 lcdNumber_elapsed->display(static_cast<double>(elapsed_sec));  // Show in seconds
                 qInfo() << "No path found!";
+                nav_state = NavigationState::BLOCKED;
             }
         });
         connect(viewer, &AbstractGraphicViewer::right_click, [this](QPointF p)
@@ -325,38 +352,77 @@ void SpecificWorker::compute()
     // When external_map_loaded, visualization is static - no need to update
     mutex_path.unlock();
 
-    // ============ LOCALIZER UPDATE ============
-    float display_x = robot_pos.translation().x();
-    float display_y = robot_pos.translation().y();
-    float display_angle = std::atan2(robot_pos.linear()(1,0), robot_pos.linear()(0,0));
+    // ============ UPDATE ROBOT POSE (Localizer or Ground Truth) ============
+    estimated_robot_pose = update_robot_pose(robot_pos, points_local);
 
+    // ============ Debug: draw lidar points to inspect noise
+    if(params.DRAW_LIDAR_POINTS)
+        draw_lidar_points(points_world);
+
+    // ============ Update robot visualization in the viewer using estimated pose
+    const float display_x = estimated_robot_pose.translation().x();
+    const float display_y = estimated_robot_pose.translation().y();
+    const float display_angle = std::atan2(estimated_robot_pose.linear()(1,0), estimated_robot_pose.linear()(0,0));
+    viewer->robot_poly()->setPos(display_x, display_y);
+    viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
+
+    // ============ MPPI NAVIGATION ============
+    if (auto cmd = compute_mppi_control(estimated_robot_pose, points_world); cmd.has_value())
+    {
+        auto [vx, vy, omega] = cmd.value();
+        try
+        {
+            // MPPI returns: vx = sideways (X+ right), vy = forward (Y+), omega = rotation
+            // setSpeedBase expects same convention: (sideways, forward, rotation)
+            omnirobot_proxy->setSpeedBase(vx, vy, omega);
+        }
+        catch (const Ice::Exception &e)
+        {
+            static int error_count = 0;
+            if (++error_count % 100 == 1)
+                qWarning() << "[MPPI] Failed to send speed to robot:" << e.what();
+        }
+    }
+
+    // ============ UPDATE UI ============
+    this->hz = fps.print("FPS:", 3000);
+    this->lcdNumber_hz->display(this->hz);
+
+    // Update CPU usage with exponential moving average to reduce flickering
+    float current_cpu = get_cpu_usage();
+    cpu_usage_avg = CPU_AVG_ALPHA * current_cpu + (1.0f - CPU_AVG_ALPHA) * cpu_usage_avg;
+    this->lcdNumber_cpu->display(static_cast<int>(cpu_usage_avg));
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+/// Update robot pose using localizer (if enabled) or ground truth
+/////////////////////////////////////////////////////////////////////////////////////////////////
+Eigen::Affine2f SpecificWorker::update_robot_pose(const Eigen::Affine2f& ground_truth_pose,
+                                                   const std::vector<Eigen::Vector2f>& points_local)
+{
+    // Default: use ground truth
+    Eigen::Affine2f result = ground_truth_pose;
+
+    // If localizer is enabled and map is ready, try to get localized pose
     if (params.USE_LOCALIZER and external_map_loaded and map_ready_for_localization.load())
     {
-        if (const auto estimated = update_localizer(robot_pos, points_local); estimated.has_value())
+        if (const auto estimated = update_localizer(ground_truth_pose, points_local); estimated.has_value())
         {
-            // Sanity check: only use estimate if it's reasonable
-            // (not too far from GT - max 5m error allowed)
-            float error = std::hypot(estimated->x - display_x, estimated->y - display_y);
+            // Sanity check: only use estimate if it's reasonable (not too far from GT - max 5m error allowed)
+            const float gt_x = ground_truth_pose.translation().x();
+            const float gt_y = ground_truth_pose.translation().y();
+            float error = std::hypot(estimated->x - gt_x, estimated->y - gt_y);
+
             if (error < 5000.f && localizer.getEffectiveSampleSize() > 10.0)
             {
-                // Use localized pose for display
-                display_x = estimated->x;
-                display_y = estimated->y;
-                display_angle = estimated->theta;
+                // Build Affine2f from localized pose
+                result.translation() = Eigen::Vector2f(estimated->x, estimated->y);
+                result.linear() = Eigen::Rotation2Df(estimated->theta).toRotationMatrix();
             }
         }
     }
 
-    // Debug: draw lidar points to inspect noise
-    if(params.DRAW_LIDAR_POINTS)
-        draw_lidar_points(points_world);
-
-    // Update robot visualization in the viewer (using localized pose if available)
-    viewer->robot_poly()->setPos(display_x, display_y);
-    viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
-
-    this->hz = fps.print("FPS:", 3000);
-    this->lcdNumber_hz->display(this->hz);
+    return result;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -489,224 +555,6 @@ void SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &point
         }
     }
 }
-
-//////////////////////////////////////////////////////////////////////////////////////////////
-/// Clustering de puntos LiDAR para detección de obstáculos convexos
-//////////////////////////////////////////////////////////////////////////////////////////////
-
-/**
- * @brief Agrupa puntos LiDAR en clusters usando Adaptive Breakpoint Detection
- *
- * El algoritmo funciona así:
- * 1. Los puntos del LiDAR vienen ordenados angularmente
- * 2. Dos puntos consecutivos pertenecen al mismo cluster si:
- *    - La distancia entre ellos < umbral adaptativo
- *    - El umbral crece con la distancia al robot (puntos lejanos están más espaciados)
- *
- * @param points Puntos LiDAR en coordenadas mundo
- * @param robot_pos Posición del robot en mundo
- * @param distance_threshold Umbral base de distancia (mm)
- * @param min_points Mínimo de puntos para considerar un cluster válido
- * @return Vector de clusters detectados
- */
-std::vector<SpecificWorker::Cluster> SpecificWorker::cluster_lidar_points(
-    const std::vector<Eigen::Vector2f> &points,
-    const Eigen::Vector2f &robot_pos,
-    float distance_threshold,
-    int min_points)
-{
-    std::vector<Cluster> clusters;
-    if (points.size() < static_cast<size_t>(min_points))
-        return clusters;
-
-    // Constantes para Adaptive Breakpoint Detection
-    constexpr float ANGULAR_RESOLUTION = 0.004f;  // ~0.25 grados en radianes (típico para LiDAR)
-    constexpr float LAMBDA = 10.0f;  // Factor de adaptación: threshold = base + lambda * sin(angular_res) * distance
-
-    Cluster current_cluster;
-    current_cluster.points.push_back(points[0]);
-
-    for (size_t i = 1; i < points.size(); ++i)
-    {
-        const auto &p_prev = points[i - 1];
-        const auto &p_curr = points[i];
-
-        // Distancia entre puntos consecutivos
-        const float dist_between = (p_curr - p_prev).norm();
-
-        // Distancia adaptativa: puntos más lejanos tienen umbral mayor
-        // Fórmula ABD: D_threshold = D_base + lambda * sin(delta_phi) * range
-        const float range = (p_prev - robot_pos).norm();
-        const float adaptive_threshold = distance_threshold + LAMBDA * std::sin(ANGULAR_RESOLUTION) * range;
-
-        if (dist_between < adaptive_threshold)
-        {
-            // Mismo cluster
-            current_cluster.points.push_back(p_curr);
-        }
-        else
-        {
-            // Nuevo cluster - guardar el anterior si tiene suficientes puntos
-            if (current_cluster.points.size() >= static_cast<size_t>(min_points))
-            {
-                // Calcular centroide
-                Eigen::Vector2f sum = Eigen::Vector2f::Zero();
-                float min_dist = std::numeric_limits<float>::max();
-                for (const auto &p : current_cluster.points)
-                {
-                    sum += p;
-                    float d = (p - robot_pos).norm();
-                    if (d < min_dist) min_dist = d;
-                }
-                current_cluster.centroid = sum / static_cast<float>(current_cluster.points.size());
-                current_cluster.min_dist_to_robot = min_dist;
-
-                // Calcular convex hull si hay suficientes puntos
-                if (current_cluster.points.size() >= 3)
-                    current_cluster.convex_hull = compute_convex_hull(current_cluster.points);
-
-                clusters.push_back(std::move(current_cluster));
-            }
-
-            // Iniciar nuevo cluster
-            current_cluster = Cluster();
-            current_cluster.points.push_back(p_curr);
-        }
-    }
-
-    // No olvidar el último cluster
-    if (current_cluster.points.size() >= static_cast<size_t>(min_points))
-    {
-        Eigen::Vector2f sum = Eigen::Vector2f::Zero();
-        float min_dist = std::numeric_limits<float>::max();
-        for (const auto &p : current_cluster.points)
-        {
-            sum += p;
-            float d = (p - robot_pos).norm();
-            if (d < min_dist) min_dist = d;
-        }
-        current_cluster.centroid = sum / static_cast<float>(current_cluster.points.size());
-        current_cluster.min_dist_to_robot = min_dist;
-
-        if (current_cluster.points.size() >= 3)
-            current_cluster.convex_hull = compute_convex_hull(current_cluster.points);
-
-        clusters.push_back(std::move(current_cluster));
-    }
-
-    return clusters;
-}
-
-/**
- * @brief Calcula la envolvente convexa de un conjunto de puntos usando el algoritmo de Graham Scan
- * @param points Puntos de entrada
- * @return Puntos de la envolvente convexa en orden antihorario
- */
-std::vector<Eigen::Vector2f> SpecificWorker::compute_convex_hull(const std::vector<Eigen::Vector2f> &points)
-{
-    if (points.size() < 3)
-        return points;
-
-    // Encontrar el punto más bajo (y menor, luego x menor)
-    size_t min_idx = 0;
-    for (size_t i = 1; i < points.size(); ++i)
-    {
-        if (points[i].y() < points[min_idx].y() ||
-            (points[i].y() == points[min_idx].y() && points[i].x() < points[min_idx].x()))
-        {
-            min_idx = i;
-        }
-    }
-
-    // Copiar puntos y poner el mínimo al principio
-    std::vector<Eigen::Vector2f> sorted_points = points;
-    std::swap(sorted_points[0], sorted_points[min_idx]);
-    const Eigen::Vector2f pivot = sorted_points[0];
-
-    // Ordenar por ángulo polar respecto al pivot
-    std::sort(sorted_points.begin() + 1, sorted_points.end(),
-              [&pivot](const Eigen::Vector2f &a, const Eigen::Vector2f &b)
-              {
-                  float angle_a = std::atan2(a.y() - pivot.y(), a.x() - pivot.x());
-                  float angle_b = std::atan2(b.y() - pivot.y(), b.x() - pivot.x());
-                  if (std::abs(angle_a - angle_b) < 1e-6f)
-                  {
-                      // Mismo ángulo: el más cercano primero
-                      return (a - pivot).squaredNorm() < (b - pivot).squaredNorm();
-                  }
-                  return angle_a < angle_b;
-              });
-
-    // Graham scan
-    std::vector<Eigen::Vector2f> hull;
-    hull.push_back(sorted_points[0]);
-    hull.push_back(sorted_points[1]);
-
-    // Función para calcular el producto cruz (determina giro)
-    auto cross = [](const Eigen::Vector2f &o, const Eigen::Vector2f &a, const Eigen::Vector2f &b) -> float
-    {
-        return (a.x() - o.x()) * (b.y() - o.y()) - (a.y() - o.y()) * (b.x() - o.x());
-    };
-
-    for (size_t i = 2; i < sorted_points.size(); ++i)
-    {
-        while (hull.size() > 1 && cross(hull[hull.size() - 2], hull[hull.size() - 1], sorted_points[i]) <= 0)
-        {
-            hull.pop_back();
-        }
-        hull.push_back(sorted_points[i]);
-    }
-
-    return hull;
-}
-
-/**
- * @brief Dibuja los clusters detectados en la escena
- */
-void SpecificWorker::draw_clusters(const std::vector<Cluster> &clusters, QGraphicsScene *scene, bool erase_only)
-{
-    static std::vector<QGraphicsItem*> cluster_items;
-    static QColor colors[] = {QColor("cyan"), QColor("magenta"), QColor("yellow"),
-                              QColor("lime"), QColor("orange"), QColor("pink")};
-
-    // Limpiar items anteriores
-    for (auto *item : cluster_items)
-    {
-        scene->removeItem(item);
-        delete item;  // Fix memory leak
-    }
-    cluster_items.clear();
-
-    if (erase_only) return;
-
-    int color_idx = 0;
-    for (const auto &cluster : clusters)
-    {
-        QColor color = colors[color_idx % 6];
-        color_idx++;
-
-        // Dibujar convex hull si existe
-        if (cluster.convex_hull.size() >= 3)
-        {
-            QPolygonF polygon;
-            for (const auto &p : cluster.convex_hull)
-                polygon << QPointF(p.x(), p.y());
-            polygon << QPointF(cluster.convex_hull[0].x(), cluster.convex_hull[0].y());  // cerrar
-
-            auto *poly_item = scene->addPolygon(polygon, QPen(color, 30), QBrush(color, Qt::Dense4Pattern));
-            poly_item->setZValue(3);
-            cluster_items.push_back(poly_item);
-        }
-
-        // Dibujar centroide
-        constexpr float cs = 80.f;
-        auto *centroid_item = scene->addEllipse(-cs/2, -cs/2, cs, cs, QPen(Qt::black, 20), QBrush(color));
-        centroid_item->setPos(cluster.centroid.x(), cluster.centroid.y());
-        centroid_item->setZValue(4);
-        cluster_items.push_back(centroid_item);
-    }
-}
-
 ///////////////////////////////////////////////////////////////////////////////////////////////
 Eigen::Affine2f SpecificWorker::get_robot_pose()
 {
@@ -835,7 +683,182 @@ void SpecificWorker::draw_paths(const std::vector<std::vector<Eigen::Vector2f>> 
     }
 }
 
+//////////////////////////////////////////////////////////////////////////////////////////////
+// MPPI Navigation Methods
+//////////////////////////////////////////////////////////////////////////////////////////////
+
+std::optional<std::tuple<float, float, float>> SpecificWorker::compute_mppi_control(
+    const Eigen::Affine2f& robot_pose,
+    const std::vector<Eigen::Vector2f>& lidar_points)
+{
+    // Check preconditions - return nullopt if MPPI should not run
+    if (not mppi_enabled.load())
+        return std::nullopt;
+
+    if (nav_state != NavigationState::NAVIGATING)
+        return std::nullopt;
+
+    if (current_path.empty())
+        return std::nullopt;
+
+    // Convert robot pose to MPPI state
+    MPPIController::State current_state;
+    current_state.x = robot_pose.translation().x();
+    current_state.y = robot_pose.translation().y();
+    current_state.theta = std::atan2(robot_pose.linear()(1,0), robot_pose.linear()(0,0));
+
+    // Check if goal reached
+    if (mppi_controller.goalReached(current_state, current_path.back()))
+    {
+        nav_state = NavigationState::GOAL_REACHED;
+        qInfo() << "[MPPI] Goal reached!";
+        return std::make_tuple(0.f, 0.f, 0.f);  // Stop
+    }
+
+    // Compute control command using MPPI
+    auto cmd = mppi_controller.compute(current_state, current_path, lidar_points);
+
+    // Log command periodically
+    static int log_counter = 0;
+    if (++log_counter % 50 == 0)
+    {
+        qDebug() << "[MPPI] Command: vx=" << cmd.vx << "mm/s, vy=" << cmd.vy
+                 << "mm/s, omega=" << cmd.omega << "rad/s";
+    }
+
+    // Draw MPPI predicted trajectory
+    draw_mppi_trajectory(mppi_controller.getOptimalTrajectory());
+
+    // Return velocities (vx, vy in mm/s, omega in rad/s)
+    return std::make_tuple(cmd.vx, cmd.vy, cmd.omega);
+}
+
+void SpecificWorker::draw_mppi_trajectory(const std::vector<MPPIController::State>& trajectory)
+{
+    // Clear previous trajectory items
+    for (auto* item : mppi_trajectory_items)
+    {
+        viewer->scene.removeItem(item);
+        delete item;
+    }
+    mppi_trajectory_items.clear();
+
+    // Colors for the N best trajectories (from worst to best among selected)
+    static const std::vector<QColor> trajectory_colors = {
+        QColor(100, 100, 255, 150),   // Light blue (transparent)
+        QColor(100, 150, 255, 150),
+        QColor(100, 200, 255, 160),
+        QColor(50, 220, 200, 170),
+        QColor(50, 255, 150, 180),
+        QColor(100, 255, 100, 190),
+        QColor(150, 255, 50, 200),
+        QColor(200, 255, 50, 210),
+        QColor(255, 200, 50, 220),
+        QColor(255, 150, 50, 230)     // Orange (best among N)
+    };
+
+    // Draw N best trajectories first (so optimal is on top)
+    const auto& best_trajectories = mppi_controller.getBestTrajectories();
+    for (size_t traj_idx = 0; traj_idx < best_trajectories.size(); ++traj_idx)
+    {
+        const auto& traj = best_trajectories[traj_idx];
+        if (traj.size() < 2) continue;
+
+        // Select color based on index (better trajectories get warmer colors)
+        size_t color_idx = std::min(traj_idx, trajectory_colors.size() - 1);
+        QColor color = trajectory_colors[color_idx];
+        QPen pen(color, 15);  // Thinner than optimal
+
+        for (size_t i = 1; i < traj.size(); ++i)
+        {
+            auto* line = viewer->scene.addLine(
+                traj[i-1].x, traj[i-1].y,
+                traj[i].x, traj[i].y,
+                pen);
+            line->setZValue(10 + static_cast<int>(traj_idx));  // Stack by quality
+            mppi_trajectory_items.push_back(line);
+        }
+    }
+
+    // Draw optimal trajectory on top in magenta, thick
+    if (trajectory.size() >= 2)
+    {
+        QPen pen(QColor("Magenta"), 40);
+        for (size_t i = 1; i < trajectory.size(); ++i)
+        {
+            auto* line = viewer->scene.addLine(
+                trajectory[i-1].x, trajectory[i-1].y,
+                trajectory[i].x, trajectory[i].y,
+                pen);
+            line->setZValue(20);  // On top of all others
+            mppi_trajectory_items.push_back(line);
+        }
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// Auxiliary methods
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+float SpecificWorker::get_cpu_usage()
+{
+    struct rusage current_usage;
+    getrusage(RUSAGE_SELF, &current_usage);
+
+    auto current_time = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        current_time - last_cpu_time).count();
+
+    if (elapsed <= 0) return 0.f;
+
+    // Calculate CPU time used (user + system)
+    long user_diff = (current_usage.ru_utime.tv_sec - last_usage.ru_utime.tv_sec) * 1000000 +
+                     (current_usage.ru_utime.tv_usec - last_usage.ru_utime.tv_usec);
+    long sys_diff = (current_usage.ru_stime.tv_sec - last_usage.ru_stime.tv_sec) * 1000000 +
+                    (current_usage.ru_stime.tv_usec - last_usage.ru_stime.tv_usec);
+
+    float cpu_percent = 100.f * static_cast<float>(user_diff + sys_diff) / static_cast<float>(elapsed);
+
+    // Update for next call
+    last_usage = current_usage;
+    last_cpu_time = current_time;
+
+    return cpu_percent;
+}
+
+void SpecificWorker::slot_mppi_button_toggled(bool checked)
+{
+    mppi_enabled.store(checked);
+
+    if (checked)
+    {
+        pushButton_mppi->setText("MPPI ON");
+        pushButton_mppi->setStyleSheet("background-color: green; color: white;");
+        qInfo() << "[MPPI] Controller ENABLED";
+    }
+    else
+    {
+        pushButton_mppi->setText("MPPI OFF");
+        pushButton_mppi->setStyleSheet("");
+        // Stop the robot when disabling MPPI
+        try
+        {
+            omnirobot_proxy->setSpeedBase(0.f, 0.f, 0.f);
+        }
+        catch (const Ice::Exception &e)
+        {
+            qWarning() << "[MPPI] Failed to stop robot:" << e.what();
+        }
+        nav_state = NavigationState::IDLE;
+        qInfo() << "[MPPI] Controller DISABLED";
+    }
+}
+
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+/// Gridder.idsl interface implementation
+/// ///////////////////////////////////////////////////////////////////////////////////////////////
+
 RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint source,
                                                          RoboCompGridder::TPoint target,
                                                          int max_paths,
@@ -1036,7 +1059,6 @@ RoboCompGridder::TDimensions SpecificWorker::Gridder_getDimensions()
             static_cast<float>(params.GRID_MAX_DIM.width()),
             static_cast<float>(params.GRID_MAX_DIM.height())};
 }
-
 RoboCompGridder::Map SpecificWorker::Gridder_getMap()
 {
     //qInfo() << __FUNCTION__ << " Requesting map. Current grid mode: " << (params.GRID_MODE == Params::GridMode::SPARSE_ESDF ? "SPARSE_ESDF" : (params.GRID_MODE == Params::GridMode::DENSE_ESDF ? "DENSE_ESDF" : "DENSE"));
@@ -1084,7 +1106,6 @@ RoboCompGridder::Map SpecificWorker::Gridder_getMap()
 
     return result;
 }
-
 bool SpecificWorker::Gridder_setGridDimensions(RoboCompGridder::TDimensions dimensions)
 {
     qInfo() << __FUNCTION__ << " Setting grid dimensions to [" << dimensions.left << dimensions.top << dimensions.width << dimensions.height << "]";
@@ -1166,8 +1187,6 @@ bool SpecificWorker::Gridder_IsPathBlocked(RoboCompGridder::TPath path)
         return grid.is_path_blocked(path_);
     }
 }
-
-//////////////////////////////////////////////////////////////////////////////////////////////
 bool SpecificWorker::Gridder_loadMRPTMap(const std::string &filepath)
 {
     qInfo() << "[MRPT Loader] Loading map from:" << filepath.c_str();
@@ -1300,7 +1319,6 @@ bool SpecificWorker::Gridder_loadMRPTMap(const std::string &filepath)
 
     return true;
 }
-
 std::string SpecificWorker::Gridder_loadAndInitializeMap(const std::string &filepath)
 {
     qInfo() << "[MRPT Loader] Loading and initializing map from:" << filepath.c_str();
@@ -1360,6 +1378,13 @@ std::string SpecificWorker::Gridder_loadAndInitializeMap(const std::string &file
     {
         return "Failed to load MRPT map";
     }
+}
+RoboCompGridder::Pose SpecificWorker::Gridder_getPose()
+{
+    RoboCompGridder::Pose ret{};  //TODO: fill ret with actual pose data
+    //implementCODE
+
+    return ret;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////

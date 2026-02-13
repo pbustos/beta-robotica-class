@@ -15,6 +15,7 @@
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLCDNumber>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QSpacerItem>
 #include <QtWidgets/QVBoxLayout>
 #include <QtWidgets/QWidget>
@@ -40,6 +41,10 @@ public:
     QHBoxLayout *horizontalLayout_5;
     QLabel *label_4;
     QLCDNumber *lcdNumber_elapsed;
+    QHBoxLayout *horizontalLayout_6;
+    QLabel *label_cpu;
+    QLCDNumber *lcdNumber_cpu;
+    QPushButton *pushButton_mppi;
     QFrame *frame;
 
     void setupUi(QWidget *guiDlg)
@@ -131,6 +136,30 @@ public:
 
         horizontalLayout_4->addLayout(horizontalLayout_5);
 
+        horizontalLayout_6 = new QHBoxLayout();
+        horizontalLayout_6->setObjectName("horizontalLayout_6");
+        label_cpu = new QLabel(guiDlg);
+        label_cpu->setObjectName("label_cpu");
+        label_cpu->setFrameShape(QFrame::StyledPanel);
+
+        horizontalLayout_6->addWidget(label_cpu);
+
+        lcdNumber_cpu = new QLCDNumber(guiDlg);
+        lcdNumber_cpu->setObjectName("lcdNumber_cpu");
+        lcdNumber_cpu->setFont(font1);
+
+        horizontalLayout_6->addWidget(lcdNumber_cpu);
+
+
+        horizontalLayout_4->addLayout(horizontalLayout_6);
+
+        pushButton_mppi = new QPushButton(guiDlg);
+        pushButton_mppi->setObjectName("pushButton_mppi");
+        pushButton_mppi->setCheckable(true);
+        pushButton_mppi->setChecked(false);
+
+        horizontalLayout_4->addWidget(pushButton_mppi);
+
 
         verticalLayout->addLayout(horizontalLayout_4);
 
@@ -162,6 +191,8 @@ public:
         label_2->setText(QCoreApplication::translate("guiDlg", "Path length", nullptr));
         label_3->setText(QCoreApplication::translate("guiDlg", "Path cost", nullptr));
         label_4->setText(QCoreApplication::translate("guiDlg", "Elapsed", nullptr));
+        label_cpu->setText(QCoreApplication::translate("guiDlg", "CPU %", nullptr));
+        pushButton_mppi->setText(QCoreApplication::translate("guiDlg", "MPPI OFF", nullptr));
     } // retranslateUi
 
 };

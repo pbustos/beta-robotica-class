@@ -34,8 +34,6 @@
 #include <Ice/Optional.h>
 #include <IceUtil/UndefSysMacros.h>
 
-
-#define ICE_IGNORE_VERSION
 #ifndef ICE_IGNORE_VERSION
 #   if ICE_INT_VERSION / 100 != 307
 #       error Ice version mismatch!
@@ -150,6 +148,25 @@ struct Map
     }
 };
 
+using Covariance = ::std::vector<float>;
+
+struct Pose
+{
+    float x;
+    float y;
+    float theta;
+    ::RoboCompGridder::Covariance cov;
+
+    /**
+     * Obtains a tuple containing all of the struct's data members.
+     * @return The data members in a tuple.
+     */
+    std::tuple<const float&, const float&, const float&, const ::RoboCompGridder::Covariance&> ice_tuple() const
+    {
+        return std::tie(x, y, theta, cov);
+    }
+};
+
 using Ice::operator<;
 using Ice::operator<=;
 using Ice::operator>;
@@ -224,6 +241,11 @@ public:
     virtual Result getPaths(TPoint source, TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor, const ::Ice::Current& current) = 0;
     /// \cond INTERNAL
     bool _iceD_getPaths(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual Pose getPose(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getPose(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
     virtual bool setGridDimensions(TDimensions dimensions, const ::Ice::Current& current) = 0;
@@ -404,6 +426,31 @@ public:
     void _iceI_getPaths(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Result>>&, const TPoint&, const TPoint&, int, bool, bool, float, const ::Ice::Context&);
     /// \endcond
 
+    Pose getPose(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::Pose>(true, this, &GridderPrx::_iceI_getPose, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto getPoseAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<::RoboCompGridder::Pose>>().get_future())
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::Pose, P>(false, this, &GridderPrx::_iceI_getPose, context);
+    }
+
+    ::std::function<void()>
+    getPoseAsync(::std::function<void(::RoboCompGridder::Pose)> response,
+                 ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                 ::std::function<void(bool)> sent = nullptr,
+                 const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<::RoboCompGridder::Pose>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_getPose, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_getPose(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Pose>>&, const ::Ice::Context&);
+    /// \endcond
+
     bool setGridDimensions(const TDimensions& dimensions, const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
         return _makePromiseOutgoing<bool>(true, this, &GridderPrx::_iceI_setGridDimensions, dimensions, context).get();
@@ -560,6 +607,23 @@ struct StreamReader<::RoboCompGridder::Map, S>
     static void read(S* istr, ::RoboCompGridder::Map& v)
     {
         istr->readAll(v.tileSize, v.cells);
+    }
+};
+
+template<>
+struct StreamableTraits<::RoboCompGridder::Pose>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 13;
+    static const bool fixedLength = false;
+};
+
+template<typename S>
+struct StreamReader<::RoboCompGridder::Pose, S>
+{
+    static void read(S* istr, ::RoboCompGridder::Pose& v)
+    {
+        istr->readAll(v.x, v.y, v.theta, v.cov);
     }
 };
 
@@ -728,6 +792,16 @@ struct Map
     ::RoboCompGridder::TCellVector cells;
 };
 
+typedef ::std::vector< ::Ice::Float> Covariance;
+
+struct Pose
+{
+    ::Ice::Float x;
+    ::Ice::Float y;
+    ::Ice::Float theta;
+    ::RoboCompGridder::Covariance cov;
+};
+
 }
 
 namespace RoboCompGridder
@@ -780,6 +854,14 @@ typedef ::IceUtil::Handle< Callback_Gridder_getMap_Base> Callback_Gridder_getMap
  */
 class Callback_Gridder_getPaths_Base : public virtual ::IceInternal::CallbackBase { };
 typedef ::IceUtil::Handle< Callback_Gridder_getPaths_Base> Callback_Gridder_getPathsPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getPose.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getPose.
+ */
+class Callback_Gridder_getPose_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_getPose_Base> Callback_Gridder_getPosePtr;
 
 /**
  * Base class for asynchronous callback wrapper classes used for calls to
@@ -1037,6 +1119,44 @@ private:
 
 public:
 
+    ::RoboCompGridder::Pose getPose(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_getPose(_iceI_begin_getPose(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_getPose(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_getPose(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_getPose(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getPose(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getPose(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getPose(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getPose(const ::RoboCompGridder::Callback_Gridder_getPosePtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getPose(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getPose(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_getPosePtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getPose(context, cb, cookie);
+    }
+
+    ::RoboCompGridder::Pose end_getPose(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_getPose(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
     bool setGridDimensions(const ::RoboCompGridder::TDimensions& dimensions, const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
         return end_setGridDimensions(_iceI_begin_setGridDimensions(dimensions, context, ::IceInternal::dummyCallback, 0, true));
@@ -1204,6 +1324,11 @@ public:
     virtual Result getPaths(const TPoint& source, const TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, ::Ice::Float safetyFactor, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
     /// \cond INTERNAL
     bool _iceD_getPaths(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual Pose getPose(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getPose(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
     virtual bool setGridDimensions(const TDimensions& dimensions, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
@@ -1395,6 +1520,38 @@ struct StreamReader< ::RoboCompGridder::Map, S>
     {
         istr->read(v.tileSize);
         istr->read(v.cells);
+    }
+};
+
+template<>
+struct StreamableTraits< ::RoboCompGridder::Pose>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 13;
+    static const bool fixedLength = false;
+};
+
+template<typename S>
+struct StreamWriter< ::RoboCompGridder::Pose, S>
+{
+    static void write(S* ostr, const ::RoboCompGridder::Pose& v)
+    {
+        ostr->write(v.x);
+        ostr->write(v.y);
+        ostr->write(v.theta);
+        ostr->write(v.cov);
+    }
+};
+
+template<typename S>
+struct StreamReader< ::RoboCompGridder::Pose, S>
+{
+    static void read(S* istr, ::RoboCompGridder::Pose& v)
+    {
+        istr->read(v.x);
+        istr->read(v.y);
+        istr->read(v.theta);
+        istr->read(v.cov);
     }
 };
 
@@ -2314,6 +2471,158 @@ template<class T, typename CT> Callback_Gridder_getPathsPtr
 newCallback_Gridder_getPaths(T* instance, void (T::*cb)(const Result&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
 {
     return new Callback_Gridder_getPaths<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getPose.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getPose.
+ */
+template<class T>
+class CallbackNC_Gridder_getPose : public Callback_Gridder_getPose_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(const Pose&);
+
+    CallbackNC_Gridder_getPose(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        Pose ret;
+        try
+        {
+            ret = proxy->end_getPose(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getPose.
+ */
+template<class T> Callback_Gridder_getPosePtr
+newCallback_Gridder_getPose(const IceUtil::Handle<T>& instance, void (T::*cb)(const Pose&), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getPose<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getPose.
+ */
+template<class T> Callback_Gridder_getPosePtr
+newCallback_Gridder_getPose(T* instance, void (T::*cb)(const Pose&), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getPose<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getPose.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getPose.
+ */
+template<class T, typename CT>
+class Callback_Gridder_getPose : public Callback_Gridder_getPose_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(const Pose&, const CT&);
+
+    Callback_Gridder_getPose(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        Pose ret;
+        try
+        {
+            ret = proxy->end_getPose(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getPose.
+ */
+template<class T, typename CT> Callback_Gridder_getPosePtr
+newCallback_Gridder_getPose(const IceUtil::Handle<T>& instance, void (T::*cb)(const Pose&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getPose<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getPose.
+ */
+template<class T, typename CT> Callback_Gridder_getPosePtr
+newCallback_Gridder_getPose(T* instance, void (T::*cb)(const Pose&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getPose<T, CT>(instance, cb, excb, sentcb);
 }
 
 /**

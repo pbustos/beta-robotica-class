@@ -6,6 +6,7 @@ Endpoints.Gridder = "tcp -p 13541"
 Proxies.Lidar3D = "lidar3d:tcp -h localhost -p 11990"
 Proxies.Lidar3D1 = "lidar3d:tcp -h localhost -p 11989"
 Proxies.Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 10006"
+Proxies.OmniRobot = "omnirobot:tcp -h localhost -p 10004"
 
 # This property is used by the clients to connect to IceStorm.
 Proxies.TopicManager = "IceStorm/TopicManager:default -p 9999"

@@ -44,6 +44,10 @@ GridderI::GridderI(GenericWorker *_worker, const size_t id): worker(_worker), id
 		[this](auto a, auto b, auto c, auto d, auto e, auto f) { return worker->Gridder_getPaths(a, b, c, d, e, f); }
 	};
 
+	getPoseHandlers = {
+		[this]() { return worker->Gridder_getPose(); }
+	};
+
 	setGridDimensionsHandlers = {
 		[this](auto a) { return worker->Gridder_setGridDimensions(a); }
 	};
@@ -141,6 +145,20 @@ RoboCompGridder::Result GridderI::getPaths(RoboCompGridder::TPoint source, RoboC
 		return  getPathsHandlers[id](source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor);
 	else
 		throw std::out_of_range("Invalid getPaths id: " + std::to_string(id));
+
+}
+
+RoboCompGridder::Pose GridderI::getPose(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < getPoseHandlers.size())
+		return  getPoseHandlers[id]();
+	else
+		throw std::out_of_range("Invalid getPose id: " + std::to_string(id));
 
 }
 

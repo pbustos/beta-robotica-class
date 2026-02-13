@@ -5,7 +5,7 @@ LIST(APPEND SOURCES
   ../src/grid_esdf.cpp
   ../src/mrpt_map_loader.cpp
   ../src/localizer.cpp
-    ..src/mppi_controller.cpp
+  ../src/mppi_controller.cpp
 )
 # Headers set
 LIST(APPEND HEADERS

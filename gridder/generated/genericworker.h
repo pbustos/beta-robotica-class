@@ -41,13 +41,15 @@
 #include <unordered_map>
 
 
+#include <GenericBase.h>
 #include <Gridder.h>
 #include <Lidar3D.h>
+#include <OmniRobot.h>
 #include <Webots2Robocomp.h>
 
 #define BASIC_PERIOD 100
 
-using TuplePrx = std::tuple<RoboCompLidar3D::Lidar3DPrxPtr,RoboCompLidar3D::Lidar3DPrxPtr,RoboCompWebots2Robocomp::Webots2RobocompPrxPtr>;
+using TuplePrx = std::tuple<RoboCompLidar3D::Lidar3DPrxPtr,RoboCompLidar3D::Lidar3DPrxPtr,RoboCompOmniRobot::OmniRobotPrxPtr,RoboCompWebots2Robocomp::Webots2RobocompPrxPtr>;
 
 
 class GenericWorker : public QWidget, public Ui_guiDlg
@@ -68,6 +70,7 @@ public:
 
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy;
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d1_proxy;
+	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
 	RoboCompWebots2Robocomp::Webots2RobocompPrxPtr webots2robocomp_proxy;
 
 	virtual bool Gridder_IsPathBlocked(RoboCompGridder::TPath path) = 0;
@@ -76,6 +79,7 @@ public:
 	virtual RoboCompGridder::TDimensions Gridder_getDimensions() = 0;
 	virtual RoboCompGridder::Map Gridder_getMap() = 0;
 	virtual RoboCompGridder::Result Gridder_getPaths(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor) = 0;
+	virtual RoboCompGridder::Pose Gridder_getPose() = 0;
 	virtual bool Gridder_setGridDimensions(RoboCompGridder::TDimensions dimensions) = 0;
 	virtual RoboCompGridder::Result Gridder_setLocationAndGetPath(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, RoboCompGridder::TPointVector freePoints, RoboCompGridder::TPointVector obstaclePoints) = 0;
 

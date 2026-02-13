@@ -60,6 +60,7 @@ const ::std::string iceC_RoboCompGridder_Gridder_ops[] =
     "getDimensions",
     "getMap",
     "getPaths",
+    "getPose",
     "ice_id",
     "ice_ids",
     "ice_isA",
@@ -73,6 +74,7 @@ const ::std::string iceC_RoboCompGridder_Gridder_getClosestFreePoint_name = "get
 const ::std::string iceC_RoboCompGridder_Gridder_getDimensions_name = "getDimensions";
 const ::std::string iceC_RoboCompGridder_Gridder_getMap_name = "getMap";
 const ::std::string iceC_RoboCompGridder_Gridder_getPaths_name = "getPaths";
+const ::std::string iceC_RoboCompGridder_Gridder_getPose_name = "getPose";
 const ::std::string iceC_RoboCompGridder_Gridder_setGridDimensions_name = "setGridDimensions";
 const ::std::string iceC_RoboCompGridder_Gridder_setLocationAndGetPath_name = "setLocationAndGetPath";
 
@@ -208,6 +210,20 @@ RoboCompGridder::Gridder::_iceD_getPaths(::IceInternal::Incoming& inS, const ::I
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_getPose(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    Pose ret = this->getPose(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceD_setGridDimensions(::IceInternal::Incoming& inS, const ::Ice::Current& current)
 {
     _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
@@ -247,7 +263,7 @@ RoboCompGridder::Gridder::_iceD_setLocationAndGetPath(::IceInternal::Incoming& i
 bool
 RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice::Current& current)
 {
-    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_ops, iceC_RoboCompGridder_Gridder_ops + 12, current.operation);
+    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_ops, iceC_RoboCompGridder_Gridder_ops + 13, current.operation);
     if(r.first == r.second)
     {
         throw ::Ice::OperationNotExistException(__FILE__, __LINE__, current.id, current.facet, current.operation);
@@ -281,25 +297,29 @@ RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice:
         }
         case 6:
         {
-            return _iceD_ice_id(in, current);
+            return _iceD_getPose(in, current);
         }
         case 7:
         {
-            return _iceD_ice_ids(in, current);
+            return _iceD_ice_id(in, current);
         }
         case 8:
         {
-            return _iceD_ice_isA(in, current);
+            return _iceD_ice_ids(in, current);
         }
         case 9:
         {
-            return _iceD_ice_ping(in, current);
+            return _iceD_ice_isA(in, current);
         }
         case 10:
         {
-            return _iceD_setGridDimensions(in, current);
+            return _iceD_ice_ping(in, current);
         }
         case 11:
+        {
+            return _iceD_setGridDimensions(in, current);
+        }
+        case 12:
         {
             return _iceD_setLocationAndGetPath(in, current);
         }
@@ -392,6 +412,17 @@ RoboCompGridder::GridderPrx::_iceI_getPaths(const ::std::shared_ptr<::IceInterna
 
 /// \cond INTERNAL
 void
+RoboCompGridder::GridderPrx::_iceI_getPose(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Pose>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getPose_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_getPose_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
 RoboCompGridder::GridderPrx::_iceI_setGridDimensions(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>& outAsync, const TDimensions& iceP_dimensions, const ::Ice::Context& context)
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_setGridDimensions_name);
@@ -452,6 +483,8 @@ const ::std::string iceC_RoboCompGridder_Gridder_getDimensions_name = "getDimens
 const ::std::string iceC_RoboCompGridder_Gridder_getMap_name = "getMap";
 
 const ::std::string iceC_RoboCompGridder_Gridder_getPaths_name = "getPaths";
+
+const ::std::string iceC_RoboCompGridder_Gridder_getPose_name = "getPose";
 
 const ::std::string iceC_RoboCompGridder_Gridder_setGridDimensions_name = "setGridDimensions";
 
@@ -735,6 +768,46 @@ IceProxy::RoboCompGridder::Gridder::end_getPaths(const ::Ice::AsyncResultPtr& re
 }
 
 ::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_getPose(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getPose_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_getPose_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_getPose_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_getPose_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+::RoboCompGridder::Pose
+IceProxy::RoboCompGridder::Gridder::end_getPose(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_getPose_name);
+    ::RoboCompGridder::Pose ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
 IceProxy::RoboCompGridder::Gridder::_iceI_begin_setGridDimensions(const ::RoboCompGridder::TDimensions& iceP_dimensions, const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_setGridDimensions_name, sync);
@@ -995,6 +1068,20 @@ RoboCompGridder::Gridder::_iceD_getPaths(::IceInternal::Incoming& inS, const ::I
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_getPose(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    Pose ret = this->getPose(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceD_setGridDimensions(::IceInternal::Incoming& inS, const ::Ice::Current& current)
 {
     _iceCheckMode(::Ice::Normal, current.mode);
@@ -1043,6 +1130,7 @@ const ::std::string iceC_RoboCompGridder_Gridder_all[] =
     "getDimensions",
     "getMap",
     "getPaths",
+    "getPose",
     "ice_id",
     "ice_ids",
     "ice_isA",
@@ -1057,7 +1145,7 @@ const ::std::string iceC_RoboCompGridder_Gridder_all[] =
 bool
 RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice::Current& current)
 {
-    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_all, iceC_RoboCompGridder_Gridder_all + 12, current.operation);
+    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_all, iceC_RoboCompGridder_Gridder_all + 13, current.operation);
     if(r.first == r.second)
     {
         throw ::Ice::OperationNotExistException(__FILE__, __LINE__, current.id, current.facet, current.operation);
@@ -1091,25 +1179,29 @@ RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice:
         }
         case 6:
         {
-            return _iceD_ice_id(in, current);
+            return _iceD_getPose(in, current);
         }
         case 7:
         {
-            return _iceD_ice_ids(in, current);
+            return _iceD_ice_id(in, current);
         }
         case 8:
         {
-            return _iceD_ice_isA(in, current);
+            return _iceD_ice_ids(in, current);
         }
         case 9:
         {
-            return _iceD_ice_ping(in, current);
+            return _iceD_ice_isA(in, current);
         }
         case 10:
         {
-            return _iceD_setGridDimensions(in, current);
+            return _iceD_ice_ping(in, current);
         }
         case 11:
+        {
+            return _iceD_setGridDimensions(in, current);
+        }
+        case 12:
         {
             return _iceD_setLocationAndGetPath(in, current);
         }

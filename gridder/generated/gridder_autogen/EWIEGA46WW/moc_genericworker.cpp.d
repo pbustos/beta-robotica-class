@@ -1,7 +1,8 @@
 /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/EWIEGA46WW/moc_genericworker.cpp: /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/genericworker.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/moc_predefs.h \
-  /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Gridder.h \
+  /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/GenericBase.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Lidar3D.h \
+  /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/OmniRobot.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Webots2Robocomp.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.tpp \

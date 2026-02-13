@@ -7,10 +7,11 @@
 3. [ESDF Construction](#3-esdf-construction)
 4. [Path Planning with ESDF](#4-path-planning-with-esdf)
 5. [Particle Filter Localization](#5-particle-filter-localization)
-6. [Implementation Details](#6-implementation-details)
-7. [Optimizations](#7-optimizations)
-8. [Configuration Reference](#8-configuration-reference)
-9. [References](#9-references)
+6. [MPPI Controller](#6-mppi-controller)
+7. [Implementation Details](#7-implementation-details)
+8. [Optimizations](#8-optimizations)
+9. [Configuration Reference](#9-configuration-reference)
+10. [References](#10-references)
 
 ---
 
@@ -651,9 +652,277 @@ $$
 
 ---
 
-## 6. Implementation Details
+## 6. MPPI Controller
 
-### 6.1 Data Structures
+### 6.1 Overview
+
+**MPPI (Model Predictive Path Integral)** is a sampling-based stochastic optimal control algorithm. Unlike traditional MPC (Model Predictive Control), MPPI does not require solving a nonlinear optimization problem. Instead, it approximates the optimal solution through a weighted average of sampled trajectories.
+
+**Key advantages:**
+- **Derivative-free**: No gradients of the cost function required
+- **Handles non-smooth costs**: Can use discontinuous cost functions (e.g., collision penalties)
+- **Parallelizable**: K trajectories can be evaluated in parallel (GPU-friendly)
+- **Robust**: Explores multiple solutions simultaneously
+
+### 6.2 System Dynamics
+
+The system is modeled with the following discrete-time equation:
+
+$$
+\mathbf{x}_{t+1} = f(\mathbf{x}_t, \mathbf{u}_t)
+$$
+
+Where:
+- $\mathbf{x}_t \in \mathbb{R}^n$ : system state at time $t$
+- $\mathbf{u}_t \in \mathbb{R}^m$ : control input at time $t$
+- $f(\cdot)$ : state transition function
+
+**For our omnidirectional robot:**
+
+$$
+\mathbf{x} = \begin{bmatrix} x \\ y \\ \theta \end{bmatrix}, \quad \mathbf{u} = \begin{bmatrix} v_x \\ v_y \\ \omega \end{bmatrix}
+$$
+
+The kinematic model is:
+
+$$
+\begin{aligned}
+x_{t+1} &= x_t + (v_x \cos\theta_t - v_y \sin\theta_t) \cdot \Delta t \\
+y_{t+1} &= y_t + (v_x \sin\theta_t + v_y \cos\theta_t) \cdot \Delta t \\
+\theta_{t+1} &= \theta_t + \omega \cdot \Delta t
+\end{aligned}
+$$
+
+### 6.3 Cost Function
+
+The objective is to minimize the expected cost over a horizon $T$:
+
+$$
+J(\mathbf{U}) = \mathbb{E}\left[ \phi(\mathbf{x}_T) + \sum_{t=0}^{T-1} q(\mathbf{x}_t, \mathbf{u}_t) \right]
+$$
+
+Where:
+- $\mathbf{U} = [\mathbf{u}_0, \mathbf{u}_1, ..., \mathbf{u}_{T-1}]$ : control sequence
+- $\phi(\mathbf{x}_T)$ : terminal cost
+- $q(\mathbf{x}_t, \mathbf{u}_t)$ : instantaneous (running) cost
+
+**Our cost function includes:**
+
+$$
+q(\mathbf{x}_t, \mathbf{u}_t) = w_p \cdot c_{\text{path}} + w_o \cdot c_{\text{obs}} + w_g \cdot c_{\text{goal}} + w_s \cdot c_{\text{smooth}} + w_v \cdot c_{\text{speed}}
+$$
+
+| Term | Formula | Description |
+|------|---------|-------------|
+| $c_{\text{path}}$ | $d_{\text{path}}^2$ | Squared distance to path |
+| $c_{\text{obs}}$ | $\exp\left(\frac{d_{\text{margin}} - d_{\text{obs}}}{d_{\text{decay}}}\right)$ | Exponential penalty for obstacle proximity |
+| $c_{\text{goal}}$ | $\|\mathbf{x} - \mathbf{x}_{\text{goal}}\|$ | Distance to goal |
+| $c_{\text{smooth}}$ | $\|\mathbf{u}_t - \mathbf{u}_{t-1}\|^2$ | Control change penalty |
+| $c_{\text{speed}}$ | $(v - v_{\text{desired}})^2$ | Speed deviation penalty |
+
+### 6.4 Trajectory Sampling
+
+MPPI generates $K$ perturbed control sequences:
+
+$$
+\mathbf{u}_t^{(k)} = \bar{\mathbf{u}}_t + \boldsymbol{\epsilon}_t^{(k)}
+$$
+
+Where:
+- $\bar{\mathbf{u}}_t$ : nominal control (from previous iteration)
+- $\boldsymbol{\epsilon}_t^{(k)} \sim \mathcal{N}(\mathbf{0}, \boldsymbol{\Sigma})$ : Gaussian noise
+
+**Noise covariance matrix:**
+
+$$
+\boldsymbol{\Sigma} = \begin{bmatrix} \sigma_{v_x}^2 & 0 & 0 \\ 0 & \sigma_{v_y}^2 & 0 \\ 0 & 0 & \sigma_{\omega}^2 \end{bmatrix}
+$$
+
+### 6.5 Trajectory Evaluation
+
+For each sample $k$, simulate the complete trajectory:
+
+$$
+\mathbf{x}_{t+1}^{(k)} = f(\mathbf{x}_t^{(k)}, \mathbf{u}_t^{(k)})
+$$
+
+And compute the total cost:
+
+$$
+S^{(k)} = \phi(\mathbf{x}_T^{(k)}) + \sum_{t=0}^{T-1} q(\mathbf{x}_t^{(k)}, \mathbf{u}_t^{(k)})
+$$
+
+### 6.6 Weight Computation (Softmin)
+
+Weights are computed using the **softmin** function (Boltzmann distribution):
+
+$$
+w^{(k)} = \frac{\exp\left(-\frac{1}{\lambda}(S^{(k)} - S_{\min})\right)}{\sum_{j=1}^{K} \exp\left(-\frac{1}{\lambda}(S^{(j)} - S_{\min})\right)}
+$$
+
+Where:
+- $\lambda > 0$ : **temperature** parameter
+- $S_{\min} = \min_k S^{(k)}$ : minimum cost (for numerical stability)
+
+**Effect of $\lambda$:**
+- $\lambda \to 0$ : **greedy** behavior (only best trajectory)
+- $\lambda \to \infty$ : uniform average of all trajectories
+
+### 6.7 Optimal Control Update
+
+The optimal control is obtained as a weighted average:
+
+$$
+\mathbf{u}_t^* = \sum_{k=1}^{K} w^{(k)} \cdot \mathbf{u}_t^{(k)}
+$$
+
+Equivalently:
+
+$$
+\mathbf{u}_t^* = \bar{\mathbf{u}}_t + \sum_{k=1}^{K} w^{(k)} \cdot \boldsymbol{\epsilon}_t^{(k)}
+$$
+
+### 6.8 Warm Starting
+
+To improve convergence, the control sequence is shifted at each iteration:
+
+$$
+\bar{\mathbf{u}}_t^{\text{new}} = \mathbf{u}_{t+1}^{*,\text{old}} \quad \text{for } t = 0, ..., T-2
+$$
+
+$$
+\bar{\mathbf{u}}_{T-1}^{\text{new}} = \mathbf{u}_{T-1}^{*,\text{old}}
+$$
+
+### 6.9 Algorithm Pseudocode
+
+```
+Algorithm: MPPI Controller
+───────────────────────────────────────────────────────────
+Input: current state x₀, target path, obstacles
+Output: optimal control command u*
+
+1. Warm start: shift previous control sequence
+   ū ← shift(ū_prev)
+
+2. For k = 1 to K:
+   a. Generate noise sequence:
+      ε^(k) ← sample(N(0, Σ), T)
+   
+   b. Compute perturbed control sequence:
+      u^(k) ← clamp(ū + ε^(k), u_min, u_max)
+   
+   c. Simulate trajectory:
+      x^(k)_0 ← x₀
+      For t = 0 to T-1:
+         x^(k)_{t+1} ← f(x^(k)_t, u^(k)_t)
+   
+   d. Compute total cost:
+      S^(k) ← Σ_t q(x^(k)_t, u^(k)_t)
+
+3. Find minimum cost:
+   S_min ← min_k(S^(k))
+
+4. Compute normalized weights:
+   For k = 1 to K:
+      w^(k) ← exp(-1/λ · (S^(k) - S_min))
+   w ← w / sum(w)
+
+5. Compute optimal control:
+   u* ← Σ_k w^(k) · u^(k)
+
+6. Store for next iteration:
+   ū_prev ← u*
+
+7. Return u*_0 (first control of sequence)
+───────────────────────────────────────────────────────────
+```
+
+### 6.10 Flow Diagram
+
+```
+                    ┌─────────────────┐
+                    │  Current State  │
+                    │   x₀, θ₀        │
+                    └────────┬────────┘
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │        Warm Start            │
+              │    ū ← shift(ū_prev)         │
+              └──────────────┬───────────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         │                   │                   │
+         ▼                   ▼                   ▼
+    ┌─────────┐         ┌─────────┐         ┌─────────┐
+    │Sample 1 │         │Sample 2 │   ...   │Sample K │
+    │ε¹~N(0,Σ)│         │ε²~N(0,Σ)│         │εᴷ~N(0,Σ)│
+    └────┬────┘         └────┬────┘         └────┬────┘
+         │                   │                   │
+         ▼                   ▼                   ▼
+    ┌─────────┐         ┌─────────┐         ┌─────────┐
+    │Simulate │         │Simulate │   ...   │Simulate │
+    │Trajectory│        │Trajectory│        │Trajectory│
+    └────┬────┘         └────┬────┘         └────┬────┘
+         │                   │                   │
+         ▼                   ▼                   ▼
+    ┌─────────┐         ┌─────────┐         ┌─────────┐
+    │ Cost S¹ │         │ Cost S² │   ...   │ Cost Sᴷ │
+    └────┬────┘         └────┬────┘         └────┬────┘
+         │                   │                   │
+         └───────────────────┼───────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │      Compute Weights         │
+              │  wᵏ = exp(-Sᵏ/λ) / Σexp()   │
+              └──────────────┬───────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │     Weighted Average         │
+              │     u* = Σ wᵏ · uᵏ          │
+              └──────────────┬───────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │    Apply u*₀ to robot        │
+              │      (vx, vy, ω)             │
+              └──────────────────────────────┘
+```
+
+### 6.11 Computational Complexity
+
+- **Time**: $O(K \cdot T \cdot (n + m + |\text{obstacles}|))$
+- **Space**: $O(K \cdot T \cdot m)$ for storing control sequences
+
+Where:
+- $K$ = number of samples
+- $T$ = prediction horizon
+- $n$ = state dimension
+- $m$ = control dimension
+- $|\text{obstacles}|$ = number of obstacle points
+
+### 6.12 Advantages and Limitations
+
+**Advantages:**
+1. **Derivative-free**: No gradients of cost function required
+2. **Non-smooth costs**: Can use discontinuous cost functions
+3. **Parallelizable**: K trajectories can be evaluated in parallel (GPU)
+4. **Robust**: Explores multiple solutions simultaneously
+5. **Easy to implement**: No complex optimization solvers needed
+
+**Limitations:**
+1. **Sample dependency**: Needs many samples for good approximation
+2. **Limited horizon**: Does not guarantee global optimality
+3. **Computational cost**: Can be expensive for high-dimensional systems
+
+---
+
+## 7. Implementation Details
+
+### 7.1 Data Structures
 
 #### Grid Cell (Dense)
 ```cpp
@@ -686,7 +955,7 @@ struct Particle {
 };
 ```
 
-### 6.2 Key Conversions
+### 7.2 Key Conversions
 
 **Point to Key:**
 ```cpp
@@ -704,7 +973,7 @@ float probability(float log_odds) {
 }
 ```
 
-### 6.3 Thread Safety
+### 7.3 Thread Safety
 
 | Component | Thread | Synchronization |
 |-----------|--------|-----------------|
@@ -713,7 +982,7 @@ float probability(float log_odds) {
 | Localization | main thread | atomic flags |
 | Visualization | main thread | Qt event loop |
 
-### 6.4 MRPT Map Loading
+### 7.4 MRPT Map Loading
 
 ```cpp
 bool Gridder_loadMRPTMap(const string& filepath) {
@@ -731,9 +1000,9 @@ bool Gridder_loadMRPTMap(const string& filepath) {
 
 ---
 
-## 7. Optimizations
+## 8. Optimizations
 
-### 7.1 Precomputed Distance Field
+### 8.1 Precomputed Distance Field
 
 **Problem:** ESDF queries are O(R²) per call, called millions of times during localization.
 
@@ -754,7 +1023,7 @@ void precompute_distance_field() {
 
 **Result:** O(1) queries instead of O(R²)
 
-### 7.2 Fused Particle Operations
+### 8.2 Fused Particle Operations
 
 **Problem:** Multiple passes over particles array (normalize, ESS, mean).
 
@@ -788,7 +1057,7 @@ void normalizeAndComputeStats() {
 
 **Result:** 2 passes instead of 6+
 
-### 7.3 Float vs Double
+### 8.3 Float vs Double
 
 | Variable | Type | Reason |
 |----------|------|--------|
@@ -798,7 +1067,7 @@ void normalizeAndComputeStats() {
 | Weight sums | `double` | Accumulation precision |
 | Trigonometry | `float` | Use `sinf`, `cosf`, `expf` |
 
-### 7.4 LiDAR Subsampling
+### 8.4 LiDAR Subsampling
 
 Process every N-th point instead of all:
 
@@ -810,7 +1079,7 @@ for (size_t i = 0; i < points.size(); i += step):
 
 **Trade-off:** N=15 gives good balance (140 points from 2100)
 
-### 7.5 Visualization Throttling
+### 8.5 Visualization Throttling
 
 ```cpp
 // Particles: draw every 10 frames
@@ -823,7 +1092,7 @@ const size_t max_draw = 500;
 const size_t step = max(1, particles.size() / max_draw);
 ```
 
-### 7.6 Complexity Summary
+### 8.6 Complexity Summary
 
 | Operation | Before | After |
 |-----------|--------|-------|
@@ -834,9 +1103,9 @@ const size_t step = max(1, particles.size() / max_draw);
 
 ---
 
-## 8. Configuration Reference
+## 9. Configuration Reference
 
-### 8.1 Grid Parameters
+### 9.1 Grid Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -847,7 +1116,7 @@ const size_t step = max(1, particles.size() / max_draw);
 | `log_odds_miss` | -0.4 | Log-odds for free space |
 | `occupancy_threshold` | 2.0 | Log-odds to confirm obstacle |
 
-### 8.2 Path Planning Parameters
+### 9.2 Path Planning Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -857,7 +1126,7 @@ const size_t step = max(1, particles.size() / max_draw);
 | `obstacle_cost` | 100 | Cost at obstacles |
 | `free_cost` | 1 | Cost in free space |
 
-### 8.3 Localizer Parameters
+### 9.3 Localizer Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -870,7 +1139,7 @@ const size_t step = max(1, particles.size() / max_draw);
 | `z_rand` | 0.05 | Random model weight |
 | `resample_threshold` | 0.5 | ESS ratio for resampling |
 
-### 8.4 MRPT Map Loading
+### 9.4 MRPT Map Loading
 
 | Parameter | Description |
 |-----------|-------------|
@@ -878,9 +1147,33 @@ const size_t step = max(1, particles.size() / max_draw);
 | `MRPT_MAP_OFFSET_Y` | Y translation (mm) |
 | `MRPT_MAP_ROTATION` | Rotation angle (radians) |
 
+### 9.5 MPPI Controller Parameters
+
+| Parameter | Symbol | Default | Description |
+|-----------|--------|---------|-------------|
+| `K` | $K$ | 500 | Number of sampled trajectories |
+| `T` | $T$ | 20 | Prediction horizon (time steps) |
+| `dt` | $\Delta t$ | 0.1 s | Time step for simulation |
+| `lambda` | $\lambda$ | 1.0 | Temperature (exploration vs exploitation) |
+| `sigma_vx` | $\sigma_{v_x}$ | 200 mm/s | Noise std dev for forward velocity |
+| `sigma_vy` | $\sigma_{v_y}$ | 200 mm/s | Noise std dev for lateral velocity |
+| `sigma_omega` | $\sigma_\omega$ | 0.3 rad/s | Noise std dev for angular velocity |
+| `max_vx` | - | 800 mm/s | Maximum forward velocity |
+| `max_vy` | - | 800 mm/s | Maximum lateral velocity |
+| `max_omega` | - | 0.8 rad/s | Maximum angular velocity |
+| `robot_radius` | $r$ | 250 mm | Robot radius for collision detection |
+| `safety_margin` | $d_{\text{margin}}$ | 500 mm | Distance to start penalizing obstacles |
+| `obstacle_decay` | $d_{\text{decay}}$ | 200 mm | Exponential decay rate for obstacle cost |
+| `goal_tolerance` | - | 300 mm | Distance to consider goal reached |
+| `w_path` | $w_p$ | 1.0 | Weight for path following cost |
+| `w_obstacle` | $w_o$ | 10.0 | Weight for obstacle avoidance cost |
+| `w_goal` | $w_g$ | 0.5 | Weight for goal reaching cost |
+| `w_smoothness` | $w_s$ | 0.1 | Weight for control smoothness cost |
+| `w_speed` | $w_v$ | 0.05 | Weight for speed maintenance cost |
+
 ---
 
-## 9. References
+## 10. References
 
 1. Thrun, S., Burgard, W., & Fox, D. (2005). *Probabilistic Robotics*. MIT Press.
 
@@ -891,6 +1184,12 @@ const size_t step = max(1, particles.size() / max_draw);
 4. Fox, D. (2003). "KLD-Sampling: Adaptive Particle Filters." *NIPS*.
 
 5. Felzenszwalb, P. & Huttenlocher, D. (2012). "Distance Transforms of Sampled Functions." *Theory of Computing*.
+
+6. Williams, G., et al. (2017). "Information theoretic MPC for model-based reinforcement learning." *IEEE ICRA*.
+
+7. Williams, G., et al. (2016). "Aggressive driving with model predictive path integral control." *IEEE ICRA*.
+
+8. Theodorou, E., et al. (2010). "A generalized path integral control approach to reinforcement learning." *JMLR*.
 
 ---
 

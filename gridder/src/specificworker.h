@@ -36,12 +36,14 @@
 #include "grid_esdf.h"
 #include "mrpt_map_loader.h"
 #include "localizer.h"
+#include "mppi_controller.h"
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include <Eigen/Eigen>
 #include "abstract_graphic_viewer/abstract_graphic_viewer.h"
 #include "Gridder.h"
 #include <fps/fps.h>
 #include <timer/timer.h>
+#include <sys/resource.h>  // For CPU usage
 
 
 /**
@@ -148,6 +150,12 @@ class SpecificWorker : public GenericWorker
 		 */
 		RoboCompGridder::Result Gridder_setLocationAndGetPath(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, RoboCompGridder::TPointVector freePoints, RoboCompGridder::TPointVector obstaclePoints);
 
+
+	/**
+		 * @ brief Returns the current pose of the robot (position and orientation with covariance if available)
+		 * @return
+		 */
+		RoboCompGridder::Pose Gridder_getPose();
 
 		/**
 		 * \brief Initializes the worker one time.
@@ -272,27 +280,46 @@ class SpecificWorker : public GenericWorker
 	    void draw_path(const std::vector<Eigen::Vector2f> &path, QGraphicsScene *scene, bool erase_only=false);
 	    void draw_lidar_points(const std::vector<Eigen::Vector2f> &points_world);
 
-	    // Clustering for obstacle detection
-	    struct Cluster
-	    {
-	        std::vector<Eigen::Vector2f> points;
-	        Eigen::Vector2f centroid = Eigen::Vector2f::Zero();
-	        float min_dist_to_robot = 0.f;
-	        std::vector<Eigen::Vector2f> convex_hull;  // optional convex hull
-	    };
-	    std::vector<Cluster> cluster_lidar_points(const std::vector<Eigen::Vector2f> &points,
-	                                              const Eigen::Vector2f &robot_pos,
-	                                              float distance_threshold = 300.f,
-	                                              int min_points = 3);
-	    std::vector<Eigen::Vector2f> compute_convex_hull(const std::vector<Eigen::Vector2f> &points);
-	    void draw_clusters(const std::vector<Cluster> &clusters, QGraphicsScene *scene, bool erase_only = false);
-
 	    // mutex
 	    std::mutex mutex_path;
 
 		Eigen::Affine2f get_robot_pose();
+	    float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
 
-	float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
+	    // ==================== Robot Pose Estimation ====================
+	    Eigen::Affine2f estimated_robot_pose;  // Current best estimate of robot pose
+	    Eigen::Affine2f update_robot_pose(const Eigen::Affine2f& ground_truth_pose,
+	                                       const std::vector<Eigen::Vector2f>& points_local);
+
+	    // ==================== MPPI Controller ====================
+	    MPPIController mppi_controller;
+	    std::atomic<bool> mppi_enabled{false};
+
+	    // Navigation state
+	    enum class NavigationState { IDLE, NAVIGATING, GOAL_REACHED, BLOCKED };
+	    NavigationState nav_state = NavigationState::IDLE;
+	    std::vector<Eigen::Vector2f> current_path;
+	    Eigen::Vector2f current_target;
+
+	    // MPPI visualization
+	    std::vector<QGraphicsItem*> mppi_trajectory_items;
+	    void draw_mppi_trajectory(const std::vector<MPPIController::State>& trajectory);
+
+	    // Navigation methods - returns optional (vx, vy, omega) velocities
+	    // Returns nullopt if MPPI is disabled or not navigating
+	    std::optional<std::tuple<float, float, float>> compute_mppi_control(
+	        const Eigen::Affine2f& robot_pose,
+	        const std::vector<Eigen::Vector2f>& lidar_points);
+
+	    // CPU usage tracking
+	    float get_cpu_usage();
+	    struct rusage last_usage;
+	    std::chrono::steady_clock::time_point last_cpu_time;
+	    float cpu_usage_avg = 0.0f;  // Exponential moving average
+	    static constexpr float CPU_AVG_ALPHA = 0.1f;  // Smoothing factor (0.1 = slow, 0.5 = fast)
+
+	    // UI slots
+	    void slot_mppi_button_toggled(bool checked);
 
 };
 

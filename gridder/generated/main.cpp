@@ -79,8 +79,10 @@
 
 #include <gridderI.h>
 
+#include <GenericBase.h>
 #include <Gridder.h>
 #include <Lidar3D.h>
+#include <OmniRobot.h>
 #include <Webots2Robocomp.h>
 
 #define USE_QTGUI
@@ -195,6 +197,7 @@ int gridder::run(int argc, char* argv[])
 
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy;
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy1;
+	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
 	RoboCompWebots2Robocomp::Webots2RobocompPrxPtr webots2robocomp_proxy;
 
 
@@ -203,10 +206,12 @@ int gridder::run(int argc, char* argv[])
 	                    configLoader.get<std::string>("Proxies.Lidar3D"), "Lidar3DProxy", lidar3d_proxy);
 	require<RoboCompLidar3D::Lidar3DPrx, RoboCompLidar3D::Lidar3DPrxPtr>(communicator(),
 	                    configLoader.get<std::string>("Proxies.Lidar3D1"), "Lidar3DProxy1", lidar3d_proxy1);
+	require<RoboCompOmniRobot::OmniRobotPrx, RoboCompOmniRobot::OmniRobotPrxPtr>(communicator(),
+	                    configLoader.get<std::string>("Proxies.OmniRobot"), "OmniRobotProxy", omnirobot_proxy);
 	require<RoboCompWebots2Robocomp::Webots2RobocompPrx, RoboCompWebots2Robocomp::Webots2RobocompPrxPtr>(communicator(),
 	                    configLoader.get<std::string>("Proxies.Webots2Robocomp"), "Webots2RobocompProxy", webots2robocomp_proxy);
 
-	tprx = std::make_tuple(lidar3d_proxy,lidar3d_proxy1,webots2robocomp_proxy);
+	tprx = std::make_tuple(lidar3d_proxy,lidar3d_proxy1,omnirobot_proxy,webots2robocomp_proxy);
 	SpecificWorker *worker = new SpecificWorker(this->configLoader, tprx, startup_check_flag);
 	QObject::connect(worker, SIGNAL(kill()), &a, SLOT(quit()));
 

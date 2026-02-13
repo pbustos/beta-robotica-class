@@ -1,12 +1,15 @@
 /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/VNU7RW3YIC/moc_specificworker.cpp: /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/specificworker.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/gridder_autogen/moc_predefs.h \
+  /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/GenericBase.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Gridder.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Lidar3D.h \
+  /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/OmniRobot.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/Webots2Robocomp.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/generated/genericworker.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/grid_esdf.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/localizer.h \
+  /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mppi_controller.h \
   /home/pbustos/robocomp/components/beta-robotica-class/gridder/src/mrpt_map_loader.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.h \
   /home/pbustos/robocomp/robocomp_core/classes/ConfigLoader/ConfigLoader.tpp \
