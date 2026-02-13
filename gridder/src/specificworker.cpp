@@ -136,17 +136,10 @@ void SpecificWorker::initialize()
         read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
         std::cout << __FUNCTION__ << " Started lidar reader" << std::endl;
 
-        // Initialize MPPI controller with custom parameters
-        MPPIController::Params mppi_params;
-        mppi_params.K = 500;              // Number of samples (reduced for CPU efficiency)
-        mppi_params.T = 20;               // Prediction horizon
-        mppi_params.dt = 0.1f;            // Time step
-        mppi_params.max_vx = 800.0f;      // Max forward speed (mm/s)
-        mppi_params.max_vy = 800.0f;      // Max lateral speed (mm/s)
-        mppi_params.max_omega = 0.8f;     // Max angular speed (rad/s)
+        // Initialize MPPI controller with default parameters from header
+        // Only override robot-specific values
+        MPPIController::Params mppi_params;  // Uses defaults from mppi_controller.h
         mppi_params.robot_radius = params.ROBOT_SEMI_WIDTH;
-        mppi_params.safety_margin = 500.0f;
-        mppi_params.goal_tolerance = 300.0f;
         mppi_controller.setParams(mppi_params);
 
         // Initialize CPU usage tracking

@@ -75,17 +75,17 @@ public:
         float max_omega = 0.5f;    // rad/s - smooth turning
 
         // Cost weights
-        float w_path = 5.0f;           // Weight for path following (increased to keep trajectories on path)
-        float w_obstacle = 10.0f;      // Weight for obstacle avoidance
+        float w_path = 1.0f;           // Weight for path following (slightly higher to follow path better)
+        float w_obstacle = 100.0f;     // Weight for obstacle avoidance (reduced from 200)
         float w_goal = 2.0f;           // Weight for goal reaching
-        float w_smoothness = 3.0f;     // Weight for control smoothness
+        float w_smoothness = 2.0f;     // Weight for control smoothness (increased for smoother motion)
         float w_speed = 0.1f;          // Weight for maintaining desired speed
         float w_heading = 3.0f;        // Weight for heading alignment
 
         // Safety parameters
         float robot_radius = 250.0f;       // mm
-        float safety_margin = 500.0f;      // mm - start penalizing at this distance (increased)
-        float obstacle_decay = 150.0f;     // mm - exponential decay rate (faster decay)
+        float safety_margin = 1000.0f;     // mm - reduced from 1200
+        float obstacle_decay = 80.0f;      // mm - increased from 50 for less aggressive decay
 
         // Path following
         float lookahead_distance = 500.0f; // mm - how far ahead to look on path

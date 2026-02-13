@@ -649,18 +649,25 @@ float GridESDF::get_cost(const Key &k)
 
     // Extended range cost with stronger penalty near walls
     // This helps keep paths away from walls in narrow passages
-    if (dist < tile_size_f * 2.0f)
-        // Very close to wall: very high cost
-        return params_.obstacle_cost * std::exp(-dist / (tile_size_f * 0.5f));
+    // Costs match the 6 visual inflation layers
+    if (dist < tile_size_f * 1.0f)
+        // Layer 1 (orange): Very high cost
+        return params_.obstacle_cost * 2.0f;
+    else if (dist < tile_size_f * 2.0f)
+        // Layer 2 (green): High cost
+        return params_.obstacle_cost * 1.0f;
+    else if (dist < tile_size_f * 3.0f)
+        // Layer 3 (light green): Medium-high cost
+        return params_.obstacle_cost * 0.5f;
     else if (dist < tile_size_f * 4.0f)
-        // Medium distance: high cost
-        return params_.obstacle_cost * 0.5f * std::exp(-(dist - tile_size_f * 2.0f) / tile_size_f);
+        // Layer 4: Medium cost
+        return params_.obstacle_cost * 0.25f;
+    else if (dist < tile_size_f * 5.0f)
+        // Layer 5: Low-medium cost
+        return params_.obstacle_cost * 0.1f;
     else if (dist < tile_size_f * 6.0f)
-        // Extended range: moderate cost (new range for narrow passages)
-        return params_.obstacle_cost * 0.15f * std::exp(-(dist - tile_size_f * 4.0f) / (tile_size_f * 2.0f));
-    else if (dist < tile_size_f * 8.0f)
-        // Far range: small cost
-        return params_.obstacle_cost * 0.05f * std::exp(-(dist - tile_size_f * 6.0f) / (tile_size_f * 2.0f));
+        // Layer 6: Low cost
+        return params_.obstacle_cost * 0.05f;
     else
         return params_.free_cost;
 }
@@ -1082,10 +1089,66 @@ void GridESDF::update_visualization(bool show_inflation)
         }
     }
 
-    // Reserve space for tiles
-    inflation_tiles_.reserve(layer1_set.size() + layer2_set.size() + layer3_set.size() + layer4_set.size());
+    // Layer 5: all cells adjacent to layer4 but not in previous layers
+    std::unordered_set<Key, boost::hash<Key>> layer5_set;
+    layer5_set.reserve(layer4_set.size() * 4);
+    for (const auto &l4 : layer4_set)
+    {
+        for (const auto &n : get_neighbors_8(l4))
+        {
+            if (obstacle_set.find(n) == obstacle_set.end() &&
+                layer1_set.find(n) == layer1_set.end() &&
+                layer2_set.find(n) == layer2_set.end() &&
+                layer3_set.find(n) == layer3_set.end() &&
+                layer4_set.find(n) == layer4_set.end())
+                layer5_set.insert(n);
+        }
+    }
 
-    // Draw layer 4 first (lightest green) - lowest z-order
+    // Layer 6: all cells adjacent to layer5 but not in previous layers
+    std::unordered_set<Key, boost::hash<Key>> layer6_set;
+    layer6_set.reserve(layer5_set.size() * 4);
+    for (const auto &l5 : layer5_set)
+    {
+        for (const auto &n : get_neighbors_8(l5))
+        {
+            if (obstacle_set.find(n) == obstacle_set.end() &&
+                layer1_set.find(n) == layer1_set.end() &&
+                layer2_set.find(n) == layer2_set.end() &&
+                layer3_set.find(n) == layer3_set.end() &&
+                layer4_set.find(n) == layer4_set.end() &&
+                layer5_set.find(n) == layer5_set.end())
+                layer6_set.insert(n);
+        }
+    }
+
+    // Reserve space for tiles
+    inflation_tiles_.reserve(layer1_set.size() + layer2_set.size() + layer3_set.size() +
+                            layer4_set.size() + layer5_set.size() + layer6_set.size());
+
+    // Draw layer 6 first (lightest) - lowest z-order
+    for (const auto &k : layer6_set)
+    {
+        auto *tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
+                                     QPen(Qt::NoPen),
+                                     QBrush(QColor(220, 255, 220, 150)));  // Lightest green
+        tile->setPos(k.first + ts/2, k.second + ts/2);
+        tile->setZValue(-1.0);
+        inflation_tiles_.push_back(tile);
+    }
+
+    // Draw layer 5
+    for (const auto &k : layer5_set)
+    {
+        auto *tile = scene_->addRect(-ts/2, -ts/2, ts, ts,
+                                     QPen(Qt::NoPen),
+                                     QBrush(QColor(210, 255, 210, 160)));  // Very light green
+        tile->setPos(k.first + ts/2, k.second + ts/2);
+        tile->setZValue(-0.75);
+        inflation_tiles_.push_back(tile);
+    }
+
+    // Draw layer 4 (very light green)
     for (const auto &k : layer4_set)
     {
         auto *tile = scene_->addRect(-ts/2, -ts/2, ts, ts,

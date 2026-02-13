@@ -219,15 +219,17 @@ MPPIController::ControlCommand MPPIController::compute(
             if (!collision)
             {
                 // Obstacle cost (only if within safety margin)
+                // Use very aggressive exponential penalty
                 if (min_dist_sq < safety_margin_sq)
                 {
                     float min_dist = std::sqrt(min_dist_sq);
                     float penetration = params_.safety_margin - min_dist;
-                    traj_cost += params_.w_obstacle * std::exp(penetration / params_.obstacle_decay);
+                    // Quadratic + exponential for very aggressive avoidance
+                    traj_cost += params_.w_obstacle * (penetration * penetration / 1000.0f + std::exp(penetration / params_.obstacle_decay));
                 }
 
                 // =========================================================================
-                // OPTIMIZATION 8: Simplified path following cost (use squared distance)
+                // Path following cost - use LINEAR distance, not squared
                 // =========================================================================
                 float path_min_dist_sq = std::numeric_limits<float>::max();
                 for (const auto& wp : path)
@@ -237,7 +239,8 @@ MPPIController::ControlCommand MPPIController::compute(
                     float d_sq = dx * dx + dy * dy;
                     if (d_sq < path_min_dist_sq) path_min_dist_sq = d_sq;
                 }
-                traj_cost += params_.w_path * path_min_dist_sq;
+                // Use linear distance to avoid dominating obstacle cost
+                traj_cost += params_.w_path * std::sqrt(path_min_dist_sq);
 
                 // Smoothness cost
                 if (t > 0)
