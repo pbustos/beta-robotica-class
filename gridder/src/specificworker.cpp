@@ -183,12 +183,33 @@ void SpecificWorker::initialize()
             qInfo() << "[MOUSE] New global target arrived:" << p;
             std::lock_guard<std::mutex> lock(mutex_current_path);
 
-            // Use current robot position in world coordinates as source
+            // Use estimated robot position (from localizer) as source for path planning
             const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-            const auto &[robot, lidar_world, lidar_local] = buffer_sync.read(timestamp);
-            if (not robot.has_value()) return;
 
-            const Eigen::Vector2f source = robot.value().translation();
+            Eigen::Vector2f source;
+            if (params.USE_LOCALIZER && localizer_initialized.load())
+            {
+                // Use localized pose
+                const auto& [estimated] = buffer_estimated_pose.read(timestamp);
+                if (!estimated.has_value())
+                {
+                    qWarning() << "[PATH] Localizer not ready, cannot compute path";
+                    return;
+                }
+                source = estimated.value().translation();
+            }
+            else
+            {
+                // Fallback to GT only during initialization or when localizer disabled
+                const auto &[robot, lidar_world, lidar_local] = buffer_sync.read(timestamp);
+                if (!robot.has_value())
+                {
+                    qWarning() << "[PATH] No pose available, cannot compute path";
+                    return;
+                }
+                source = robot.value().translation();
+            }
+
             const Eigen::Vector2f target{p.x(), p.y()};
             std::vector<Eigen::Vector2f> path;
 
@@ -325,29 +346,33 @@ void SpecificWorker::compute()
     const auto &[robot, lidar_world, lidar_local] = buffer_sync.read(timestamp);
     if (not robot.has_value() or not lidar_world.has_value() or not lidar_local.has_value())
         { qWarning() << "No data from buffer_sync: robot has value?"; return; };
-    const auto &robot_pos = robot.value();  // Ground truth pose from simulator
+    const auto &robot_pos = robot.value();  // Ground truth pose - ONLY used for computing odometry in localizer
     const auto &points_world = lidar_world.value();
     // Note: lidar_local is used by the localizer thread via buffer_sync
+
+    // ============ Get estimated robot pose (from Localizer thread) ============
+    Eigen::Affine2f current_robot_pose = robot_pos;  // Temporary fallback during initialization
+    if (params.USE_LOCALIZER && localizer_initialized.load())
+    {
+        // Try to read from localizer thread's buffer
+        if (const auto& [estimated] = buffer_estimated_pose.read(timestamp); estimated.has_value())
+            current_robot_pose = estimated.value();
+        // else: keep using GT during warmup (first few frames)
+    }
 
     /// Update grid with world coordinates (only if no external map loaded)
     if (not external_map_loaded)
     {
         mutex_path.lock();
         // VoxBlox-style ESDF: only stores obstacles
-        grid_esdf.update(points_world, robot_pos.translation(), params.MAX_LIDAR_RANGE, timestamp);
+        // Use estimated pose for grid update (or GT during initialization)
+        grid_esdf.update(points_world, current_robot_pose.translation(), params.MAX_LIDAR_RANGE, timestamp);
         grid_esdf.update_visualization(true);  // Only update visualization when there are changes
         mutex_path.unlock();
     }
 
-    // ============ UPDATE ROBOT POSE (from Localizer thread or Ground Truth) ============
-    if (params.USE_LOCALIZER and external_map_loaded)
-        // Try to read from localizer thread's buffer
-        if (const auto& [estimated] = buffer_estimated_pose.read(timestamp); estimated.has_value())
-            estimated_robot_pose = estimated.value();
-        else
-            estimated_robot_pose = robot_pos;  // Fallback to ground truth
-    else
-        estimated_robot_pose = robot_pos;  // Use ground truth directly
+    // Store estimated pose for UI and other components
+    estimated_robot_pose = current_robot_pose;
 
     // ============ Debug: draw lidar points (controlled by UI checkbox)
     if (show_lidar_points.load())
@@ -518,21 +543,8 @@ void SpecificWorker::draw_covariance_ellipse()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
-Eigen::Affine2f SpecificWorker::get_robot_pose()
-{
-    RoboCompWebots2Robocomp::ObjectPose pose;
-    Eigen::Affine2f robot_pose;
-    try
-    {
-        pose = webots2robocomp_proxy->getObjectPose("shadow");
-         robot_pose.translation() = Eigen::Vector2f(-pose.position.y, pose.position.x);
-        const auto yaw = yawFromQuaternion(pose.orientation);
-        robot_pose.linear() = Eigen::Rotation2Df(yaw).toRotationMatrix();
-    }
-    catch (const Ice::Exception &e){ std::cout<<e.what()<<std::endl; return {};}
-    return robot_pose;
-}
-
+// Utility: Convert quaternion to yaw angle
+///////////////////////////////////////////////////////////////////////////////////////////////
 float SpecificWorker::yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat)
 {
     double w = quat.w;
@@ -780,24 +792,17 @@ void SpecificWorker::run_mppi()
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
 
-        // Read current robot pose from estimated pose buffer
+        // Read current robot pose from estimated pose buffer (ONLY from localizer, NO fallback to GT)
         Eigen::Affine2f robot_pose;
         {
             const auto& [estimated] = buffer_estimated_pose.read(timestamp);
-            if (estimated.has_value())
-                robot_pose = estimated.value();
-            else
+            if (!estimated.has_value())
             {
-                // Try to get from sync buffer as fallback
-                const auto& [robot, lw, ll] = buffer_sync.read(timestamp);
-                if (robot.has_value())
-                    robot_pose = robot.value();
-                else
-                {
-                    std::this_thread::sleep_for(target_period);
-                    continue;
-                }
+                // Wait for localizer to provide a pose estimate - DO NOT use GT as fallback
+                std::this_thread::sleep_for(target_period);
+                continue;
             }
+            robot_pose = estimated.value();
         }
 
         // Read LiDAR points for obstacle avoidance
