@@ -948,7 +948,7 @@ Where:
 - No discontinuities at obstacle boundaries
 - Better handling of narrow passages
 
-### 5.16 Covariance-Aware Margin Inflation (Option A)
+### 5.16 Covariance-Aware Margin Inflation
 
 When the robot's pose has uncertainty (from the localizer), we **inflate the safety margin** proportionally to pose uncertainty. This is the key innovation for robust navigation under localization uncertainty.
 

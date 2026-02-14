@@ -187,27 +187,43 @@ void SpecificWorker::initialize()
             const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
             Eigen::Vector2f source;
+            bool source_valid = false;
+
             if (params.USE_LOCALIZER && localizer_initialized.load())
             {
                 // Use localized pose
                 const auto& [estimated] = buffer_estimated_pose.read(timestamp);
-                if (!estimated.has_value())
+                if (estimated.has_value())
                 {
-                    qWarning() << "[PATH] Localizer not ready, cannot compute path";
-                    return;
+                    source = estimated.value().translation();
+                    source_valid = true;
                 }
-                source = estimated.value().translation();
+                else if (params.USE_GT_WARMUP)
+                {
+                    // Simulation only: Allow GT fallback during warmup
+                    const auto &[robot, lw, ll] = buffer_sync.read(timestamp);
+                    if (robot.has_value())
+                    {
+                        source = robot.value().translation();
+                        source_valid = true;
+                    }
+                }
             }
-            else
+            else if (params.USE_GT_WARMUP)
             {
-                // Fallback to GT only during initialization or when localizer disabled
-                const auto &[robot, lidar_world, lidar_local] = buffer_sync.read(timestamp);
-                if (!robot.has_value())
+                // Localizer disabled and GT warmup enabled (simulation mode)
+                const auto &[robot, lw, ll] = buffer_sync.read(timestamp);
+                if (robot.has_value())
                 {
-                    qWarning() << "[PATH] No pose available, cannot compute path";
-                    return;
+                    source = robot.value().translation();
+                    source_valid = true;
                 }
-                source = robot.value().translation();
+            }
+
+            if (!source_valid)
+            {
+                qWarning() << "[PATH] No valid pose available for path planning";
+                return;
             }
 
             const Eigen::Vector2f target{p.x(), p.y()};
@@ -308,15 +324,30 @@ void SpecificWorker::initialize()
             draw_path({}, &viewer->scene, true);
             cancel_from_mouse = true;
         });
-        // Shift+Left click to reposition robot (for initial placement with external maps)
-        // connect(viewer, &AbstractGraphicViewer::robot_moved, [this](QPointF p)
-        // {
-        //     qInfo() << "[ROBOT] Manual reposition to:" << p;
-        //     // Update robot visual position
-        //     viewer->robot_poly()->setPos(p.x(), p.y());
-        //     // Update internal robot pose (for path planning source)
-        //     robot_pose.translation() = Eigen::Vector2f(p.x(), p.y());
-        // });
+
+        // Shift+Left click to manually position robot (for initial localization without GT)
+        connect(viewer, &AbstractGraphicViewer::robot_moved, [this](QPointF p)
+        {
+            qInfo() << "[ROBOT] Manual reposition to:" << p.x() << p.y();
+
+            // Update robot visual position
+            viewer->robot_poly()->setPos(p.x(), p.y());
+
+            // Initialize localizer at this position if not yet initialized
+            if (!localizer_initialized.load())
+            {
+                Localizer::Pose2D init_pose{static_cast<float>(p.x()),
+                                           static_cast<float>(p.y()),
+                                           0.0f};  // Assume 0 angle, will converge quickly
+                localizer.resetGaussian(init_pose, 500.f, 0.2f);
+                localizer_initialized.store(true);
+                qInfo() << "[Localizer] Manually initialized at:" << p.x() << p.y() << "theta: 0";
+            }
+            else
+            {
+                qWarning() << "[ROBOT] Localizer already initialized, ignoring manual position";
+            }
+        });
         if(not params.DISPLAY)
             hide();
 
@@ -338,6 +369,23 @@ void SpecificWorker::initialize()
         { qWarning() << "No data from buffer_sync: robot has value?. Exiting program"; std::terminate(); };
         const auto &robot_pos = robot.value();  // Ground truth pose from simulator
         viewer->centerOn(robot_pos.translation().x(), robot_pos.translation().y());
+
+        // Display initialization instructions based on GT warmup setting
+        if (!params.USE_GT_WARMUP && params.USE_LOCALIZER)
+        {
+            qInfo() << "═══════════════════════════════════════════════════════════════";
+            qInfo() << "  REAL ROBOT MODE: GT warmup disabled (USE_GT_WARMUP = false)";
+            qInfo() << "═══════════════════════════════════════════════════════════════";
+            qInfo() << "";
+            qInfo() << "  To initialize the localizer, please:";
+            qInfo() << "  1. Use Shift+Left Click to place the robot at its";
+            qInfo() << "     approximate current position on the map";
+            qInfo() << "  2. The localizer will initialize at that position";
+            qInfo() << "  3. Wait 1-3 seconds for localization to converge";
+            qInfo() << "";
+            qInfo() << "  Until initialized, the robot will NOT move.";
+            qInfo() << "═══════════════════════════════════════════════════════════════";
+        }
     }
 }
 void SpecificWorker::compute()
@@ -351,13 +399,48 @@ void SpecificWorker::compute()
     // Note: lidar_local is used by the localizer thread via buffer_sync
 
     // ============ Get estimated robot pose (from Localizer thread) ============
-    Eigen::Affine2f current_robot_pose = robot_pos;  // Temporary fallback during initialization
+    Eigen::Affine2f current_robot_pose;
+    bool pose_valid = false;
+
     if (params.USE_LOCALIZER && localizer_initialized.load())
     {
         // Try to read from localizer thread's buffer
         if (const auto& [estimated] = buffer_estimated_pose.read(timestamp); estimated.has_value())
+        {
             current_robot_pose = estimated.value();
-        // else: keep using GT during warmup (first few frames)
+            pose_valid = true;
+        }
+        else if (params.USE_GT_WARMUP)
+        {
+            // Simulation only: Allow GT during warmup (first few frames after init)
+            current_robot_pose = robot_pos;
+            pose_valid = true;
+        }
+        // else: No pose available yet - wait for localizer
+    }
+    else if (params.USE_GT_WARMUP)
+    {
+        // Localizer disabled and GT warmup enabled (simulation mode)
+        current_robot_pose = robot_pos;
+        pose_valid = true;
+    }
+
+    // Skip update if no valid pose available (real robot must wait for localizer)
+    if (!pose_valid)
+    {
+        static int wait_counter = 0;
+        if (++wait_counter % 50 == 0)  // Print every ~5 seconds (at 10 Hz)
+        {
+            if (!params.USE_GT_WARMUP && !localizer_initialized.load())
+            {
+                qWarning() << "[compute] Waiting for manual robot positioning (Shift+Left Click)...";
+            }
+            else
+            {
+                qWarning() << "[compute] Waiting for localizer to provide pose estimate...";
+            }
+        }
+        return;
     }
 
     /// Update grid with world coordinates (only if no external map loaded)

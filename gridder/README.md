@@ -1,277 +1,169 @@
-# Gridder - 2D Occupancy Grid with ESDF-based Path Planning
+# Gridder
 
-A RoboComp component that creates and maintains a 2D occupancy grid from LiDAR sensor data, providing efficient path planning capabilities using Euclidean Signed Distance Fields (ESDF).
+**Autonomous Navigation Component for RoboComp**
+
+Gridder provides complete autonomous navigation capabilities combining sparse ESDF mapping, Monte Carlo localization (AMCL), and Model Predictive Path Integral (MPPI) control. Designed for both simulation (Webots) and real robot deployment.
 
 ## Features
 
-- **Sparse ESDF Grid**: VoxBlox-style implementation that only stores obstacle cells, making it memory-efficient for large environments
-- **Real-time LiDAR Integration**: Processes point clouds from multiple LiDAR sensors
-- **A* Path Planning**: With ESDF-based cost function for smooth, collision-free paths
-- **Safety Factor**: Configurable parameter (0-1) to control how close paths get to obstacles
-- **World Coordinates**: Grid operates in absolute world coordinates with robot pose tracking
-- **Dynamic Resizing**: Grid automatically expands to accommodate new obstacles
-- **Network Interface**: ICE-based interface for remote path planning queries
+- **Sparse ESDF Mapping**: Memory-efficient occupancy grid using Euclidean Signed Distance Fields
+- **AMCL Localization**: Adaptive Monte Carlo Localization with KLD-sampling
+- **A* Path Planning**: ESDF-based cost function with configurable safety factor
+- **MPPI Controller**: Covariance-aware obstacle avoidance using path integral control
+- **Multi-threaded Architecture**: Separate threads for LiDAR, localization, and control (50-20 Hz)
+- **Dual Mode Operation**: Seamless switching between simulation and real robot deployment
+
+## Quick Start
+
+### Simulation (Webots)
+```bash
+bin/gridder etc/config
+# Left click to navigate, system auto-initializes
+```
+
+### Real Robot
+```bash
+# 1. Set USE_GT_WARMUP = false in src/specificworker.h
+# 2. Recompile: make
+# 3. Run: bin/gridder etc/config
+# 4. Shift+Click to initialize position
+# 5. Navigate with Left Click
+```
+
+## Documentation
+
+📘 **[USER MANUAL](USER_MANUAL.md)** - Start here!
+- Operating modes (Simulation vs Real Robot)
+- Mouse controls and UI
+- Step-by-step configuration
+- Troubleshooting guide
+- Deployment checklist
+
+📚 **[GRIDDER DOCUMENTATION](GRIDDER_DOCUMENTATION.md)** - Complete technical reference
+- Sparse ESDF algorithm and implementation
+- Hybrid log-odds + TSDF mapping
+- Particle filter localization (AMCL)
+- MPPI controller with time-correlated noise
+- Covariance-aware margin inflation
+- Mathematical derivations
+
+📋 **Additional References**
+- [GT_POSE_AUDIT.md](GT_POSE_AUDIT.md) - Ground truth usage verification
+- [MPPI_MATH.md](MPPI_MATH.md) - MPPI mathematical foundations
+- [ESDF_IMPLEMENTATION.md](ESDF_IMPLEMENTATION.md) - ESDF algorithm details
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        Gridder                               │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-│  │ LiDAR Thread│───▶│  Grid ESDF  │───▶│  Visualizer │     │
-│  └─────────────┘    └─────────────┘    └─────────────┘     │
-│         │                  │                                 │
-│         ▼                  ▼                                 │
-│  ┌─────────────┐    ┌─────────────┐                         │
-│  │ Robot Pose  │    │ Path Planner│                         │
-│  │   Buffer    │    │    (A*)     │                         │
-│  └─────────────┘    └─────────────┘                         │
-├─────────────────────────────────────────────────────────────┤
-│                    ICE Interface                             │
-│  getPaths() | getMap() | LineOfSightToTarget() | ...        │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                         GRIDDER                               │
+├──────────────────────────────────────────────────────────────┤
+│  Main Thread → LiDAR Thread (50Hz) → Grid ESDF               │
+│             ↓  Localizer Thread (20Hz) → Pose + Covariance   │
+│             ↓  MPPI Thread (20Hz) → Velocity Commands         │
+│             ↓  Path Planner (A*) → Navigation Paths           │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## Grid Modes
+**See [GRIDDER_DOCUMENTATION.md](GRIDDER_DOCUMENTATION.md) for detailed architecture diagrams.**
 
-The component supports three grid modes:
+## Mouse Controls
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| `SPARSE_ESDF` | Only stores obstacles (VoxBlox-style) | Large environments, memory-constrained |
-| `DENSE_ESDF` | Full grid with ESDF optimization | Medium environments, fast queries |
-| `DENSE` | Original ray-casting approach | Small environments, high accuracy |
+| Action | Function |
+|--------|----------|
+| **Left Click** | Set navigation target |
+| **Shift + Left Click** | Initialize robot position (real robot only) |
+| **Ctrl + Right Click** | Cancel current target |
+| **Right Drag** | Pan view |
+| **Wheel** | Zoom |
 
-## Path Planning
+**See [USER_MANUAL.md](USER_MANUAL.md) for complete control reference.**
 
-### Safety Factor
+## Key Parameters
 
-The `safety_factor` parameter (0.0 - 1.0) controls path behavior:
-
-- **0.0**: Shortest path, may touch obstacle boundaries (green cells)
-- **0.5**: Balanced between distance and safety
-- **1.0**: Maximum safety, strongly prefers center of free space
-
-```
-safety_factor = 0.0          safety_factor = 1.0
-                             
-    ████████                     ████████
-    █      █                     █      █
-  ──█──────█──  (short path)     █  ──  █  (safe path)
-    █      █                     █ /  \ █
-    ████████                     ████/──\████
-```
-
-### Cost Function
-
-The A* planner uses an ESDF-based cost:
-
-```
-cost = move_cost + esdf_cost × safety_factor × safety_scale
-
-where:
-  - move_cost = tile_size (or tile_size × √2 for diagonal)
-  - esdf_cost = distance-based penalty near obstacles
-  - safety_scale = 1 + safety_factor² × 10  (range 1-11x)
-```
-
-## Obstacle Detection
-
-Obstacles are confirmed using a log-odds approach:
-
-1. **Hit**: `log_odds += 1.0` (LiDAR hit on cell)
-2. **Miss**: `log_odds -= 0.4` (LiDAR ray passes through)
-3. **Threshold**: Cell becomes obstacle when `log_odds >= 2.0` AND `hits >= 3` AND has neighbor support
-
-### Inflation Layers
-
-```
-┌───┬───┬───┬───┬───┐
-│   │ G │ G │ G │   │   G = Green (cost: 100)
-├───┼───┼───┼───┼───┤   O = Orange (cost: 200)  
-│ G │ O │ O │ O │ G │   R = Red (cost: 255, obstacle)
-├───┼───┼───┼───┼───┤
-│ G │ O │ R │ O │ G │
-├───┼───┼───┼───┼───┤
-│ G │ O │ O │ O │ G │
-├───┼───┼───┼───┼───┤
-│   │ G │ G │ G │   │
-└───┴───┴───┴───┴───┘
-```
-
-## ICE Interface
-
-### Methods
-
-| Method | Description |
-|--------|-------------|
-| `getPaths(source, target, maxPaths, tryClosestFreePoint, targetIsHuman, safetyFactor)` | Compute paths between two points |
-| `getMap()` | Get serialized map (obstacles + inflation) |
-| `LineOfSightToTarget(source, target, robotRadius)` | Check if direct path is free |
-| `IsPathBlocked(path)` | Check if existing path is blocked |
-| `getClosestFreePoint(source)` | Find nearest free cell to a point |
-| `getDimensions()` | Get grid dimensions |
-| `setGridDimensions(dimensions)` | Set grid dimensions |
-| `loadMRPTMap(filepath)` | Load pre-computed map from MRPT .gridmap file |
-| `loadAndInitializeMap(filepath)` | Load MRPT map and auto-adjust grid dimensions |
-
-### Map Serialization
-
-The `getMap()` method returns a compact representation:
-
-```idsl
-struct TCell {
-    int x;      // mm - cell x position
-    int y;      // mm - cell y position  
-    byte cost;  // 0=free, 255=obstacle, intermediate=inflation
-};
-
-struct Map {
-    int tileSize;       // mm - size of each cell (default: 100)
-    TCellVector cells;  // only cells with cost > 0
-};
-```
-
-**Transmission size**: ~9 bytes per cell (only non-free cells transmitted)
-
-## MRPT Map Loading
-
-Load pre-computed occupancy grids from MRPT `.gridmap` files for rapid initialization.
-
-### Quick Start
+**File:** `src/specificworker.h` - `Params` struct
 
 ```cpp
-// In initialize()
-if (Gridder_loadMRPTMap("my_map.gridmap")) {
-    external_map_loaded = true;  // Disables LiDAR updates
-}
+// Operating Mode
+bool USE_GT_WARMUP = true;              // Set false for real robot
+
+// Grid
+float TILE_SIZE = 100;                  // mm - grid resolution
+float ROBOT_WIDTH = 460;                // mm
+
+// Localization
+bool USE_LOCALIZER = true;
+size_t LOCALIZER_PARTICLES = 500;
+float LOCALIZER_ODOM_NOISE = 0.1f;
+int LOCALIZER_PERIOD_MS = 50;           // 20 Hz
+
+// Navigation
+float SAFETY_FACTOR = 1.0f;             // 0=shortest, 1=safest
+int MPPI_PERIOD_MS = 50;                // 20 Hz
 ```
 
-### Configuration
-
-Align MRPT map with simulation world in `specificworker.h`:
-
-```cpp
-float MRPT_MAP_OFFSET_X = -13677.7f;  // mm - X translation
-float MRPT_MAP_OFFSET_Y = -7171.55f;  // mm - Y translation
-float MRPT_MAP_ROTATION = M_PI_2;     // radians - 90° left
-```
-
-### Format Support
-
-- **MRPT Native** (COccupancyGridMap2D) - zstd compression auto-detected
-- Occupancy: `0`=unknown, `1-127`=free, `>127`=occupied
-
-**Full documentation**: [MRPT_REFERENCE.md](MRPT_REFERENCE.md)
-
-## Configuration
-
-Key parameters in `specificworker.h`:
-
-```cpp
-struct Params {
-    float TILE_SIZE = 100;           // mm - grid resolution
-    float ROBOT_WIDTH = 460;         // mm
-    float ROBOT_LENGTH = 480;        // mm
-    float MAX_LIDAR_RANGE = 15000;   // mm
-    float SAFETY_FACTOR = 0.5f;      // 0=fast, 1=safe
-    GridMode GRID_MODE = GridMode::SPARSE_ESDF;
-};
-```
-
-## Dependencies
-
-- Qt6 (Widgets, OpenGL)
-- Eigen3
-- OpenCV
-- Ice (ZeroC)
-- RoboComp core libraries
+**See [GRIDDER_DOCUMENTATION.md](GRIDDER_DOCUMENTATION.md) Section 9 for complete parameter reference.**
 
 ## Building
 
 ```bash
 cd gridder
-cmake -B build
-make -C build -j$(nproc)
+cmake .
+make -j$(nproc)
 ```
 
 ## Running
 
 ```bash
-# Copy and edit config
-cp etc/config etc/myconfig
-# Edit myconfig with your LiDAR and robot proxy endpoints
-
-# Run
-bin/gridder etc/myconfig
+bin/gridder etc/config
 ```
 
-## UI Controls
+**Configuration:** Edit `etc/config` to set LiDAR, OmniRobot, and Webots2Robocomp proxy endpoints.
 
-- **Left Click**: Set path target
-- **Shift + Left Click**: Reposition robot manually
-- **Right Click + Drag**: Pan view
-- **Ctrl + Right Click**: Cancel current path
-- **Mouse Wheel**: Zoom
+## Dependencies
+
+- **Qt6** (Widgets, OpenGL)
+- **Eigen3** (>= 3.3)
+- **Ice** (ZeroC ICE middleware)
+- **RoboComp** core libraries
+- **Optional:** OpenCV (for map visualization)
+
+## ICE Interface
+
+```idsl
+interface Gridder {
+    Result getPaths(TPoint source, TPoint target, ...);
+    Map getMap();
+    TPoint getPose();
+    bool LineOfSightToTarget(TPoint source, TPoint target, float radius);
+    // ... see GRIDDER_DOCUMENTATION.md for complete API
+};
+```
 
 ## Performance
 
-| Metric | SPARSE_ESDF | DENSE |
+| Metric | Sparse ESDF | Notes |
 |--------|-------------|-------|
-| Memory (10m×10m) | ~50KB | ~1MB |
-| Update rate | 10-15 Hz | 5-10 Hz |
-| Path planning | 1-5 ms | 5-20 ms |
+| Memory (50m × 50m) | ~20-50 KB | Only obstacles stored |
+| Grid Update | 10-15 Hz | Real-time LiDAR integration |
+| Path Planning | 1-10 ms | Typical A* computation |
+| Localization | 20 Hz | AMCL particle filter |
+| MPPI Control | 20 Hz | 512 samples, 30-step horizon |
 
-## References
+## Version
 
-- [VoxBlox: Incremental 3D Euclidean Signed Distance Fields](https://github.com/ethz-asl/voxblox)
-- [Log-odds Occupancy Grids](https://en.wikipedia.org/wiki/Occupancy_grid_mapping)
+**Version:** 2.0  
+**Date:** 2026-02-14  
+**License:** See LICENSE file
 
-### Documentation Files
+## Support
 
-| File | Description |
-|------|-------------|
-| [GRIDDER_MATH.md](GRIDDER_MATH.md) | Mathematical derivation of log-odds occupancy grid update formula |
-| [MRPT_REFERENCE.md](MRPT_REFERENCE.md) | Complete MRPT map loader reference (format, API, configuration) |
-| [slam10-gridmaps.md](slam10-gridmaps.md) | Reference material on probabilistic grid mapping |
+- **Issues:** Report via GitHub Issues
+- **Documentation:** See [USER_MANUAL.md](USER_MANUAL.md) and [GRIDDER_DOCUMENTATION.md](GRIDDER_DOCUMENTATION.md)
+- **Contact:** RoboComp Team
 
 ---
 
-# Developer Notes
-
-## Editable Files
-
-- `src/*` – Component logic and implementation
-- `etc/*` – Configuration files
-- `README.md` – This documentation
-
-**Do not edit** files in `generated/` - they are auto-generated.
-
-## State Machine
-
-The component uses RoboComp's state machine:
-
-1. **Initialize**: Setup grids, viewer, LiDAR thread
-2. **Compute**: Main loop - read LiDAR, update grid, handle requests
-3. **Emergency**: Handle error conditions
-4. **Restore**: Recovery from emergency
-
-## Adding New Features
-
-1. Grid operations: Edit `src/grid_esdf.cpp`
-2. Path planning: Edit `compute_path()` in `grid_esdf.cpp`
-3. Interface methods: Edit `src/specificworker.cpp`
-4. Visualization: Edit `update_visualization()` in `grid_esdf.cpp`
-
-## Debugging
-
-Enable debug output in `compute_path()`:
-```cpp
-qDebug() << "[A*] Computing path..." << "safety:" << safety_factor;
-```
-
-View LiDAR points:
-```cpp
-params.DRAW_LIDAR_POINTS = true;
-```
+**Getting Started?** → Read [USER_MANUAL.md](USER_MANUAL.md)  
+**Want Technical Details?** → Read [GRIDDER_DOCUMENTATION.md](GRIDDER_DOCUMENTATION.md)  
+**Deploying on Real Robot?** → Check [USER_MANUAL.md](USER_MANUAL.md) Section 5
