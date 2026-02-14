@@ -877,6 +877,7 @@ void SpecificWorker::draw_paths(const std::vector<std::vector<Eigen::Vector2f>> 
 void SpecificWorker::run_mppi()
 {
     const auto target_period = std::chrono::milliseconds(params.MPPI_PERIOD_MS);
+    const auto idle_period = std::chrono::milliseconds(200);  // Sleep longer when idle (5 Hz check)
     auto last_fps_time = std::chrono::steady_clock::now();
     int frame_count = 0;
 
@@ -884,10 +885,11 @@ void SpecificWorker::run_mppi()
     {
         const auto loop_start = std::chrono::steady_clock::now();
 
-        // Check preconditions
+        // Check preconditions - sleep longer when not navigating to save CPU
         if (!mppi_enabled.load() || nav_state.load() != NavigationState::NAVIGATING)
         {
-            std::this_thread::sleep_for(target_period);
+            mppi_hz.store(0);  // Show 0 FPS when not active
+            std::this_thread::sleep_for(idle_period);
             continue;
         }
 
@@ -944,8 +946,18 @@ void SpecificWorker::run_mppi()
             // Send stop command
             MPPIOutput out{0.f, 0.f, 0.f, true};
             buffer_mppi_output.put<0>(std::move(out), timestamp);
-            std::this_thread::sleep_for(target_period);
-            continue;
+
+            // Clear trajectory visualization
+            {
+                std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
+                last_optimal_trajectory.clear();
+            }
+
+            // Reset MPPI controller for next navigation
+            mppi_controller.reset();
+            mppi_hz.store(0);
+
+            continue;  // Will sleep in idle_period at next iteration
         }
 
         // Get pose covariance from localizer (if available)

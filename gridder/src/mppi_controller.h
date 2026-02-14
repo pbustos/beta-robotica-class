@@ -118,7 +118,7 @@ public:
         float obstacle_decay = 100.0f;     // mm - softplus decay parameter
 
         // Robot footprint for precise collision detection (8 points)
-        // Points are in robot frame: X+ = right, Y+ = forward
+        // Points are in robot frame: X+ = right, Y+ = forward TODO: use a robot sheet for all modules
         float robot_semi_width = 230.0f;   // mm - half of robot width (X direction)
         float robot_semi_length = 240.0f;  // mm - half of robot length (Y direction)
         bool use_footprint_sampling = true; // Enable 8-point footprint sampling for obstacle distance

@@ -797,26 +797,21 @@ MPPIController::ControlCommand MPPIController::computeNominalControl(
     const Eigen::Vector2f& target = path[target_idx];
 
     // Vector from robot to target in world frame
-    float dx_world = target.x() - current_state.x;
-    float dy_world = target.y() - current_state.y;
-    float dist_to_target = std::sqrt(dx_world * dx_world + dy_world * dy_world);
+    const Eigen::Vector2f delta_world(target.x() - current_state.x, target.y() - current_state.y);
+    const float dist_to_target = delta_world.norm();
 
     if (dist_to_target < 1.0f) return nominal;
 
     // =======================================================================
-    // SIMPLE APPROACH: Transform target to robot frame and drive towards it
+    // Transform target delta from world frame to robot frame using Eigen::Affine2f
     // Robot frame: X+ = right, Y+ = forward
-    // World to robot transformation (rotate by -theta):
-    // [dx_robot]   [cos(theta)  sin(theta)] [dx_world]
-    // [dy_robot] = [-sin(theta) cos(theta)] [dy_world]
+    // World to robot = inverse of robot-to-world = Rotation(-theta)
     // =======================================================================
+    const Eigen::Rotation2Df R_world_to_robot(-current_state.theta);
+    const Eigen::Vector2f delta_robot = R_world_to_robot * delta_world;
 
-    float cos_theta = std::cos(current_state.theta);
-    float sin_theta = std::sin(current_state.theta);
-
-    // Transform target delta from world frame to robot frame
-    float dx_robot = dx_world * cos_theta + dy_world * sin_theta;    // lateral (+ = right)
-    float dy_robot = -dx_world * sin_theta + dy_world * cos_theta;   // forward (+ = front)
+    const float dx_robot = delta_robot.x();  // lateral (+ = right)
+    const float dy_robot = delta_robot.y();  // forward (+ = front)
 
     // Angle to target in robot frame (0 = straight ahead, positive = right)
     float angle_to_target_robot = std::atan2(dx_robot, dy_robot);  // atan2(x,y) because Y+ is forward
@@ -900,22 +895,14 @@ std::array<Eigen::Vector2f, 8> MPPIController::getFootprintPoints(const State& s
         {-sw,  0.f}   // P7: left-center
     }};
 
-    // Transform to world frame
-    const float cos_theta = std::cos(state.theta);
-    const float sin_theta = std::sin(state.theta);
+    // Build robot-to-world transform: T = Translation(x,y) * Rotation(theta)
+    Eigen::Affine2f T_robot_to_world = Eigen::Translation2f(state.x, state.y)
+                                     * Eigen::Rotation2Df(state.theta);
 
+    // Transform all points to world frame
     std::array<Eigen::Vector2f, 8> world_points;
     for (size_t i = 0; i < 8; ++i)
-    {
-        // Rotate from robot frame to world frame
-        // World X = local_x * cos(θ) - local_y * sin(θ)
-        // World Y = local_x * sin(θ) + local_y * cos(θ)
-        float wx = local_points[i].x() * cos_theta - local_points[i].y() * sin_theta;
-        float wy = local_points[i].x() * sin_theta + local_points[i].y() * cos_theta;
-
-        // Translate to world position
-        world_points[i] = Eigen::Vector2f(state.x + wx, state.y + wy);
-    }
+        world_points[i] = T_robot_to_world * local_points[i];
 
     return world_points;
 }
