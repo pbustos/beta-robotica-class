@@ -288,7 +288,7 @@ class SpecificWorker : public GenericWorker
 	    // Draw
 	    void draw_paths(const std::vector<std::vector<Eigen::Vector2f>> &paths, QGraphicsScene *scene, bool erase_only=false);
 	    void draw_path(const std::vector<Eigen::Vector2f> &path, QGraphicsScene *scene, bool erase_only=false);
-	    void draw_lidar_points(const std::vector<Eigen::Vector2f> &points_world);
+	    void draw_lidar_points(const std::vector<Eigen::Vector2f> &points_local, const Eigen::Affine2f &robot_pose);
 
 	    // mutex
 	    std::mutex mutex_path;
@@ -297,6 +297,11 @@ class SpecificWorker : public GenericWorker
 
     // ==================== Robot Pose Estimation ====================
     Eigen::Affine2f estimated_robot_pose;  // Current best estimate of robot pose
+
+    // Helper methods for compute() - keep main loop compact
+    std::optional<Eigen::Affine2f> get_current_pose(const Eigen::Affine2f& gt_pose, std::uint64_t timestamp);
+    void process_mppi_output(std::uint64_t timestamp);
+    void update_ui_displays();
 
 	    // ==================== MPPI Controller ====================
 	    MPPIController mppi_controller;

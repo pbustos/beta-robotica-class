@@ -160,6 +160,11 @@ void SpecificWorker::initialize()
         MPPIController::Params mppi_params;  // Uses defaults from mppi_controller.h
         mppi_params.robot_radius = params.ROBOT_SEMI_WIDTH;
 
+        // Set robot footprint dimensions for 8-point sampling
+        mppi_params.robot_semi_width = params.ROBOT_SEMI_WIDTH;
+        mppi_params.robot_semi_length = params.ROBOT_SEMI_LENGTH;
+        mppi_params.use_footprint_sampling = true;  // Enable 8-point footprint collision detection
+
         // Set robot kinematic model
         mppi_params.robot_type = (params.ROBOT_TYPE == Params::RobotType::DIFFERENTIAL)
             ? MPPIController::RobotType::DIFFERENTIAL
@@ -403,141 +408,143 @@ void SpecificWorker::initialize()
 }
 void SpecificWorker::compute()
 {
-    const auto timestamp = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const auto timestamp = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    // Read synchronized sensor data
     const auto &[robot, lidar_world, lidar_local] = buffer_sync.read(timestamp);
     if (not robot.has_value() or not lidar_world.has_value() or not lidar_local.has_value())
-        { qWarning() << "No data from buffer_sync: robot has value?"; return; };
-    const auto &robot_pos = robot.value();  // Ground truth pose - ONLY used for computing odometry in localizer
+        { qWarning() << "No data from buffer_sync"; return; }
+
+    const auto &robot_pos = robot.value();           // GT pose (only for odometry simulation)
     const auto &points_world = lidar_world.value();
-    // Note: lidar_local is used by the localizer thread via buffer_sync
+    const auto &points_local = lidar_local.value();
 
-    // ============ Get estimated robot pose (from Localizer thread) ============
-    Eigen::Affine2f current_robot_pose;
-    bool pose_valid = false;
+    // Get current robot pose (from localizer or GT during warmup)
+    auto current_pose_opt = get_current_pose(robot_pos, timestamp);
+    if (!current_pose_opt.has_value())
+        return;  // Waiting for localization
 
-    if (params.USE_LOCALIZER && localizer_initialized.load())
-    {
-        // Try to read from localizer thread's buffer
-        if (const auto& [estimated] = buffer_estimated_pose.read(timestamp); estimated.has_value())
-        {
-            current_robot_pose = estimated.value();
-            pose_valid = true;
-        }
-        else if (params.USE_GT_WARMUP)
-        {
-            // Simulation only: Allow GT during warmup (first few frames after init)
-            current_robot_pose = robot_pos;
-            pose_valid = true;
-        }
-        // else: No pose available yet - wait for localizer
-    }
-    else if (params.USE_GT_WARMUP)
-    {
-        // Localizer disabled and GT warmup enabled (simulation mode)
-        current_robot_pose = robot_pos;
-        pose_valid = true;
-    }
-
-    // Skip update if no valid pose available (real robot must wait for localizer)
-    if (!pose_valid)
-    {
-        static int wait_counter = 0;
-        if (++wait_counter % 50 == 0)  // Print every ~5 seconds (at 10 Hz)
-        {
-            if (!params.USE_GT_WARMUP && !localizer_initialized.load())
-            {
-                qWarning() << "[compute] Waiting for manual robot positioning (Shift+Left Click)...";
-            }
-            else
-            {
-                qWarning() << "[compute] Waiting for localizer to provide pose estimate...";
-            }
-        }
-        return;
-    }
-
-    /// Update grid with world coordinates (only if no external map loaded)
-    if (not external_map_loaded)
-    {
-        mutex_path.lock();
-        // VoxBlox-style ESDF: only stores obstacles
-        // Use estimated pose for grid update (or GT during initialization)
-        grid_esdf.update(points_world, current_robot_pose.translation(), params.MAX_LIDAR_RANGE, timestamp);
-        grid_esdf.update_visualization(true);  // Only update visualization when there are changes
-        mutex_path.unlock();
-    }
-
-    // Store estimated pose for UI and other components
+    Eigen::Affine2f current_robot_pose = current_pose_opt.value();
     estimated_robot_pose = current_robot_pose;
 
-    // ============ Debug: draw lidar points (controlled by UI checkbox)
-    if (show_lidar_points.load())
-        draw_lidar_points(points_world);
+    // Update grid with LiDAR data (if no external map loaded)
+    if (not external_map_loaded)
+    {
+        std::lock_guard<std::mutex> lock(mutex_path);
+        grid_esdf.update(points_world, current_robot_pose.translation(), params.MAX_LIDAR_RANGE, timestamp);
+        grid_esdf.update_visualization(true);
+    }
 
-    // ============ Draw localizer particles (must be in main Qt thread)
+    // Visualization (controlled by UI checkboxes)
+    if (show_lidar_points.load())
+        draw_lidar_points(points_local, estimated_robot_pose);
     if (show_particles.load() && params.USE_LOCALIZER)
         localizer.drawParticles();
-
-    // ============ Draw covariance ellipse (must be in main Qt thread)
     if (show_covariance.load() && params.USE_LOCALIZER && localizer_initialized.load())
         draw_covariance_ellipse();
 
-    // ============ Update robot visualization in the viewer using estimated pose
-    const float display_x = estimated_robot_pose.translation().x();
-    const float display_y = estimated_robot_pose.translation().y();
-    const float display_angle = std::atan2(estimated_robot_pose.linear()(1,0), estimated_robot_pose.linear()(0,0));
-    viewer->robot_poly()->setPos(display_x, display_y);
-    viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
+    // Update robot visualization
+    const float angle = std::atan2(estimated_robot_pose.linear()(1,0), estimated_robot_pose.linear()(0,0));
+    viewer->robot_poly()->setPos(estimated_robot_pose.translation().x(), estimated_robot_pose.translation().y());
+    viewer->robot_poly()->setRotation(qRadiansToDegrees(angle));
 
-    // ============ MPPI NAVIGATION (read from MPPI thread) ============
-    if (mppi_enabled.load())
+    // Process MPPI output and send commands to robot
+    process_mppi_output(timestamp);
+
+    // Update UI displays (FPS, CPU, etc.)
+    update_ui_displays();
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+// Helper: Get current robot pose from localizer or GT (during warmup)
+/////////////////////////////////////////////////////////////////////////////////////////////////
+std::optional<Eigen::Affine2f> SpecificWorker::get_current_pose(const Eigen::Affine2f& gt_pose, std::uint64_t timestamp)
+{
+    // Case 1: Localizer enabled and initialized - use estimated pose
+    if (params.USE_LOCALIZER && localizer_initialized.load())
     {
-        const auto& [mppi_out] = buffer_mppi_output.read(timestamp);
-        if (mppi_out.has_value() && mppi_out->valid)
-            try
-            {
-                // MPPI returns: vx = sideways (X+ right), vy = forward (Y+), omega = rotation
-                // setSpeedBase expects same convention: (sideways, forward, rotation)
-                omnirobot_proxy->setSpeedBase(mppi_out->vx, mppi_out->vy, mppi_out->omega);
-            }
-            catch (const Ice::Exception &e)
-            {
-                static int error_count = 0;
-                if (++error_count % 100 == 1)
-                    qWarning() << "[MPPI] Failed to send speed to robot:" << e.what();
-            }
+        if (const auto& [estimated] = buffer_estimated_pose.read(timestamp); estimated.has_value())
+            return estimated.value();
 
-        // Update MPPI trajectory visualization (from the thread's output) if enabled
-        if (show_trajectories.load())
-        {
-            std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
-            if (!last_optimal_trajectory.empty())
-                draw_mppi_trajectory(last_optimal_trajectory);
+        // Simulation fallback: use GT during warmup
+        if (params.USE_GT_WARMUP)
+            return gt_pose;
+
+        return std::nullopt;  // Wait for localizer
+    }
+
+    // Case 2: GT warmup mode (simulation without localizer)
+    if (params.USE_GT_WARMUP)
+        return gt_pose;
+
+    // Case 3: Real robot - waiting for manual initialization
+    static int wait_counter = 0;
+    if (++wait_counter % 50 == 0)
+        qWarning() << "[compute] Waiting for manual robot positioning (Shift+Left Click)...";
+
+    return std::nullopt;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+// Helper: Process MPPI output and send velocity commands
+/////////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::process_mppi_output(std::uint64_t timestamp)
+{
+    if (!mppi_enabled.load())
+        return;
+
+    // Read MPPI output and send to robot
+    if (const auto& [mppi_out] = buffer_mppi_output.read(timestamp);
+        mppi_out.has_value() && mppi_out->valid)
+    {
+        try {
+            omnirobot_proxy->setSpeedBase(mppi_out->vx, mppi_out->vy, mppi_out->omega);
+        }
+        catch (const Ice::Exception &e) {
+            static int error_count = 0;
+            if (++error_count % 100 == 1)
+                qWarning() << "[MPPI] Failed to send speed:" << e.what();
         }
     }
 
-    // ============ UPDATE UI ============
+    // Update trajectory visualization if enabled
+    if (show_trajectories.load())
+    {
+        std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
+        if (!last_optimal_trajectory.empty())
+            draw_mppi_trajectory(last_optimal_trajectory);
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+// Helper: Update UI displays (FPS, CPU usage, etc.)
+/////////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::update_ui_displays()
+{
     this->hz = fps.print("FPS:", 3000);
     this->lcdNumber_hz->display(this->hz);
     this->lcdNumber_loc_hz->display(localizer_hz.load());
     this->lcdNumber_mppi_hz->display(mppi_hz.load());
 
-    // Update CPU usage with exponential moving average to reduce flickering
+    // CPU usage with exponential moving average
     const float current_cpu = get_cpu_usage();
     cpu_usage_avg = CPU_AVG_ALPHA * current_cpu + (1.0f - CPU_AVG_ALPHA) * cpu_usage_avg;
     this->lcdNumber_cpu->display(static_cast<int>(cpu_usage_avg));
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
-void SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &points_world)
+auto SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &points,
+                                       const Eigen::Affine2f &robot_pose) -> void
 {
     static std::vector<QGraphicsEllipseItem*> lidar_points;
     static const QPen pen(QColor("DarkBlue"));
     static const QBrush brush(QColor("DarkBlue"));
     static constexpr float s = 40.f;
 
-    const int stride = std::max(1, static_cast<int>(points_world.size() / params.MAX_LIDAR_DRAW_POINTS));
-    const size_t num_points_to_draw = (points_world.size() + stride - 1) / stride;
+    const int stride = std::max(1, static_cast<int>(points.size() / params.MAX_LIDAR_DRAW_POINTS));
+    const size_t num_points_to_draw = (points.size() + stride - 1) / stride;
 
     // Reuse existing items when possible, only create/delete when needed
     // Remove excess items if we have too many
@@ -551,9 +558,9 @@ void SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector2f> &point
 
     // Update existing items and create new ones as needed
     size_t idx = 0;
-    for (size_t i = 0; i < points_world.size() && idx < num_points_to_draw; i += stride, ++idx)
+    for (size_t i = 0; i < points.size() && idx < num_points_to_draw; i += stride, ++idx)
     {
-        const auto &p = points_world[i];
+        const auto &p = robot_pose * points[i];
         if (idx < lidar_points.size())
         {
             // Reuse existing item - just update position
@@ -1116,7 +1123,7 @@ void SpecificWorker::slot_lidar_checkbox_toggled(bool checked)
     if (!checked)
     {
         // Clear existing lidar points from scene
-        draw_lidar_points({});
+        draw_lidar_points({}, {});
     }
 }
 

@@ -7,6 +7,13 @@
 3. [Path Planning with ESDF](#3-path-planning-with-esdf)
 4. [Particle Filter Localization](#4-particle-filter-localization)
 5. [MPPI Controller](#5-mppi-controller)
+   - [5.13 Time-Correlated Noise](#513-time-correlated-noise)
+   - [5.14 Adaptive Covariance](#514-adaptive-covariance)
+   - [5.15 ESDF-Based Obstacle Costs](#515-esdf-based-obstacle-costs)
+   - [5.16 Covariance-Aware Margin Inflation](#516-covariance-aware-margin-inflation)
+   - [5.17 Robot Footprint Sampling (8-Point)](#517-robot-footprint-sampling-8-point-collision-detection)
+   - [5.18 Output Smoothing Filter](#518-output-smoothing-filter)
+   - [5.19 Configuration Parameters](#519-mppi-configuration-parameters)
 6. [Implementation Details](#6-implementation-details)
 7. [Configuration Reference](#7-configuration-reference)
 
@@ -1018,7 +1025,129 @@ For each trajectory state (x, y, θ):
 - **Low pose uncertainty** → Normal margin → Efficient navigation
 - **Only near obstacles** → No overhead in open space
 
-### 5.17 Output Smoothing Filter
+### 5.17 Robot Footprint Sampling (8-Point Collision Detection)
+
+Standard MPPI implementations model the robot as a **single point** (center) for collision detection. This is imprecise for rectangular robots, especially when:
+- Navigating through narrow passages
+- Rotating near obstacles
+- Approaching walls at an angle
+
+We implement **8-point footprint sampling** for precise obstacle distance computation.
+
+#### Footprint Points Layout
+
+```
+Robot frame (X+ = right, Y+ = forward):
+
+    P0 -------- P1 -------- P2      ← Front edge
+    |                        |
+    P7        CENTER        P3      ← Side edges
+    |                        |
+    P6 -------- P5 -------- P4      ← Rear edge
+
+Points:
+  P0 = front-left corner      P1 = front-center      P2 = front-right corner
+  P3 = right-center           P4 = rear-right corner
+  P5 = rear-center            P6 = rear-left corner  P7 = left-center
+```
+
+#### Coordinate Transformation
+
+Each footprint point is transformed from robot frame to world frame:
+
+$$
+\begin{bmatrix} x_w \\ y_w \end{bmatrix} = 
+\begin{bmatrix} \cos\theta & -\sin\theta \\ \sin\theta & \cos\theta \end{bmatrix}
+\begin{bmatrix} x_r \\ y_r \end{bmatrix} +
+\begin{bmatrix} x_{robot} \\ y_{robot} \end{bmatrix}
+$$
+
+Where $(x_r, y_r)$ are local coordinates and $(x_{robot}, y_{robot}, \theta)$ is the robot pose.
+
+#### Distance Computation
+
+For each trajectory state, we compute:
+
+1. **Minimum LiDAR distance**: Check all 8 footprint points against all LiDAR obstacles
+   $$d_{lidar} = \min_{i \in [0,7]} \min_{j \in obs} \|P_i - obs_j\|$$
+
+2. **Minimum ESDF distance**: Query ESDF at each footprint point
+   $$d_{esdf} = \min_{i \in [0,7]} ESDF(P_i)$$
+
+3. **Fused distance**: Conservative minimum
+   $$d_{fused} = \min(d_{esdf}, d_{lidar})$$
+
+#### Collision Detection
+
+A collision is detected if **any** footprint point is within the collision threshold:
+
+```cpp
+for (const auto& fp : footprint_points) {
+    for (const auto& obs : obstacles) {
+        if ((fp - obs).squaredNorm() < threshold_sq) {
+            collision = true;
+            break;
+        }
+    }
+}
+```
+
+#### Implementation
+
+```cpp
+std::array<Eigen::Vector2f, 8> getFootprintPoints(const State& state) const {
+    const float sw = params_.robot_semi_width;   // Half width
+    const float sl = params_.robot_semi_length;  // Half length
+    
+    // 8 points in robot frame
+    const std::array<Eigen::Vector2f, 8> local = {{
+        {-sw,  sl}, { 0, sl}, { sw,  sl},  // Front: left, center, right
+        { sw,  0},                          // Right center
+        { sw, -sl}, { 0,-sl}, {-sw, -sl},  // Rear: right, center, left
+        {-sw,  0}                           // Left center
+    }};
+    
+    // Transform to world frame
+    const float c = cos(state.theta), s = sin(state.theta);
+    std::array<Eigen::Vector2f, 8> world;
+    for (size_t i = 0; i < 8; ++i) {
+        world[i] = {
+            state.x + local[i].x()*c - local[i].y()*s,
+            state.y + local[i].x()*s + local[i].y()*c
+        };
+    }
+    return world;
+}
+```
+
+#### Computational Cost
+
+| Method | ESDF Queries | LiDAR Checks | Precision |
+|--------|--------------|--------------|-----------|
+| Single point (center) | 1 | O(N) | Low |
+| **8-point footprint** | **8** | **O(8N)** | **High** |
+
+The 8x increase in ESDF queries is acceptable because:
+- ESDF queries are O(1) with precomputed distances
+- Better precision prevents oscillations near walls (fewer recovery maneuvers)
+- Enables tighter navigation in narrow passages
+
+#### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `robot_semi_width` | 230 mm | Half of robot width (X direction) |
+| `robot_semi_length` | 240 mm | Half of robot length (Y direction) |
+| `use_footprint_sampling` | true | Enable 8-point sampling |
+
+#### Benefits
+
+1. **Precise narrow passage navigation**: Robot correctly estimates clearance on both sides
+2. **Better rotation near obstacles**: Corner points detect imminent collisions
+3. **Reduced oscillations**: More accurate cost gradients lead to smoother trajectories
+4. **Asymmetric robot support**: Works with non-square robots (different width/length)
+
+### 5.18 Output Smoothing Filter
 
 MPPI inherently produces some **jitter** in velocity commands due to:
 1. **Stochastic sampling**: Each iteration uses different random trajectories
@@ -1112,7 +1241,7 @@ The filter state is reset when:
 
 This prevents the filter from "remembering" old velocities when starting a new motion.
 
-### 5.18 MPPI Configuration Parameters
+### 5.19 MPPI Configuration Parameters
 
 ```cpp
 struct Params {
@@ -1149,6 +1278,11 @@ struct Params {
     float robot_radius = 250.0f;    // mm - collision threshold
     float collision_buffer = 120.0f; // mm - soft penalty band
     float safety_margin = 1000.0f;  // mm - outer cost zone
+    
+    // Robot footprint (8-point sampling)
+    float robot_semi_width = 230.0f;   // mm - half width (X direction)
+    float robot_semi_length = 240.0f;  // mm - half length (Y direction)
+    bool use_footprint_sampling = true; // Enable 8-point collision detection
     
     // Covariance-aware margin inflation
     bool use_covariance_inflation = true;
@@ -1395,6 +1529,9 @@ const size_t step = max(1, particles.size() / max_draw);
 | `w_goal` | $w_g$ | 0.5 | Weight for goal reaching cost |
 | `w_smoothness` | $w_s$ | 0.1 | Weight for control smoothness cost |
 | `w_speed` | $w_v$ | 0.05 | Weight for speed maintenance cost |
+| `robot_semi_width` | - | 230 mm | Half robot width for footprint (X) |
+| `robot_semi_length` | - | 240 mm | Half robot length for footprint (Y) |
+| `use_footprint_sampling` | - | true | Enable 8-point footprint collision |
 | `output_smoothing_alpha` | $\alpha$ | 0.3 | EMA filter for output (0=off, 0.5=heavy) |
 
 ---
@@ -1420,4 +1557,9 @@ const size_t step = max(1, particles.size() / max_draw);
 ---
 
 *Document generated: 2026-02-14*
-*Component version: Gridder v2.1*
+*Component version: Gridder v2.2*
+
+**Recent Changes (v2.2):**
+- Added 8-point robot footprint sampling for precise collision detection
+- Supports rectangular robots with configurable dimensions
+- Improved narrow passage navigation

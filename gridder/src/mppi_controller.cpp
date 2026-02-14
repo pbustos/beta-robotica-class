@@ -258,26 +258,76 @@ MPPIController::ControlCommand MPPIController::compute(
             trajectory.push_back(state);
 
             // ==============================================================
-            // HARD COLLISION CHECK (LiDAR safety layer)
-            // Also compute minimum LiDAR distance for cost fusion
+            // HARD COLLISION CHECK & DISTANCE COMPUTATION
+            // Uses 8-point footprint sampling for precise obstacle distances
             // ==============================================================
             float min_lidar_dist_sq = std::numeric_limits<float>::max();
-            for (const auto& obs : obs_to_use)
-            {
-                float dx = state.x - obs.x();
-                float dy = state.y - obs.y();
-                float dist_sq = dx * dx + dy * dy;
+            float min_esdf_dist = std::numeric_limits<float>::max();
 
-                // Hard collision check
-                if (dist_sq < robot_radius_sq)
+            if (params_.use_footprint_sampling)
+            {
+                // Get 8 footprint points in world frame
+                auto footprint_points = getFootprintPoints(state);
+
+                // Check each footprint point against LiDAR obstacles
+                for (const auto& fp : footprint_points)
                 {
-                    collision = true;
-                    break;
+                    for (const auto& obs : obs_to_use)
+                    {
+                        float dx = fp.x() - obs.x();
+                        float dy = fp.y() - obs.y();
+                        float dist_sq = dx * dx + dy * dy;
+
+                        // Hard collision: any footprint point inside obstacle
+                        if (dist_sq < 100.0f * 100.0f)  // 100mm threshold for LiDAR points
+                        {
+                            collision = true;
+                            break;
+                        }
+
+                        if (dist_sq < min_lidar_dist_sq)
+                            min_lidar_dist_sq = dist_sq;
+                    }
+                    if (collision) break;
                 }
 
-                // Track minimum distance for cost fusion
-                if (dist_sq < min_lidar_dist_sq)
-                    min_lidar_dist_sq = dist_sq;
+                // Query ESDF for each footprint point (find minimum)
+                if (!collision && esdf != nullptr)
+                {
+                    for (const auto& fp : footprint_points)
+                    {
+                        auto esdf_query = esdf->query_esdf(fp.x(), fp.y());
+                        if (esdf_query.valid && esdf_query.distance < min_esdf_dist)
+                            min_esdf_dist = esdf_query.distance;
+                    }
+                }
+            }
+            else
+            {
+                // Fallback: single point (center) check
+                for (const auto& obs : obs_to_use)
+                {
+                    float dx = state.x - obs.x();
+                    float dy = state.y - obs.y();
+                    float dist_sq = dx * dx + dy * dy;
+
+                    if (dist_sq < robot_radius_sq)
+                    {
+                        collision = true;
+                        break;
+                    }
+
+                    if (dist_sq < min_lidar_dist_sq)
+                        min_lidar_dist_sq = dist_sq;
+                }
+
+                // Single ESDF query at center
+                if (!collision && esdf != nullptr)
+                {
+                    auto esdf_query = esdf->query_esdf(state.x, state.y);
+                    if (esdf_query.valid)
+                        min_esdf_dist = esdf_query.distance;
+                }
             }
 
             if (collision)
@@ -285,18 +335,10 @@ MPPIController::ControlCommand MPPIController::compute(
 
             // ==============================================================
             // FUSED OBSTACLE COST: d_fused = min(d_esdf, d_lidar)
-            // - ESDF: smooth field from static map
-            // - LiDAR: detects dynamic/unmapped obstacles
+            // Now using minimum distance from all footprint points
             // ==============================================================
-            float d_esdf = std::numeric_limits<float>::max();
-            GridESDF::ESDFQuery esdf_query = esdf->query_esdf(state.x, state.y);
-            if (esdf_query.valid)
-                d_esdf = esdf_query.distance;
-
             float d_lidar = std::sqrt(min_lidar_dist_sq);
-
-            // Fused distance: conservative (minimum of both)
-            const float d_fused = std::min(d_esdf, d_lidar);
+            float d_fused = std::min(min_esdf_dist, d_lidar);
 
             // Quadratic hinge cost: c = w * max(0, margin - d)^2
             if (d_fused < params_.safety_margin)
@@ -309,10 +351,11 @@ MPPIController::ControlCommand MPPIController::compute(
                 breakdown.obstacle_cost += obs_c;
             }
 
-            // Extra penalty when very close to collision
-            if (d_fused < params_.robot_radius + params_.collision_buffer)
+            // Extra penalty when very close to collision (any footprint point)
+            // Note: with footprint sampling, collision_buffer applies to the footprint edge
+            if (d_fused < params_.collision_buffer)
             {
-                float critical_pen = (params_.robot_radius + params_.collision_buffer) - d_fused;
+                float critical_pen = params_.collision_buffer - d_fused;
                 float critical_c = params_.w_obstacle * 10.0f * std::exp(critical_pen / 50.0f);
                 traj_cost += critical_c;
                 breakdown.obstacle_cost += critical_c;
@@ -830,3 +873,50 @@ void MPPIController::warmStart()
         // Last control stays the same (or could be set to zero)
     }
 }
+
+std::array<Eigen::Vector2f, 8> MPPIController::getFootprintPoints(const State& state) const
+{
+    // Robot footprint points in robot frame (X+ = right, Y+ = forward)
+    // 8 points: 4 corners + 4 edge midpoints
+    //
+    //     P0 -------- P1 -------- P2
+    //     |                        |
+    //     P7        CENTER        P3
+    //     |                        |
+    //     P6 -------- P5 -------- P4
+
+    const float sw = params_.robot_semi_width;   // Half width (X)
+    const float sl = params_.robot_semi_length;  // Half length (Y)
+
+    // Footprint points in robot frame (local coordinates)
+    const std::array<Eigen::Vector2f, 8> local_points = {{
+        {-sw,  sl},   // P0: front-left corner
+        { 0.f, sl},   // P1: front-center
+        { sw,  sl},   // P2: front-right corner
+        { sw,  0.f},  // P3: right-center
+        { sw, -sl},   // P4: rear-right corner
+        { 0.f,-sl},   // P5: rear-center
+        {-sw, -sl},   // P6: rear-left corner
+        {-sw,  0.f}   // P7: left-center
+    }};
+
+    // Transform to world frame
+    const float cos_theta = std::cos(state.theta);
+    const float sin_theta = std::sin(state.theta);
+
+    std::array<Eigen::Vector2f, 8> world_points;
+    for (size_t i = 0; i < 8; ++i)
+    {
+        // Rotate from robot frame to world frame
+        // World X = local_x * cos(θ) - local_y * sin(θ)
+        // World Y = local_x * sin(θ) + local_y * cos(θ)
+        float wx = local_points[i].x() * cos_theta - local_points[i].y() * sin_theta;
+        float wy = local_points[i].x() * sin_theta + local_points[i].y() * cos_theta;
+
+        // Translate to world position
+        world_points[i] = Eigen::Vector2f(state.x + wx, state.y + wy);
+    }
+
+    return world_points;
+}
+

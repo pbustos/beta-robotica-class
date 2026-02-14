@@ -22,6 +22,7 @@
 
 #include <Eigen/Dense>
 #include <vector>
+#include <array>
 #include <random>
 #include <algorithm>
 #include <cmath>
@@ -115,6 +116,12 @@ public:
         float collision_buffer = 120.0f;   // mm - soft penalty band before collision
         float safety_margin = 1000.0f;     // mm - outer cost zone
         float obstacle_decay = 100.0f;     // mm - softplus decay parameter
+
+        // Robot footprint for precise collision detection (8 points)
+        // Points are in robot frame: X+ = right, Y+ = forward
+        float robot_semi_width = 230.0f;   // mm - half of robot width (X direction)
+        float robot_semi_length = 240.0f;  // mm - half of robot length (Y direction)
+        bool use_footprint_sampling = true; // Enable 8-point footprint sampling for obstacle distance
 
         // Covariance-aware margin inflation (Option A)
         bool use_covariance_inflation = true;   // Enable covariance-aware margin inflation
@@ -295,6 +302,26 @@ private:
      */
     ControlCommand computeNominalControl(const State& state,
                                          const std::vector<Eigen::Vector2f>& path) const;
+
+    /**
+     * @brief Generate 8 footprint points in world frame for a given robot state
+     * @param state Robot state (x, y, theta)
+     * @return Vector of 8 points: 4 corners + 4 edge midpoints
+     *
+     * Points layout in robot frame (X+ = right, Y+ = forward):
+     *
+     *     P0 -------- P1 -------- P2
+     *     |                        |
+     *     P7        CENTER        P3
+     *     |                        |
+     *     P6 -------- P5 -------- P4
+     *
+     *  P0 = front-left corner     P1 = front-center    P2 = front-right corner
+     *  P3 = right-center          P4 = rear-right corner
+     *  P5 = rear-center           P6 = rear-left corner
+     *  P7 = left-center
+     */
+    std::array<Eigen::Vector2f, 8> getFootprintPoints(const State& state) const;
 };
 
 #endif // MPPI_CONTROLLER_H
