@@ -11,11 +11,12 @@
 1. [Overview](#overview)
 2. [Mouse Controls](#mouse-controls)
 3. [Operating Modes](#operating-modes)
-4. [Simulation Mode (Webots)](#simulation-mode-webots)
-5. [Real Robot Mode](#real-robot-mode)
-6. [Configuration](#configuration)
-7. [Troubleshooting](#troubleshooting)
-8. [Performance Optimization](#performance-optimization)
+4. [Robot Kinematic Models](#robot-kinematic-models)
+5. [Simulation Mode (Webots)](#simulation-mode-webots)
+6. [Real Robot Mode](#real-robot-mode)
+7. [Configuration](#configuration)
+8. [Troubleshooting](#troubleshooting)
+9. [Performance Optimization](#performance-optimization)
 
 ---
 
@@ -92,6 +93,118 @@ The Gridder component supports two distinct operating modes controlled by the `U
 | Startup Time | Immediate | 1-3 seconds after positioning |
 | Webots2Robocomp | Required | Not used |
 | Typical Use | Development, testing | Deployment |
+
+---
+
+## Robot Kinematic Models
+
+The Gridder component supports **two robot kinematic models** for the MPPI controller:
+
+### Supported Models
+
+| Model | Type | DOF | Lateral Motion | Examples |
+|-------|------|-----|----------------|----------|
+| **Omnidirectional** | Holonomic | 3 (vx, vy, ω) | ✅ Yes | Mecanum wheels, omni wheels, Kuka YouBot |
+| **Differential Drive** | Non-holonomic | 2 (vy, ω) | ❌ No | Pioneer, TurtleBot, Shadow, most wheeled robots |
+
+### Setting the Robot Type
+
+**File:** `src/specificworker.h` - `Params` struct
+
+```cpp
+// For omnidirectional robot (default)
+RobotType ROBOT_TYPE = RobotType::OMNIDIRECTIONAL;
+
+// For differential drive robot
+RobotType ROBOT_TYPE = RobotType::DIFFERENTIAL;
+```
+
+**Remember to recompile after changing:**
+```bash
+cd /path/to/gridder
+make
+```
+
+### Omnidirectional Robot (Holonomic)
+
+**Characteristics:**
+- 3 degrees of freedom: lateral (vx), forward (vy), rotation (omega)
+- Can move sideways while moving forward
+- Can strafe to avoid obstacles
+- Full 3D control space exploration in MPPI
+
+**Kinematic Model:**
+```cpp
+// Robot frame: X+ = right, Y+ = forward
+// Transform to world frame:
+vx_world = vx * cos(theta) - vy * sin(theta)
+vy_world = vx * sin(theta) + vy * cos(theta)
+theta_new = theta + omega * dt
+```
+
+**Advantages:**
+- ✅ Smoother trajectories
+- ✅ Better obstacle avoidance (can strafe)
+- ✅ Can approach goal from any angle
+- ✅ Faster navigation in tight spaces
+
+### Differential Drive Robot (Non-holonomic)
+
+**Characteristics:**
+- 2 degrees of freedom: forward (vy), rotation (omega)
+- **Cannot move sideways** (vx always forced to 0)
+- Must rotate to change direction
+- Most common type for mobile robots
+
+**Kinematic Model:**
+```cpp
+// Robot frame: Y+ = forward only
+// Transform to world frame:
+vx_world = -vy * sin(theta)
+vy_world = vy * cos(theta)
+theta_new = theta + omega * dt
+// vx is always 0
+```
+
+**Characteristics:**
+- ⚠️ Requires more time for complex maneuvers
+- ⚠️ Larger turning radius needed
+- ⚠️ Must align before moving forward
+- ✅ More realistic for most mobile robots
+- ✅ Simpler mechanical design
+
+### MPPI Controller Behavior
+
+The MPPI controller automatically adapts based on robot type:
+
+**Omnidirectional Mode:**
+- Samples trajectories with full 3-DOF control
+- Exploration noise: vx ∈ [-σ_vx, +σ_vx], vy ∈ [-σ_vy, +σ_vy], omega ∈ [-σ_ω, +σ_ω]
+- Nominal control uses lateral motion when target is to the side
+
+**Differential Mode:**
+- **Forces vx = 0** in all sampled trajectories
+- Exploration noise: vx = 0 (always), vy ∈ [-σ_vy, +σ_vy], omega ∈ [-σ_ω, +σ_ω]
+- Nominal control rotates to face target before moving forward
+
+### Monitoring Robot Type
+
+**Console output at startup:**
+```
+[MPPI] Initializing with robot type: OMNIDIRECTIONAL  // or DIFFERENTIAL
+```
+
+**Control commands:**
+
+Differential drive always shows `vx ≈ 0`:
+```
+[MPPI Thread] Command: vx= 0.000000 mm/s, vy= 450.234 mm/s, omega= 0.145 rad/s
+```
+
+Omnidirectional can have non-zero `vx`:
+```
+[MPPI Thread] Command: vx= 120.456 mm/s, vy= 450.234 mm/s, omega= 0.145 rad/s
+```
 
 ---
 
@@ -327,9 +440,14 @@ int LOCALIZER_PERIOD_MS = 50;        // Localizer thread period (20 Hz)
 #### MPPI Controller Parameters
 
 ```cpp
+// Robot kinematic model
+RobotType ROBOT_TYPE = RobotType::OMNIDIRECTIONAL;  // or DIFFERENTIAL
+
 int MPPI_PERIOD_MS = 50;             // MPPI thread period (~20 Hz)
 float SAFETY_FACTOR = 1.0f;          // Path safety (0=shortest, 1=safest)
 ```
+
+**Note:** After changing `ROBOT_TYPE`, you must recompile the component.
 
 #### Map Parameters
 
@@ -423,6 +541,36 @@ The interface provides checkboxes to control visualization:
 3. **Check obstacle costs**: May be too conservative
 4. **Verify covariance**: High uncertainty → conservative behavior
 
+### Differential robot tries to move laterally
+
+**Problem:** `vx ≠ 0` in differential drive mode
+
+**Solutions:**
+1. **Check configuration**: Verify `ROBOT_TYPE = RobotType::DIFFERENTIAL`
+2. **Recompile**: Must recompile after changing robot type
+3. **Verify console**: Should show "Robot type: DIFFERENTIAL" at startup
+4. **Monitor commands**: vx should always be 0.0 in console output
+
+### Omnidirectional robot doesn't use lateral motion
+
+**Problem:** `vx ≈ 0` always, even when sideways motion would help
+
+**Solutions:**
+1. **Check configuration**: Verify `ROBOT_TYPE = RobotType::OMNIDIRECTIONAL`
+2. **Check max_vx**: Should be > 0 in MPPI params
+3. **Increase sigma_vx**: More lateral exploration noise
+4. **Verify recompilation**: Changes require rebuild
+
+### Differential robot gets stuck or oscillates
+
+**Problem:** Robot can't reach target with non-holonomic constraints
+
+**Solutions:**
+1. **Increase max_omega**: Faster rotation capability
+2. **Reduce goal_tolerance**: Smaller acceptable radius
+3. **Increase MPPI horizon T**: Longer-term planning (30-50 steps)
+4. **Check turning radius**: May need larger clearance in tight spaces
+
 ---
 
 ## Performance Optimization
@@ -486,6 +634,7 @@ Use this checklist when deploying on a real robot:
 
 ### Pre-Deployment
 - [ ] `USE_GT_WARMUP = false` in `src/specificworker.h`
+- [ ] `ROBOT_TYPE` set correctly (OMNIDIRECTIONAL or DIFFERENTIAL)
 - [ ] Webots2Robocomp removed from `gridder.cdsl`
 - [ ] Webots proxy removed from `etc/config`
 - [ ] Odometry source updated to `omnirobot_proxy->getBaseState()`
@@ -525,16 +674,22 @@ Use this checklist when deploying on a real robot:
 
 ### Simulation Mode (Development)
 ✅ Set `USE_GT_WARMUP = true`  
+✅ Set `ROBOT_TYPE` to match your robot (OMNIDIRECTIONAL or DIFFERENTIAL)  
 ✅ Connect Webots2Robocomp  
 ✅ Start and go - automatic initialization  
 ✅ Perfect for testing algorithms
 
 ### Real Robot Mode (Deployment)
 ✅ Set `USE_GT_WARMUP = false`  
+✅ Set `ROBOT_TYPE` correctly (OMNIDIRECTIONAL or DIFFERENTIAL)  
 ✅ Remove Webots dependencies  
 ✅ **Shift+Left Click** to initialize position  
 ✅ Wait for convergence  
 ✅ Start navigation
+
+### Robot Kinematic Models
+- **Omnidirectional**: Full 3-DOF (vx, vy, omega) - can strafe
+- **Differential**: 2-DOF (vy, omega) - vx always 0
 
 ### Mouse Controls Quick Reference
 - **Left Click**: Navigate here

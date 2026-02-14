@@ -203,21 +203,21 @@ class SpecificWorker : public GenericWorker
 	        float MIN_DISTANCE_TO_TARGET = ROBOT_WIDTH / 2.f; // mm
 	        std::string LIDAR_NAME_LOW = "bpearl";
 	        std::string LIDAR_NAME_HIGH = "helios";
-	        float MAX_LIDAR_LOW_RANGE = 15000;  // mm
-	        float MAX_LIDAR_HIGH_RANGE = 15000;  // mm
+	        float MAX_LIDAR_LOW_RANGE = 100000;  // mm
+	        float MAX_LIDAR_HIGH_RANGE = 100000;  // mm
 	        float MAX_LIDAR_RANGE = MAX_LIDAR_LOW_RANGE;  // mm used in the grid
 	        int LIDAR_LOW_DECIMATION_FACTOR = 1;
 	        int LIDAR_HIGH_DECIMATION_FACTOR = 1;
 	        QRectF GRID_MAX_DIM{-500, -500, 1000, 1000};
+	    	//QRectF GRID_MAX_DIM{-5, -5, 10, 10};
 	        long PERIOD_HYSTERESIS = 2; // to avoid oscillations in the adjustment of the lidar thread period
 	        int PERIOD = 100;    // ms (20 Hz) for compute timer
 	        unsigned int ELAPSED_TIME_BETWEEN_PATH_UPDATES = 3000;
 	        int NUM_PATHS_TO_SEARCH = 3;
 	        float MIN_DISTANCE_BETWEEN_PATHS = 500; // mm
-	        bool DISPLAY = true ; //TODO: config file
 	        bool DRAW_LIDAR_POINTS = false;  // debug: draw LiDAR points (can impact performance)
 	        int MAX_LIDAR_DRAW_POINTS = 1500; // debug: limit number of points drawn
-
+			bool DISPLAY = true; // Whether to display the viewer (set false for headless operation)
 	        // Path planning safety factor: 0=shortest path (touch walls), 1=safest path (prefer center)
 	        float SAFETY_FACTOR = 1.0f;	// 0=touch walls, 1=prefer center
 	        size_t MAX_ASTAR_NODES = 100000;  // Maximum nodes to expand in A* before giving up
@@ -228,22 +228,26 @@ class SpecificWorker : public GenericWorker
 	        //float MRPT_MAP_OFFSET_Y = 5600.f;  // mm - Y offset to apply to loaded map
 	        //float MRPT_MAP_ROTATION = M_PI_2;   // radians - rotation to apply (90º left = PI/2)
 
-        // Localizer parameters
-        bool USE_LOCALIZER = true;  // Enable/disable AMCL localization
-        size_t LOCALIZER_PARTICLES = 500;  // Number of particles
-        float LOCALIZER_ODOM_NOISE = 0.1f;  // Noise factor for simulated odometry
-        int LOCALIZER_PERIOD_MS = 50;       // ms - Localizer thread period (20 Hz)
+	        // Localizer parameters
+	        bool USE_LOCALIZER = true;  // Enable/disable AMCL localization
+	        size_t LOCALIZER_PARTICLES = 500;  // Number of particles
+	        float LOCALIZER_ODOM_NOISE = 0.1f;  // Noise factor for simulated odometry
+	        int LOCALIZER_PERIOD_MS = 50;       // ms - Localizer thread period (20 Hz)
 
-        // Ground Truth warmup (only for simulation - set FALSE for real robot)
-        bool USE_GT_WARMUP = true;  // Allow GT pose during initialization warmup (Webots only)
+	        // Ground Truth warmup (only for simulation - set FALSE for real robot)
+	        bool USE_GT_WARMUP = true;  // Allow GT pose during initialization warmup (Webots only)
 
-        float MRPT_MAP_OFFSET_X = 12000.0f; //26100.7f;  // mm - X offset to apply to loaded map
-        float MRPT_MAP_OFFSET_Y = -2500.0f;//5600.f;  // mm - Y offset to apply to loaded map
-        float MRPT_MAP_ROTATION =  -M_PI_2;   // radians - rotation to apply (90º left = PI/2)
-        bool MRPT_MAP_MIRROR_X = true;       // Mirror X axis (negate X before rotation) if map appears flipped
+	        float MRPT_MAP_OFFSET_X = 12000.0f; //26100.7f;  // mm - X offset to apply to loaded map
+	        float MRPT_MAP_OFFSET_Y = -2500.0f;//5600.f;  // mm - Y offset to apply to loaded map
+	        float MRPT_MAP_ROTATION =  -M_PI_2;   // radians - rotation to apply (90º left = PI/2)
+	        bool MRPT_MAP_MIRROR_X = true;       // Mirror X axis (negate X before rotation) if map appears flipped
 
-        // MPPI controller parameters
-        int MPPI_PERIOD_MS = 50;            // ms - MPPI thread period (~33 Hz)
+	        // MPPI controller parameters
+	        int MPPI_PERIOD_MS = 50;            // ms - MPPI thread period (~20 Hz)
+
+	        // Robot kinematic model
+	        enum class RobotType { OMNIDIRECTIONAL, DIFFERENTIAL };
+	        RobotType ROBOT_TYPE = RobotType::DIFFERENTIAL;  // DIFFERENTIAL for non-holonomic robots
 	    };
 	    Params params;
 

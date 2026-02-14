@@ -94,13 +94,14 @@ void SpecificWorker::initialize()
 	{
         // Viewer
         viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM, false);
-        viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 100, QColor("LightBlue"));
+        viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 0.2, QColor("Blue"));
         // Don't limit sceneRect - allow unlimited panning
         // viewer->setSceneRect(params.GRID_MAX_DIM);
         viewer->show();
 
         // Fit the view to show the initial grid area centered on robot
-        QRectF initial_view(-3000, -3000, 6000, 6000);  // 6m x 6m area centered on origin
+        //QRectF initial_view(-3000, -3000, 6000, 6000);  // 6m x 6m area centered on origin
+	    QRectF initial_view(-3, -3, 6, 6);  // 6m x 6m area centered on origin
         viewer->fitToScene(initial_view);
 
         // Initialize Sparse ESDF grid (VoxBlox-style)
@@ -158,6 +159,12 @@ void SpecificWorker::initialize()
         // Only override robot-specific values
         MPPIController::Params mppi_params;  // Uses defaults from mppi_controller.h
         mppi_params.robot_radius = params.ROBOT_SEMI_WIDTH;
+
+        // Set robot kinematic model
+        mppi_params.robot_type = (params.ROBOT_TYPE == Params::RobotType::DIFFERENTIAL)
+            ? MPPIController::RobotType::DIFFERENTIAL
+            : MPPIController::RobotType::OMNIDIRECTIONAL;
+
         mppi_controller.setParams(mppi_params);
 
         // MPPI thread is created
@@ -368,6 +375,12 @@ void SpecificWorker::initialize()
         if (not robot.has_value() or not lidar_world.has_value())
         { qWarning() << "No data from buffer_sync: robot has value?. Exiting program"; std::terminate(); };
         const auto &robot_pos = robot.value();  // Ground truth pose from simulator
+	    const float rx = robot_pos.translation().x();
+	    const float ry = robot_pos.translation().y();
+	    // Fit a 6x6m window around the robot and center on it
+        constexpr float view_side_m = 6000.f; //mm
+	    viewer->fitToScene(QRectF(rx - view_side_m/2.f, ry - view_side_m/2.f, view_side_m, view_side_m));
+	    viewer->centerOn(rx, ry);
         viewer->centerOn(robot_pos.translation().x(), robot_pos.translation().y());
 
         // Display initialization instructions based on GT warmup setting
@@ -610,7 +623,7 @@ void SpecificWorker::draw_covariance_ellipse()
     {
         covariance_ellipse = viewer->scene.addEllipse(
             -sigma1, -sigma2, 2.0f * sigma1, 2.0f * sigma2,
-            QPen(QColor(255, 0, 255, 255), 5),  // Magenta border, thicker
+            QPen(QColor(255, 0, 255, 255), 10),  // Magenta border, thicker
             QBrush(QColor(255, 0, 255, 80))     // Semi-transparent fill
         );
         covariance_ellipse->setZValue(100);  // On top of everything
@@ -664,7 +677,7 @@ void SpecificWorker::read_lidar()
             points_world.reserve(data.points.size());
             points_local.reserve(data.points.size());
             for (const auto &p : data.points)
-                if (std::hypot(p.y, p.x) > 100) // TODO: move to Params
+                if (p.x*p.x + p.y*p.y < params.MAX_LIDAR_RANGE * params.MAX_LIDAR_RANGE)
                 {
                     points_local.emplace_back(p.x, p.y);
                     points_world.emplace_back(eig_pose * Eigen::Vector2f{p.x, p.y});
@@ -676,8 +689,8 @@ void SpecificWorker::read_lidar()
             buffer_sync.put<2>(std::move(points_local), timestamp);
 
             // Adjust period with hysteresis
-            if (wait_period > std::chrono::milliseconds((long) data.period + 2)) wait_period--;
-            else if (wait_period < std::chrono::milliseconds((long) data.period - 2)) wait_period++;
+            if (wait_period > std::chrono::milliseconds((long) data.period + 2)) --wait_period;
+            else if (wait_period < std::chrono::milliseconds((long) data.period - 2)) ++wait_period;
         }
         catch (const Ice::Exception &e)
         { std::cout << "Error reading from Lidar3D or robot pose: " << e.what() << std::endl; }

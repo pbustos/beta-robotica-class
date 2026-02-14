@@ -87,6 +87,9 @@ bin/gridder etc/config
 // Operating Mode
 bool USE_GT_WARMUP = true;              // Set false for real robot
 
+// Robot Model
+RobotType ROBOT_TYPE = RobotType::OMNIDIRECTIONAL;  // or DIFFERENTIAL
+
 // Grid
 float TILE_SIZE = 100;                  // mm - grid resolution
 float ROBOT_WIDTH = 460;                // mm

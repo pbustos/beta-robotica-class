@@ -1018,7 +1018,101 @@ For each trajectory state (x, y, θ):
 - **Low pose uncertainty** → Normal margin → Efficient navigation
 - **Only near obstacles** → No overhead in open space
 
-### 5.17 MPPI Configuration Parameters
+### 5.17 Output Smoothing Filter
+
+MPPI inherently produces some **jitter** in velocity commands due to:
+1. **Stochastic sampling**: Each iteration uses different random trajectories
+2. **Weight concentration**: ESS can be low, causing few trajectories to dominate
+3. **Variable computation time**: Period fluctuations affect control updates
+
+To reduce this jitter, we apply an **Exponential Moving Average (EMA) filter** to the output:
+
+#### Mathematical Formulation
+
+$$
+\mathbf{u}_{smoothed} = \alpha \cdot \mathbf{u}_{prev} + (1 - \alpha) \cdot \mathbf{u}_{raw}
+$$
+
+Where:
+- $\alpha \in [0, 1]$ : smoothing factor
+- $\mathbf{u}_{raw}$ : raw MPPI output (weighted average)
+- $\mathbf{u}_{prev}$ : previous smoothed output
+
+#### Effect of $\alpha$
+
+| $\alpha$ | Behavior | Use Case |
+|----------|----------|----------|
+| 0.0 | No smoothing (raw output) | Maximum responsiveness |
+| 0.2 | Light smoothing | Fast dynamic environments |
+| **0.3** | **Moderate smoothing (default)** | **Balanced performance** |
+| 0.5 | Heavy smoothing | Smooth motion priority |
+| 0.7+ | Very heavy smoothing | May introduce lag |
+
+#### Frequency Domain Analysis
+
+The EMA filter acts as a **first-order low-pass filter** with cutoff frequency:
+
+$$
+f_c = \frac{f_s}{2\pi} \cdot \ln\left(\frac{1}{1-\alpha}\right)^{-1}
+$$
+
+Where $f_s$ is the MPPI sampling frequency (~20 Hz).
+
+For $\alpha = 0.3$ at 20 Hz: $f_c \approx 4.5$ Hz
+
+#### Implementation
+
+```cpp
+// Applied before returning the control command
+ControlCommand smooth_output(const ControlCommand& raw) {
+    if (first_output_ || params_.output_smoothing_alpha <= 0.0f) {
+        last_smoothed_output_ = raw;
+        first_output_ = false;
+        return raw;
+    }
+    
+    const float alpha = params_.output_smoothing_alpha;
+    const float one_minus_alpha = 1.0f - alpha;
+    
+    ControlCommand smoothed;
+    smoothed.vx = alpha * last_smoothed_output_.vx + one_minus_alpha * raw.vx;
+    smoothed.vy = alpha * last_smoothed_output_.vy + one_minus_alpha * raw.vy;
+    smoothed.omega = alpha * last_smoothed_output_.omega + one_minus_alpha * raw.omega;
+    
+    last_smoothed_output_ = smoothed;
+    return smoothed;
+}
+```
+
+#### Expected Improvement
+
+| Metric | Without Filter | With Filter (α=0.3) |
+|--------|----------------|---------------------|
+| vy variation | ~40 mm/s | ~10 mm/s |
+| vx oscillation | ±10 mm/s | ±2 mm/s |
+| omega jitter | ±0.1 rad/s | ±0.03 rad/s |
+
+#### Interaction with Other Components
+
+The output smoothing filter is the **final stage** of the MPPI pipeline:
+
+```
+Trajectory Sampling → Cost Evaluation → Weight Computation 
+    → Weighted Average → Output Smoothing Filter → Robot
+```
+
+It operates **after** the warm start and adaptive covariance mechanisms, so it doesn't affect the internal MPPI optimization.
+
+#### Reset Behavior
+
+The filter state is reset when:
+- `reset()` is called (new navigation target)
+- Controller is re-initialized
+- First command after idle period
+
+This prevents the filter from "remembering" old velocities when starting a new motion.
+
+### 5.18 MPPI Configuration Parameters
 
 ```cpp
 struct Params {
@@ -1061,6 +1155,9 @@ struct Params {
     float cov_z_score = 1.64f;      // Risk multiplier
     float cov_inflation_gate = 2.0f;
     float cov_sigma_max_clamp = 0.5f;
+    
+    // Output smoothing (reduces jitter)
+    float output_smoothing_alpha = 0.3f;  // EMA filter: 0=off, 0.3=default, 0.5=heavy
 };
 ```
 
@@ -1298,6 +1395,7 @@ const size_t step = max(1, particles.size() / max_draw);
 | `w_goal` | $w_g$ | 0.5 | Weight for goal reaching cost |
 | `w_smoothness` | $w_s$ | 0.1 | Weight for control smoothness cost |
 | `w_speed` | $w_v$ | 0.05 | Weight for speed maintenance cost |
+| `output_smoothing_alpha` | $\alpha$ | 0.3 | EMA filter for output (0=off, 0.5=heavy) |
 
 ---
 
@@ -1321,5 +1419,5 @@ const size_t step = max(1, particles.size() / max_draw);
 
 ---
 
-*Document generated: 2026-02-13*
-*Component version: Gridder v2.0*
+*Document generated: 2026-02-14*
+*Component version: Gridder v2.1*

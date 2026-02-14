@@ -1,5 +1,5 @@
 /*
- *    Copyright (C) 2026 by YOUR NAME HERE
+ *    Copyright (C) 2026 by RoboComp Team
  *
  *    This file is part of RoboComp
  *
@@ -42,6 +42,13 @@ class GridESDF;
 class MPPIController
 {
 public:
+    // Robot type enumeration
+    enum class RobotType
+    {
+        OMNIDIRECTIONAL,  // Holonomic robot (vx, vy, omega independent)
+        DIFFERENTIAL      // Non-holonomic robot (only vy, omega; vx = 0)
+    };
+
     // Control output structure
     // Robot frame convention: X+ = right (lateral), Y+ = forward
     struct ControlCommand
@@ -62,6 +69,9 @@ public:
     // Configuration parameters
     struct Params
     {
+        // Robot model
+        RobotType robot_type = RobotType::OMNIDIRECTIONAL;  // Robot kinematic model
+
         // MPPI parameters
         int K = 100;               // Number of sampled trajectories
         int T = 50;                // Prediction horizon (time steps)
@@ -115,6 +125,25 @@ public:
         // Path following
         float lookahead_distance = 500.0f; // mm - how far ahead to look on path
         float goal_tolerance = 200.0f;     // mm - consider goal reached
+
+        // Warm start blending weights (blend previous controls with nominal)
+        float warm_start_vx_weight = 0.2f;     // Weight for previous vx (0-1), rest goes to nominal
+        float warm_start_vy_weight = 0.5f;     // Weight for previous vy
+        float warm_start_omega_weight = 0.5f;  // Weight for previous omega
+
+        // Obstacle cost smoothing (softmin aggregation)
+        int obstacle_k_nearest = 10;           // Number of nearest obstacles for softmin
+        float obstacle_softmin_beta = 0.02f;   // Softmin smoothing parameter (1/mm)
+
+        // Nominal control parameters
+        float alignment_forward_threshold = 0.3f;   // cos(angle) > this → move forward
+        float alignment_backward_threshold = -0.3f; // cos(angle) < this → rotate in place
+        float lateral_motion_gain = 0.5f;           // Gain for lateral motion in omnidirectional mode
+        float nominal_slow_speed_factor = 0.3f;     // Speed factor when strafing or turning
+
+        // Output smoothing (reduces jitter in velocity commands)
+        float output_smoothing_alpha = 0.3f;  // EMA filter: 0 = no smoothing, 0.5 = heavy smoothing
+                                               // output = alpha * prev + (1-alpha) * new
 
         // Visualization
         int num_trajectories_to_draw = 10; // Number of best trajectories to visualize
@@ -236,6 +265,10 @@ private:
 
     // Adaptive lambda (temperature) - adjusted based on ESS
     float adaptive_lambda_;
+
+    // Output smoothing (EMA filter to reduce jitter)
+    mutable ControlCommand last_smoothed_output_{0.0f, 0.0f, 0.0f};
+    mutable bool first_output_ = true;
 
     /**
      * @brief Simulate robot motion using kinematic model
