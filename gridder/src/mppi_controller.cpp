@@ -357,14 +357,27 @@ MPPIController::ControlCommand MPPIController::compute(
                 breakdown.obstacle_cost += obs_c;
             }
 
-            // Extra penalty when very close to collision (any footprint point)
-            // Note: with footprint sampling, collision_buffer applies to the footprint edge
-            if (d_fused < params_.collision_buffer)
+            // CRITICAL ZONE: Very aggressive penalty when close to collision
+            // This ensures strong repulsion from nearby obstacles, especially on sides
+            const float critical_distance = params_.collision_buffer + 50.0f;  // ~170mm from footprint edge
+            if (d_fused < critical_distance)
             {
-                float critical_pen = params_.collision_buffer - d_fused;
-                float critical_c = params_.w_obstacle * 10.0f * std::exp(critical_pen / 50.0f);
+                // Exponential penalty that grows very fast as we approach collision
+                float critical_pen = critical_distance - d_fused;
+                // Steeper exponential: divide by 30 instead of 50 for faster growth
+                float critical_c = params_.w_obstacle * 20.0f * std::exp(critical_pen / 30.0f);
                 traj_cost += critical_c;
                 breakdown.obstacle_cost += critical_c;
+            }
+
+            // EMERGENCY ZONE: Extremely high cost when about to collide
+            // This should make trajectories that get too close almost always rejected
+            const float emergency_distance = 50.0f;  // 50mm from footprint edge
+            if (d_fused < emergency_distance)
+            {
+                float emergency_c = params_.w_obstacle * 100.0f * (emergency_distance - d_fused);
+                traj_cost += emergency_c;
+                breakdown.obstacle_cost += emergency_c;
             }
 
             // ==============================================================
@@ -483,19 +496,34 @@ MPPIController::ControlCommand MPPIController::compute(
     // ADAPTIVE K: Adjust sample count based on ESS ratio
     // Theory: ESS measures effective samples. Low ESS → need more samples
     // Note: T (horizon) is NOT adapted - only K (sample count)
+    // SAFETY: Don't reduce K when near obstacles (narrow passages need more samples)
     // ========================================================================
     if (params_.use_adaptive_K)
     {
         const int prev_K = adaptive_K_;
+
+        // Check if we're near obstacles (query ESDF at current position)
+        bool near_obstacles = false;
+        if (esdf != nullptr)
+        {
+            auto esdf_query = esdf->query_esdf(current_state.x, current_state.y);
+            if (esdf_query.valid)
+            {
+                // Consider "near obstacles" if distance < 2x safety margin
+                near_obstacles = (esdf_query.distance < 2.0f * params_.safety_margin);
+            }
+        }
+
         if (ess_ratio < params_.ess_ratio_low && valid_ratio > 0.5f)
         {
             // Poor exploration: increase K
             adaptive_K_ = std::min(params_.K_max,
                 static_cast<int>(adaptive_K_ * params_.K_increase_factor));
         }
-        else if (ess_ratio > params_.ess_ratio_high && valid_ratio > 0.9f)
+        else if (ess_ratio > params_.ess_ratio_high && valid_ratio > 0.9f && !near_obstacles)
         {
-            // Over-sampling: decrease K to save CPU
+            // Over-sampling AND not near obstacles: decrease K to save CPU
+            // Don't decrease if near obstacles - we need samples for narrow passages
             adaptive_K_ = std::max(params_.K_min,
                 static_cast<int>(adaptive_K_ * params_.K_decrease_factor));
         }
@@ -507,6 +535,7 @@ MPPIController::ControlCommand MPPIController::compute(
             qDebug() << "[MPPI] K=" << adaptive_K_
                      << "ESS=" << QString::number(ess_ratio, 'f', 2)
                      << "valid=" << QString::number(valid_ratio, 'f', 2)
+                     << (near_obstacles ? "NEAR_OBS" : "")
                      << (adaptive_K_ != prev_K ? "(changed)" : "");
         }
     }

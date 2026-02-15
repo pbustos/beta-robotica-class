@@ -83,8 +83,9 @@ public:
         // Adaptive K (number of samples) based on ESS theory
         // ESS = 1/Σw²ᵢ measures effective number of samples contributing to estimate
         // When ESS_ratio is low, we need more samples; when high, we can reduce
+        // SAFETY: K won't decrease when near obstacles (narrow passages)
         bool use_adaptive_K = true;         // Enable/disable adaptive sample count
-        int K_min = 50;                     // Minimum samples (CPU floor)
+        int K_min = 80;                     // Minimum samples (safety floor, was 50)
         int K_max = 300;                    // Maximum samples (CPU ceiling)
         float ess_ratio_low = 0.10f;        // Below this: increase K (poor exploration)
         float ess_ratio_high = 0.50f;       // Above this: decrease K (over-sampling)
@@ -124,7 +125,7 @@ public:
 
         // Safety parameters
         float robot_radius = 250.0f;       // mm - hard collision threshold
-        float collision_buffer = 120.0f;   // mm - soft penalty band before collision
+        float collision_buffer = 150.0f;   // mm - soft penalty band before collision (was 120)
         float safety_margin = 1000.0f;     // mm - outer cost zone
         float obstacle_decay = 100.0f;     // mm - softplus decay parameter
 

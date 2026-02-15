@@ -978,20 +978,51 @@ $$
 d_{fused} = \min(d_{ESDF}, d_{LiDAR})
 $$
 
-**Cost function (softplus barrier):**
+#### Multi-Zone Cost Function
+
+The obstacle cost uses a **three-zone penalty structure** for robust avoidance, especially for lateral obstacles:
+
+```
+Distance from footprint edge:
+     │
+1000 ├─────────────────────────  Safety Margin
+     │     Quadratic cost
+ 200 ├─────────────────────────  Critical Zone
+     │     Exponential cost (aggressive)
+  50 ├─────────────────────────  Emergency Zone
+     │     Linear × 100 (near-rejection)
+   0 └─────────────────────────  Collision
+```
+
+**Zone 1: Safety Margin (d < 1000mm)**
 $$
-c_{obs} = w_{obs} \cdot \text{softplus}\left(\frac{m - d_{fused}}{\tau}\right)
+c_{safety} = w_{obs} \cdot \left(\frac{m - d}{m}\right)^2 \cdot 100
 $$
 
-Where:
-- $m$ : safety margin (robot radius + buffer)
-- $\tau$ : decay parameter (controls steepness)
-- $\text{softplus}(x) = \log(1 + e^x)$
+**Zone 2: Critical Zone (d < 200mm)** - Strong repulsion
+$$
+c_{critical} = w_{obs} \cdot 20 \cdot \exp\left(\frac{200 - d}{30}\right)
+$$
 
-**Advantages over LiDAR-only:**
-- Smooth gradients for optimization
-- No discontinuities at obstacle boundaries
-- Better handling of narrow passages
+**Zone 3: Emergency Zone (d < 50mm)** - Near-certain rejection
+$$
+c_{emergency} = w_{obs} \cdot 100 \cdot (50 - d)
+$$
+
+#### Cost Profile
+
+| Distance | Approx. Cost (w_obs=50) | Effect |
+|----------|------------------------|--------|
+| 500mm | ~125 | Gentle repulsion |
+| 200mm | ~1000 | Strong avoidance |
+| 100mm | ~6000 | Very strong |
+| 50mm | ~15000+ | Near-rejection |
+
+**Advantages:**
+- Smooth gradients far from obstacles
+- Aggressive response to close obstacles
+- Especially effective for lateral obstacles (sides of robot)
+- Three-zone design prevents "sneaking through" narrow gaps unsafely
 
 ### 5.16 Covariance-Aware Margin Inflation
 
@@ -1223,11 +1254,15 @@ Therefore, to maintain constant estimation quality, we adapt K based on ESS rati
 #### Adaptation Algorithm
 
 ```cpp
+// Check if near obstacles (don't reduce K in narrow passages)
+bool near_obstacles = (esdf_distance < 2.0 * safety_margin);
+
 if (ess_ratio < ess_ratio_low && valid_ratio > 0.5f)
     // Poor exploration: increase K
     adaptive_K = min(K_max, K * K_increase_factor);
-else if (ess_ratio > ess_ratio_high && valid_ratio > 0.9f)
-    // Over-sampling: decrease K to save CPU
+else if (ess_ratio > ess_ratio_high && valid_ratio > 0.9f && !near_obstacles)
+    // Over-sampling AND not near obstacles: decrease K to save CPU
+    // SAFETY: Don't decrease K near obstacles - need samples for narrow passages
     adaptive_K = max(K_min, K * K_decrease_factor);
 ```
 
@@ -1236,21 +1271,28 @@ else if (ess_ratio > ess_ratio_high && valid_ratio > 0.9f)
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `use_adaptive_K` | true | Enable/disable adaptive sample count |
-| `K_min` | 50 | Minimum samples (CPU floor) |
+| `K_min` | 80 | Minimum samples (safety floor) |
 | `K_max` | 300 | Maximum samples (CPU ceiling) |
 | `ess_ratio_low` | 0.10 | Below this: increase K |
-| `ess_ratio_high` | 0.50 | Above this: decrease K |
+| `ess_ratio_high` | 0.50 | Above this: decrease K (if not near obstacles) |
 | `K_increase_factor` | 1.3 | Multiply K when ESS too low |
 | `K_decrease_factor` | 0.85 | Multiply K when ESS too high |
 
+#### Safety Feature: Near-Obstacle Detection
+
+K will **not decrease** when the robot is within `2 × safety_margin` of obstacles. This ensures:
+- Narrow passages always have enough samples
+- Approaching doors/walls maintains exploration
+- Only truly open spaces reduce K
+
 #### Expected Behavior
 
-| Scenario | ESS Ratio | K Trend | CPU Usage |
-|----------|-----------|---------|-----------|
-| Open space, straight path | ~0.6 | ↓ to K_min (~50) | Low |
-| Approaching obstacle | ~0.15 | ↑ (~150) | Medium |
-| Narrow passage | ~0.08 | ↑ to K_max (~300) | High |
-| After clearing obstacle | ~0.5 | ↓ gradually | Decreasing |
+| Scenario | ESS Ratio | Near Obs? | K Trend | CPU Usage |
+|----------|-----------|-----------|---------|-----------|
+| Open space, straight path | ~0.6 | ❌ | ↓ to K_min (~80) | Low |
+| Approaching door | ~0.5 | ✅ | Maintains | Medium |
+| Narrow passage | ~0.08 | ✅ | ↑ to K_max (~300) | High |
+| After clearing obstacle | ~0.5 | ❌ | ↓ gradually | Decreasing |
 
 #### References
 
@@ -1625,10 +1667,10 @@ const size_t step = max(1, particles.size() / max_draw);
 | `dt` | $\Delta t$ | 0.1 s | Time step for simulation |
 | `lambda` | $\lambda$ | 50.0 | Temperature (exploration vs exploitation) |
 | `use_adaptive_K` | - | true | Enable ESS-based adaptive sample count |
-| `K_min` | - | 50 | Minimum samples (CPU floor) |
+| `K_min` | - | 80 | Minimum samples (safety floor) |
 | `K_max` | - | 300 | Maximum samples (CPU ceiling) |
 | `ess_ratio_low` | - | 0.10 | ESS ratio below which K increases |
-| `ess_ratio_high` | - | 0.50 | ESS ratio above which K decreases |
+| `ess_ratio_high` | - | 0.50 | ESS ratio above which K decreases (if not near obstacles) |
 | `sigma_vx` | $\sigma_{v_x}$ | 80 mm/s | Noise std dev for lateral velocity |
 | `sigma_vy` | $\sigma_{v_y}$ | 150 mm/s | Noise std dev for forward velocity |
 | `sigma_omega` | $\sigma_\omega$ | 0.3 rad/s | Noise std dev for angular velocity |
@@ -1637,7 +1679,7 @@ const size_t step = max(1, particles.size() / max_draw);
 | `max_omega` | - | 0.5 rad/s | Maximum angular velocity |
 | `robot_radius` | $r$ | 250 mm | Robot radius for collision detection |
 | `safety_margin` | $d_{\text{margin}}$ | 1000 mm | Distance to start penalizing obstacles |
-| `collision_buffer` | - | 120 mm | Soft penalty band before collision |
+| `collision_buffer` | - | 150 mm | Critical zone distance (was 120mm) |
 | `goal_tolerance` | - | 200 mm | Distance to consider goal reached |
 | `w_path` | $w_p$ | 1.0 | Weight for path following cost |
 | `w_obstacle` | $w_o$ | 50.0 | Weight for obstacle avoidance cost |
@@ -1672,9 +1714,16 @@ const size_t step = max(1, particles.size() / max_draw);
 ---
 
 *Document generated: 2026-02-15*
-*Component version: Gridder v2.3*
+*Component version: Gridder v2.4*
 
-**Recent Changes (v2.3):**
+**Recent Changes (v2.4):**
+- Three-zone obstacle cost function (safety/critical/emergency) for better close-obstacle response
+- K adaptation safety: won't reduce K when near obstacles (narrow passages)
+- Increased K_min to 80 (was 50) for safety floor
+- Increased collision_buffer to 150mm (was 120mm)
+- More aggressive exponential penalty in critical zone (÷30 instead of ÷50)
+
+**Changes (v2.3):**
 - Adaptive K (sample count) based on ESS theory for dynamic CPU optimization
 - Corrected architecture diagram to show proper data flow
 - MPPI thread sleeps when idle (goal reached) to save resources
