@@ -1,9 +1,17 @@
 # ainf_slamo
-A brief introduction to the component. Describe its purpose, functionality, and any specific features here.
-```
-<YOUR BRIEFING>
+
+Componente de prueba para **Active Inference** con un robot simulado (Webots) y un LiDAR 3D. La idea es estimar/refinar la **pose 2D del robot** dentro de una habitación rectangular conocida minimizando una pérdida basada en la **Signed Distance Function (SDF)** del modelo de la sala.
+
+La interfaz muestra en la banda superior el **FPS del bucle `compute()`** y el valor final de **SDF (loss)** tras cada optimización.
+
+```text
+Estado (robot-room): [width, length, x, y, phi]
+- width/length: dimensiones de la sala (fijas por ahora)
+- x,y,phi: pose del robot respecto al centro de la sala (optimizadas)
 ```
 
+
+````markdown
 ## Dependencies
 The following dependencies are required to build and run ainf_slamo. Ensure they are installed and properly configured on your system before proceeding:
 ```
@@ -158,3 +166,4 @@ cd ~/software/libQGLViewer && qmake6 *.pro && make -j12 && sudo make install && 
 - `etc/config`
 - `etc/config.toml`
 - Your Clases...
+````

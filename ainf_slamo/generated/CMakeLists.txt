@@ -35,13 +35,14 @@ SET (SOURCES
   $ENV{ROBOCOMP}/classes/ConfigLoader/ConfigLoader.cpp
   main.cpp
   genericworker.cpp
+  joystickadapterI.cpp
 )
 
 
 #ROBOCOMP
 ROBOCOMP_INITIALIZE( $ENV{ROBOCOMP}/ )
-ROBOCOMP_IDSL_TO_ICE(Webots2Robocomp Gridder Lidar3D OmniRobot GenericBase)
-ROBOCOMP_ICE_TO_SRC(Webots2Robocomp Gridder Lidar3D OmniRobot GenericBase)
+ROBOCOMP_IDSL_TO_ICE(JoystickAdapter Lidar3D GenericBase Webots2Robocomp Gridder OmniRobot)
+ROBOCOMP_ICE_TO_SRC(JoystickAdapter Lidar3D GenericBase Webots2Robocomp Gridder OmniRobot)
 SET (EXECUTABLE_OUTPUT_PATH ${RC_COMPONENT_DEVEL_PATH}/bin)
 set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 

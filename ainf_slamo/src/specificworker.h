@@ -22,16 +22,14 @@
 	@author authorname
 */
 
-
-
 #ifndef SPECIFICWORKER_H
 #define SPECIFICWORKER_H
-
 
 // If you want to reduce the period automatically due to lack of use, you must uncomment the following line
 //#define HIBERNATION_ENABLED
 
 #include <genericworker.h>
+#include <JoystickAdapter.h>
 #include <Eigen/Eigen>
 #include <fps/fps.h>
 #include <timer/timer.h>
@@ -40,7 +38,8 @@
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include "room_concept_ai.h"
 #include "pointcloud_center_estimator.h"
-#include <QLabel>
+#include <boost/circular_buffer.hpp>
+#include "common_types.h"
 
 /**
  * \brief Class SpecificWorker implements the core functionality of the component.
@@ -62,6 +61,7 @@ class SpecificWorker : public GenericWorker
 	     */
 		~SpecificWorker();
 
+		void JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data);
 
 	public slots:
 
@@ -112,7 +112,7 @@ class SpecificWorker : public GenericWorker
 		int LIDAR_LOW_DECIMATION_FACTOR = 1;
 		int LIDAR_HIGH_DECIMATION_FACTOR = 1;
 		float LIDAR_HIGH_MIN_HEIGHT = 1.2; // m, points below this height in the high lidar will be ignored (e.g. to filter tables)
-		float LIDAR_HIGH_MAX_HEIGHT = 2.4f; // m, points above this height in the high lidar will be ignored (e.g. to filter ceiling)
+		float LIDAR_HIGH_MAX_HEIGHT = 1.4f; // m, points above this height in the high lidar will be ignored (e.g. to filter ceiling)
 		QRectF GRID_MAX_DIM{-8, -5, 16, 10};
 		int MAX_LIDAR_DRAW_POINTS = 1500;
 	};
@@ -125,7 +125,8 @@ class SpecificWorker : public GenericWorker
 
 	// Sync Buffer: robot pose, world points, local points
 	BufferSync<InOut<Eigen::Affine2f, Eigen::Affine2f>,
-			   InOut<std::vector<Eigen::Vector3f>, std::vector<Eigen::Vector3f>>> buffer_sync;
+			   InOut<std::pair<std::vector<Eigen::Vector3f>, std::int64_t>,
+					 std::pair<std::vector<Eigen::Vector3f>, std::int64_t>>> buffer_sync;
 
 	// Lidar Thread
 	std::thread read_lidar_th;
@@ -134,18 +135,37 @@ class SpecificWorker : public GenericWorker
 
 	// GT Room
 	QRectF room_rect_gt;
+	std::vector<Eigen::Vector2f> room_polygon_gt;  // Polygon vertices for GT room (in room frame)
+	bool capturing_room_polygon = false;
+	std::vector<QGraphicsEllipseItem*> polygon_vertex_items;
+	QGraphicsPolygonItem* polygon_item = nullptr;
+
+	// velocity commands. boost buffer is thread safe
+	boost::circular_buffer<rc::VelocityCommand> velocity_history_{20};
+    rc::VelocityCommand compute_current_odometry(long lidar_timestamp_ms, float delay = 0.0f);
 
 	// Active inference room concept
 	rc::RoomConceptAI room_ai;
 
-	QLabel *status_label = nullptr;
-
 	// Draw
 	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points, const Eigen::Affine2f &robot_pose);
+	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);
 	void display_robot(const Eigen::Affine2f &robot_pose_gt);
 	float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
 	float estimate_orientation_from_points(const std::vector<Eigen::Vector3f> &pts) const;
+	void update_ui(const rc::RoomConceptAI::UpdateResult &res, const rc::VelocityCommand &current_velocity, int fps_val);
+
+	// Room polygon capture
+	void draw_room_polygon();
+	void on_scene_clicked(QPointF pos);
+
+private slots:
+	void slot_capture_room_toggled(bool checked);
 
 };
 
 #endif
+
+
+
+
