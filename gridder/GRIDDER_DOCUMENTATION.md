@@ -12,8 +12,9 @@
    - [5.15 ESDF-Based Obstacle Costs](#515-esdf-based-obstacle-costs)
    - [5.16 Covariance-Aware Margin Inflation](#516-covariance-aware-margin-inflation)
    - [5.17 Robot Footprint Sampling (8-Point)](#517-robot-footprint-sampling-8-point-collision-detection)
-   - [5.18 Output Smoothing Filter](#518-output-smoothing-filter)
-   - [5.19 Configuration Parameters](#519-mppi-configuration-parameters)
+   - [5.18 Adaptive K (ESS-Based)](#518-adaptive-k-sample-count-based-on-ess-theory)
+   - [5.19 Output Smoothing Filter](#519-output-smoothing-filter)
+   - [5.20 Configuration Parameters](#520-mppi-configuration-parameters)
 6. [Implementation Details](#6-implementation-details)
 7. [Configuration Reference](#7-configuration-reference)
 
@@ -50,52 +51,89 @@ The component uses a **VoxBlox-inspired sparse representation**:
 ### 1.2 Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                            GRIDDER                                    │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  ┌─────────────────┐                                                 │
-│  │   Main Thread   │◄──────────────────────────────────────┐         │
-│  │    compute()    │                                       │         │
-│  │  ─────────────  │                                       │         │
-│  │  • Grid update  │                                       │         │
-│  │  • Visualization│                                       │         │
-│  │  • UI events    │                                       │         │
-│  └────────┬────────┘                                       │         │
-│           │                                                │         │
-│           │ DoubleBuffer                                   │         │
-│           ▼                                                │         │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌──────────┴───────┐ │
-│  │  LiDAR Thread   │    │ Localizer Thread│    │   MPPI Thread    │ │
-│  │  ─────────────  │    │  ─────────────  │    │   ─────────────  │ │
-│  │  read_lidar()   │    │ run_localizer() │    │   run_mppi()     │ │
-│  │     ~50 Hz      │    │     ~20 Hz      │    │     ~20 Hz       │ │
-│  └────────┬────────┘    └────────┬────────┘    └────────┬─────────┘ │
-│           │                      │                      │           │
-│           │                      │ Pose + Covariance    │           │
-│           │                      └──────────────────────┤           │
-│           │                                             │           │
-│           │ LiDAR points                                │ Commands  │
-│           ▼                                             ▼           │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐ │
-│  │   Grid ESDF     │    │  Path Planner   │    │   OmniRobot     │ │
-│  │  (sparse map)   │◄───│     (A*)        │    │  (velocity cmd) │ │
-│  └─────────────────┘    └─────────────────┘    └─────────────────┘ │
-│                                                                      │
-├──────────────────────────────────────────────────────────────────────┤
-│                          ICE Interface                                │
-│    getPaths() | getMap() | getPose() | LineOfSightToTarget()         │
-└──────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              GRIDDER                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌──────────────────┐                                                        │
+│  │   LiDAR Thread   │ ─────────────────────────────────────────┐             │
+│  │  ─────────────── │                                          │             │
+│  │  read_lidar()    │                                          │             │
+│  │     ~50 Hz       │                                          │             │
+│  └────────┬─────────┘                                          │             │
+│           │                                                    │             │
+│           │ LiDAR points (DoubleBuffer)                        │             │
+│           ▼                                                    ▼             │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
+│  │   Main Thread    │    │ Localizer Thread │    │   MPPI Thread    │       │
+│  │  ─────────────── │    │  ─────────────── │    │  ─────────────── │       │
+│  │  compute()       │    │  run_localizer() │    │  run_mppi()      │       │
+│  │  • Visualization │◄───│     ~20 Hz       │───►│     ~20 Hz       │       │
+│  │  • UI events     │    │                  │    │                  │       │
+│  │  • Grid update   │    │  Reads: LiDAR,   │    │  Reads: LiDAR,   │       │
+│  │    (mapping mode)│    │         Odometry │    │         Path,    │       │
+│  └────────┬─────────┘    │         Grid/ESDF│    │         Grid/ESDF│       │
+│           │              │                  │    │         Pose+Cov │       │
+│           │              │  Outputs: Pose,  │    │                  │       │
+│           │              │          Covar.  │    │  Outputs: vx,vy,ω│       │
+│           │              └──────────────────┘    └────────┬─────────┘       │
+│           │                                               │                  │
+│           ▼                                               ▼                  │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
+│  │   Grid ESDF      │    │  Path Planner    │    │   OmniRobot      │       │
+│  │  (sparse map)    │◄───│     (A*)         │    │  (velocity cmd)  │       │
+│  │                  │    │                  │    │                  │       │
+│  │  • Obstacles     │    │  Uses Grid for   │    │  Receives MPPI   │       │
+│  │  • ESDF distance │    │  cost-aware path │    │  commands        │       │
+│  │  • Gradient      │    │  computation     │    │                  │       │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘       │
+│                                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                            ICE Interface                                     │
+│      getPaths() | getMap() | getPose() | LineOfSightToTarget()              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Data Flow Summary:**
+
+```
+                    ┌─────────┐
+                    │  LiDAR  │
+                    └────┬────┘
+                         │
+         ┌───────────────┼───────────────┐
+         ▼               ▼               ▼
+   ┌───────────┐   ┌───────────┐   ┌───────────┐
+   │   Grid    │   │ Localizer │   │   MPPI    │
+   │(map mode) │   │           │   │           │
+   └─────┬─────┘   └─────┬─────┘   └─────┬─────┘
+         │               │               │
+         │               ▼               │
+         │         ┌───────────┐         │
+         └────────►│ Path (A*) │◄────────┘
+                   └───────────┘
 ```
 
 **Thread Communication:**
+
 | Source | Destination | Mechanism | Data |
 |--------|-------------|-----------|------|
-| LiDAR Thread | Main | DoubleBuffer | Point cloud |
-| Main | Localizer | DoubleBuffer | LiDAR + odometry |
-| Localizer | Main/MPPI | DoubleBuffer | Pose + covariance |
-| Main | MPPI | Atomic flags, mutex | Path, target |
-| MPPI | Main | DoubleBuffer | Velocity commands |
+| LiDAR Thread | Main/Localizer/MPPI | DoubleBuffer | Point cloud (world + local) |
+| Main | Grid ESDF | Direct call | LiDAR points (mapping mode only) |
+| Main | Localizer | DoubleBuffer | Odometry (from GT or encoder) |
+| Localizer | Main/MPPI | DoubleBuffer | Pose + Covariance |
+| Main | MPPI | Mutex + atomic | Current path, target |
+| MPPI | Main | DoubleBuffer | Velocity commands (vx, vy, ω) |
+| Grid ESDF | Localizer | Direct read | Distance field for observation model |
+| Grid ESDF | MPPI | Direct read | Distance + gradient for obstacle cost |
+| Grid ESDF | Path Planner | Direct read | Cost map for A* |
+
+**Operating Modes:**
+
+| Mode | Grid Update | Localizer | MPPI | Use Case |
+|------|-------------|-----------|------|----------|
+| **Mapping** | ✅ Active | ✅ Uses ESDF | ✅ Uses ESDF + LiDAR | Building map |
+| **Localization** | ❌ Static | ✅ Uses ESDF | ✅ Uses ESDF + LiDAR | Pre-loaded map |
 
 ---
 
@@ -1147,7 +1185,79 @@ The 8x increase in ESDF queries is acceptable because:
 3. **Reduced oscillations**: More accurate cost gradients lead to smoother trajectories
 4. **Asymmetric robot support**: Works with non-square robots (different width/length)
 
-### 5.18 Output Smoothing Filter
+### 5.18 Adaptive K (Sample Count) Based on ESS Theory
+
+Standard MPPI uses a fixed number of samples K. However, the optimal K depends on the situation:
+- **Open spaces**: Few samples needed (most trajectories are similar)
+- **Near obstacles**: More samples needed for better exploration
+- **Narrow passages**: More samples to find collision-free paths
+
+We implement **adaptive K** based on **Effective Sample Size (ESS)** theory from importance sampling.
+
+#### Theoretical Foundation
+
+The ESS measures how many samples effectively contribute to the weighted average:
+
+$$
+ESS = \frac{1}{\sum_{k=1}^{K} w_k^2}
+$$
+
+Where $w_k$ are the normalized weights. The **ESS ratio** = ESS/K indicates sampling efficiency:
+
+| ESS Ratio | Interpretation | Action |
+|-----------|----------------|--------|
+| < 0.10 | Few trajectories dominate (poor exploration) | **Increase K** |
+| 0.10 - 0.50 | Normal range | Maintain K |
+| > 0.50 | Many similar trajectories (over-sampling) | **Decrease K** |
+
+#### Monte Carlo Variance Theory
+
+The variance of the MPPI estimate decreases with ESS, not raw K:
+
+$$
+\text{Var}[\hat{u}^*] \propto \frac{1}{ESS}
+$$
+
+Therefore, to maintain constant estimation quality, we adapt K based on ESS ratio.
+
+#### Adaptation Algorithm
+
+```cpp
+if (ess_ratio < ess_ratio_low && valid_ratio > 0.5f)
+    // Poor exploration: increase K
+    adaptive_K = min(K_max, K * K_increase_factor);
+else if (ess_ratio > ess_ratio_high && valid_ratio > 0.9f)
+    // Over-sampling: decrease K to save CPU
+    adaptive_K = max(K_min, K * K_decrease_factor);
+```
+
+#### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `use_adaptive_K` | true | Enable/disable adaptive sample count |
+| `K_min` | 50 | Minimum samples (CPU floor) |
+| `K_max` | 300 | Maximum samples (CPU ceiling) |
+| `ess_ratio_low` | 0.10 | Below this: increase K |
+| `ess_ratio_high` | 0.50 | Above this: decrease K |
+| `K_increase_factor` | 1.3 | Multiply K when ESS too low |
+| `K_decrease_factor` | 0.85 | Multiply K when ESS too high |
+
+#### Expected Behavior
+
+| Scenario | ESS Ratio | K Trend | CPU Usage |
+|----------|-----------|---------|-----------|
+| Open space, straight path | ~0.6 | ↓ to K_min (~50) | Low |
+| Approaching obstacle | ~0.15 | ↑ (~150) | Medium |
+| Narrow passage | ~0.08 | ↑ to K_max (~300) | High |
+| After clearing obstacle | ~0.5 | ↓ gradually | Decreasing |
+
+#### References
+
+- Owen, A. (2013). *Monte Carlo Theory, Methods and Examples* - ESS theory
+- Williams, G., et al. (2017). "Information Theoretic MPC" - MPPI foundations
+
+### 5.19 Output Smoothing Filter
 
 MPPI inherently produces some **jitter** in velocity commands due to:
 1. **Stochastic sampling**: Each iteration uses different random trajectories
@@ -1241,7 +1351,7 @@ The filter state is reset when:
 
 This prevents the filter from "remembering" old velocities when starting a new motion.
 
-### 5.19 MPPI Configuration Parameters
+### 5.20 MPPI Configuration Parameters
 
 ```cpp
 struct Params {
@@ -1510,25 +1620,30 @@ const size_t step = max(1, particles.size() / max_draw);
 
 | Parameter | Symbol | Default | Description |
 |-----------|--------|---------|-------------|
-| `K` | $K$ | 500 | Number of sampled trajectories |
-| `T` | $T$ | 20 | Prediction horizon (time steps) |
+| `K` | $K$ | 100 | Initial number of sampled trajectories |
+| `T` | $T$ | 50 | Prediction horizon (time steps) |
 | `dt` | $\Delta t$ | 0.1 s | Time step for simulation |
-| `lambda` | $\lambda$ | 1.0 | Temperature (exploration vs exploitation) |
-| `sigma_vx` | $\sigma_{v_x}$ | 200 mm/s | Noise std dev for forward velocity |
-| `sigma_vy` | $\sigma_{v_y}$ | 200 mm/s | Noise std dev for lateral velocity |
+| `lambda` | $\lambda$ | 50.0 | Temperature (exploration vs exploitation) |
+| `use_adaptive_K` | - | true | Enable ESS-based adaptive sample count |
+| `K_min` | - | 50 | Minimum samples (CPU floor) |
+| `K_max` | - | 300 | Maximum samples (CPU ceiling) |
+| `ess_ratio_low` | - | 0.10 | ESS ratio below which K increases |
+| `ess_ratio_high` | - | 0.50 | ESS ratio above which K decreases |
+| `sigma_vx` | $\sigma_{v_x}$ | 80 mm/s | Noise std dev for lateral velocity |
+| `sigma_vy` | $\sigma_{v_y}$ | 150 mm/s | Noise std dev for forward velocity |
 | `sigma_omega` | $\sigma_\omega$ | 0.3 rad/s | Noise std dev for angular velocity |
-| `max_vx` | - | 800 mm/s | Maximum forward velocity |
-| `max_vy` | - | 800 mm/s | Maximum lateral velocity |
-| `max_omega` | - | 0.8 rad/s | Maximum angular velocity |
+| `max_vx` | - | 300 mm/s | Maximum lateral velocity |
+| `max_vy` | - | 800 mm/s | Maximum forward velocity |
+| `max_omega` | - | 0.5 rad/s | Maximum angular velocity |
 | `robot_radius` | $r$ | 250 mm | Robot radius for collision detection |
-| `safety_margin` | $d_{\text{margin}}$ | 500 mm | Distance to start penalizing obstacles |
-| `obstacle_decay` | $d_{\text{decay}}$ | 200 mm | Exponential decay rate for obstacle cost |
-| `goal_tolerance` | - | 300 mm | Distance to consider goal reached |
+| `safety_margin` | $d_{\text{margin}}$ | 1000 mm | Distance to start penalizing obstacles |
+| `collision_buffer` | - | 120 mm | Soft penalty band before collision |
+| `goal_tolerance` | - | 200 mm | Distance to consider goal reached |
 | `w_path` | $w_p$ | 1.0 | Weight for path following cost |
-| `w_obstacle` | $w_o$ | 10.0 | Weight for obstacle avoidance cost |
-| `w_goal` | $w_g$ | 0.5 | Weight for goal reaching cost |
-| `w_smoothness` | $w_s$ | 0.1 | Weight for control smoothness cost |
-| `w_speed` | $w_v$ | 0.05 | Weight for speed maintenance cost |
+| `w_obstacle` | $w_o$ | 50.0 | Weight for obstacle avoidance cost |
+| `w_goal` | $w_g$ | 5.0 | Weight for goal reaching cost |
+| `w_smoothness` | $w_s$ | 1.0 | Weight for control smoothness cost |
+| `w_speed` | $w_v$ | 0.001 | Weight for speed maintenance cost |
 | `robot_semi_width` | - | 230 mm | Half robot width for footprint (X) |
 | `robot_semi_length` | - | 240 mm | Half robot length for footprint (Y) |
 | `use_footprint_sampling` | - | true | Enable 8-point footprint collision |
@@ -1556,10 +1671,17 @@ const size_t step = max(1, particles.size() / max_draw);
 
 ---
 
-*Document generated: 2026-02-14*
-*Component version: Gridder v2.2*
+*Document generated: 2026-02-15*
+*Component version: Gridder v2.3*
 
-**Recent Changes (v2.2):**
+**Recent Changes (v2.3):**
+- Adaptive K (sample count) based on ESS theory for dynamic CPU optimization
+- Corrected architecture diagram to show proper data flow
+- MPPI thread sleeps when idle (goal reached) to save resources
+
+**Changes (v2.2):**
 - Added 8-point robot footprint sampling for precise collision detection
 - Supports rectangular robots with configurable dimensions
 - Improved narrow passage navigation
+- Output smoothing filter (EMA) to reduce velocity jitter
+- Eigen::Affine2f for cleaner coordinate transformations

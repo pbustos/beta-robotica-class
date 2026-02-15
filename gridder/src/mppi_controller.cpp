@@ -42,6 +42,7 @@ MPPIController::MPPIController(const Params& params)
     , adaptive_sigma_vy_(params.sigma_vy)
     , adaptive_sigma_omega_(params.sigma_omega)
     , adaptive_lambda_(params.lambda)
+    , adaptive_K_(params.K)
 {
     // Initialize previous controls to zero
     prev_controls_.resize(params_.T);
@@ -50,10 +51,11 @@ MPPIController::MPPIController(const Params& params)
         ctrl = ControlCommand{0.0f, 0.0f, 0.0f};
     }
 
-    // Pre-allocate buffers for performance
-    noise_buffer_vx_.resize(params_.K * params_.T);
-    noise_buffer_vy_.resize(params_.K * params_.T);
-    noise_buffer_omega_.resize(params_.K * params_.T);
+    // Pre-allocate buffers for performance (use max K for buffer size)
+    const int max_samples = params_.use_adaptive_K ? params_.K_max : params_.K;
+    noise_buffer_vx_.resize(max_samples * params_.T);
+    noise_buffer_vy_.resize(max_samples * params_.T);
+    noise_buffer_omega_.resize(max_samples * params_.T);
 }
 
 // ============================================================================
@@ -103,6 +105,10 @@ MPPIController::ControlCommand MPPIController::compute(
         return compute(current_state, path, obstacles, esdf);
     }
 
+    // Use adaptive K if enabled, otherwise use fixed K from params
+    const int K = params_.use_adaptive_K ? adaptive_K_ : params_.K;
+    const int T = params_.T;
+
     // Extract pose covariance matrix elements: [σ²_xx, σ_xy, σ_xθ, σ²_yy, σ_yθ, σ²_θθ]
     // Build 3x3 covariance matrix
     Eigen::Matrix3f Sigma_pose;
@@ -125,7 +131,7 @@ MPPIController::ControlCommand MPPIController::compute(
     warmStart();
 
     // Blend warm-started controls with nominal control
-    for (int t = 0; t < params_.T; ++t)
+    for (int t = 0; t < T; ++t)
     {
         prev_controls_[t].vx = 0.2f * prev_controls_[t].vx + 0.8f * nominal_control.vx;
         prev_controls_[t].vy = 0.5f * prev_controls_[t].vy + 0.5f * nominal_control.vy;
@@ -133,8 +139,8 @@ MPPIController::ControlCommand MPPIController::compute(
     }
 
     // Generate noise (same as base version)
-    const int total_samples = params_.K * params_.T;
-    if (static_cast<int>(noise_buffer_vx_.size()) != total_samples)
+    const int total_samples = K * T;
+    if (static_cast<int>(noise_buffer_vx_.size()) < total_samples)
     {
         noise_buffer_vx_.resize(total_samples);
         noise_buffer_vy_.resize(total_samples);
@@ -146,14 +152,14 @@ MPPIController::ControlCommand MPPIController::compute(
         const float alpha = params_.noise_alpha;
         const float innovation_scale = std::sqrt(std::max(0.0f, 1.0f - alpha * alpha));
 
-        for (int k = 0; k < params_.K; ++k)
+        for (int k = 0; k < K; ++k)
         {
             float eps_vx = noise_vx_(rng_) * adaptive_sigma_vx_;
             float eps_vy = noise_vy_(rng_) * adaptive_sigma_vy_;
             float eps_omega = noise_omega_(rng_) * adaptive_sigma_omega_;
 
-            const int noise_base = k * params_.T;
-            for (int t = 0; t < params_.T; ++t)
+            const int noise_base = k * T;
+            for (int t = 0; t < T; ++t)
             {
                 noise_buffer_vx_[noise_base + t] = eps_vx;
                 noise_buffer_vy_[noise_base + t] = eps_vy;
@@ -191,9 +197,9 @@ MPPIController::ControlCommand MPPIController::compute(
     const auto& obs_to_use = (obstacles.size() > max_obstacles) ? subsampled_obstacles : obstacles;
 
     // Storage for trajectories and costs
-    std::vector<std::vector<ControlCommand>> all_controls(params_.K);
-    std::vector<std::vector<State>> all_trajectories(params_.K);
-    std::vector<float> costs(params_.K);
+    std::vector<std::vector<ControlCommand>> all_controls(K);
+    std::vector<std::vector<State>> all_trajectories(K);
+    std::vector<float> costs(K);
 
     // Precompute sin/cos for initial state
     const float cos_theta_init = std::cos(current_state.theta);
@@ -208,16 +214,16 @@ MPPIController::ControlCommand MPPIController::compute(
         float goal_cost = 0.f;
         float total() const { return path_cost + obstacle_cost + smoothness_cost + speed_cost + goal_cost; }
     };
-    std::vector<CostBreakdown> cost_breakdowns(params_.K);
+    std::vector<CostBreakdown> cost_breakdowns(K);
 
     // ========================================================================
     // SAMPLE K TRAJECTORIES WITH ESDF-BASED OBSTACLE COSTS
     // ========================================================================
-    for (int k = 0; k < params_.K; ++k)
+    for (int k = 0; k < K; ++k)
     {
-        std::vector<ControlCommand> controls(params_.T);
+        std::vector<ControlCommand> controls(T);
         std::vector<State> trajectory;
-        trajectory.reserve(params_.T + 1);
+        trajectory.reserve(T + 1);
         trajectory.push_back(current_state);
 
         State state = current_state;
@@ -228,8 +234,8 @@ MPPIController::ControlCommand MPPIController::compute(
         float traj_cost = 0.0f;
         CostBreakdown& breakdown = cost_breakdowns[k];
 
-        const int noise_base = k * params_.T;
-        for (int t = 0; t < params_.T && !collision; ++t)
+        const int noise_base = k * T;
+        for (int t = 0; t < T && !collision; ++t)
         {
             // Add noise to controls
             ControlCommand ctrl;
@@ -421,7 +427,7 @@ MPPIController::ControlCommand MPPIController::compute(
     // ========================================================================
     float min_valid_cost = std::numeric_limits<float>::max();
     int num_invalid = 0;
-    for (int k = 0; k < params_.K; ++k)
+    for (int k = 0; k < K; ++k)
     {
         if (std::isinf(costs[k]))
             num_invalid++;
@@ -432,12 +438,12 @@ MPPIController::ControlCommand MPPIController::compute(
     if (std::isinf(min_valid_cost))
         return ControlCommand{0.0f, 0.0f, 0.0f};
 
-    const float valid_ratio = static_cast<float>(params_.K - num_invalid) / static_cast<float>(params_.K);
+    const float valid_ratio = static_cast<float>(K - num_invalid) / static_cast<float>(K);
 
     constexpr float invalid_cost_multiplier = 30.0f;
     const float invalid_cost = min_valid_cost + invalid_cost_multiplier * adaptive_lambda_;
 
-    for (int k = 0; k < params_.K; ++k)
+    for (int k = 0; k < K; ++k)
     {
         if (std::isinf(costs[k]))
             costs[k] = invalid_cost;
@@ -446,12 +452,12 @@ MPPIController::ControlCommand MPPIController::compute(
     float min_cost = min_valid_cost;
     const float inv_lambda = -1.0f / adaptive_lambda_;
     float weight_sum = 0.0f;
-    std::vector<float> weights(params_.K);
+    std::vector<float> weights(K);
 
     float max_cost = min_cost;
-    int valid_count = params_.K - num_invalid;
+    int valid_count = K - num_invalid;
 
-    for (int k = 0; k < params_.K; ++k)
+    for (int k = 0; k < K; ++k)
     {
         weights[k] = std::exp(inv_lambda * (costs[k] - min_cost));
         weight_sum += weights[k];
@@ -465,13 +471,45 @@ MPPIController::ControlCommand MPPIController::compute(
 
     // ESS computation
     float sum_w_squared = 0.0f;
-    for (int k = 0; k < params_.K; ++k)
+    for (int k = 0; k < K; ++k)
     {
         float w_norm = weights[k] * inv_weight_sum;
         sum_w_squared += w_norm * w_norm;
     }
     const float ess = (sum_w_squared > 1e-10f) ? (1.0f / sum_w_squared) : static_cast<float>(valid_count);
     const float ess_ratio = ess / static_cast<float>(std::max(1, valid_count));
+
+    // ========================================================================
+    // ADAPTIVE K: Adjust sample count based on ESS ratio
+    // Theory: ESS measures effective samples. Low ESS → need more samples
+    // Note: T (horizon) is NOT adapted - only K (sample count)
+    // ========================================================================
+    if (params_.use_adaptive_K)
+    {
+        const int prev_K = adaptive_K_;
+        if (ess_ratio < params_.ess_ratio_low && valid_ratio > 0.5f)
+        {
+            // Poor exploration: increase K
+            adaptive_K_ = std::min(params_.K_max,
+                static_cast<int>(adaptive_K_ * params_.K_increase_factor));
+        }
+        else if (ess_ratio > params_.ess_ratio_high && valid_ratio > 0.9f)
+        {
+            // Over-sampling: decrease K to save CPU
+            adaptive_K_ = std::max(params_.K_min,
+                static_cast<int>(adaptive_K_ * params_.K_decrease_factor));
+        }
+
+        // Periodic log of K status (every ~100 iterations, ~5 seconds at 20Hz)
+        static int k_log_counter = 0;
+        if (++k_log_counter % 100 == 0)
+        {
+            qDebug() << "[MPPI] K=" << adaptive_K_
+                     << "ESS=" << QString::number(ess_ratio, 'f', 2)
+                     << "valid=" << QString::number(valid_ratio, 'f', 2)
+                     << (adaptive_K_ != prev_K ? "(changed)" : "");
+        }
+    }
 
     // Adaptive lambda
     if (params_.use_adaptive_covariance)
@@ -518,14 +556,14 @@ MPPIController::ControlCommand MPPIController::compute(
     // ========================================================================
     // COMPUTE OPTIMAL CONTROLS
     // ========================================================================
-    std::vector<ControlCommand> optimal_controls(params_.T, ControlCommand{0.0f, 0.0f, 0.0f});
+    std::vector<ControlCommand> optimal_controls(T, ControlCommand{0.0f, 0.0f, 0.0f});
 
-    for (int k = 0; k < params_.K; ++k)
+    for (int k = 0; k < K; ++k)
     {
         const float w = weights[k] * inv_weight_sum;
         if (w > 1e-10f)
         {
-            for (int t = 0; t < params_.T; ++t)
+            for (int t = 0; t < T; ++t)
             {
                 optimal_controls[t].vx += w * all_controls[k][t].vx;
                 optimal_controls[t].vy += w * all_controls[k][t].vy;
@@ -535,7 +573,7 @@ MPPIController::ControlCommand MPPIController::compute(
     }
 
     // NaN check
-    for (int t = 0; t < params_.T; ++t)
+    for (int t = 0; t < T; ++t)
     {
         if (std::isnan(optimal_controls[t].vx)) optimal_controls[t].vx = 0.0f;
         if (std::isnan(optimal_controls[t].vy)) optimal_controls[t].vy = 0.0f;
@@ -551,7 +589,7 @@ MPPIController::ControlCommand MPPIController::compute(
         float weighted_var_omega = 0.0f;
         float total_weight = 0.0f;
 
-        for (int k = 0; k < params_.K; ++k)
+        for (int k = 0; k < K; ++k)
         {
             const float w = weights[k] * inv_weight_sum;
             if (w > 1e-10f)
@@ -610,8 +648,8 @@ MPPIController::ControlCommand MPPIController::compute(
     if (params_.num_trajectories_to_draw > 0)
     {
         std::vector<int> valid_indices;
-        valid_indices.reserve(params_.K);
-        for (int k = 0; k < params_.K; ++k)
+        valid_indices.reserve(K);
+        for (int k = 0; k < K; ++k)
         {
             if (!std::isinf(costs[k]) && !all_trajectories[k].empty())
                 valid_indices.push_back(k);
@@ -675,6 +713,9 @@ void MPPIController::reset()
 
     // Reset adaptive lambda
     adaptive_lambda_ = params_.lambda;
+
+    // Reset adaptive K to initial value
+    adaptive_K_ = params_.K;
 
     // Reset output smoothing filter
     last_smoothed_output_ = ControlCommand{0.0f, 0.0f, 0.0f};

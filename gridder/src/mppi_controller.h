@@ -74,11 +74,22 @@ public:
         RobotType robot_type = RobotType::OMNIDIRECTIONAL;  // Robot kinematic model
 
         // MPPI parameters
-        int K = 100;               // Number of sampled trajectories
+        int K = 100;               // Number of sampled trajectories (initial, adapted online)
         int T = 50;                // Prediction horizon (time steps)
         float dt = 0.1f;           // Time step (seconds) - larger for stability
         float lambda = 50.0f;      // Temperature - should be ~10-100 after cost rescaling
         float cost_scale = 1000.0f; // Divide all costs by this to get totals in range 10-1000
+
+        // Adaptive K (number of samples) based on ESS theory
+        // ESS = 1/Σw²ᵢ measures effective number of samples contributing to estimate
+        // When ESS_ratio is low, we need more samples; when high, we can reduce
+        bool use_adaptive_K = true;         // Enable/disable adaptive sample count
+        int K_min = 50;                     // Minimum samples (CPU floor)
+        int K_max = 300;                    // Maximum samples (CPU ceiling)
+        float ess_ratio_low = 0.10f;        // Below this: increase K (poor exploration)
+        float ess_ratio_high = 0.50f;       // Above this: decrease K (over-sampling)
+        float K_increase_factor = 1.3f;     // Multiply K when ESS too low
+        float K_decrease_factor = 0.85f;    // Multiply K when ESS too high
 
         // Control noise standard deviations (initial values, adapted online)
         float sigma_vx = 80.0f;    // mm/s - lateral exploration
@@ -272,6 +283,9 @@ private:
 
     // Adaptive lambda (temperature) - adjusted based on ESS
     float adaptive_lambda_;
+
+    // Adaptive K (number of samples) - adjusted based on ESS ratio
+    int adaptive_K_;
 
     // Output smoothing (EMA filter to reduce jitter)
     mutable ControlCommand last_smoothed_output_{0.0f, 0.0f, 0.0f};
