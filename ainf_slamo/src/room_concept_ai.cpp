@@ -72,6 +72,7 @@ namespace rc
         has_smoothed_pose_ = false;  // Reset smoothing
         tracking_step_count_ = 0;  // Reset early exit tracking
         prediction_early_exits_ = 0;
+        current_velocity_weights_ = Eigen::Vector3f::Ones();  // Reset velocity weights
 
         qInfo() << "RoomConceptAI using device:" << (get_device() == torch::kCUDA ? "CUDA" : "CPU");
     }
@@ -112,9 +113,92 @@ namespace rc
         has_smoothed_pose_ = false;  // Reset smoothing
         tracking_step_count_ = 0;  // Reset early exit tracking
         prediction_early_exits_ = 0;
+        current_velocity_weights_ = Eigen::Vector3f::Ones();  // Reset velocity weights
 
         qInfo() << "RoomConceptAI initialized with polygon room:" << polygon_vertices.size()
                 << "vertices. Robot at (" << init_x << "," << init_y << "," << init_phi << ")";
+    }
+
+    Eigen::Vector3f RoomConceptAI::compute_velocity_adaptive_weights(const OdometryPrior& odometry_prior)
+    {
+        /**
+         * Compute velocity-adaptive precision weights for [x, y, theta].
+         *
+         * Based on the current velocity profile:
+         * - If rotating (high angular, low linear): boost theta weight, reduce x,y
+         * - If moving straight (high linear, low angular): boost x,y, reduce theta
+         * - If stationary: use base weights (uniform)
+         *
+         * The weights scale gradients during optimization, making the system
+         * more responsive to parameters expected to change based on motion.
+         */
+        if (!params.velocity_adaptive_weights || !odometry_prior.valid)
+        {
+            return Eigen::Vector3f::Ones();
+        }
+
+        // Get velocities from odometry prior
+        const float linear_speed = odometry_prior.delta_pose.head<2>().norm() /
+                                   std::max(odometry_prior.dt, 0.001f);
+        const float angular_speed = std::abs(odometry_prior.delta_pose[2]) /
+                                    std::max(odometry_prior.dt, 0.001f);
+
+        // Determine motion profile
+        const bool is_rotating = angular_speed > params.angular_velocity_threshold;
+        const bool is_translating = linear_speed > params.linear_velocity_threshold;
+
+        float w_x, w_y, w_theta;
+
+        if (is_rotating && !is_translating)
+        {
+            // Pure rotation: emphasize theta, de-emphasize x, y
+            w_x = params.weight_reduction_factor;
+            w_y = params.weight_reduction_factor;
+            w_theta = params.weight_boost_factor;
+        }
+        else if (is_translating && !is_rotating)
+        {
+            // Pure translation: emphasize x, y based on direction
+            // Get velocity direction in robot frame
+            const float vx = odometry_prior.delta_pose[0] / std::max(odometry_prior.dt, 0.001f);
+            const float vy = odometry_prior.delta_pose[1] / std::max(odometry_prior.dt, 0.001f);
+
+            if (std::abs(vy) > std::abs(vx))
+            {
+                // Mostly forward/backward motion - emphasize y (forward axis)
+                w_x = 1.0f;
+                w_y = params.weight_boost_factor;
+            }
+            else
+            {
+                // Mostly lateral motion - emphasize x
+                w_x = params.weight_boost_factor;
+                w_y = 1.0f;
+            }
+            w_theta = params.weight_reduction_factor;
+        }
+        else if (is_rotating && is_translating)
+        {
+            // Combined motion: moderate boost for all
+            w_x = 1.2f;
+            w_y = 1.2f;
+            w_theta = 1.2f;
+        }
+        else
+        {
+            // Stationary: use base weights
+            w_x = 1.0f;
+            w_y = 1.0f;
+            w_theta = 1.0f;
+        }
+
+        Eigen::Vector3f new_weights(w_x, w_y, w_theta);
+
+        // Smooth transition using exponential moving average
+        const float alpha = params.weight_smoothing_alpha;
+        current_velocity_weights_ = (1.0f - alpha) * current_velocity_weights_ + alpha * new_weights;
+
+        return current_velocity_weights_;
     }
 
     RoomConceptAI::UpdateResult RoomConceptAI::update(
@@ -273,10 +357,14 @@ namespace rc
                     pose.linear() = Eigen::Rotation2Df(smoothed_phi).toRotationMatrix();
                     res.robot_pose = pose;
 
-                    // Propagate covariance (increase uncertainty since we skipped optimization)
+                    // Use PROPAGATED covariance (uncertainty grows when we skip optimization)
+                    // current_covariance was already updated with prediction.propagated_cov above
                     res.covariance = current_covariance;
                     res.innovation = Eigen::Vector3f::Zero();  // No correction applied
                     res.innovation_norm = 0.0f;
+
+                    // Update current_covariance to reflect the propagated uncertainty
+                    // (This is already done above in the prediction step, but we store it in result)
 
                     // Update model with smoothed pose
                     model_->robot_pos.data().copy_(torch::tensor({smoothed_x, smoothed_y},
@@ -314,6 +402,9 @@ namespace rc
         );
         torch::optim::Adam optimizer(param_groups);
 
+        // Compute velocity-adaptive weights for gradient scaling
+        const Eigen::Vector3f velocity_weights = compute_velocity_adaptive_weights(odometry_prior);
+
         // Determine number of iterations
         const int max_iters = params.num_iterations;
 
@@ -325,6 +416,22 @@ namespace rc
             optimizer.zero_grad();
             const torch::Tensor loss = loss_sdf_mse(points_tensor, *model_);
             loss.backward();
+
+            // Apply velocity-adaptive gradient weighting
+            // This emphasizes parameters that are expected to change based on motion
+            {
+                torch::NoGradGuard no_grad;
+                if (model_->robot_pos.grad().defined())
+                {
+                    model_->robot_pos.mutable_grad().index({0}) *= velocity_weights[0];  // x weight
+                    model_->robot_pos.mutable_grad().index({1}) *= velocity_weights[1];  // y weight
+                }
+                if (model_->robot_theta.grad().defined())
+                {
+                    model_->robot_theta.mutable_grad() *= velocity_weights[2];   // theta weight
+                }
+            }
+
             optimizer.step();
 
             prev_loss = last_loss;
@@ -701,15 +808,17 @@ namespace rc
         float forward_motion = std::abs(dy_local);   // Forward (Y in robot frame)
         float lateral_motion = std::abs(dx_local);   // Lateral (X in robot frame)
 
-        float base_trans_noise = 0.002f;  // 2mm base uncertainty
+        // Base noise ensures covariance grows even when stationary
+        float base_trans_noise = prediction_params.NOISE_BASE;  // Base uncertainty (2cm default)
 
         // Forward uncertainty: grows with forward motion
         float forward_noise = base_trans_noise + prediction_params.NOISE_TRANS * forward_motion;
 
-        // Lateral uncertainty: much smaller (differential drive, 10% of forward)
-        float lateral_noise = base_trans_noise + 0.1f * prediction_params.NOISE_TRANS * lateral_motion;
+        // Lateral uncertainty: smaller for differential drive (30% of forward)
+        float lateral_noise = base_trans_noise + 0.3f * prediction_params.NOISE_TRANS * lateral_motion;
 
-        float base_rot_noise = 0.005f;  // 5 mrad base uncertainty
+        // Rotation noise: base + motion-dependent
+        float base_rot_noise = prediction_params.NOISE_BASE * 0.5f;  // Half of trans noise for rotation
         float rot_noise = base_rot_noise + prediction_params.NOISE_ROT * std::abs(dtheta);
 
         torch::Tensor Q = torch::zeros({dim, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(device));

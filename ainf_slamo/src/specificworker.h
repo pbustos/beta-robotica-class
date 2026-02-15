@@ -147,10 +147,20 @@ class SpecificWorker : public GenericWorker
 	// Active inference room concept
 	rc::RoomConceptAI room_ai;
 
+	// CPU usage tracking
+	float get_cpu_usage();
+	clock_t last_cpu_time_ = 0;
+	clock_t last_sys_cpu_time_ = 0;
+	clock_t last_user_cpu_time_ = 0;
+	int num_processors_ = 1;
+
+	// Covariance ellipse visualization
+	QGraphicsEllipseItem* cov_ellipse_item_ = nullptr;
+
 	// Draw
 	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points, const Eigen::Affine2f &robot_pose);
 	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);
-	void display_robot(const Eigen::Affine2f &robot_pose_gt);
+	void display_robot(const Eigen::Affine2f &robot_pose, const Eigen::Matrix3f &covariance);
 	float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
 	float estimate_orientation_from_points(const std::vector<Eigen::Vector3f> &pts) const;
 	void update_ui(const rc::RoomConceptAI::UpdateResult &res, const rc::VelocityCommand &current_velocity, int fps_val);

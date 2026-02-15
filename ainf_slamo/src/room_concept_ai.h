@@ -71,7 +71,6 @@ public:
         int max_lidar_points = 500;      // Subsample for speed
         float pose_smoothing = 0.3f;     // EMA smoothing factor (0=no smoothing, 1=full smoothing)
 
-
         // GPU/CPU selection
         // Note: For small tensors (~200 points), CPU is faster due to GPU transfer overhead
         bool use_cuda = false;
@@ -84,6 +83,15 @@ public:
         float prediction_trust_factor = 0.5f; // Threshold = sigma_sdf * factor (~7.5cm)
         int min_tracking_steps = 20;          // Wait for system to stabilize before early exit
         float max_uncertainty_for_early_exit = 0.1f;  // Max pose uncertainty to allow early exit
+
+        // ===== Velocity-Adaptive Gradient Weights =====
+        // Adjust optimization emphasis based on current motion profile
+        bool velocity_adaptive_weights = true;
+        float linear_velocity_threshold = 0.05f;   // m/s - below this = "not moving linearly"
+        float angular_velocity_threshold = 0.05f;  // rad/s - below this = "not rotating"
+        float weight_boost_factor = 2.0f;          // Multiplier for emphasized parameters
+        float weight_reduction_factor = 0.5f;      // Multiplier for de-emphasized parameters
+        float weight_smoothing_alpha = 0.3f;       // EMA smoothing for weight transitions
     };
 
     // Get the torch device based on params
@@ -163,10 +171,20 @@ private:
    int tracking_step_count_ = 0;        // Number of tracking steps since init
    int prediction_early_exits_ = 0;     // Counter for statistics
 
+   // Velocity-adaptive gradient weights [x, y, theta]
+   Eigen::Vector3f current_velocity_weights_ = Eigen::Vector3f::Ones();
+
+   // Compute velocity-adaptive weights based on motion profile
+   Eigen::Vector3f compute_velocity_adaptive_weights(const OdometryPrior& odometry_prior);
+
     struct PredictionParameters
    {
-       float NOISE_TRANS = 0.02f;  // 2cm stddev per meter
-       float NOISE_ROT = 0.01f;     // 0.1 rad
+       // Process noise - controls how fast covariance grows during prediction
+       // Higher values = faster covariance growth = more frequent optimizations
+       // These are realistic values for a differential drive robot with encoder noise
+       float NOISE_TRANS = 0.20f;  // 20% error per meter of motion (realistic wheel slip)
+       float NOISE_ROT = 0.10f;    // ~6° stddev per radian of rotation
+       float NOISE_BASE = 0.05f;   // Base noise even when stationary (5cm drift)
    };
     PredictionParameters prediction_params;
 

@@ -21,6 +21,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QFileDialog>
+#include <unistd.h>  // For sysconf
 
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
 {
@@ -55,6 +56,13 @@ SpecificWorker::~SpecificWorker()
 void SpecificWorker::initialize()
 {
     std::cout << "Initializing worker" << std::endl;
+
+    // Initialize CPU usage tracking
+    num_processors_ = sysconf(_SC_NPROCESSORS_ONLN);
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    last_user_cpu_time_ = usage.ru_utime.tv_sec * 1000000 + usage.ru_utime.tv_usec;
+    last_sys_cpu_time_ = usage.ru_stime.tv_sec * 1000000 + usage.ru_stime.tv_usec;
 
     // Viewer
     viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM, true);
@@ -182,7 +190,7 @@ void SpecificWorker::compute()
         if(const auto res = room_ai.update(lidar_local_.value(), velocity_history_); res.ok)
         {
 			update_ui(res, velocity_history_.back(), fps_val);
-            display_robot(res.robot_pose);
+            display_robot(res.robot_pose, res.covariance);
             draw_lidar_points(lidar_local, res.robot_pose);
 
             // Draw room rectangle (only if not using polygon)
@@ -195,6 +203,32 @@ void SpecificWorker::compute()
 /// Methods
 /////////////////////////////////////////////////////////////////////////////////
 
+float SpecificWorker::get_cpu_usage()
+{
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+
+    clock_t user_time = usage.ru_utime.tv_sec * 1000000 + usage.ru_utime.tv_usec;
+    clock_t sys_time = usage.ru_stime.tv_sec * 1000000 + usage.ru_stime.tv_usec;
+
+    clock_t user_diff = user_time - last_user_cpu_time_;
+    clock_t sys_diff = sys_time - last_sys_cpu_time_;
+
+    last_user_cpu_time_ = user_time;
+    last_sys_cpu_time_ = sys_time;
+
+    // CPU usage as percentage (normalized by number of processors)
+    static auto last_call = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(now - last_call).count();
+    last_call = now;
+
+    if (elapsed_us <= 0) return 0.0f;
+
+    float cpu_percent = 100.0f * (user_diff + sys_diff) / static_cast<float>(elapsed_us);
+    return cpu_percent;
+}
+
 void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
 							   const rc::VelocityCommand &current_velocity,
 							   int fps_val)
@@ -203,33 +237,95 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
 	const float sigma_xy_cm = std::sqrt(res.covariance(0,0) + res.covariance(1,1)) * 100.0f; // m to cm
 	const float sdf_median_cm = res.sdf_mse * 100.0f;  // Median SDF error in cm (already in meters)
 	const float innovation_cm = res.innovation_norm * 100.0f;  // Innovation norm in cm
+	const float cpu_usage = get_cpu_usage();
 
 	lcdNumber_fps->display(fps_val);
 	lcdNumber_loss->display(sdf_median_cm);  // Median SDF error in cm
 	lcdNumber_sigma->display(sigma_xy_cm);
 	lcdNumber_velocity->display(std::abs(current_velocity.adv_y));
 	lcdNumber_innov->display(innovation_cm);  // Innovation as health indicator
+	lcdNumber_cpu->display(static_cast<int>(cpu_usage));
+
+	// Color sigma based on absolute uncertainty values
+	// Green: < 5cm, Yellow: 5-10cm, Orange: 10-20cm, Red: > 20cm
+	QString sigma_color;
+	if (sigma_xy_cm < 5.0f)
+		sigma_color = "background-color: #90EE90;";  // Light green - very low uncertainty
+	else if (sigma_xy_cm < 10.0f)
+		sigma_color = "background-color: #FFFF00;";  // Yellow - moderate uncertainty
+	else if (sigma_xy_cm < 20.0f)
+		sigma_color = "background-color: #FFA500;";  // Orange - high uncertainty
+	else
+		sigma_color = "background-color: #FF6B6B;";  // Red - very high uncertainty
+	lcdNumber_sigma->setStyleSheet(sigma_color);
 
 	// Color the innovation display based on health
 	// Green: < 5cm, Yellow: 5-15cm, Red: > 15cm
-	QString color;
+	QString innov_color;
 	if (innovation_cm < 5.0f)
-		color = "background-color: #90EE90;";  // Light green
+		innov_color = "background-color: #90EE90;";  // Light green
 	else if (innovation_cm < 15.0f)
-		color = "background-color: #FFFF00;";  // Yellow
+		innov_color = "background-color: #FFFF00;";  // Yellow
 	else
-		color = "background-color: #FF6B6B;";  // Light red
-	lcdNumber_innov->setStyleSheet(color);
+		innov_color = "background-color: #FF6B6B;";  // Light red
+	lcdNumber_innov->setStyleSheet(innov_color);
+
+	// Color CPU based on usage
+	QString cpu_color;
+	if (cpu_usage < 30.0f)
+		cpu_color = "background-color: #90EE90;";  // Light green
+	else if (cpu_usage < 60.0f)
+		cpu_color = "background-color: #FFFF00;";  // Yellow
+	else
+		cpu_color = "background-color: #FF6B6B;";  // Red
+	lcdNumber_cpu->setStyleSheet(cpu_color);
 }
 
-void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose)
+void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eigen::Matrix3f &covariance)
 {
-	// ============ Update robot visualization in the viewer using GT pose
+	// ============ Update robot visualization in the viewer
 	const float display_x = robot_pose.translation().x();
 	const float display_y = robot_pose.translation().y();
 	const float display_angle = std::atan2(robot_pose.linear()(1,0), robot_pose.linear()(0,0));
 	viewer->robot_poly()->setPos(display_x, display_y);
 	viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
+
+	// ============ Draw covariance ellipse (2D position uncertainty)
+	// Extract 2x2 position covariance submatrix
+	Eigen::Matrix2f pos_cov = covariance.block<2,2>(0,0);
+
+	// Compute eigenvalues and eigenvectors for ellipse axes
+	Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> solver(pos_cov);
+	Eigen::Vector2f eigenvalues = solver.eigenvalues();
+	Eigen::Matrix2f eigenvectors = solver.eigenvectors();
+
+	// Ellipse radii are sqrt(eigenvalues) * scale_factor (2.4477 for 95% confidence)
+	// Use larger scale to make it more visible
+	constexpr float confidence_scale = 3.0f;  // ~99% confidence, more visible
+	const float radius_x = std::sqrt(std::max(0.001f, eigenvalues(0))) * confidence_scale;
+	const float radius_y = std::sqrt(std::max(0.001f, eigenvalues(1))) * confidence_scale;
+
+	// Ellipse rotation angle (from eigenvectors)
+	const float ellipse_angle = std::atan2(eigenvectors(1,0), eigenvectors(0,0));
+
+	// Create or update the ellipse item
+	if (cov_ellipse_item_ == nullptr)
+	{
+		cov_ellipse_item_ = viewer->scene.addEllipse(
+			-radius_x, -radius_y, 2*radius_x, 2*radius_y,
+			QPen(QColor(255, 50, 50), 0.03),       // Bright red outline, thicker
+			QBrush(QColor(255, 100, 100, 80))      // Semi-transparent red fill
+		);
+		cov_ellipse_item_->setZValue(100);  // Well above robot and lidar points
+	}
+	else
+	{
+		cov_ellipse_item_->setRect(-radius_x, -radius_y, 2*radius_x, 2*radius_y);
+	}
+
+	// Position and rotate the ellipse to match robot pose
+	cov_ellipse_item_->setPos(display_x, display_y);
+	cov_ellipse_item_->setRotation(qRadiansToDegrees(ellipse_angle));
 }
 
 void SpecificWorker::read_lidar()
