@@ -59,6 +59,9 @@ namespace rc
 class Model : public torch::nn::Module
 {
     public:
+        // Device for tensor operations (CPU or CUDA)
+        torch::Device device_ = torch::kCPU;
+
         // Room parameters are fixed for now
         torch::Tensor half_extents;  // [half_width, half_length] (no grad) - for box mode
         torch::Tensor polygon_vertices;  // [N, 2] polygon vertices in room frame (no grad)
@@ -79,6 +82,12 @@ class Model : public torch::nn::Module
         torch::Tensor prev_cov;
         std::optional<Eigen::Affine2f> robot_prev_pose;
 
+        // Set the device for all tensors
+        void set_device(torch::Device device)
+        {
+            device_ = device;
+        }
+
         void init_from_state(float width, float length, float x, float y, float phi, float wall_height)
         {
             use_polygon = false;
@@ -87,17 +96,23 @@ class Model : public torch::nn::Module
             half_height = wall_height * 0.5f;
 
             // fixed room size
-            half_extents = torch::tensor({half_w, half_l}, torch::kFloat32);
+            half_extents = torch::tensor({half_w, half_l}, torch::TensorOptions().dtype(torch::kFloat32).device(device_));
 
             // optimized robot pose
-            robot_pos = torch::tensor({x, y}, torch::requires_grad(true));
-            robot_theta = torch::tensor({phi}, torch::requires_grad(true));
+            robot_pos = torch::tensor({x, y}, torch::TensorOptions().dtype(torch::kFloat32).device(device_).requires_grad(true));
+            robot_theta = torch::tensor({phi}, torch::TensorOptions().dtype(torch::kFloat32).device(device_).requires_grad(true));
 
             register_parameter("robot_pos", robot_pos);
             register_parameter("robot_theta", robot_theta);
 
             init_common();
         }
+
+        // Pre-computed segment data for faster SDF (computed once in init_from_polygon)
+        torch::Tensor seg_a_;      // [num_segs, 2] segment start points
+        torch::Tensor seg_b_;      // [num_segs, 2] segment end points
+        torch::Tensor seg_ab_;     // [num_segs, 2] segment vectors (b - a)
+        torch::Tensor seg_ab_sq_;  // [num_segs] squared length of each segment
 
         void init_from_polygon(const std::vector<Eigen::Vector2f>& vertices, float x, float y, float phi, float wall_height)
         {
@@ -113,7 +128,16 @@ class Model : public torch::nn::Module
                 verts_flat.push_back(v.y());
             }
             polygon_vertices = torch::from_blob(verts_flat.data(),
-                {static_cast<long>(vertices.size()), 2}, torch::kFloat32).clone();
+                {static_cast<long>(vertices.size()), 2}, torch::kFloat32).clone().to(device_);
+
+            // Pre-compute segment data for faster SDF
+            const int64_t num_verts = polygon_vertices.size(0);
+            auto indices_a = torch::arange(num_verts, torch::TensorOptions().dtype(torch::kLong).device(device_));
+            auto indices_b = (indices_a + 1) % num_verts;
+            seg_a_ = polygon_vertices.index_select(0, indices_a).contiguous();
+            seg_b_ = polygon_vertices.index_select(0, indices_b).contiguous();
+            seg_ab_ = (seg_b_ - seg_a_).contiguous();
+            seg_ab_sq_ = torch::sum(seg_ab_ * seg_ab_, /*dim=*/1).contiguous();
 
             // Compute bounding box for half_extents (for compatibility)
             float min_x = vertices[0].x(), max_x = vertices[0].x();
@@ -123,11 +147,12 @@ class Model : public torch::nn::Module
                 min_x = std::min(min_x, v.x()); max_x = std::max(max_x, v.x());
                 min_y = std::min(min_y, v.y()); max_y = std::max(max_y, v.y());
             }
-            half_extents = torch::tensor({(max_x - min_x) / 2.f, (max_y - min_y) / 2.f}, torch::kFloat32);
+            half_extents = torch::tensor({(max_x - min_x) / 2.f, (max_y - min_y) / 2.f},
+                torch::TensorOptions().dtype(torch::kFloat32).device(device_));
 
             // optimized robot pose
-            robot_pos = torch::tensor({x, y}, torch::requires_grad(true));
-            robot_theta = torch::tensor({phi}, torch::requires_grad(true));
+            robot_pos = torch::tensor({x, y}, torch::TensorOptions().dtype(torch::kFloat32).device(device_).requires_grad(true));
+            robot_theta = torch::tensor({phi}, torch::TensorOptions().dtype(torch::kFloat32).device(device_).requires_grad(true));
 
             register_parameter("robot_pos", robot_pos);
             register_parameter("robot_theta", robot_theta);
@@ -139,13 +164,13 @@ class Model : public torch::nn::Module
         void init_common()
         {
             // Initialize prediction tensors (detached from graph)
-            predicted_pos = torch::zeros({2}, torch::kFloat32);
-            predicted_theta = torch::zeros({1}, torch::kFloat32);
-            prediction_precision_matrix = torch::eye(3, torch::kFloat32);
+            predicted_pos = torch::zeros({2}, torch::TensorOptions().dtype(torch::kFloat32).device(device_));
+            predicted_theta = torch::zeros({1}, torch::TensorOptions().dtype(torch::kFloat32).device(device_));
+            prediction_precision_matrix = torch::eye(3, torch::TensorOptions().dtype(torch::kFloat32).device(device_));
             has_prediction = false;
 
             // Initialize covariance for EKF prediction (moderate initial uncertainty)
-            prev_cov = 0.1f * torch::eye(3, torch::kFloat32);
+            prev_cov = 0.1f * torch::eye(3, torch::TensorOptions().dtype(torch::kFloat32).device(device_));
 
             // Initialize previous pose
             robot_prev_pose = std::nullopt;  // Will be set after first update
@@ -154,15 +179,16 @@ class Model : public torch::nn::Module
     public:
         void set_prediction(const Eigen::Vector2f &pred_pos, float pred_theta, const Eigen::Matrix3f &precision)
         {
-             predicted_pos = torch::tensor({pred_pos.x(), pred_pos.y()}, torch::kFloat32);
-             predicted_theta = torch::tensor({pred_theta}, torch::kFloat32);
+             predicted_pos = torch::tensor({pred_pos.x(), pred_pos.y()},
+                 torch::TensorOptions().dtype(torch::kFloat32).device(device_));
+             predicted_theta = torch::tensor({pred_theta},
+                 torch::TensorOptions().dtype(torch::kFloat32).device(device_));
 
              // Convert Eigen Matrix to Tensor
-             auto options = torch::TensorOptions().dtype(torch::kFloat32);
              prediction_precision_matrix = torch::from_blob(
                  const_cast<float*>(precision.data()),
                  {3, 3},
-                 options).clone(); // Clone to own memory
+                 torch::kFloat32).clone().to(device_);
 
              has_prediction = true;
         }
@@ -214,17 +240,26 @@ class Model : public torch::nn::Module
         torch::Tensor sdf(const torch::Tensor &points_robot) const
         {
             // Transform points from robot frame to room frame
+            // All operations must be on the same device as input points
+            const auto device = points_robot.device();
             const auto pxy = points_robot.index({torch::indexing::Slice(), torch::indexing::Slice(0,2)});
 
-            const auto c = torch::cos(robot_theta);
-            const auto s = torch::sin(robot_theta);
-            const auto rot = torch::stack({
-                torch::stack({c.squeeze(), -s.squeeze()}),
-                torch::stack({s.squeeze(),  c.squeeze()})
-            });
+            // Ensure robot_theta and robot_pos are on the same device as points
+            const auto theta = robot_theta.to(device);
+            const auto pos = robot_pos.to(device);
+
+            const auto c = torch::cos(theta);
+            const auto s = torch::sin(theta);
+
+            // Build rotation matrix on the same device
+            auto rot = torch::zeros({2, 2}, pxy.options());
+            rot[0][0] = c.squeeze();
+            rot[0][1] = -s.squeeze();
+            rot[1][0] = s.squeeze();
+            rot[1][1] = c.squeeze();
 
             // Map points to room frame: p_room = R(phi) * p_robot + t
-            const auto points_room_xy = torch::matmul(pxy, rot.transpose(0,1)) + robot_pos;
+            const auto points_room_xy = torch::matmul(pxy, rot.transpose(0,1)) + pos;
 
             if (use_polygon)
             {
@@ -239,11 +274,13 @@ class Model : public torch::nn::Module
     private:
         torch::Tensor sdf_box(const torch::Tensor& points_robot, const torch::Tensor& points_room_xy) const
         {
+            const auto device = points_room_xy.device();
             const auto pz = points_robot.index({torch::indexing::Slice(), 2}).reshape({-1,1});
-            const auto points_room = torch::cat({points_room_xy, pz}, 1);
+            const auto points_room = torch::cat({points_room_xy, pz.to(device)}, 1);
 
             const auto hz = torch::full({1}, half_height, points_room.options());
-            const auto half_sizes = torch::cat({half_extents.to(points_room.options()), hz}, 0);
+            const auto half_ext = half_extents.to(device);
+            const auto half_sizes = torch::cat({half_ext, hz}, 0);
 
             const auto abs_points = torch::abs(points_room);
             const auto d = abs_points - half_sizes;
@@ -256,36 +293,59 @@ class Model : public torch::nn::Module
 
         torch::Tensor sdf_polygon(const torch::Tensor& points_room_xy) const
         {
-            // Compute minimum distance to any edge of the polygon
-            // For each point, find distance to all segments and take minimum
+            // OPTIMIZED FOR CPU: Process segment by segment to avoid large intermediate tensors
+            // This keeps autograd working while being memory-efficient
+
             const int64_t num_points = points_room_xy.size(0);
-            const int64_t num_vertices = polygon_vertices.size(0);
+            const int64_t num_segs = seg_a_.size(0);
+
+            // Ensure segment data is on the same device as points
+            const auto seg_a = seg_a_.to(points_room_xy.device());
+            const auto seg_ab = seg_ab_.to(points_room_xy.device());
+            const auto seg_ab_sq = seg_ab_sq_.to(points_room_xy.device());
 
             // Initialize with large distance
             auto min_dist_sq = torch::full({num_points}, 1e10f, points_room_xy.options());
 
-            // Loop through polygon edges
-            for (int64_t i = 0; i < num_vertices; ++i)
+            // Process each segment - keeps tensors small and autograd intact
+            for (int64_t i = 0; i < num_segs; ++i)
             {
-                const int64_t j = (i + 1) % num_vertices;
-                const auto a = polygon_vertices[i];  // [2]
-                const auto b = polygon_vertices[j];  // [2]
+                const auto a = seg_a[i];      // [2]
+                const auto ab = seg_ab[i];    // [2]
+                const float ab_sq = seg_ab_sq[i].item<float>();
 
-                auto dist_sq = point_to_segment_distance_sq(points_room_xy, a, b);
+                // ap = points - a  [N, 2]
+                const auto ap = points_room_xy - a;
+
+                // t = clamp(dot(ap, ab) / |ab|², 0, 1)  [N]
+                auto t = torch::sum(ap * ab, /*dim=*/1) / (ab_sq + 1e-8f);
+                t = torch::clamp(t, 0.0f, 1.0f);
+
+                // closest = a + t * ab  [N, 2]
+                const auto closest = a + t.unsqueeze(1) * ab;
+
+                // dist² = |points - closest|²  [N]
+                const auto diff = points_room_xy - closest;
+                const auto dist_sq = torch::sum(diff * diff, /*dim=*/1);
+
+                // Update minimum
                 min_dist_sq = torch::minimum(min_dist_sq, dist_sq);
             }
 
-            // Return distance (sqrt of squared distance)
-            // Adding small epsilon for numerical stability in backward pass
+            // Return sqrt with epsilon for numerical stability
             return torch::sqrt(min_dist_sq + 1e-8f);
         }
 
     public:
         Eigen::Matrix<float,5,1> get_state() const
         {
-            const auto ext = half_extents.accessor<float,1>();
-            const auto pos = robot_pos.accessor<float,1>();
-            const auto th  = robot_theta.accessor<float,1>();
+            // Must convert to CPU for accessor
+            auto ext_cpu = half_extents.to(torch::kCPU);
+            auto pos_cpu = robot_pos.to(torch::kCPU);
+            auto th_cpu  = robot_theta.to(torch::kCPU);
+            const auto ext = ext_cpu.accessor<float,1>();
+            const auto pos = pos_cpu.accessor<float,1>();
+            const auto th  = th_cpu.accessor<float,1>();
             Eigen::Matrix<float,5,1> s;
             s << 2.f*ext[0], 2.f*ext[1], pos[0], pos[1], th[0];
             return s;
@@ -302,12 +362,34 @@ class RoomConceptAI
 public:
     struct Params
     {
-        int num_iterations = 100;      // Increased for better convergence
-        float learning_rate = 0.05f;   // Increased for faster convergence
-        float min_loss_threshold = 1e-4f;
+        int num_iterations = 100;          // Balance between speed and convergence
+        float learning_rate_pos = 0.05f;  // Moderate LR for position
+        float learning_rate_rot = 0.01f; // Higher LR for rotation - more reactive
+        float min_loss_threshold = 0.1f;  // Early exit threshold
+
         float wall_thickness = 0.1f;
-        float wall_height = 2.4f;   // meters
+        float wall_height = 2.4f;        // meters
+        int max_lidar_points = 200;      // Subsample for speed
+        int static_iterations = 10;      // Fewer iterations when stationary
+        float pose_smoothing_base = 0.3f;     // More aggressive smoothing
+        float pose_smoothing_max = 0.6f;      // Higher max smoothing
+
+        // Adaptive rotation LR based on jitter
+        float jitter_threshold_low = 0.002f;   // ~0.1° - below this, use full LR
+        float jitter_threshold_high = 0.02f;   // ~1.1° - above this, use minimum LR
+        float lr_rot_min_scale = 0.3f;         // Don't reduce LR too much
+
+        // GPU/CPU selection
+        bool use_cuda = true;  // Set to true to use GPU if available
     };
+
+    // Get the torch device based on params
+    torch::Device get_device() const
+    {
+        if (params.use_cuda && torch::cuda::is_available())
+            return torch::kCUDA;
+        return torch::kCPU;
+    }
 
     struct UpdateResult
     {
@@ -319,6 +401,11 @@ public:
         Eigen::Matrix3f covariance = Eigen::Matrix3f::Identity();
         float condition_number = 0.f;
         int iterations_used = 0;
+
+        // Innovation: difference between optimized pose and prediction (Kalman innovation)
+        // Low values indicate good prediction, high values indicate model mismatch
+        Eigen::Vector3f innovation = Eigen::Vector3f::Zero();  // [dx, dy, dtheta]
+        float innovation_norm = 0.f;  // ||innovation|| for quick health check
     };
 
     struct OdometryPrior
@@ -364,6 +451,20 @@ private:
    std::shared_ptr<Model> model_;
    std::int64_t last_lidar_timestamp = 0;
    UpdateResult last_update_result;
+   bool needs_orientation_search_ = true;  // Search for best orientation on first update
+
+   // Smoothed pose to reduce jitter
+   Eigen::Vector3f smoothed_pose_ = Eigen::Vector3f::Zero();  // [x, y, theta]
+   bool has_smoothed_pose_ = false;
+
+   // Jitter measurement for adaptive learning rate
+   static constexpr int JITTER_WINDOW_SIZE = 10;
+   std::vector<float> theta_history_;  // Last N theta values
+   float current_jitter_ = 0.0f;       // Current measured jitter (std dev)
+   float adaptive_lr_rot_ = 0.01f;     // Adaptive learning rate for rotation
+
+   void update_jitter_estimate(float theta);
+   float compute_adaptive_lr_rot() const;
 
     struct PredictionParameters
    {
@@ -391,8 +492,14 @@ private:
                                   const OdometryPrior &odometry_prior,
                                   bool is_localized);
 
+    // Find best initial orientation by testing multiple candidates (0°, 90°, 180°, 270°)
+    // Returns the orientation with lowest SDF loss
+    float find_best_initial_orientation(const std::vector<Eigen::Vector3f>& lidar_points,
+                                        float x, float y, float base_phi);
+
     // points to tensor [N,3] - overload for Eigen::Vector3f
-    static torch::Tensor points_to_tensor_xyz(const std::vector<Eigen::Vector3f> &points)
+    static torch::Tensor points_to_tensor_xyz(const std::vector<Eigen::Vector3f> &points,
+                                               torch::Device device = torch::kCPU)
     {
         std::vector<float> data;
         data.reserve(points.size()*3);
@@ -402,11 +509,12 @@ private:
             data.push_back(p.y());
             data.push_back(p.z());
         }
-        return torch::from_blob(data.data(), {static_cast<long>(points.size()), 3}, torch::kFloat32).clone();
+        return torch::from_blob(data.data(), {static_cast<long>(points.size()), 3}, torch::kFloat32).clone().to(device);
     }
 
     // points to tensor [N,3] - overload for RoboCompLidar3D::TPoints
-    static torch::Tensor points_to_tensor_xyz(const RoboCompLidar3D::TPoints &points)
+    static torch::Tensor points_to_tensor_xyz(const RoboCompLidar3D::TPoints &points,
+                                               torch::Device device = torch::kCPU)
     {
         std::vector<float> data;
         data.reserve(points.size()*3);
@@ -416,7 +524,7 @@ private:
             data.push_back(p.y);
             data.push_back(p.z);
         }
-        return torch::from_blob(data.data(), {static_cast<long>(points.size()), 3}, torch::kFloat32).clone();
+        return torch::from_blob(data.data(), {static_cast<long>(points.size()), 3}, torch::kFloat32).clone().to(device);
     }
 
     static torch::Tensor loss_sdf_mse(const torch::Tensor &points_xyz, const Model &m)

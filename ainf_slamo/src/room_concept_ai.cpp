@@ -4,11 +4,142 @@
 
 namespace rc
 {
+    // Static initialization: limit PyTorch threads to avoid CPU overload
+    static bool torch_threads_initialized = []() {
+        torch::set_num_threads(2);  // Limit to 2 threads
+        torch::set_num_interop_threads(1);
+        return true;
+    }();
+
+    float RoomConceptAI::find_best_initial_orientation(const std::vector<Eigen::Vector3f>& lidar_points,
+                                                        float x, float y, float base_phi)
+    {
+        if (model_ == nullptr || lidar_points.empty())
+            return base_phi;
+
+        // Test 4 orientations: base, +90°, +180°, +270° (covers symmetries)
+        const std::vector<float> angle_offsets = {0.0f, M_PI_2, M_PI, 3.0f * M_PI_2};
+
+        // Subsample points for faster evaluation
+        std::vector<Eigen::Vector3f> sample_points;
+        const int max_samples = 100;
+        const int stride = std::max(1, static_cast<int>(lidar_points.size()) / max_samples);
+        for (size_t i = 0; i < lidar_points.size(); i += stride)
+            sample_points.push_back(lidar_points[i]);
+
+        const torch::Tensor points_tensor = points_to_tensor_xyz(sample_points);
+
+        float best_phi = base_phi;
+        float best_loss = std::numeric_limits<float>::infinity();
+
+        for (float offset : angle_offsets)
+        {
+            float test_phi = base_phi + offset;
+            // Normalize to [-pi, pi]
+            while (test_phi > M_PI) test_phi -= 2.0f * M_PI;
+            while (test_phi < -M_PI) test_phi += 2.0f * M_PI;
+
+            // Temporarily set the pose
+            model_->robot_pos.data().copy_(torch::tensor({x, y},
+                torch::TensorOptions().device(get_device())));
+            model_->robot_theta.data().copy_(torch::tensor({test_phi},
+                torch::TensorOptions().device(get_device())));
+
+            // Evaluate SDF loss (without gradient)
+            torch::NoGradGuard no_grad;
+            const auto sdf_vals = model_->sdf(points_tensor);
+            const float loss = torch::mean(torch::square(sdf_vals)).item<float>();
+
+            qDebug() << "  Testing phi=" << qRadiansToDegrees(test_phi) << "° -> loss=" << loss;
+
+            if (loss < best_loss)
+            {
+                best_loss = loss;
+                best_phi = test_phi;
+            }
+        }
+
+        qInfo() << "Best initial orientation:" << qRadiansToDegrees(best_phi) << "° (loss=" << best_loss << ")";
+        return best_phi;
+    }
 
     void RoomConceptAI::set_initial_state(float width, float length, float x, float y, float phi)
     {
         model_ = std::make_shared<Model>();
+        model_->set_device(get_device());  // Set device before init
         model_->init_from_state(width, length, x, y, phi, params.wall_height);
+        needs_orientation_search_ = true;  // Will search for best orientation on first update
+        has_smoothed_pose_ = false;  // Reset smoothing
+        theta_history_.clear();  // Reset jitter history
+        current_jitter_ = 0.0f;
+        adaptive_lr_rot_ = params.learning_rate_rot;
+
+        qInfo() << "RoomConceptAI using device:" << (get_device() == torch::kCUDA ? "CUDA" : "CPU");
+    }
+
+    void RoomConceptAI::update_jitter_estimate(float theta)
+    {
+        // Add to history
+        theta_history_.push_back(theta);
+
+        // Keep only last N values
+        if (static_cast<int>(theta_history_.size()) > JITTER_WINDOW_SIZE)
+            theta_history_.erase(theta_history_.begin());
+
+        // Need at least 3 samples to estimate jitter
+        if (theta_history_.size() < 3)
+        {
+            current_jitter_ = 0.0f;
+            return;
+        }
+
+        // Compute jitter as standard deviation of angle differences (not angles themselves)
+        // This measures the "oscillation" not the absolute angle
+        std::vector<float> diffs;
+        diffs.reserve(theta_history_.size() - 1);
+        for (size_t i = 1; i < theta_history_.size(); ++i)
+        {
+            float diff = theta_history_[i] - theta_history_[i-1];
+            // Normalize angle difference
+            while (diff > M_PI) diff -= 2.0f * M_PI;
+            while (diff < -M_PI) diff += 2.0f * M_PI;
+            diffs.push_back(diff);
+        }
+
+        // Compute mean of absolute differences (simpler than std dev, captures oscillation)
+        float sum = 0.0f;
+        for (float d : diffs)
+            sum += std::abs(d);
+        current_jitter_ = sum / static_cast<float>(diffs.size());
+
+        // Debug output every 20 updates
+        static int debug_counter = 0;
+        if (++debug_counter % 40 == 0)
+        {
+            qDebug() << "[JITTER] theta:" << qRadiansToDegrees(current_jitter_) << "° "
+                     << "lr_rot:" << compute_adaptive_lr_rot()
+                     << "(scale:" << compute_adaptive_lr_rot() / params.learning_rate_rot << ")";
+        }
+    }
+
+    float RoomConceptAI::compute_adaptive_lr_rot() const
+    {
+        // Scale LR based on jitter:
+        // - Low jitter (< threshold_low): use full LR
+        // - High jitter (> threshold_high): use minimum LR
+        // - In between: linear interpolation
+
+        if (current_jitter_ <= params.jitter_threshold_low)
+            return params.learning_rate_rot;
+
+        if (current_jitter_ >= params.jitter_threshold_high)
+            return params.learning_rate_rot * params.lr_rot_min_scale;
+
+        // Linear interpolation
+        const float t = (current_jitter_ - params.jitter_threshold_low) /
+                        (params.jitter_threshold_high - params.jitter_threshold_low);
+        const float scale = 1.0f - t * (1.0f - params.lr_rot_min_scale);
+        return params.learning_rate_rot * scale;
     }
 
     void RoomConceptAI::set_polygon_room(const std::vector<Eigen::Vector2f>& polygon_vertices)
@@ -35,12 +166,18 @@ namespace rc
         }
 
         model_ = std::make_shared<Model>();
+        model_->set_device(get_device());  // Set device before init
         model_->init_from_polygon(polygon_vertices, init_x, init_y, init_phi, params.wall_height);
 
         // Reset state but keep covariance reasonable
         last_lidar_timestamp = 0;
         last_update_result = UpdateResult{};
         current_covariance = Eigen::Matrix3f::Identity() * 0.1f;
+        needs_orientation_search_ = true;  // Will search for best orientation on first update
+        has_smoothed_pose_ = false;  // Reset smoothing
+        theta_history_.clear();  // Reset jitter history
+        current_jitter_ = 0.0f;
+        adaptive_lr_rot_ = params.learning_rate_rot;
 
         qInfo() << "RoomConceptAI initialized with polygon room:" << polygon_vertices.size()
                 << "vertices. Robot at (" << init_x << "," << init_y << "," << init_phi << ")";
@@ -57,6 +194,18 @@ namespace rc
         if(model_ == nullptr)
             return res;
 
+        // ===== ORIENTATION SEARCH ON FIRST UPDATE =====
+        // Test multiple orientations (0°, 90°, 180°, 270°) to avoid symmetry traps
+        if (needs_orientation_search_)
+        {
+            const auto state = model_->get_state();
+            const float best_phi = find_best_initial_orientation(lidar.first, state[2], state[3], state[4]);
+            model_->robot_theta.data().copy_(torch::tensor({best_phi},
+                torch::TensorOptions().device(get_device())));
+            needs_orientation_search_ = false;
+            qInfo() << "Initial orientation search complete. Using phi=" << qRadiansToDegrees(best_phi) << "°";
+        }
+
         // ===== ODOMETRY PRIOR BETWEEN LIDAR MEASUREMENTS =====
         auto odometry_prior = compute_odometry_prior(velocity_history, lidar);
 
@@ -69,8 +218,9 @@ namespace rc
         // EKF predict: P_prior = F * P_prev * F^T + Q
         if (prediction.have_propagated && prediction.propagated_cov.defined())
         {
-            // Convert propagated covariance from torch tensor to Eigen
-            auto cov_acc = prediction.propagated_cov.accessor<float, 2>();
+            // Convert propagated covariance from torch tensor to Eigen (must be on CPU for accessor)
+            auto cov_cpu = prediction.propagated_cov.to(torch::kCPU);
+            auto cov_acc = cov_cpu.accessor<float, 2>();
             for (int i = 0; i < 3; i++)
                 for (int j = 0; j < 3; j++)
                     current_covariance(i, j) = cov_acc[i][j];
@@ -95,8 +245,10 @@ namespace rc
 
             // Initialize optimizer state with prediction (crucial for Active Inference)
             // Use data().copy_() to modify values without breaking the computation graph
-            model_->robot_pos.data().copy_(torch::tensor({pred_pos.x(), pred_pos.y()}));
-            model_->robot_theta.data().copy_(torch::tensor({pred_theta}));
+            model_->robot_pos.data().copy_(torch::tensor({pred_pos.x(), pred_pos.y()},
+                torch::TensorOptions().device(get_device())));
+            model_->robot_theta.data().copy_(torch::tensor({pred_theta},
+                torch::TensorOptions().device(get_device())));
 
             // Compute precision matrix (inverse of PROPAGATED covariance)
             Eigen::Matrix3f prior_precision = current_covariance.inverse();
@@ -106,31 +258,67 @@ namespace rc
         }
 
         // ===== MINIMISATION STEP (Minimize Variational Free Energy) =====
-        const torch::Tensor points_tensor = points_to_tensor_xyz(lidar.first);
-        const std::vector<torch::Tensor> optim_params = model_->optim_parameters();
-        torch::optim::Adam optimizer(optim_params, torch::optim::AdamOptions(params.learning_rate));
+        // Subsample lidar points for speed
+        const auto& all_points = lidar.first;
+        std::vector<Eigen::Vector3f> sampled_points;
+        if (static_cast<int>(all_points.size()) > params.max_lidar_points)
+        {
+            const int stride = static_cast<int>(all_points.size()) / params.max_lidar_points;
+            sampled_points.reserve(params.max_lidar_points);
+            for (size_t i = 0; i < all_points.size(); i += stride)
+                sampled_points.push_back(all_points[i]);
+        }
+        else
+        {
+            sampled_points = all_points;
+        }
+
+        const torch::Tensor points_tensor = points_to_tensor_xyz(sampled_points, get_device());
+
+        // Use different learning rates for position vs rotation
+        const float current_lr_rot = compute_adaptive_lr_rot();
+
+        std::vector<torch::optim::OptimizerParamGroup> param_groups;
+        param_groups.emplace_back(
+            std::vector<torch::Tensor>{model_->robot_pos},
+            std::make_unique<torch::optim::AdamOptions>(params.learning_rate_pos)
+        );
+        param_groups.emplace_back(
+            std::vector<torch::Tensor>{model_->robot_theta},
+            std::make_unique<torch::optim::AdamOptions>(current_lr_rot)
+        );
+        torch::optim::Adam optimizer(param_groups);
+
+        // Determine number of iterations
+        const int max_iters = params.num_iterations;
 
         float last_loss = std::numeric_limits<float>::infinity();
+        float prev_loss = std::numeric_limits<float>::infinity();
         int iterations = 0;
-        for(int i=0; i<params.num_iterations; ++i)
+        for(int i=0; i < max_iters; ++i)
         {
             optimizer.zero_grad();
             const torch::Tensor loss = loss_sdf_mse(points_tensor, *model_);
             loss.backward();
             optimizer.step();
 
+            prev_loss = last_loss;
             last_loss = loss.item<float>();
             iterations = i + 1;
+
+            // Early exit: absolute threshold or relative convergence
             if(last_loss < params.min_loss_threshold)
+                break;
+            // If loss changed by less than 1%, we've converged
+            if (i > 5 && std::abs(prev_loss - last_loss) < 0.01f * prev_loss)
                 break;
         }
 
         // ===== COVARIANCE UPDATE =====
         // Active Inference / EKF update: P_posterior = (P_prior^-1 + H_likelihood)^-1
-        // where H_likelihood is the Hessian of the observation loss
+        // Using diagonal Hessian approximation for efficiency (Gauss-Newton style)
         try {
-            // Compute Huber loss for Hessian calculation (consistent with optimization)
-            // Note: We use the same loss function as in optimization for consistency
+            // Compute gradients for diagonal Hessian approximation
             const torch::Tensor sdf_vals = model_->sdf(points_tensor);
             constexpr float huber_delta = 0.15f;
             const torch::Tensor likelihood_loss = torch::nn::functional::huber_loss(
@@ -139,40 +327,33 @@ namespace rc
                 torch::nn::functional::HuberLossFuncOptions().reduction(torch::kMean).delta(huber_delta)
             );
 
-            // Get parameters as vector
+            // Get parameters
             std::vector<torch::Tensor> params_list = model_->optim_parameters();
 
-            // Compute gradients (first order)
-            auto first_grads = torch::autograd::grad({likelihood_loss}, params_list,
-                                                     /*grad_outputs=*/{},
-                                                     /*retain_graph=*/true,
-                                                     /*create_graph=*/true);
+            // Compute first-order gradients
+            auto grads = torch::autograd::grad({likelihood_loss}, params_list,
+                                               /*grad_outputs=*/{},
+                                               /*retain_graph=*/false,
+                                               /*create_graph=*/false);
 
-            // Flatten gradients to vector [3]
-            torch::Tensor grad_flat = torch::cat({first_grads[0].flatten(), first_grads[1].flatten()}, 0);
+            // Diagonal Hessian approximation: H_ii ≈ (∂L/∂θ_i)² / L
+            // This is a Fisher Information approximation
+            torch::Tensor grad_flat = torch::cat({grads[0].flatten(), grads[1].flatten()}, 0);
+            float loss_val = likelihood_loss.item<float>();
 
-            // Compute Hessian matrix [3x3] via Jacobian of gradients
-            std::vector<torch::Tensor> hessian_rows;
-            for(int i = 0; i < 3; i++) {
-                auto grad_i = grad_flat[i];
-                auto second_grads = torch::autograd::grad({grad_i}, params_list,
-                                                          /*grad_outputs=*/{},
-                                                          /*retain_graph=*/true,
-                                                          /*create_graph=*/false);
-                torch::Tensor row = torch::cat({second_grads[0].flatten(), second_grads[1].flatten()}, 0);
-                hessian_rows.push_back(row);
+            // Compute diagonal Hessian approximation (must be on CPU for accessor)
+            Eigen::Matrix3f H_likelihood = Eigen::Matrix3f::Zero();
+            auto grad_cpu = grad_flat.to(torch::kCPU);
+            auto g_acc = grad_cpu.accessor<float, 1>();
+
+            // Use gradient magnitude as proxy for curvature
+            // Scale by number of points for proper normalization
+            float scale = static_cast<float>(points_tensor.size(0)) / (loss_val + 1e-6f);
+            for (int i = 0; i < 3; i++) {
+                H_likelihood(i, i) = std::abs(g_acc[i]) * scale + 1e-4f;  // Ensure positive
             }
-            torch::Tensor hessian_likelihood = torch::stack(hessian_rows, 0); // [3, 3]
-
-            // Convert Hessian to Eigen
-            Eigen::Matrix3f H_likelihood;
-            auto h_acc = hessian_likelihood.accessor<float, 2>();
-            for(int i = 0; i < 3; i++)
-                for(int j = 0; j < 3; j++)
-                    H_likelihood(i, j) = h_acc[i][j];
 
             // ===== BAYESIAN FUSION: P_posterior = (P_prior^-1 + H_likelihood)^-1 =====
-            // Get prior precision (inverse of propagated covariance)
             Eigen::Matrix3f prior_precision = current_covariance.inverse();
 
             // Posterior precision = prior precision + likelihood precision (Hessian)
@@ -213,13 +394,77 @@ namespace rc
         res.iterations_used = iterations;
         res.state = model_->get_state();
         {
-            const float x = res.state[2];
-            const float y = res.state[3];
-            const float phi = res.state[4];
+            float x = res.state[2];
+            float y = res.state[3];
+            float phi = res.state[4];
+
+            // ===== POSE SMOOTHING to reduce jitter =====
+            // Apply exponential moving average filter
+            // Smoothing factor adapts to jitter: more jitter = more smoothing
+            if (has_smoothed_pose_)
+            {
+                // Compute adaptive smoothing: more jitter = higher alpha (more smoothing)
+                float jitter_ratio = 0.0f;
+                if (current_jitter_ > params.jitter_threshold_low)
+                {
+                    jitter_ratio = std::min(1.0f,
+                        (current_jitter_ - params.jitter_threshold_low) /
+                        (params.jitter_threshold_high - params.jitter_threshold_low));
+                }
+                const float alpha = params.pose_smoothing_base +
+                                   jitter_ratio * (params.pose_smoothing_max - params.pose_smoothing_base);
+
+                x = alpha * smoothed_pose_[0] + (1.0f - alpha) * x;
+                y = alpha * smoothed_pose_[1] + (1.0f - alpha) * y;
+
+                // Smooth angle carefully (handle wrap-around)
+                float angle_diff = phi - smoothed_pose_[2];
+                while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;
+                while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;
+                phi = smoothed_pose_[2] + (1.0f - alpha) * angle_diff;
+                while (phi > M_PI) phi -= 2.0f * M_PI;
+                while (phi < -M_PI) phi += 2.0f * M_PI;
+            }
+
+            // Store smoothed pose for next iteration
+            smoothed_pose_ = Eigen::Vector3f(x, y, phi);
+            has_smoothed_pose_ = true;
+
+            // Update jitter estimate for adaptive LR (use raw phi before smoothing for accurate jitter measurement)
+            update_jitter_estimate(res.state[4]);
+
+            // Update model with smoothed values
+            model_->robot_pos.data().copy_(torch::tensor({x, y},
+                torch::TensorOptions().device(get_device())));
+            model_->robot_theta.data().copy_(torch::tensor({phi},
+                torch::TensorOptions().device(get_device())));
+
+            // Update result state with smoothed values
+            res.state[2] = x;
+            res.state[3] = y;
+            res.state[4] = phi;
+
             Eigen::Affine2f pose = Eigen::Affine2f::Identity();
             pose.translation() = Eigen::Vector2f{x, y};
             pose.linear() = Eigen::Rotation2Df(phi).toRotationMatrix();
             res.robot_pose = pose;
+
+            // ===== COMPUTE INNOVATION (Kalman residual) =====
+            // Innovation = optimized_state - predicted_state
+            if (model_->has_prediction)
+            {
+                res.innovation[0] = x - model_->predicted_pos[0].item<float>();
+                res.innovation[1] = y - model_->predicted_pos[1].item<float>();
+                float pred_theta = model_->predicted_theta[0].item<float>();
+                res.innovation[2] = phi - pred_theta;
+                // Normalize angle difference to [-pi, pi]
+                while (res.innovation[2] > M_PI) res.innovation[2] -= 2.0f * M_PI;
+                while (res.innovation[2] < -M_PI) res.innovation[2] += 2.0f * M_PI;
+
+                // Compute norm (position only for simplicity)
+                res.innovation_norm = std::sqrt(res.innovation[0]*res.innovation[0] +
+                                                res.innovation[1]*res.innovation[1]);
+            }
         }
 
         // ===== UPDATE MODEL STATE FOR NEXT ITERATION =====
@@ -227,11 +472,13 @@ namespace rc
         model_->robot_prev_pose = res.robot_pose;
 
         // Store current covariance as tensor for next prediction
-        model_->prev_cov = torch::zeros({3, 3}, torch::kFloat32);
-        auto cov_acc = model_->prev_cov.accessor<float, 2>();
+        // Create on CPU first for accessor, then move to device
+        auto cov_cpu = torch::zeros({3, 3}, torch::kFloat32);
+        auto cov_acc = cov_cpu.accessor<float, 2>();
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 3; j++)
                 cov_acc[i][j] = res.covariance(i, j);
+        model_->prev_cov = cov_cpu.to(get_device());
 
         // Reset prediction flag for next cycle
         model_->has_prediction = false;
@@ -278,7 +525,7 @@ namespace rc
 
         // Compute covariance
         Eigen::Matrix3f cov_eigen = compute_motion_covariance(prior);
-        prior.covariance = torch::eye(3, torch::kFloat32);
+        prior.covariance = torch::eye(3, torch::TensorOptions().dtype(torch::kFloat32).device(get_device()));
         prior.covariance[0][0] = cov_eigen(0, 0);
         prior.covariance[1][1] = cov_eigen(1, 1);
         prior.covariance[2][2] = cov_eigen(2, 2);
@@ -383,18 +630,20 @@ namespace rc
     {
         int dim = is_localized ? 3 : 5;  // 3 for localized [x,y,theta], 5 for full state [w,h,x,y,theta]
         PredictionState prediction;
+        const auto device = get_device();
 
         // Ensure prev_cov is properly initialized
         if (!room->prev_cov.defined() || room->prev_cov.numel() == 0)
         {
-            room->prev_cov = 0.1f * torch::eye(dim, torch::kFloat32);
+            room->prev_cov = 0.1f * torch::eye(dim, torch::TensorOptions().dtype(torch::kFloat32).device(device));
         }
 
         // Get current pose for Jacobian computation
         if (not room->robot_prev_pose.has_value())
         {
             // Fallback: simple additive noise
-            prediction.propagated_cov = room->prev_cov + prediction_params.NOISE_TRANS * prediction_params.NOISE_TRANS * torch::eye(dim, torch::kFloat32);
+            prediction.propagated_cov = room->prev_cov + prediction_params.NOISE_TRANS * prediction_params.NOISE_TRANS *
+                torch::eye(dim, torch::TensorOptions().dtype(torch::kFloat32).device(device));
             return prediction;
         }
 
@@ -416,7 +665,7 @@ namespace rc
         // ===== MOTION MODEL JACOBIAN =====
         // State: [x, y, theta] (for localized) or [w, h, x, y, theta] (for mapping)
 
-        torch::Tensor F = torch::eye(dim, torch::kFloat32);
+        torch::Tensor F = torch::eye(dim, torch::TensorOptions().dtype(torch::kFloat32).device(device));
 
         if (is_localized) {
             // Jacobian for robot pose only [x, y, theta]
@@ -450,7 +699,7 @@ namespace rc
         float base_rot_noise = 0.005f;  // 5 mrad base uncertainty
         float rot_noise = base_rot_noise + prediction_params.NOISE_ROT * std::abs(dtheta);
 
-        torch::Tensor Q = torch::zeros({dim, dim}, torch::kFloat32);
+        torch::Tensor Q = torch::zeros({dim, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
 
         if (is_localized) {
             // Build noise covariance in robot frame: Q = diag(lateral², forward², theta²)

@@ -159,12 +159,21 @@ class SpecificWorker : public GenericWorker
 	void draw_room_polygon();
 	void on_scene_clicked(QPointF pos);
 
+	// Layout save/load
+	void save_layout_to_file(const std::string& filename);
+	void load_layout_from_file(const std::string& filename);
+	void load_polygon_from_file(const std::string& filename);  // Only loads vertices, doesn't init room_ai
+
 private slots:
 	void slot_capture_room_toggled(bool checked);
+	void slot_save_layout();
+	void slot_load_layout();
 
 };
 
 #endif
+
+
 
 
 

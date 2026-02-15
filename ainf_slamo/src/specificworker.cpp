@@ -17,6 +17,10 @@
  *    along with RoboComp.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "specificworker.h"
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QFileDialog>
 
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
 {
@@ -62,6 +66,13 @@ void SpecificWorker::initialize()
 
     // Connect mouse clicks on the scene for polygon capture
     connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::on_scene_clicked);
+
+    // Connect save/load layout buttons
+    connect(pushButton_saveLayout, &QPushButton::clicked, this, &SpecificWorker::slot_save_layout);
+    connect(pushButton_loadLayout, &QPushButton::clicked, this, &SpecificWorker::slot_load_layout);
+
+    // Try to load default layout on startup (only loads vertices, doesn't init room_ai yet)
+    load_polygon_from_file("etc/room_layout.json");
 
     // Lidar thread is created
     read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
@@ -134,11 +145,22 @@ void SpecificWorker::initialize()
     Eigen::Rotation2Df R(init_phi);
     const Eigen::Vector2f init_xy = -(R * room_center_in_robot.cast<float>());
 
-    room_ai.set_initial_state(room_width, room_length, init_xy.x(), init_xy.y(), init_phi);
-
-    qInfo() << "RoomConceptAI init state [w,l,x,y,phi]="
+    // Initialize room_ai: use loaded polygon if available, otherwise use rectangle
+    if (!room_polygon_gt.empty())
+    {
+        // Use pre-loaded polygon from file
+        room_ai.set_polygon_room(room_polygon_gt);
+        draw_room_polygon();
+        qInfo() << "RoomConceptAI initialized with loaded polygon:" << room_polygon_gt.size() << "vertices";
+    }
+    else
+    {
+        // Use default rectangle
+        room_ai.set_initial_state(room_width, room_length, init_xy.x(), init_xy.y(), init_phi);
+        qInfo() << "RoomConceptAI init state [w,l,x,y,phi]="
             << room_width << room_length << init_xy.x() << init_xy.y() << init_phi
             << "  (room_center_in_robot=" << room_center_in_robot.x() << room_center_in_robot.y() << ")";
+    }
 
 	setPeriod("Compute", 50);
 }
@@ -153,7 +175,6 @@ void SpecificWorker::compute()
     if (not lidar_local_.has_value() or not robot_pose_gt_.has_value())
     { qWarning() << "No data from buffer_sync: robot has value?"; return; };
     const auto &lidar_local = lidar_local_.value().first;
-	const auto &lidar_local_timestamp = lidar_local_.value().second;
 
     if(room_ai.is_initialized())
     {
@@ -181,11 +202,24 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
 	// Update QLCDNumber displays
 	const float sigma_xy_cm = std::sqrt(res.covariance(0,0) + res.covariance(1,1)) * 100.0f; // m to cm
 	const float sdf_median_cm = res.sdf_mse * 100.0f;  // Median SDF error in cm (already in meters)
+	const float innovation_cm = res.innovation_norm * 100.0f;  // Innovation norm in cm
 
 	lcdNumber_fps->display(fps_val);
 	lcdNumber_loss->display(sdf_median_cm);  // Median SDF error in cm
 	lcdNumber_sigma->display(sigma_xy_cm);
 	lcdNumber_velocity->display(std::abs(current_velocity.adv_y));
+	lcdNumber_innov->display(innovation_cm);  // Innovation as health indicator
+
+	// Color the innovation display based on health
+	// Green: < 5cm, Yellow: 5-15cm, Red: > 15cm
+	QString color;
+	if (innovation_cm < 5.0f)
+		color = "background-color: #90EE90;";  // Light green
+	else if (innovation_cm < 15.0f)
+		color = "background-color: #FFFF00;";  // Yellow
+	else
+		color = "background-color: #FF6B6B;";  // Light red
+	lcdNumber_innov->setStyleSheet(color);
 }
 
 void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose)
@@ -550,6 +584,149 @@ void SpecificWorker::draw_room_polygon()
     QPen pen(capturing_room_polygon ? Qt::yellow : Qt::magenta, 0.08);
     polygon_item = viewer->scene.addPolygon(poly, pen, QBrush(Qt::NoBrush));
     polygon_item->setZValue(8);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+/// Layout Save/Load
+////////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::slot_save_layout()
+{
+    if (room_polygon_gt.empty())
+    {
+        qWarning() << "No polygon to save - capture a room first";
+        return;
+    }
+
+    // Use native dialog with explicit options to avoid freezing
+    QString filename = QFileDialog::getSaveFileName(this,
+        "Save Room Layout",
+        "etc/room_layout.json",
+        "JSON Files (*.json)",
+        nullptr,
+        QFileDialog::DontUseNativeDialog);
+
+    if (filename.isEmpty())
+        return;
+
+    save_layout_to_file(filename.toStdString());
+}
+
+void SpecificWorker::slot_load_layout()
+{
+    QString filename = QFileDialog::getOpenFileName(this,
+        "Load Room Layout",
+        "etc/",
+        "JSON Files (*.json)",
+        nullptr,
+        QFileDialog::DontUseNativeDialog);
+
+    if (filename.isEmpty())
+        return;
+
+    load_layout_from_file(filename.toStdString());
+}
+
+void SpecificWorker::save_layout_to_file(const std::string& filename)
+{
+    if (room_polygon_gt.empty())
+    {
+        qWarning() << "No polygon to save";
+        return;
+    }
+
+    QJsonObject root;
+    root["type"] = "polygon";
+    root["version"] = 1;
+
+    QJsonArray vertices;
+    for (const auto& v : room_polygon_gt)
+    {
+        QJsonObject vertex;
+        vertex["x"] = static_cast<double>(v.x());
+        vertex["y"] = static_cast<double>(v.y());
+        vertices.append(vertex);
+    }
+    root["vertices"] = vertices;
+
+    // Save room dimensions for reference
+    root["room_width"] = static_cast<double>(room_rect_gt.width());
+    root["room_height"] = static_cast<double>(room_rect_gt.height());
+
+    QJsonDocument doc(root);
+    QFile file(QString::fromStdString(filename));
+    if (file.open(QIODevice::WriteOnly))
+    {
+        file.write(doc.toJson());
+        file.close();
+        qInfo() << "Layout saved to" << QString::fromStdString(filename);
+    }
+    else
+    {
+        qWarning() << "Failed to save layout to" << QString::fromStdString(filename);
+    }
+}
+
+void SpecificWorker::load_layout_from_file(const std::string& filename)
+{
+    load_polygon_from_file(filename);
+
+    // If polygon was loaded, initialize room_ai
+    if (room_polygon_gt.size() >= 3)
+    {
+        room_ai.set_polygon_room(room_polygon_gt);
+        draw_room_polygon();
+        qInfo() << "Layout loaded and room_ai initialized with" << room_polygon_gt.size() << "vertices";
+    }
+}
+
+void SpecificWorker::load_polygon_from_file(const std::string& filename)
+{
+    QFile file(QString::fromStdString(filename));
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        qInfo() << "No default layout file found at" << QString::fromStdString(filename);
+        return;
+    }
+
+    QByteArray data = file.readAll();
+    file.close();
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError)
+    {
+        qWarning() << "Failed to parse layout file:" << parseError.errorString();
+        return;
+    }
+
+    QJsonObject root = doc.object();
+    if (root["type"].toString() != "polygon")
+    {
+        qWarning() << "Unknown layout type";
+        return;
+    }
+
+    // Clear previous polygon
+    room_polygon_gt.clear();
+    for (auto* item : polygon_vertex_items)
+    {
+        viewer->scene.removeItem(item);
+        delete item;
+    }
+    polygon_vertex_items.clear();
+
+    // Load vertices
+    QJsonArray vertices = root["vertices"].toArray();
+    for (const auto& v : vertices)
+    {
+        QJsonObject vertex = v.toObject();
+        float x = static_cast<float>(vertex["x"].toDouble());
+        float y = static_cast<float>(vertex["y"].toDouble());
+        room_polygon_gt.emplace_back(x, y);
+    }
+
+    qInfo() << "Polygon loaded from" << QString::fromStdString(filename)
+            << "with" << room_polygon_gt.size() << "vertices";
 }
 
 
