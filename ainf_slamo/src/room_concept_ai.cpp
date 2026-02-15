@@ -70,77 +70,12 @@ namespace rc
         model_->init_from_state(width, length, x, y, phi, params.wall_height);
         needs_orientation_search_ = true;  // Will search for best orientation on first update
         has_smoothed_pose_ = false;  // Reset smoothing
-        theta_history_.clear();  // Reset jitter history
-        current_jitter_ = 0.0f;
-        adaptive_lr_rot_ = params.learning_rate_rot;
+        tracking_step_count_ = 0;  // Reset early exit tracking
+        prediction_early_exits_ = 0;
 
         qInfo() << "RoomConceptAI using device:" << (get_device() == torch::kCUDA ? "CUDA" : "CPU");
     }
 
-    void RoomConceptAI::update_jitter_estimate(float theta)
-    {
-        // Add to history
-        theta_history_.push_back(theta);
-
-        // Keep only last N values
-        if (static_cast<int>(theta_history_.size()) > JITTER_WINDOW_SIZE)
-            theta_history_.erase(theta_history_.begin());
-
-        // Need at least 3 samples to estimate jitter
-        if (theta_history_.size() < 3)
-        {
-            current_jitter_ = 0.0f;
-            return;
-        }
-
-        // Compute jitter as standard deviation of angle differences (not angles themselves)
-        // This measures the "oscillation" not the absolute angle
-        std::vector<float> diffs;
-        diffs.reserve(theta_history_.size() - 1);
-        for (size_t i = 1; i < theta_history_.size(); ++i)
-        {
-            float diff = theta_history_[i] - theta_history_[i-1];
-            // Normalize angle difference
-            while (diff > M_PI) diff -= 2.0f * M_PI;
-            while (diff < -M_PI) diff += 2.0f * M_PI;
-            diffs.push_back(diff);
-        }
-
-        // Compute mean of absolute differences (simpler than std dev, captures oscillation)
-        float sum = 0.0f;
-        for (float d : diffs)
-            sum += std::abs(d);
-        current_jitter_ = sum / static_cast<float>(diffs.size());
-
-        // Debug output every 20 updates
-        static int debug_counter = 0;
-        if (++debug_counter % 40 == 0)
-        {
-            qDebug() << "[JITTER] theta:" << qRadiansToDegrees(current_jitter_) << "° "
-                     << "lr_rot:" << compute_adaptive_lr_rot()
-                     << "(scale:" << compute_adaptive_lr_rot() / params.learning_rate_rot << ")";
-        }
-    }
-
-    float RoomConceptAI::compute_adaptive_lr_rot() const
-    {
-        // Scale LR based on jitter:
-        // - Low jitter (< threshold_low): use full LR
-        // - High jitter (> threshold_high): use minimum LR
-        // - In between: linear interpolation
-
-        if (current_jitter_ <= params.jitter_threshold_low)
-            return params.learning_rate_rot;
-
-        if (current_jitter_ >= params.jitter_threshold_high)
-            return params.learning_rate_rot * params.lr_rot_min_scale;
-
-        // Linear interpolation
-        const float t = (current_jitter_ - params.jitter_threshold_low) /
-                        (params.jitter_threshold_high - params.jitter_threshold_low);
-        const float scale = 1.0f - t * (1.0f - params.lr_rot_min_scale);
-        return params.learning_rate_rot * scale;
-    }
 
     void RoomConceptAI::set_polygon_room(const std::vector<Eigen::Vector2f>& polygon_vertices)
     {
@@ -175,9 +110,8 @@ namespace rc
         current_covariance = Eigen::Matrix3f::Identity() * 0.1f;
         needs_orientation_search_ = true;  // Will search for best orientation on first update
         has_smoothed_pose_ = false;  // Reset smoothing
-        theta_history_.clear();  // Reset jitter history
-        current_jitter_ = 0.0f;
-        adaptive_lr_rot_ = params.learning_rate_rot;
+        tracking_step_count_ = 0;  // Reset early exit tracking
+        prediction_early_exits_ = 0;
 
         qInfo() << "RoomConceptAI initialized with polygon room:" << polygon_vertices.size()
                 << "vertices. Robot at (" << init_x << "," << init_y << "," << init_phi << ")";
@@ -275,9 +209,100 @@ namespace rc
 
         const torch::Tensor points_tensor = points_to_tensor_xyz(sampled_points, get_device());
 
-        // Use different learning rates for position vs rotation
-        const float current_lr_rot = compute_adaptive_lr_rot();
+        // Increment tracking step counter
+        tracking_step_count_++;
 
+        // ===== PREDICTION-BASED EARLY EXIT =====
+        // If the predicted pose already has low SDF error, skip optimization entirely.
+        // This saves significant CPU when the robot moves smoothly.
+        if (params.prediction_early_exit &&
+            last_update_result.ok &&
+            odometry_prior.valid &&
+            tracking_step_count_ > params.min_tracking_steps)
+        {
+            // Check pose uncertainty (trace of position covariance)
+            const float pose_uncertainty = current_covariance(0,0) + current_covariance(1,1);
+
+            if (pose_uncertainty < params.max_uncertainty_for_early_exit)
+            {
+                // Evaluate SDF at predicted pose (no gradients needed)
+                torch::NoGradGuard no_grad;
+                const auto sdf_pred = model_->sdf(points_tensor);
+                const float mean_sdf_pred = torch::mean(torch::abs(sdf_pred)).item<float>();
+
+                // Early exit threshold
+                const float prediction_trust_threshold = params.sigma_sdf * params.prediction_trust_factor;
+
+                if (mean_sdf_pred < prediction_trust_threshold)
+                {
+                    // Prediction is good enough - skip optimization entirely
+                    prediction_early_exits_++;
+
+                    res.ok = true;
+                    res.final_loss = mean_sdf_pred;
+                    res.sdf_mse = mean_sdf_pred;
+                    res.iterations_used = 0;
+                    res.state = model_->get_state();
+
+                    // Build pose from predicted values (already set in model)
+                    const float x = res.state[2];
+                    const float y = res.state[3];
+                    const float phi = res.state[4];
+
+                    // Apply smoothing even for early exit
+                    float smoothed_x = x, smoothed_y = y, smoothed_phi = phi;
+                    if (has_smoothed_pose_)
+                    {
+                        const float alpha = params.pose_smoothing;
+                        smoothed_x = alpha * smoothed_pose_[0] + (1.0f - alpha) * x;
+                        smoothed_y = alpha * smoothed_pose_[1] + (1.0f - alpha) * y;
+                        float angle_diff = phi - smoothed_pose_[2];
+                        while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;
+                        while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;
+                        smoothed_phi = smoothed_pose_[2] + (1.0f - alpha) * angle_diff;
+                    }
+                    smoothed_pose_ = Eigen::Vector3f(smoothed_x, smoothed_y, smoothed_phi);
+                    has_smoothed_pose_ = true;
+
+                    res.state[2] = smoothed_x;
+                    res.state[3] = smoothed_y;
+                    res.state[4] = smoothed_phi;
+
+                    Eigen::Affine2f pose = Eigen::Affine2f::Identity();
+                    pose.translation() = Eigen::Vector2f{smoothed_x, smoothed_y};
+                    pose.linear() = Eigen::Rotation2Df(smoothed_phi).toRotationMatrix();
+                    res.robot_pose = pose;
+
+                    // Propagate covariance (increase uncertainty since we skipped optimization)
+                    res.covariance = current_covariance;
+                    res.innovation = Eigen::Vector3f::Zero();  // No correction applied
+                    res.innovation_norm = 0.0f;
+
+                    // Update model with smoothed pose
+                    model_->robot_pos.data().copy_(torch::tensor({smoothed_x, smoothed_y},
+                        torch::TensorOptions().device(get_device())));
+                    model_->robot_theta.data().copy_(torch::tensor({smoothed_phi},
+                        torch::TensorOptions().device(get_device())));
+                    model_->robot_prev_pose = res.robot_pose;
+                    model_->has_prediction = false;
+
+                    last_update_result = res;
+                    last_lidar_timestamp = lidar.second;
+
+                    // Debug: log early exits periodically
+                    if (prediction_early_exits_ % 50 == 0)
+                    {
+                        qDebug() << "[EARLY_EXIT] Skipped optimization. SDF:" << mean_sdf_pred
+                                 << "m, threshold:" << prediction_trust_threshold
+                                 << "m, total early exits:" << prediction_early_exits_;
+                    }
+
+                    return res;
+                }
+            }
+        }
+
+        // Use different learning rates for position vs rotation
         std::vector<torch::optim::OptimizerParamGroup> param_groups;
         param_groups.emplace_back(
             std::vector<torch::Tensor>{model_->robot_pos},
@@ -285,7 +310,7 @@ namespace rc
         );
         param_groups.emplace_back(
             std::vector<torch::Tensor>{model_->robot_theta},
-            std::make_unique<torch::optim::AdamOptions>(current_lr_rot)
+            std::make_unique<torch::optim::AdamOptions>(params.learning_rate_rot)
         );
         torch::optim::Adam optimizer(param_groups);
 
@@ -400,19 +425,9 @@ namespace rc
 
             // ===== POSE SMOOTHING to reduce jitter =====
             // Apply exponential moving average filter
-            // Smoothing factor adapts to jitter: more jitter = more smoothing
             if (has_smoothed_pose_)
             {
-                // Compute adaptive smoothing: more jitter = higher alpha (more smoothing)
-                float jitter_ratio = 0.0f;
-                if (current_jitter_ > params.jitter_threshold_low)
-                {
-                    jitter_ratio = std::min(1.0f,
-                        (current_jitter_ - params.jitter_threshold_low) /
-                        (params.jitter_threshold_high - params.jitter_threshold_low));
-                }
-                const float alpha = params.pose_smoothing_base +
-                                   jitter_ratio * (params.pose_smoothing_max - params.pose_smoothing_base);
+                const float alpha = params.pose_smoothing;
 
                 x = alpha * smoothed_pose_[0] + (1.0f - alpha) * x;
                 y = alpha * smoothed_pose_[1] + (1.0f - alpha) * y;
@@ -430,8 +445,6 @@ namespace rc
             smoothed_pose_ = Eigen::Vector3f(x, y, phi);
             has_smoothed_pose_ = true;
 
-            // Update jitter estimate for adaptive LR (use raw phi before smoothing for accurate jitter measurement)
-            update_jitter_estimate(res.state[4]);
 
             // Update model with smoothed values
             model_->robot_pos.data().copy_(torch::tensor({x, y},

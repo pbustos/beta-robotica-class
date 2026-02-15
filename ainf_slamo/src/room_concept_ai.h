@@ -61,25 +61,29 @@ class RoomConceptAI
 public:
     struct Params
     {
-        int num_iterations = 100;          // Balance between speed and convergence
+        int num_iterations = 50;          // Balance between speed and convergence
         float learning_rate_pos = 0.05f;  // Moderate LR for position
-        float learning_rate_rot = 0.01f; // Higher LR for rotation - more reactive
+        float learning_rate_rot = 0.01f;  // LR for rotation
         float min_loss_threshold = 0.1f;  // Early exit threshold
 
         float wall_thickness = 0.1f;
         float wall_height = 2.4f;        // meters
-        int max_lidar_points = 200;      // Subsample for speed
-        int static_iterations = 10;      // Fewer iterations when stationary
-        float pose_smoothing_base = 0.3f;     // More aggressive smoothing
-        float pose_smoothing_max = 0.6f;      // Higher max smoothing
+        int max_lidar_points = 500;      // Subsample for speed
+        float pose_smoothing = 0.3f;     // EMA smoothing factor (0=no smoothing, 1=full smoothing)
 
-        // Adaptive rotation LR based on jitter
-        float jitter_threshold_low = 0.002f;   // ~0.1° - below this, use full LR
-        float jitter_threshold_high = 0.02f;   // ~1.1° - above this, use minimum LR
-        float lr_rot_min_scale = 0.3f;         // Don't reduce LR too much
 
         // GPU/CPU selection
-        bool use_cuda = true;  // Set to true to use GPU if available
+        // Note: For small tensors (~200 points), CPU is faster due to GPU transfer overhead
+        bool use_cuda = false;
+
+        // ===== Prediction-based Early Exit =====
+        // If predicted pose already has low SDF error, skip optimization entirely
+        // This saves CPU when motion model is accurate (smooth motion)
+        bool prediction_early_exit = true;
+        float sigma_sdf = 0.15f;              // SDF observation noise (15cm)
+        float prediction_trust_factor = 0.5f; // Threshold = sigma_sdf * factor (~7.5cm)
+        int min_tracking_steps = 20;          // Wait for system to stabilize before early exit
+        float max_uncertainty_for_early_exit = 0.1f;  // Max pose uncertainty to allow early exit
     };
 
     // Get the torch device based on params
@@ -155,14 +159,9 @@ private:
    Eigen::Vector3f smoothed_pose_ = Eigen::Vector3f::Zero();  // [x, y, theta]
    bool has_smoothed_pose_ = false;
 
-   // Jitter measurement for adaptive learning rate
-   static constexpr int JITTER_WINDOW_SIZE = 10;
-   std::vector<float> theta_history_;  // Last N theta values
-   float current_jitter_ = 0.0f;       // Current measured jitter (std dev)
-   float adaptive_lr_rot_ = 0.01f;     // Adaptive learning rate for rotation
-
-   void update_jitter_estimate(float theta);
-   float compute_adaptive_lr_rot() const;
+   // Prediction-based early exit tracking
+   int tracking_step_count_ = 0;        // Number of tracking steps since init
+   int prediction_early_exits_ = 0;     // Counter for statistics
 
     struct PredictionParameters
    {
@@ -199,13 +198,14 @@ private:
     static torch::Tensor points_to_tensor_xyz(const std::vector<Eigen::Vector3f> &points,
                                                torch::Device device = torch::kCPU)
     {
-        std::vector<float> data;
-        data.reserve(points.size()*3);
-        for(const auto &p : points)
+        std::vector<float> data(points.size() * 3);
+        for (size_t i = 0; i < points.size(); ++i)
         {
-            data.push_back(p.x());
-            data.push_back(p.y());
-            data.push_back(p.z());
+            const auto &p = points[i];
+            const size_t idx = i * 3;
+            data[idx] = p.x();
+            data[idx + 1] = p.y();
+            data[idx + 2] = p.z();
         }
         return torch::from_blob(data.data(), {static_cast<long>(points.size()), 3}, torch::kFloat32).clone().to(device);
     }
