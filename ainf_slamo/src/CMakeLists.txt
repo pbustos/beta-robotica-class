@@ -28,7 +28,9 @@ find_package(Boost REQUIRED COMPONENTS system filesystem)
 LIST(APPEND SOURCES
   ../src/specificworker.cpp
   ../src/room_concept_ai.cpp
+  ../src/room_model.cpp
   ../src/pointcloud_center_estimator.cpp
+
 
 )
 
@@ -36,6 +38,7 @@ LIST(APPEND SOURCES
 LIST(APPEND HEADERS
   ../src/specificworker.h
   ../src/room_concept_ai.h
+  ../src/room_model.h
 )
 
 
