@@ -40,10 +40,10 @@ namespace rc
         explicit PointcloudCenterEstimator(const Config &config = Config{});
 
         std::optional<Point2D> estimate(const std::vector<Point2D>& points);
-        std::optional<Point2D> estimate(const RoboCompLidar3D::TPoints& points);
+        std::optional<Point2D> estimate(const std::vector<Eigen::Vector3f>& points);
 
         std::optional<OBB> estimate_obb(const std::vector<Point2D>& points);
-        std::optional<OBB> estimate_obb(const RoboCompLidar3D::TPoints& points);
+        std::optional<OBB> estimate_obb(const std::vector<Eigen::Vector3f>& points);
 
     private:
         Config config_;

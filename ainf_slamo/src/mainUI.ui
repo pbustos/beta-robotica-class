@@ -189,6 +189,105 @@
          </property>
         </widget>
        </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_flipX">
+         <property name="text">
+          <string>Flip X</string>
+         </property>
+         <property name="toolTip">
+          <string>Mirror robot position on X axis (fixes symmetry issues)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_flipY">
+         <property name="text">
+          <string>Flip Y</string>
+         </property>
+         <property name="toolTip">
+          <string>Mirror robot position on Y axis (fixes symmetry issues)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="Line" name="line_separator">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="verticalLayout_robotX">
+         <item>
+          <widget class="QLabel" name="label_robotX">
+           <property name="text">
+            <string>X (m)</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLCDNumber" name="lcdNumber_robotX">
+           <property name="digitCount">
+            <number>6</number>
+           </property>
+           <property name="segmentStyle">
+            <enum>QLCDNumber::Flat</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="verticalLayout_robotY">
+         <item>
+          <widget class="QLabel" name="label_robotY">
+           <property name="text">
+            <string>Y (m)</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLCDNumber" name="lcdNumber_robotY">
+           <property name="digitCount">
+            <number>6</number>
+           </property>
+           <property name="segmentStyle">
+            <enum>QLCDNumber::Flat</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="verticalLayout_robotTheta">
+         <item>
+          <widget class="QLabel" name="label_robotTheta">
+           <property name="text">
+            <string>θ (°)</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLCDNumber" name="lcdNumber_robotTheta">
+           <property name="digitCount">
+            <number>5</number>
+           </property>
+           <property name="segmentStyle">
+            <enum>QLCDNumber::Flat</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
       </layout>
      </item>
      <item>

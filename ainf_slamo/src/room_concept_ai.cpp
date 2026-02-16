@@ -20,6 +20,15 @@ namespace rc
         // Test 4 orientations: base, +90°, +180°, +270° (covers symmetries)
         const std::vector<float> angle_offsets = {0.0f, M_PI_2, M_PI, 3.0f * M_PI_2};
 
+        // Also test mirrored positions (x, y) and (-x, y) with all rotations
+        // This handles axis-mirroring ambiguity
+        const std::vector<std::pair<float, float>> position_variants = {
+            {x, y},      // Original
+            {-x, y},     // Mirror X
+            {x, -y},     // Mirror Y
+            {-x, -y}     // Mirror both
+        };
+
         // Subsample points for faster evaluation
         std::vector<Eigen::Vector3f> sample_points;
         const int max_samples = 100;
@@ -30,36 +39,50 @@ namespace rc
         const torch::Tensor points_tensor = points_to_tensor_xyz(sample_points);
 
         float best_phi = base_phi;
+        float best_x = x;
+        float best_y = y;
         float best_loss = std::numeric_limits<float>::infinity();
 
-        for (float offset : angle_offsets)
+        // Test all combinations of position variants and angle offsets
+        for (const auto& [test_x, test_y] : position_variants)
         {
-            float test_phi = base_phi + offset;
-            // Normalize to [-pi, pi]
-            while (test_phi > M_PI) test_phi -= 2.0f * M_PI;
-            while (test_phi < -M_PI) test_phi += 2.0f * M_PI;
-
-            // Temporarily set the pose
-            model_->robot_pos.data().copy_(torch::tensor({x, y},
-                torch::TensorOptions().device(get_device())));
-            model_->robot_theta.data().copy_(torch::tensor({test_phi},
-                torch::TensorOptions().device(get_device())));
-
-            // Evaluate SDF loss (without gradient)
-            torch::NoGradGuard no_grad;
-            const auto sdf_vals = model_->sdf(points_tensor);
-            const float loss = torch::mean(torch::square(sdf_vals)).item<float>();
-
-            qDebug() << "  Testing phi=" << qRadiansToDegrees(test_phi) << "° -> loss=" << loss;
-
-            if (loss < best_loss)
+            for (float offset : angle_offsets)
             {
-                best_loss = loss;
-                best_phi = test_phi;
+                float test_phi = base_phi + offset;
+                // Normalize to [-pi, pi]
+                while (test_phi > M_PI) test_phi -= 2.0f * M_PI;
+                while (test_phi < -M_PI) test_phi += 2.0f * M_PI;
+
+                // Temporarily set the pose
+                model_->robot_pos.data().copy_(torch::tensor({test_x, test_y},
+                    torch::TensorOptions().device(get_device())));
+                model_->robot_theta.data().copy_(torch::tensor({test_phi},
+                    torch::TensorOptions().device(get_device())));
+
+                // Evaluate SDF loss (without gradient)
+                torch::NoGradGuard no_grad;
+                const auto sdf_vals = model_->sdf(points_tensor);
+                const float loss = torch::mean(torch::square(sdf_vals)).item<float>();
+
+                qDebug() << "  Testing pos=(" << test_x << "," << test_y << ") phi="
+                         << qRadiansToDegrees(test_phi) << "° -> loss=" << loss;
+
+                if (loss < best_loss)
+                {
+                    best_loss = loss;
+                    best_phi = test_phi;
+                    best_x = test_x;
+                    best_y = test_y;
+                }
             }
         }
 
-        qInfo() << "Best initial orientation:" << qRadiansToDegrees(best_phi) << "° (loss=" << best_loss << ")";
+        // Set the best position found
+        model_->robot_pos.data().copy_(torch::tensor({best_x, best_y},
+            torch::TensorOptions().device(get_device())));
+
+        qInfo() << "Best initial pose: (" << best_x << "," << best_y << ") phi="
+                << qRadiansToDegrees(best_phi) << "° (loss=" << best_loss << ")";
         return best_phi;
     }
 
@@ -117,6 +140,46 @@ namespace rc
 
         qInfo() << "RoomConceptAI initialized with polygon room:" << polygon_vertices.size()
                 << "vertices. Robot at (" << init_x << "," << init_y << "," << init_phi << ")";
+    }
+
+    void RoomConceptAI::set_robot_pose(float x, float y, float theta)
+    {
+        if (model_ == nullptr)
+        {
+            qWarning() << "Cannot set robot pose: model not initialized";
+            return;
+        }
+
+        // Directly update robot pose tensors
+        model_->robot_pos = torch::tensor({x, y}, torch::TensorOptions().dtype(torch::kFloat32).device(model_->device_).requires_grad(true));
+        model_->robot_theta = torch::tensor({theta}, torch::TensorOptions().dtype(torch::kFloat32).device(model_->device_).requires_grad(true));
+
+        // Reset smoothed pose to new position
+        smoothed_pose_ = Eigen::Vector3f(x, y, theta);
+        has_smoothed_pose_ = true;
+
+        // Reset covariance to reasonable value (we're uncertain after manual placement)
+        current_covariance = Eigen::Matrix3f::Identity() * 0.1f;
+
+        // Reset tracking counters and prediction state
+        tracking_step_count_ = 0;
+        needs_orientation_search_ = false;  // User explicitly set orientation
+        last_lidar_timestamp = 0;  // Force fresh start
+
+        // Skip optimization for a few frames to let the new pose "settle"
+        manual_reset_frames_ = 5;
+
+        // Clear any previous prediction
+        model_->has_prediction = false;
+        model_->robot_prev_pose = std::nullopt;
+
+        // Reset last update result with new pose
+        last_update_result = UpdateResult{};
+        last_update_result.robot_pose.translation() = Eigen::Vector2f(x, y);
+        last_update_result.robot_pose.linear() = Eigen::Rotation2Df(theta).toRotationMatrix();
+        last_update_result.ok = true;
+
+        qInfo() << "Robot pose manually set to (" << x << "," << y << "," << qRadiansToDegrees(theta) << "°)";
     }
 
     Eigen::Vector3f RoomConceptAI::compute_velocity_adaptive_weights(const OdometryPrior& odometry_prior)
@@ -211,6 +274,28 @@ namespace rc
 
         if(model_ == nullptr)
             return res;
+
+        // ===== MANUAL RESET: Skip optimization and use current pose =====
+        if (manual_reset_frames_ > 0)
+        {
+            manual_reset_frames_--;
+
+            // Just return current pose without optimization
+            const auto state = model_->get_state();
+            res.ok = true;
+            res.state = state;
+            res.robot_pose.translation() = Eigen::Vector2f(state[2], state[3]);
+            res.robot_pose.linear() = Eigen::Rotation2Df(state[4]).toRotationMatrix();
+            res.covariance = current_covariance;
+            res.final_loss = 0.0f;
+            res.sdf_mse = 0.0f;
+
+            last_update_result = res;
+            last_lidar_timestamp = lidar.second;
+
+            qInfo() << "Manual reset: skipping optimization (" << manual_reset_frames_ << " frames remaining)";
+            return res;
+        }
 
         // ===== ORIENTATION SEARCH ON FIRST UPDATE =====
         // Test multiple orientations (0°, 90°, 180°, 270°) to avoid symmetry traps

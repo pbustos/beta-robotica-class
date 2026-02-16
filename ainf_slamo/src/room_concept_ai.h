@@ -138,6 +138,7 @@ public:
 
     void set_initial_state(float width, float length, float x, float y, float phi);
     void set_polygon_room(const std::vector<Eigen::Vector2f>& polygon_vertices);
+    void set_robot_pose(float x, float y, float theta);  // Set robot pose manually (e.g., from UI click)
     bool is_initialized() const { return model_ != nullptr; }
 
     Eigen::Matrix<float,5,1> get_current_state() const
@@ -162,6 +163,9 @@ private:
    std::int64_t last_lidar_timestamp = 0;
    UpdateResult last_update_result;
    bool needs_orientation_search_ = true;  // Search for best orientation on first update
+
+   // Manual pose reset - skip optimization for a few frames
+   int manual_reset_frames_ = 0;  // Counter to skip optimization after manual reset
 
    // Smoothed pose to reduce jitter
    Eigen::Vector3f smoothed_pose_ = Eigen::Vector3f::Zero();  // [x, y, theta]

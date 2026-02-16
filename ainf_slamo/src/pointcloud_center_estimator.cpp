@@ -8,6 +8,7 @@
 #include <numbers>
 #include <random>
 #include <numeric>
+#include <ATen/core/interned_strings.h>
 
 namespace rc
 {
@@ -21,12 +22,12 @@ namespace rc
         return obb->center;
     }
 
-    std::optional<PointcloudCenterEstimator::Point2D> PointcloudCenterEstimator::estimate( const RoboCompLidar3D::TPoints &points)
+    std::optional<PointcloudCenterEstimator::Point2D> PointcloudCenterEstimator::estimate( const std::vector<Eigen::Vector3f> &points)
     {
         std::vector<Point2D> pc;
         pc.reserve(points.size());
         for (const auto &p : points)
-            pc.emplace_back(p.x, p.y); // Convert mm to meters
+            pc.emplace_back(p.head(2).cast<double>());
         return estimate(pc);
     }
 
@@ -67,12 +68,12 @@ namespace rc
     }
 
     std::optional<PointcloudCenterEstimator::OBB>
-    PointcloudCenterEstimator::estimate_obb(const RoboCompLidar3D::TPoints& points)
+    PointcloudCenterEstimator::estimate_obb(const std::vector<Eigen::Vector3f>& points)
     {
         std::vector<Point2D> pc;
         pc.reserve(points.size());
         for (const auto &p : points)
-            pc.emplace_back(p.x, p.y);
+            pc.emplace_back(p.head(2).cast<double>());
         return estimate_obb(pc);
     }
 

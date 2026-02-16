@@ -136,6 +136,8 @@ class SpecificWorker : public GenericWorker
 	// GT Room
 	QRectF room_rect_gt;
 	std::vector<Eigen::Vector2f> room_polygon_gt;  // Polygon vertices for GT room (in room frame)
+	std::vector<Eigen::Vector2f> room_polygon_backup_;  // Backup of polygon during capture
+	QGraphicsPolygonItem* polygon_item_backup_ = nullptr;  // Backup of polygon graphic item
 	bool capturing_room_polygon = false;
 	std::vector<QGraphicsEllipseItem*> polygon_vertex_items;
 	QGraphicsPolygonItem* polygon_item = nullptr;
@@ -171,13 +173,20 @@ class SpecificWorker : public GenericWorker
 
 	// Layout save/load
 	void save_layout_to_file(const std::string& filename);
+	void save_layout_to_svg(const std::string& filename);
 	void load_layout_from_file(const std::string& filename);
 	void load_polygon_from_file(const std::string& filename);  // Only loads vertices, doesn't init room_ai
+	void load_polygon_from_svg(const QString& svg_content);    // Parse SVG path/polygon data
 
 private slots:
 	void slot_capture_room_toggled(bool checked);
 	void slot_save_layout();
 	void slot_load_layout();
+	void slot_flip_x();
+	void slot_flip_y();
+	void slot_robot_dragging(QPointF pos);
+	void slot_robot_drag_end(QPointF pos);
+	void slot_robot_rotate(QPointF pos);
 
 };
 
