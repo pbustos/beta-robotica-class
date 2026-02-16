@@ -136,11 +136,16 @@ class SpecificWorker : public GenericWorker
 	// GT Room
 	QRectF room_rect_gt;
 	std::vector<Eigen::Vector2f> room_polygon_gt;  // Polygon vertices for GT room (in room frame)
+	std::vector<Eigen::Vector2f> room_polygon_original_;  // Original polygon before any flips
 	std::vector<Eigen::Vector2f> room_polygon_backup_;  // Backup of polygon during capture
 	QGraphicsPolygonItem* polygon_item_backup_ = nullptr;  // Backup of polygon graphic item
 	bool capturing_room_polygon = false;
 	std::vector<QGraphicsEllipseItem*> polygon_vertex_items;
 	QGraphicsPolygonItem* polygon_item = nullptr;
+
+	// Flip state tracking
+	bool flip_x_applied_ = false;
+	bool flip_y_applied_ = false;
 
 	// velocity commands. boost buffer is thread safe
 	boost::circular_buffer<rc::VelocityCommand> velocity_history_{20};
@@ -177,6 +182,12 @@ class SpecificWorker : public GenericWorker
 	void load_layout_from_file(const std::string& filename);
 	void load_polygon_from_file(const std::string& filename);  // Only loads vertices, doesn't init room_ai
 	void load_polygon_from_svg(const QString& svg_content);    // Parse SVG path/polygon data
+
+	// Pose persistence (for fast restart)
+	void save_last_pose();
+	bool load_last_pose();  // Returns true if pose was loaded successfully
+	void perform_grid_search(const std::vector<Eigen::Vector3f>& lidar_points);
+	static constexpr const char* LAST_POSE_FILE = "./last_pose.json";
 
 private slots:
 	void slot_capture_room_toggled(bool checked);

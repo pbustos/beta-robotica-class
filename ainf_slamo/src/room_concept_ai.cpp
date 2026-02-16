@@ -86,6 +86,116 @@ namespace rc
         return best_phi;
     }
 
+    bool RoomConceptAI::grid_search_initial_pose(const std::vector<Eigen::Vector3f>& lidar_points,
+                                                  float grid_resolution,
+                                                  float angle_resolution)
+    {
+        if (model_ == nullptr || lidar_points.empty())
+            return false;
+
+        qInfo() << "Starting grid search for initial pose...";
+
+        // Get room bounds from polygon or half_extents
+        float min_x, max_x, min_y, max_y;
+        if (model_->use_polygon && model_->polygon_vertices.defined())
+        {
+            auto verts_cpu = model_->polygon_vertices.to(torch::kCPU);
+            auto acc = verts_cpu.accessor<float, 2>();
+            min_x = max_x = acc[0][0];
+            min_y = max_y = acc[0][1];
+            for (int i = 1; i < verts_cpu.size(0); i++)
+            {
+                min_x = std::min(min_x, acc[i][0]);
+                max_x = std::max(max_x, acc[i][0]);
+                min_y = std::min(min_y, acc[i][1]);
+                max_y = std::max(max_y, acc[i][1]);
+            }
+        }
+        else
+        {
+            auto he_cpu = model_->half_extents.to(torch::kCPU);
+            float hw = he_cpu[0].item<float>();
+            float hh = he_cpu[1].item<float>();
+            min_x = -hw; max_x = hw;
+            min_y = -hh; max_y = hh;
+        }
+
+        // Add margin inside the room (robot shouldn't be at the walls)
+        const float margin = 0.3f;  // 30cm from walls
+        min_x += margin; max_x -= margin;
+        min_y += margin; max_y -= margin;
+
+        // Subsample lidar points for faster evaluation
+        std::vector<Eigen::Vector3f> sample_points;
+        const int max_samples = 150;
+        const int stride = std::max(1, static_cast<int>(lidar_points.size()) / max_samples);
+        for (size_t i = 0; i < lidar_points.size(); i += stride)
+            sample_points.push_back(lidar_points[i]);
+
+        const torch::Tensor points_tensor = points_to_tensor_xyz(sample_points, get_device());
+
+        // Generate angle candidates
+        std::vector<float> angles;
+        for (float a = -M_PI; a < M_PI; a += angle_resolution)
+            angles.push_back(a);
+
+        float best_x = 0, best_y = 0, best_theta = 0;
+        float best_loss = std::numeric_limits<float>::infinity();
+        int total_tests = 0;
+
+        // Grid search
+        for (float x = min_x; x <= max_x; x += grid_resolution)
+        {
+            for (float y = min_y; y <= max_y; y += grid_resolution)
+            {
+                for (float theta : angles)
+                {
+                    // Set test pose
+                    model_->robot_pos.data().copy_(torch::tensor({x, y},
+                        torch::TensorOptions().device(get_device())));
+                    model_->robot_theta.data().copy_(torch::tensor({theta},
+                        torch::TensorOptions().device(get_device())));
+
+                    // Evaluate SDF loss
+                    torch::NoGradGuard no_grad;
+                    const auto sdf_vals = model_->sdf(points_tensor);
+                    const float loss = torch::mean(torch::square(sdf_vals)).item<float>();
+
+                    if (loss < best_loss)
+                    {
+                        best_loss = loss;
+                        best_x = x;
+                        best_y = y;
+                        best_theta = theta;
+                    }
+                    total_tests++;
+                }
+            }
+        }
+
+        // Set the best pose found
+        model_->robot_pos.data().copy_(torch::tensor({best_x, best_y},
+            torch::TensorOptions().device(get_device())));
+        model_->robot_theta.data().copy_(torch::tensor({best_theta},
+            torch::TensorOptions().device(get_device())));
+
+        // Initialize smoothed pose
+        smoothed_pose_ = Eigen::Vector3f(best_x, best_y, best_theta);
+        has_smoothed_pose_ = true;
+
+        // Reset tracking state
+        needs_orientation_search_ = false;  // We already found the best orientation
+        tracking_step_count_ = 0;
+        current_covariance = Eigen::Matrix3f::Identity() * 0.1f;
+
+        qInfo() << "Grid search complete:" << total_tests << "poses tested";
+        qInfo() << "Best pose: (" << best_x << "," << best_y << ") theta="
+                << qRadiansToDegrees(best_theta) << "° (loss=" << best_loss << ")";
+
+        // Return true if we found a reasonable pose (loss < threshold)
+        return best_loss < 1.0f;  // Threshold for "good" pose
+    }
+
     void RoomConceptAI::set_initial_state(float width, float length, float x, float y, float phi)
     {
         model_ = std::make_shared<Model>();
@@ -178,8 +288,6 @@ namespace rc
         last_update_result.robot_pose.translation() = Eigen::Vector2f(x, y);
         last_update_result.robot_pose.linear() = Eigen::Rotation2Df(theta).toRotationMatrix();
         last_update_result.ok = true;
-
-        qInfo() << "Robot pose manually set to (" << x << "," << y << "," << qRadiansToDegrees(theta) << "°)";
     }
 
     Eigen::Vector3f RoomConceptAI::compute_velocity_adaptive_weights(const OdometryPrior& odometry_prior)

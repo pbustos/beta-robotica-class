@@ -141,6 +141,12 @@ public:
     void set_robot_pose(float x, float y, float theta);  // Set robot pose manually (e.g., from UI click)
     bool is_initialized() const { return model_ != nullptr; }
 
+    // Grid search for initial pose (solves kidnapping problem)
+    // Returns true if a good pose was found, false otherwise
+    bool grid_search_initial_pose(const std::vector<Eigen::Vector3f>& lidar_points,
+                                   float grid_resolution = 0.5f,  // meters
+                                   float angle_resolution = M_PI_4);  // 45 degrees
+
     Eigen::Matrix<float,5,1> get_current_state() const
     {
         if (model_) return model_->get_state();

@@ -23,6 +23,7 @@
 #include <QFileDialog>
 #include <QTextStream>
 #include <QRegularExpression>
+#include <QDateTime>
 #include <unistd.h>  // For sysconf
 #include <cmath>     // For std::fabs
 #include <limits>    // For std::numeric_limits
@@ -54,6 +55,14 @@ SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, 
 SpecificWorker::~SpecificWorker()
 {
 	std::cout << "Destroying SpecificWorker" << std::endl;
+
+	// Save the last known pose for fast restart
+	save_last_pose();
+
+	// Stop lidar thread
+	stop_lidar_thread = true;
+	if (read_lidar_th.joinable())
+	    read_lidar_th.join();
 }
 
 
@@ -92,7 +101,7 @@ void SpecificWorker::initialize()
 
     // Try to load default layout on startup (only loads vertices, doesn't init room_ai yet)
     //load_polygon_from_file("room_layout.json");
-    load_polygon_from_file("room_layout.svg");
+    load_polygon_from_file("hall_layout.svg");
 
     // Lidar thread is created
     read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
@@ -172,6 +181,9 @@ void SpecificWorker::initialize()
         room_ai.set_polygon_room(room_polygon_gt);
         draw_room_polygon();
         qInfo() << "RoomConceptAI initialized with loaded polygon:" << room_polygon_gt.size() << "vertices";
+
+        // Perform grid search or load saved pose to solve kidnapping problem
+        perform_grid_search(pts);
     }
     else
     {
@@ -207,6 +219,14 @@ void SpecificWorker::compute()
 
             // Draw room rectangle (only if not using polygon)
             draw_estimated_room(res.state);
+
+            // Save pose periodically (every ~30 seconds at 20Hz = 600 frames)
+            static int pose_save_counter = 0;
+            if (++pose_save_counter >= 600)
+            {
+                save_last_pose();
+                pose_save_counter = 0;
+            }
         }
     }
 }
@@ -799,6 +819,9 @@ void SpecificWorker::slot_flip_x()
         vertex.x() = -vertex.x();
     }
 
+    // Toggle flip state
+    flip_x_applied_ = !flip_x_applied_;
+
     // Update the room model with flipped polygon
     if (room_ai.is_initialized())
     {
@@ -808,7 +831,7 @@ void SpecificWorker::slot_flip_x()
     // Redraw the polygon
     draw_room_polygon();
 
-    qInfo() << "Room polygon flipped on X axis";
+    qInfo() << "Room polygon flipped on X axis (flip_x=" << flip_x_applied_ << ")";
 }
 
 void SpecificWorker::slot_flip_y()
@@ -825,6 +848,9 @@ void SpecificWorker::slot_flip_y()
         vertex.y() = -vertex.y();
     }
 
+    // Toggle flip state
+    flip_y_applied_ = !flip_y_applied_;
+
     // Update the room model with flipped polygon
     if (room_ai.is_initialized())
     {
@@ -834,7 +860,7 @@ void SpecificWorker::slot_flip_y()
     // Redraw the polygon
     draw_room_polygon();
 
-    qInfo() << "Room polygon flipped on Y axis";
+    qInfo() << "Room polygon flipped on Y axis (flip_y=" << flip_y_applied_ << ")";
 }
 
 void SpecificWorker::slot_robot_dragging(QPointF pos)
@@ -1201,12 +1227,13 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
         return;
     }
 
-    // Parse SVG path data (supports M, L, C, Z commands)
+    // Parse SVG path data (supports M, L, C, Z commands and implicit line commands)
     // We extract only the line endpoints, ignoring curves for simplicity
-    QRegularExpression cmdRegex(R"(([MLCZmlcz])\s*([-\d\.\s,]*))");
+    QRegularExpression cmdRegex(R"(([MLCZmlcz])\s*([-\d\.\s,eE+]*))");
     QRegularExpressionMatchIterator it = cmdRegex.globalMatch(pathData);
 
     float currentX = 0, currentY = 0;
+    float startX = 0, startY = 0;  // For Z command to close path
     bool firstPoint = true;
 
     while (it.hasNext())
@@ -1215,8 +1242,8 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
         QString cmd = match.captured(1);
         QString args = match.captured(2).trimmed();
 
-        // Parse numbers from args
-        QRegularExpression numRegex(R"([-+]?\d*\.?\d+)");
+        // Parse numbers from args (including scientific notation like 5.5e-4)
+        QRegularExpression numRegex(R"([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)");
         QRegularExpressionMatchIterator numIt = numRegex.globalMatch(args);
         std::vector<float> numbers;
         while (numIt.hasNext())
@@ -1228,6 +1255,7 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
         {
             if (numbers.size() >= 2)
             {
+                // First m/M is always absolute for the first point
                 if (cmd == "m" && !firstPoint)
                 {
                     currentX += numbers[0];
@@ -1238,13 +1266,17 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
                     currentX = numbers[0];
                     currentY = numbers[1];
                 }
+                startX = currentX;
+                startY = currentY;
                 // SVG Y is inverted, flip it back
                 room_polygon_gt.emplace_back(currentX, -currentY);
                 firstPoint = false;
 
-                // M can have implicit L commands after first pair
+                // After M/m, subsequent coordinate pairs are implicit L/l commands
                 for (size_t i = 2; i + 1 < numbers.size(); i += 2)
                 {
+                    // After m, implicit commands are relative (l)
+                    // After M, implicit commands are absolute (L)
                     if (cmd == "m")
                     {
                         currentX += numbers[i];
@@ -1315,4 +1347,128 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
     qInfo() << "SVG path loaded with" << room_polygon_gt.size() << "vertices";
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+/// Pose Persistence
+////////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::save_last_pose()
+{
+    if (!room_ai.is_initialized())
+        return;
+
+    const auto state = room_ai.get_current_state();
+    const float x = state[2];
+    const float y = state[3];
+    const float theta = state[4];
+
+    QJsonObject root;
+    root["x"] = static_cast<double>(x);
+    root["y"] = static_cast<double>(y);
+    root["theta"] = static_cast<double>(theta);
+    root["flip_x"] = flip_x_applied_;
+    root["flip_y"] = flip_y_applied_;
+    root["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+    QJsonDocument doc(root);
+    QFile file(LAST_POSE_FILE);
+    if (file.open(QIODevice::WriteOnly))
+    {
+        file.write(doc.toJson());
+        file.close();
+        qDebug() << "Last pose saved: (" << x << "," << y << "," << qRadiansToDegrees(theta) << "°)"
+                 << "flip_x=" << flip_x_applied_ << "flip_y=" << flip_y_applied_;
+    }
+}
+
+bool SpecificWorker::load_last_pose()
+{
+    QFile file(LAST_POSE_FILE);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        qInfo() << "No saved pose file found at" << LAST_POSE_FILE;
+        return false;
+    }
+
+    QByteArray data = file.readAll();
+    file.close();
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError)
+    {
+        qWarning() << "Failed to parse pose file:" << parseError.errorString();
+        return false;
+    }
+
+    QJsonObject root = doc.object();
+    const float x = static_cast<float>(root["x"].toDouble());
+    const float y = static_cast<float>(root["y"].toDouble());
+    const float theta = static_cast<float>(root["theta"].toDouble());
+    const bool saved_flip_x = root["flip_x"].toBool(false);
+    const bool saved_flip_y = root["flip_y"].toBool(false);
+
+    qInfo() << "Loaded last pose: (" << x << "," << y << "," << qRadiansToDegrees(theta) << "°)";
+    qInfo() << "  Flip state: flip_x=" << saved_flip_x << "flip_y=" << saved_flip_y;
+    qInfo() << "  Saved at:" << root["timestamp"].toString();
+
+    // Apply saved flip state - flip the polygon if needed
+    // The polygon is loaded fresh from file, so we need to apply flips if they were saved
+    if (saved_flip_x)
+    {
+        for (auto& vertex : room_polygon_gt)
+            vertex.x() = -vertex.x();
+        flip_x_applied_ = true;
+
+        if (room_ai.is_initialized())
+            room_ai.set_polygon_room(room_polygon_gt);
+        draw_room_polygon();
+        qInfo() << "Applied saved flip_x";
+    }
+    if (saved_flip_y)
+    {
+        for (auto& vertex : room_polygon_gt)
+            vertex.y() = -vertex.y();
+        flip_y_applied_ = true;
+
+        if (room_ai.is_initialized())
+            room_ai.set_polygon_room(room_polygon_gt);
+        draw_room_polygon();
+        qInfo() << "Applied saved flip_y";
+    }
+
+    // Set the pose in room_ai
+    room_ai.set_robot_pose(x, y, theta);
+
+    return true;
+}
+
+void SpecificWorker::perform_grid_search(const std::vector<Eigen::Vector3f>& lidar_points)
+{
+    if (!room_ai.is_initialized())
+    {
+        qWarning() << "Cannot perform grid search: room_ai not initialized";
+        return;
+    }
+
+    qInfo() << "Performing grid search for initial pose...";
+
+    // Try to load last pose first
+    if (load_last_pose())
+    {
+        // For now, we trust the saved pose - user can use Flip buttons if wrong
+        qInfo() << "Using saved pose. If incorrect, use Flip X/Y buttons or drag the robot.";
+        return;
+    }
+
+    // No saved pose or invalid - do full grid search
+    const bool found = room_ai.grid_search_initial_pose(lidar_points, 0.5f, M_PI_4);
+
+    if (found)
+    {
+        qInfo() << "Grid search found a valid initial pose";
+    }
+    else
+    {
+        qWarning() << "Grid search did not find a good pose. Manual adjustment may be needed.";
+    }
+}
 
