@@ -2,20 +2,19 @@
 
 [Proxies]
 # Proxies for required interfaces
-Gridder = "gridder:tcp -h localhost -p 0"
-Lidar3D = "lidar3d:tcp -h localhost -p 0"
-Lidar3D1 = "lidar3d:tcp -h localhost -p 0"
-OmniRobot = "omnirobot:tcp -h localhost -p 0"
-Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 0"
+Lidar3D = "lidar3d:tcp -h localhost -p 11990"
+Lidar3D1 = "lidar3d:tcp -h localhost -p 11989"
+OmniRobot = "omnirobot:tcp -h localhost -p 10004"
+Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 10006"
 
 
 [Endpoints]
 # Endpoints for implements interfaces
-Gridder = "tcp -p 0"
+Gridder = "tcp -p 13541"
 
 
 [Period]
-Compute = 100
+Compute = 50
 Emergency = 500
 
 [Ice]
