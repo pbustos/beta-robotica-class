@@ -53,17 +53,57 @@ module RoboCompGridder
 		float theta;
 		Covariance cov;
 	};
+	enum NavigationState { 
+	        IDLE,           // No target set, robot stopped
+	        NAVIGATING,     // Moving towards target
+	        PAUSED,         // Stopped but target still active (can resume)
+	        REACHED,        // Target reached, robot stopped
+	        BLOCKED,        // Path blocked, attempting to replan
+	        ERROR           // Critical error (localization lost, etc.)
+	     };
+	struct NavigationOptions
+	{
+		float maxSpeed;
+		float safetyFactor;
+		bool useEsdf;
+		bool allowReplan;
+	};
+	struct NavigationStatus
+	{
+		NavigationState state;
+		TPoint currentTarget;
+		TPoint currentPosition;
+		float currentOrientation;
+		float distanceToTarget;
+		float estimatedTime;
+		float currentSpeed;
+		int pathWaypointsRemaining;
+		string statusMessage;
+	};
 	interface Gridder
 	{
 		bool IsPathBlocked (TPath path);
 		bool LineOfSightToTarget (TPoint source, TPoint target, float robotRadius);
+		void cancelNavigation ();
 		TPoint getClosestFreePoint (TPoint source);
 		TDimensions getDimensions ();
+		float getDistanceToTarget ();
+		float getEstimatedTimeToTarget ();
 		Map getMap ();
+		NavigationState getNavigationState ();
+		NavigationStatus getNavigationStatus ();
 		Result getPaths (TPoint source, TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor);
 		Pose getPose ();
+		TPoint getTarget ();
+		bool hasReachedTarget ();
+		bool replanPath ();
+		bool resumeNavigation ();
 		bool setGridDimensions (TDimensions dimensions);
 		Result setLocationAndGetPath (TPoint source, TPoint target, TPointVector freePoints, TPointVector obstaclePoints);
+		bool setTarget (TPoint target);
+		bool setTargetWithOptions (TPoint target, NavigationOptions options);
+		bool startNavigation ();
+		void stopNavigation ();
 	};
 };
 

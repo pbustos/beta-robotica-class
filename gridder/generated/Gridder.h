@@ -167,6 +167,55 @@ struct Pose
     }
 };
 
+enum class NavigationState : unsigned char
+{
+    IDLE,
+    NAVIGATING,
+    PAUSED,
+    REACHED,
+    BLOCKED,
+    ERROR
+};
+
+struct NavigationOptions
+{
+    float maxSpeed;
+    float safetyFactor;
+    bool useEsdf;
+    bool allowReplan;
+
+    /**
+     * Obtains a tuple containing all of the struct's data members.
+     * @return The data members in a tuple.
+     */
+    std::tuple<const float&, const float&, const bool&, const bool&> ice_tuple() const
+    {
+        return std::tie(maxSpeed, safetyFactor, useEsdf, allowReplan);
+    }
+};
+
+struct NavigationStatus
+{
+    ::RoboCompGridder::NavigationState state;
+    ::RoboCompGridder::TPoint currentTarget;
+    ::RoboCompGridder::TPoint currentPosition;
+    float currentOrientation;
+    float distanceToTarget;
+    float estimatedTime;
+    float currentSpeed;
+    int pathWaypointsRemaining;
+    ::std::string statusMessage;
+
+    /**
+     * Obtains a tuple containing all of the struct's data members.
+     * @return The data members in a tuple.
+     */
+    std::tuple<const ::RoboCompGridder::NavigationState&, const ::RoboCompGridder::TPoint&, const ::RoboCompGridder::TPoint&, const float&, const float&, const float&, const float&, const int&, const ::std::string&> ice_tuple() const
+    {
+        return std::tie(state, currentTarget, currentPosition, currentOrientation, distanceToTarget, estimatedTime, currentSpeed, pathWaypointsRemaining, statusMessage);
+    }
+};
+
 using Ice::operator<;
 using Ice::operator<=;
 using Ice::operator>;
@@ -223,6 +272,11 @@ public:
     bool _iceD_LineOfSightToTarget(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
+    virtual void cancelNavigation(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_cancelNavigation(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
     virtual TPoint getClosestFreePoint(TPoint source, const ::Ice::Current& current) = 0;
     /// \cond INTERNAL
     bool _iceD_getClosestFreePoint(::IceInternal::Incoming&, const ::Ice::Current&);
@@ -233,9 +287,29 @@ public:
     bool _iceD_getDimensions(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
+    virtual float getDistanceToTarget(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getDistanceToTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual float getEstimatedTimeToTarget(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getEstimatedTimeToTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
     virtual Map getMap(const ::Ice::Current& current) = 0;
     /// \cond INTERNAL
     bool _iceD_getMap(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual NavigationState getNavigationState(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getNavigationState(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual NavigationStatus getNavigationStatus(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getNavigationStatus(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
     virtual Result getPaths(TPoint source, TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor, const ::Ice::Current& current) = 0;
@@ -248,6 +322,26 @@ public:
     bool _iceD_getPose(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
+    virtual TPoint getTarget(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool hasReachedTarget(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_hasReachedTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool replanPath(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_replanPath(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool resumeNavigation(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_resumeNavigation(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
     virtual bool setGridDimensions(TDimensions dimensions, const ::Ice::Current& current) = 0;
     /// \cond INTERNAL
     bool _iceD_setGridDimensions(::IceInternal::Incoming&, const ::Ice::Current&);
@@ -256,6 +350,26 @@ public:
     virtual Result setLocationAndGetPath(TPoint source, TPoint target, TPointVector freePoints, TPointVector obstaclePoints, const ::Ice::Current& current) = 0;
     /// \cond INTERNAL
     bool _iceD_setLocationAndGetPath(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool setTarget(TPoint target, const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_setTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool setTargetWithOptions(TPoint target, NavigationOptions options, const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_setTargetWithOptions(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool startNavigation(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_startNavigation(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual void stopNavigation(const ::Ice::Current& current) = 0;
+    /// \cond INTERNAL
+    bool _iceD_stopNavigation(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
     /// \cond INTERNAL
@@ -324,6 +438,31 @@ public:
     void _iceI_LineOfSightToTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>&, const TPoint&, const TPoint&, float, const ::Ice::Context&);
     /// \endcond
 
+    void cancelNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        _makePromiseOutgoing<void>(true, this, &GridderPrx::_iceI_cancelNavigation, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto cancelNavigationAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<void>>().get_future())
+    {
+        return _makePromiseOutgoing<void, P>(false, this, &GridderPrx::_iceI_cancelNavigation, context);
+    }
+
+    ::std::function<void()>
+    cancelNavigationAsync(::std::function<void()> response,
+                          ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                          ::std::function<void(bool)> sent = nullptr,
+                          const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<void>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_cancelNavigation, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_cancelNavigation(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<void>>&, const ::Ice::Context&);
+    /// \endcond
+
     TPoint getClosestFreePoint(const TPoint& source, const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
         return _makePromiseOutgoing<::RoboCompGridder::TPoint>(true, this, &GridderPrx::_iceI_getClosestFreePoint, source, context).get();
@@ -375,6 +514,56 @@ public:
     void _iceI_getDimensions(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::TDimensions>>&, const ::Ice::Context&);
     /// \endcond
 
+    float getDistanceToTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<float>(true, this, &GridderPrx::_iceI_getDistanceToTarget, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto getDistanceToTargetAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<float>>().get_future())
+    {
+        return _makePromiseOutgoing<float, P>(false, this, &GridderPrx::_iceI_getDistanceToTarget, context);
+    }
+
+    ::std::function<void()>
+    getDistanceToTargetAsync(::std::function<void(float)> response,
+                             ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                             ::std::function<void(bool)> sent = nullptr,
+                             const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<float>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_getDistanceToTarget, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_getDistanceToTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<float>>&, const ::Ice::Context&);
+    /// \endcond
+
+    float getEstimatedTimeToTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<float>(true, this, &GridderPrx::_iceI_getEstimatedTimeToTarget, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto getEstimatedTimeToTargetAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<float>>().get_future())
+    {
+        return _makePromiseOutgoing<float, P>(false, this, &GridderPrx::_iceI_getEstimatedTimeToTarget, context);
+    }
+
+    ::std::function<void()>
+    getEstimatedTimeToTargetAsync(::std::function<void(float)> response,
+                                  ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                                  ::std::function<void(bool)> sent = nullptr,
+                                  const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<float>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_getEstimatedTimeToTarget, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_getEstimatedTimeToTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<float>>&, const ::Ice::Context&);
+    /// \endcond
+
     Map getMap(const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
         return _makePromiseOutgoing<::RoboCompGridder::Map>(true, this, &GridderPrx::_iceI_getMap, context).get();
@@ -398,6 +587,56 @@ public:
 
     /// \cond INTERNAL
     void _iceI_getMap(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Map>>&, const ::Ice::Context&);
+    /// \endcond
+
+    NavigationState getNavigationState(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::NavigationState>(true, this, &GridderPrx::_iceI_getNavigationState, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto getNavigationStateAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<::RoboCompGridder::NavigationState>>().get_future())
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::NavigationState, P>(false, this, &GridderPrx::_iceI_getNavigationState, context);
+    }
+
+    ::std::function<void()>
+    getNavigationStateAsync(::std::function<void(::RoboCompGridder::NavigationState)> response,
+                            ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                            ::std::function<void(bool)> sent = nullptr,
+                            const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<::RoboCompGridder::NavigationState>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_getNavigationState, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_getNavigationState(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::NavigationState>>&, const ::Ice::Context&);
+    /// \endcond
+
+    NavigationStatus getNavigationStatus(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::NavigationStatus>(true, this, &GridderPrx::_iceI_getNavigationStatus, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto getNavigationStatusAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<::RoboCompGridder::NavigationStatus>>().get_future())
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::NavigationStatus, P>(false, this, &GridderPrx::_iceI_getNavigationStatus, context);
+    }
+
+    ::std::function<void()>
+    getNavigationStatusAsync(::std::function<void(::RoboCompGridder::NavigationStatus)> response,
+                             ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                             ::std::function<void(bool)> sent = nullptr,
+                             const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<::RoboCompGridder::NavigationStatus>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_getNavigationStatus, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_getNavigationStatus(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::NavigationStatus>>&, const ::Ice::Context&);
     /// \endcond
 
     Result getPaths(const TPoint& source, const TPoint& target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor, const ::Ice::Context& context = ::Ice::noExplicitContext)
@@ -451,6 +690,106 @@ public:
     void _iceI_getPose(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Pose>>&, const ::Ice::Context&);
     /// \endcond
 
+    TPoint getTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::TPoint>(true, this, &GridderPrx::_iceI_getTarget, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto getTargetAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<::RoboCompGridder::TPoint>>().get_future())
+    {
+        return _makePromiseOutgoing<::RoboCompGridder::TPoint, P>(false, this, &GridderPrx::_iceI_getTarget, context);
+    }
+
+    ::std::function<void()>
+    getTargetAsync(::std::function<void(::RoboCompGridder::TPoint)> response,
+                   ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                   ::std::function<void(bool)> sent = nullptr,
+                   const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<::RoboCompGridder::TPoint>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_getTarget, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_getTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::TPoint>>&, const ::Ice::Context&);
+    /// \endcond
+
+    bool hasReachedTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<bool>(true, this, &GridderPrx::_iceI_hasReachedTarget, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto hasReachedTargetAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<bool>>().get_future())
+    {
+        return _makePromiseOutgoing<bool, P>(false, this, &GridderPrx::_iceI_hasReachedTarget, context);
+    }
+
+    ::std::function<void()>
+    hasReachedTargetAsync(::std::function<void(bool)> response,
+                          ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                          ::std::function<void(bool)> sent = nullptr,
+                          const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<bool>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_hasReachedTarget, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_hasReachedTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>&, const ::Ice::Context&);
+    /// \endcond
+
+    bool replanPath(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<bool>(true, this, &GridderPrx::_iceI_replanPath, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto replanPathAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<bool>>().get_future())
+    {
+        return _makePromiseOutgoing<bool, P>(false, this, &GridderPrx::_iceI_replanPath, context);
+    }
+
+    ::std::function<void()>
+    replanPathAsync(::std::function<void(bool)> response,
+                    ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                    ::std::function<void(bool)> sent = nullptr,
+                    const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<bool>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_replanPath, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_replanPath(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>&, const ::Ice::Context&);
+    /// \endcond
+
+    bool resumeNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<bool>(true, this, &GridderPrx::_iceI_resumeNavigation, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto resumeNavigationAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<bool>>().get_future())
+    {
+        return _makePromiseOutgoing<bool, P>(false, this, &GridderPrx::_iceI_resumeNavigation, context);
+    }
+
+    ::std::function<void()>
+    resumeNavigationAsync(::std::function<void(bool)> response,
+                          ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                          ::std::function<void(bool)> sent = nullptr,
+                          const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<bool>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_resumeNavigation, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_resumeNavigation(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>&, const ::Ice::Context&);
+    /// \endcond
+
     bool setGridDimensions(const TDimensions& dimensions, const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
         return _makePromiseOutgoing<bool>(true, this, &GridderPrx::_iceI_setGridDimensions, dimensions, context).get();
@@ -501,6 +840,108 @@ public:
 
     /// \cond INTERNAL
     void _iceI_setLocationAndGetPath(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Result>>&, const TPoint&, const TPoint&, const TPointVector&, const TPointVector&, const ::Ice::Context&);
+    /// \endcond
+
+    bool setTarget(const TPoint& target, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<bool>(true, this, &GridderPrx::_iceI_setTarget, target, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto setTargetAsync(const TPoint& target, const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<bool>>().get_future())
+    {
+        return _makePromiseOutgoing<bool, P>(false, this, &GridderPrx::_iceI_setTarget, target, context);
+    }
+
+    ::std::function<void()>
+    setTargetAsync(const TPoint& target,
+                   ::std::function<void(bool)> response,
+                   ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                   ::std::function<void(bool)> sent = nullptr,
+                   const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<bool>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_setTarget, target, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_setTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>&, const TPoint&, const ::Ice::Context&);
+    /// \endcond
+
+    bool setTargetWithOptions(const TPoint& target, const NavigationOptions& options, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<bool>(true, this, &GridderPrx::_iceI_setTargetWithOptions, target, options, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto setTargetWithOptionsAsync(const TPoint& target, const NavigationOptions& options, const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<bool>>().get_future())
+    {
+        return _makePromiseOutgoing<bool, P>(false, this, &GridderPrx::_iceI_setTargetWithOptions, target, options, context);
+    }
+
+    ::std::function<void()>
+    setTargetWithOptionsAsync(const TPoint& target, const NavigationOptions& options,
+                              ::std::function<void(bool)> response,
+                              ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                              ::std::function<void(bool)> sent = nullptr,
+                              const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<bool>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_setTargetWithOptions, target, options, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_setTargetWithOptions(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>&, const TPoint&, const NavigationOptions&, const ::Ice::Context&);
+    /// \endcond
+
+    bool startNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makePromiseOutgoing<bool>(true, this, &GridderPrx::_iceI_startNavigation, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto startNavigationAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<bool>>().get_future())
+    {
+        return _makePromiseOutgoing<bool, P>(false, this, &GridderPrx::_iceI_startNavigation, context);
+    }
+
+    ::std::function<void()>
+    startNavigationAsync(::std::function<void(bool)> response,
+                         ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                         ::std::function<void(bool)> sent = nullptr,
+                         const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<bool>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_startNavigation, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_startNavigation(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>&, const ::Ice::Context&);
+    /// \endcond
+
+    void stopNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        _makePromiseOutgoing<void>(true, this, &GridderPrx::_iceI_stopNavigation, context).get();
+    }
+
+    template<template<typename> class P = ::std::promise>
+    auto stopNavigationAsync(const ::Ice::Context& context = ::Ice::noExplicitContext)
+        -> decltype(::std::declval<P<void>>().get_future())
+    {
+        return _makePromiseOutgoing<void, P>(false, this, &GridderPrx::_iceI_stopNavigation, context);
+    }
+
+    ::std::function<void()>
+    stopNavigationAsync(::std::function<void()> response,
+                        ::std::function<void(::std::exception_ptr)> ex = nullptr,
+                        ::std::function<void(bool)> sent = nullptr,
+                        const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _makeLamdaOutgoing<void>(std::move(response), std::move(ex), std::move(sent), this, &RoboCompGridder::GridderPrx::_iceI_stopNavigation, context);
+    }
+
+    /// \cond INTERNAL
+    void _iceI_stopNavigation(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<void>>&, const ::Ice::Context&);
     /// \endcond
 
     /**
@@ -624,6 +1065,50 @@ struct StreamReader<::RoboCompGridder::Pose, S>
     static void read(S* istr, ::RoboCompGridder::Pose& v)
     {
         istr->readAll(v.x, v.y, v.theta, v.cov);
+    }
+};
+
+template<>
+struct StreamableTraits< ::RoboCompGridder::NavigationState>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryEnum;
+    static const int minValue = 0;
+    static const int maxValue = 5;
+    static const int minWireSize = 1;
+    static const bool fixedLength = false;
+};
+
+template<>
+struct StreamableTraits<::RoboCompGridder::NavigationOptions>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 10;
+    static const bool fixedLength = true;
+};
+
+template<typename S>
+struct StreamReader<::RoboCompGridder::NavigationOptions, S>
+{
+    static void read(S* istr, ::RoboCompGridder::NavigationOptions& v)
+    {
+        istr->readAll(v.maxSpeed, v.safetyFactor, v.useEsdf, v.allowReplan);
+    }
+};
+
+template<>
+struct StreamableTraits<::RoboCompGridder::NavigationStatus>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 46;
+    static const bool fixedLength = false;
+};
+
+template<typename S>
+struct StreamReader<::RoboCompGridder::NavigationStatus, S>
+{
+    static void read(S* istr, ::RoboCompGridder::NavigationStatus& v)
+    {
+        istr->readAll(v.state, v.currentTarget, v.currentPosition, v.currentOrientation, v.distanceToTarget, v.estimatedTime, v.currentSpeed, v.pathWaypointsRemaining, v.statusMessage);
     }
 };
 
@@ -802,6 +1287,37 @@ struct Pose
     ::RoboCompGridder::Covariance cov;
 };
 
+enum NavigationState
+{
+    IDLE,
+    NAVIGATING,
+    PAUSED,
+    REACHED,
+    BLOCKED,
+    ERROR
+};
+
+struct NavigationOptions
+{
+    ::Ice::Float maxSpeed;
+    ::Ice::Float safetyFactor;
+    bool useEsdf;
+    bool allowReplan;
+};
+
+struct NavigationStatus
+{
+    ::RoboCompGridder::NavigationState state;
+    ::RoboCompGridder::TPoint currentTarget;
+    ::RoboCompGridder::TPoint currentPosition;
+    ::Ice::Float currentOrientation;
+    ::Ice::Float distanceToTarget;
+    ::Ice::Float estimatedTime;
+    ::Ice::Float currentSpeed;
+    ::Ice::Int pathWaypointsRemaining;
+    ::std::string statusMessage;
+};
+
 }
 
 namespace RoboCompGridder
@@ -825,6 +1341,14 @@ typedef ::IceUtil::Handle< Callback_Gridder_LineOfSightToTarget_Base> Callback_G
 
 /**
  * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_cancelNavigation.
+ */
+class Callback_Gridder_cancelNavigation_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_cancelNavigation_Base> Callback_Gridder_cancelNavigationPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
  * IceProxy::RoboCompGridder::Gridder::begin_getClosestFreePoint.
  * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getClosestFreePoint.
  */
@@ -841,11 +1365,43 @@ typedef ::IceUtil::Handle< Callback_Gridder_getDimensions_Base> Callback_Gridder
 
 /**
  * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getDistanceToTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getDistanceToTarget.
+ */
+class Callback_Gridder_getDistanceToTarget_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_getDistanceToTarget_Base> Callback_Gridder_getDistanceToTargetPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getEstimatedTimeToTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getEstimatedTimeToTarget.
+ */
+class Callback_Gridder_getEstimatedTimeToTarget_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_getEstimatedTimeToTarget_Base> Callback_Gridder_getEstimatedTimeToTargetPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
  * IceProxy::RoboCompGridder::Gridder::begin_getMap.
  * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getMap.
  */
 class Callback_Gridder_getMap_Base : public virtual ::IceInternal::CallbackBase { };
 typedef ::IceUtil::Handle< Callback_Gridder_getMap_Base> Callback_Gridder_getMapPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getNavigationState.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getNavigationState.
+ */
+class Callback_Gridder_getNavigationState_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_getNavigationState_Base> Callback_Gridder_getNavigationStatePtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getNavigationStatus.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getNavigationStatus.
+ */
+class Callback_Gridder_getNavigationStatus_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_getNavigationStatus_Base> Callback_Gridder_getNavigationStatusPtr;
 
 /**
  * Base class for asynchronous callback wrapper classes used for calls to
@@ -865,6 +1421,38 @@ typedef ::IceUtil::Handle< Callback_Gridder_getPose_Base> Callback_Gridder_getPo
 
 /**
  * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getTarget.
+ */
+class Callback_Gridder_getTarget_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_getTarget_Base> Callback_Gridder_getTargetPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_hasReachedTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_hasReachedTarget.
+ */
+class Callback_Gridder_hasReachedTarget_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_hasReachedTarget_Base> Callback_Gridder_hasReachedTargetPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_replanPath.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_replanPath.
+ */
+class Callback_Gridder_replanPath_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_replanPath_Base> Callback_Gridder_replanPathPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_resumeNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_resumeNavigation.
+ */
+class Callback_Gridder_resumeNavigation_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_resumeNavigation_Base> Callback_Gridder_resumeNavigationPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
  * IceProxy::RoboCompGridder::Gridder::begin_setGridDimensions.
  * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_setGridDimensions.
  */
@@ -878,6 +1466,38 @@ typedef ::IceUtil::Handle< Callback_Gridder_setGridDimensions_Base> Callback_Gri
  */
 class Callback_Gridder_setLocationAndGetPath_Base : public virtual ::IceInternal::CallbackBase { };
 typedef ::IceUtil::Handle< Callback_Gridder_setLocationAndGetPath_Base> Callback_Gridder_setLocationAndGetPathPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_setTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_setTarget.
+ */
+class Callback_Gridder_setTarget_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_setTarget_Base> Callback_Gridder_setTargetPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_setTargetWithOptions.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_setTargetWithOptions.
+ */
+class Callback_Gridder_setTargetWithOptions_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_setTargetWithOptions_Base> Callback_Gridder_setTargetWithOptionsPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_startNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_startNavigation.
+ */
+class Callback_Gridder_startNavigation_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_startNavigation_Base> Callback_Gridder_startNavigationPtr;
+
+/**
+ * Base class for asynchronous callback wrapper classes used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_stopNavigation.
+ */
+class Callback_Gridder_stopNavigation_Base : public virtual ::IceInternal::CallbackBase { };
+typedef ::IceUtil::Handle< Callback_Gridder_stopNavigation_Base> Callback_Gridder_stopNavigationPtr;
 
 }
 
@@ -967,6 +1587,44 @@ private:
 
 public:
 
+    void cancelNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        end_cancelNavigation(_iceI_begin_cancelNavigation(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_cancelNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_cancelNavigation(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_cancelNavigation(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_cancelNavigation(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_cancelNavigation(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_cancelNavigation(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_cancelNavigation(const ::RoboCompGridder::Callback_Gridder_cancelNavigationPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_cancelNavigation(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_cancelNavigation(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_cancelNavigationPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_cancelNavigation(context, cb, cookie);
+    }
+
+    void end_cancelNavigation(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_cancelNavigation(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
     ::RoboCompGridder::TPoint getClosestFreePoint(const ::RoboCompGridder::TPoint& source, const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
         return end_getClosestFreePoint(_iceI_begin_getClosestFreePoint(source, context, ::IceInternal::dummyCallback, 0, true));
@@ -1043,6 +1701,82 @@ private:
 
 public:
 
+    ::Ice::Float getDistanceToTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_getDistanceToTarget(_iceI_begin_getDistanceToTarget(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_getDistanceToTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_getDistanceToTarget(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_getDistanceToTarget(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getDistanceToTarget(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getDistanceToTarget(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getDistanceToTarget(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getDistanceToTarget(const ::RoboCompGridder::Callback_Gridder_getDistanceToTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getDistanceToTarget(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getDistanceToTarget(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_getDistanceToTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getDistanceToTarget(context, cb, cookie);
+    }
+
+    ::Ice::Float end_getDistanceToTarget(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_getDistanceToTarget(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    ::Ice::Float getEstimatedTimeToTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_getEstimatedTimeToTarget(_iceI_begin_getEstimatedTimeToTarget(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_getEstimatedTimeToTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_getEstimatedTimeToTarget(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_getEstimatedTimeToTarget(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getEstimatedTimeToTarget(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getEstimatedTimeToTarget(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getEstimatedTimeToTarget(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getEstimatedTimeToTarget(const ::RoboCompGridder::Callback_Gridder_getEstimatedTimeToTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getEstimatedTimeToTarget(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getEstimatedTimeToTarget(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_getEstimatedTimeToTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getEstimatedTimeToTarget(context, cb, cookie);
+    }
+
+    ::Ice::Float end_getEstimatedTimeToTarget(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_getEstimatedTimeToTarget(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
     ::RoboCompGridder::Map getMap(const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
         return end_getMap(_iceI_begin_getMap(context, ::IceInternal::dummyCallback, 0, true));
@@ -1078,6 +1812,82 @@ public:
 private:
 
     ::Ice::AsyncResultPtr _iceI_begin_getMap(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    ::RoboCompGridder::NavigationState getNavigationState(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_getNavigationState(_iceI_begin_getNavigationState(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationState(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_getNavigationState(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationState(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getNavigationState(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationState(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getNavigationState(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationState(const ::RoboCompGridder::Callback_Gridder_getNavigationStatePtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getNavigationState(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationState(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_getNavigationStatePtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getNavigationState(context, cb, cookie);
+    }
+
+    ::RoboCompGridder::NavigationState end_getNavigationState(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_getNavigationState(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    ::RoboCompGridder::NavigationStatus getNavigationStatus(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_getNavigationStatus(_iceI_begin_getNavigationStatus(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationStatus(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_getNavigationStatus(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationStatus(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getNavigationStatus(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationStatus(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getNavigationStatus(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationStatus(const ::RoboCompGridder::Callback_Gridder_getNavigationStatusPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getNavigationStatus(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getNavigationStatus(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_getNavigationStatusPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getNavigationStatus(context, cb, cookie);
+    }
+
+    ::RoboCompGridder::NavigationStatus end_getNavigationStatus(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_getNavigationStatus(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
 
 public:
 
@@ -1157,6 +1967,158 @@ private:
 
 public:
 
+    ::RoboCompGridder::TPoint getTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_getTarget(_iceI_begin_getTarget(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_getTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_getTarget(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_getTarget(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getTarget(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getTarget(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getTarget(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getTarget(const ::RoboCompGridder::Callback_Gridder_getTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getTarget(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_getTarget(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_getTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_getTarget(context, cb, cookie);
+    }
+
+    ::RoboCompGridder::TPoint end_getTarget(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_getTarget(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    bool hasReachedTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_hasReachedTarget(_iceI_begin_hasReachedTarget(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_hasReachedTarget(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_hasReachedTarget(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_hasReachedTarget(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_hasReachedTarget(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_hasReachedTarget(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_hasReachedTarget(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_hasReachedTarget(const ::RoboCompGridder::Callback_Gridder_hasReachedTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_hasReachedTarget(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_hasReachedTarget(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_hasReachedTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_hasReachedTarget(context, cb, cookie);
+    }
+
+    bool end_hasReachedTarget(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_hasReachedTarget(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    bool replanPath(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_replanPath(_iceI_begin_replanPath(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_replanPath(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_replanPath(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_replanPath(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_replanPath(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_replanPath(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_replanPath(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_replanPath(const ::RoboCompGridder::Callback_Gridder_replanPathPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_replanPath(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_replanPath(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_replanPathPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_replanPath(context, cb, cookie);
+    }
+
+    bool end_replanPath(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_replanPath(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    bool resumeNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_resumeNavigation(_iceI_begin_resumeNavigation(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_resumeNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_resumeNavigation(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_resumeNavigation(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_resumeNavigation(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_resumeNavigation(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_resumeNavigation(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_resumeNavigation(const ::RoboCompGridder::Callback_Gridder_resumeNavigationPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_resumeNavigation(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_resumeNavigation(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_resumeNavigationPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_resumeNavigation(context, cb, cookie);
+    }
+
+    bool end_resumeNavigation(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_resumeNavigation(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
     bool setGridDimensions(const ::RoboCompGridder::TDimensions& dimensions, const ::Ice::Context& context = ::Ice::noExplicitContext)
     {
         return end_setGridDimensions(_iceI_begin_setGridDimensions(dimensions, context, ::IceInternal::dummyCallback, 0, true));
@@ -1233,6 +2195,158 @@ private:
 
 public:
 
+    bool setTarget(const ::RoboCompGridder::TPoint& target, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_setTarget(_iceI_begin_setTarget(target, context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_setTarget(const ::RoboCompGridder::TPoint& target, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_setTarget(target, context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_setTarget(const ::RoboCompGridder::TPoint& target, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_setTarget(target, ::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_setTarget(const ::RoboCompGridder::TPoint& target, const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_setTarget(target, context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_setTarget(const ::RoboCompGridder::TPoint& target, const ::RoboCompGridder::Callback_Gridder_setTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_setTarget(target, ::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_setTarget(const ::RoboCompGridder::TPoint& target, const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_setTargetPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_setTarget(target, context, cb, cookie);
+    }
+
+    bool end_setTarget(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_setTarget(const ::RoboCompGridder::TPoint&, const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    bool setTargetWithOptions(const ::RoboCompGridder::TPoint& target, const ::RoboCompGridder::NavigationOptions& options, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_setTargetWithOptions(_iceI_begin_setTargetWithOptions(target, options, context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_setTargetWithOptions(const ::RoboCompGridder::TPoint& target, const ::RoboCompGridder::NavigationOptions& options, const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_setTargetWithOptions(target, options, context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_setTargetWithOptions(const ::RoboCompGridder::TPoint& target, const ::RoboCompGridder::NavigationOptions& options, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_setTargetWithOptions(target, options, ::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_setTargetWithOptions(const ::RoboCompGridder::TPoint& target, const ::RoboCompGridder::NavigationOptions& options, const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_setTargetWithOptions(target, options, context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_setTargetWithOptions(const ::RoboCompGridder::TPoint& target, const ::RoboCompGridder::NavigationOptions& options, const ::RoboCompGridder::Callback_Gridder_setTargetWithOptionsPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_setTargetWithOptions(target, options, ::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_setTargetWithOptions(const ::RoboCompGridder::TPoint& target, const ::RoboCompGridder::NavigationOptions& options, const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_setTargetWithOptionsPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_setTargetWithOptions(target, options, context, cb, cookie);
+    }
+
+    bool end_setTargetWithOptions(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_setTargetWithOptions(const ::RoboCompGridder::TPoint&, const ::RoboCompGridder::NavigationOptions&, const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    bool startNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return end_startNavigation(_iceI_begin_startNavigation(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_startNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_startNavigation(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_startNavigation(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_startNavigation(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_startNavigation(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_startNavigation(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_startNavigation(const ::RoboCompGridder::Callback_Gridder_startNavigationPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_startNavigation(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_startNavigation(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_startNavigationPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_startNavigation(context, cb, cookie);
+    }
+
+    bool end_startNavigation(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_startNavigation(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
+    void stopNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        end_stopNavigation(_iceI_begin_stopNavigation(context, ::IceInternal::dummyCallback, 0, true));
+    }
+
+    ::Ice::AsyncResultPtr begin_stopNavigation(const ::Ice::Context& context = ::Ice::noExplicitContext)
+    {
+        return _iceI_begin_stopNavigation(context, ::IceInternal::dummyCallback, 0);
+    }
+
+    ::Ice::AsyncResultPtr begin_stopNavigation(const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_stopNavigation(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_stopNavigation(const ::Ice::Context& context, const ::Ice::CallbackPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_stopNavigation(context, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_stopNavigation(const ::RoboCompGridder::Callback_Gridder_stopNavigationPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_stopNavigation(::Ice::noExplicitContext, cb, cookie);
+    }
+
+    ::Ice::AsyncResultPtr begin_stopNavigation(const ::Ice::Context& context, const ::RoboCompGridder::Callback_Gridder_stopNavigationPtr& cb, const ::Ice::LocalObjectPtr& cookie = 0)
+    {
+        return _iceI_begin_stopNavigation(context, cb, cookie);
+    }
+
+    void end_stopNavigation(const ::Ice::AsyncResultPtr& result);
+
+private:
+
+    ::Ice::AsyncResultPtr _iceI_begin_stopNavigation(const ::Ice::Context&, const ::IceInternal::CallbackBasePtr&, const ::Ice::LocalObjectPtr& cookie = 0, bool sync = false);
+
+public:
+
     /**
      * Obtains the Slice type ID corresponding to this interface.
      * @return A fully-scoped type ID.
@@ -1306,6 +2420,11 @@ public:
     bool _iceD_LineOfSightToTarget(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
+    virtual void cancelNavigation(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_cancelNavigation(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
     virtual TPoint getClosestFreePoint(const TPoint& source, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
     /// \cond INTERNAL
     bool _iceD_getClosestFreePoint(::IceInternal::Incoming&, const ::Ice::Current&);
@@ -1316,9 +2435,29 @@ public:
     bool _iceD_getDimensions(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
+    virtual ::Ice::Float getDistanceToTarget(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getDistanceToTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual ::Ice::Float getEstimatedTimeToTarget(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getEstimatedTimeToTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
     virtual Map getMap(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
     /// \cond INTERNAL
     bool _iceD_getMap(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual NavigationState getNavigationState(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getNavigationState(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual NavigationStatus getNavigationStatus(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getNavigationStatus(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
     virtual Result getPaths(const TPoint& source, const TPoint& target, ::Ice::Int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, ::Ice::Float safetyFactor, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
@@ -1331,6 +2470,26 @@ public:
     bool _iceD_getPose(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
+    virtual TPoint getTarget(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_getTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool hasReachedTarget(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_hasReachedTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool replanPath(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_replanPath(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool resumeNavigation(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_resumeNavigation(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
     virtual bool setGridDimensions(const TDimensions& dimensions, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
     /// \cond INTERNAL
     bool _iceD_setGridDimensions(::IceInternal::Incoming&, const ::Ice::Current&);
@@ -1339,6 +2498,26 @@ public:
     virtual Result setLocationAndGetPath(const TPoint& source, const TPoint& target, const TPointVector& freePoints, const TPointVector& obstaclePoints, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
     /// \cond INTERNAL
     bool _iceD_setLocationAndGetPath(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool setTarget(const TPoint& target, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_setTarget(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool setTargetWithOptions(const TPoint& target, const NavigationOptions& options, const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_setTargetWithOptions(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual bool startNavigation(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_startNavigation(::IceInternal::Incoming&, const ::Ice::Current&);
+    /// \endcond
+
+    virtual void stopNavigation(const ::Ice::Current& current = ::Ice::emptyCurrent) = 0;
+    /// \cond INTERNAL
+    bool _iceD_stopNavigation(::IceInternal::Incoming&, const ::Ice::Current&);
     /// \endcond
 
     /// \cond INTERNAL
@@ -1552,6 +2731,90 @@ struct StreamReader< ::RoboCompGridder::Pose, S>
         istr->read(v.y);
         istr->read(v.theta);
         istr->read(v.cov);
+    }
+};
+
+template<>
+struct StreamableTraits< ::RoboCompGridder::NavigationState>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryEnum;
+    static const int minValue = 0;
+    static const int maxValue = 5;
+    static const int minWireSize = 1;
+    static const bool fixedLength = false;
+};
+
+template<>
+struct StreamableTraits< ::RoboCompGridder::NavigationOptions>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 10;
+    static const bool fixedLength = true;
+};
+
+template<typename S>
+struct StreamWriter< ::RoboCompGridder::NavigationOptions, S>
+{
+    static void write(S* ostr, const ::RoboCompGridder::NavigationOptions& v)
+    {
+        ostr->write(v.maxSpeed);
+        ostr->write(v.safetyFactor);
+        ostr->write(v.useEsdf);
+        ostr->write(v.allowReplan);
+    }
+};
+
+template<typename S>
+struct StreamReader< ::RoboCompGridder::NavigationOptions, S>
+{
+    static void read(S* istr, ::RoboCompGridder::NavigationOptions& v)
+    {
+        istr->read(v.maxSpeed);
+        istr->read(v.safetyFactor);
+        istr->read(v.useEsdf);
+        istr->read(v.allowReplan);
+    }
+};
+
+template<>
+struct StreamableTraits< ::RoboCompGridder::NavigationStatus>
+{
+    static const StreamHelperCategory helper = StreamHelperCategoryStruct;
+    static const int minWireSize = 46;
+    static const bool fixedLength = false;
+};
+
+template<typename S>
+struct StreamWriter< ::RoboCompGridder::NavigationStatus, S>
+{
+    static void write(S* ostr, const ::RoboCompGridder::NavigationStatus& v)
+    {
+        ostr->write(v.state);
+        ostr->write(v.currentTarget);
+        ostr->write(v.currentPosition);
+        ostr->write(v.currentOrientation);
+        ostr->write(v.distanceToTarget);
+        ostr->write(v.estimatedTime);
+        ostr->write(v.currentSpeed);
+        ostr->write(v.pathWaypointsRemaining);
+        ostr->write(v.statusMessage);
+    }
+};
+
+template<typename S>
+struct StreamReader< ::RoboCompGridder::NavigationStatus, S>
+{
+    static void read(S* istr, ::RoboCompGridder::NavigationStatus& v)
+    {
+        istr->read(v.state);
+        istr->read(v.currentTarget);
+        istr->read(v.currentPosition);
+        istr->read(v.currentOrientation);
+        istr->read(v.distanceToTarget);
+        istr->read(v.estimatedTime);
+        istr->read(v.currentSpeed);
+        istr->read(v.pathWaypointsRemaining);
+        istr->read(v.statusMessage);
     }
 };
 
@@ -1867,6 +3130,162 @@ newCallback_Gridder_LineOfSightToTarget(T* instance, void (T::*cb)(bool, const C
 
 /**
  * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_cancelNavigation.
+ */
+template<class T>
+class CallbackNC_Gridder_cancelNavigation : public Callback_Gridder_cancelNavigation_Base, public ::IceInternal::OnewayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)();
+
+    CallbackNC_Gridder_cancelNavigation(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::OnewayCallbackNC<T>(obj, cb, excb, sentcb)
+    {
+    }
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ */
+template<class T> Callback_Gridder_cancelNavigationPtr
+newCallback_Gridder_cancelNavigation(const IceUtil::Handle<T>& instance, void (T::*cb)(), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_cancelNavigation<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ */
+template<class T> Callback_Gridder_cancelNavigationPtr
+newCallback_Gridder_cancelNavigation(const IceUtil::Handle<T>& instance, void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_cancelNavigation<T>(instance, 0, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ */
+template<class T> Callback_Gridder_cancelNavigationPtr
+newCallback_Gridder_cancelNavigation(T* instance, void (T::*cb)(), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_cancelNavigation<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ */
+template<class T> Callback_Gridder_cancelNavigationPtr
+newCallback_Gridder_cancelNavigation(T* instance, void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_cancelNavigation<T>(instance, 0, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_cancelNavigation.
+ */
+template<class T, typename CT>
+class Callback_Gridder_cancelNavigation : public Callback_Gridder_cancelNavigation_Base, public ::IceInternal::OnewayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(const CT&);
+
+    Callback_Gridder_cancelNavigation(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::OnewayCallback<T, CT>(obj, cb, excb, sentcb)
+    {
+    }
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_cancelNavigationPtr
+newCallback_Gridder_cancelNavigation(const IceUtil::Handle<T>& instance, void (T::*cb)(const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_cancelNavigation<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_cancelNavigationPtr
+newCallback_Gridder_cancelNavigation(const IceUtil::Handle<T>& instance, void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_cancelNavigation<T, CT>(instance, 0, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_cancelNavigationPtr
+newCallback_Gridder_cancelNavigation(T* instance, void (T::*cb)(const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_cancelNavigation<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_cancelNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_cancelNavigationPtr
+newCallback_Gridder_cancelNavigation(T* instance, void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_cancelNavigation<T, CT>(instance, 0, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
  * IceProxy::RoboCompGridder::Gridder::begin_getClosestFreePoint.
  * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getClosestFreePoint.
  */
@@ -2171,6 +3590,310 @@ newCallback_Gridder_getDimensions(T* instance, void (T::*cb)(const TDimensions&,
 
 /**
  * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getDistanceToTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getDistanceToTarget.
+ */
+template<class T>
+class CallbackNC_Gridder_getDistanceToTarget : public Callback_Gridder_getDistanceToTarget_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(::Ice::Float);
+
+    CallbackNC_Gridder_getDistanceToTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        ::Ice::Float ret;
+        try
+        {
+            ret = proxy->end_getDistanceToTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getDistanceToTarget.
+ */
+template<class T> Callback_Gridder_getDistanceToTargetPtr
+newCallback_Gridder_getDistanceToTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(::Ice::Float), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getDistanceToTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getDistanceToTarget.
+ */
+template<class T> Callback_Gridder_getDistanceToTargetPtr
+newCallback_Gridder_getDistanceToTarget(T* instance, void (T::*cb)(::Ice::Float), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getDistanceToTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getDistanceToTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getDistanceToTarget.
+ */
+template<class T, typename CT>
+class Callback_Gridder_getDistanceToTarget : public Callback_Gridder_getDistanceToTarget_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(::Ice::Float, const CT&);
+
+    Callback_Gridder_getDistanceToTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        ::Ice::Float ret;
+        try
+        {
+            ret = proxy->end_getDistanceToTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getDistanceToTarget.
+ */
+template<class T, typename CT> Callback_Gridder_getDistanceToTargetPtr
+newCallback_Gridder_getDistanceToTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(::Ice::Float, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getDistanceToTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getDistanceToTarget.
+ */
+template<class T, typename CT> Callback_Gridder_getDistanceToTargetPtr
+newCallback_Gridder_getDistanceToTarget(T* instance, void (T::*cb)(::Ice::Float, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getDistanceToTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getEstimatedTimeToTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getEstimatedTimeToTarget.
+ */
+template<class T>
+class CallbackNC_Gridder_getEstimatedTimeToTarget : public Callback_Gridder_getEstimatedTimeToTarget_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(::Ice::Float);
+
+    CallbackNC_Gridder_getEstimatedTimeToTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        ::Ice::Float ret;
+        try
+        {
+            ret = proxy->end_getEstimatedTimeToTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getEstimatedTimeToTarget.
+ */
+template<class T> Callback_Gridder_getEstimatedTimeToTargetPtr
+newCallback_Gridder_getEstimatedTimeToTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(::Ice::Float), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getEstimatedTimeToTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getEstimatedTimeToTarget.
+ */
+template<class T> Callback_Gridder_getEstimatedTimeToTargetPtr
+newCallback_Gridder_getEstimatedTimeToTarget(T* instance, void (T::*cb)(::Ice::Float), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getEstimatedTimeToTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getEstimatedTimeToTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getEstimatedTimeToTarget.
+ */
+template<class T, typename CT>
+class Callback_Gridder_getEstimatedTimeToTarget : public Callback_Gridder_getEstimatedTimeToTarget_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(::Ice::Float, const CT&);
+
+    Callback_Gridder_getEstimatedTimeToTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        ::Ice::Float ret;
+        try
+        {
+            ret = proxy->end_getEstimatedTimeToTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getEstimatedTimeToTarget.
+ */
+template<class T, typename CT> Callback_Gridder_getEstimatedTimeToTargetPtr
+newCallback_Gridder_getEstimatedTimeToTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(::Ice::Float, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getEstimatedTimeToTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getEstimatedTimeToTarget.
+ */
+template<class T, typename CT> Callback_Gridder_getEstimatedTimeToTargetPtr
+newCallback_Gridder_getEstimatedTimeToTarget(T* instance, void (T::*cb)(::Ice::Float, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getEstimatedTimeToTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
  * IceProxy::RoboCompGridder::Gridder::begin_getMap.
  * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getMap.
  */
@@ -2319,6 +4042,310 @@ template<class T, typename CT> Callback_Gridder_getMapPtr
 newCallback_Gridder_getMap(T* instance, void (T::*cb)(const Map&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
 {
     return new Callback_Gridder_getMap<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getNavigationState.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getNavigationState.
+ */
+template<class T>
+class CallbackNC_Gridder_getNavigationState : public Callback_Gridder_getNavigationState_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(NavigationState);
+
+    CallbackNC_Gridder_getNavigationState(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        NavigationState ret;
+        try
+        {
+            ret = proxy->end_getNavigationState(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getNavigationState.
+ */
+template<class T> Callback_Gridder_getNavigationStatePtr
+newCallback_Gridder_getNavigationState(const IceUtil::Handle<T>& instance, void (T::*cb)(NavigationState), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getNavigationState<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getNavigationState.
+ */
+template<class T> Callback_Gridder_getNavigationStatePtr
+newCallback_Gridder_getNavigationState(T* instance, void (T::*cb)(NavigationState), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getNavigationState<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getNavigationState.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getNavigationState.
+ */
+template<class T, typename CT>
+class Callback_Gridder_getNavigationState : public Callback_Gridder_getNavigationState_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(NavigationState, const CT&);
+
+    Callback_Gridder_getNavigationState(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        NavigationState ret;
+        try
+        {
+            ret = proxy->end_getNavigationState(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getNavigationState.
+ */
+template<class T, typename CT> Callback_Gridder_getNavigationStatePtr
+newCallback_Gridder_getNavigationState(const IceUtil::Handle<T>& instance, void (T::*cb)(NavigationState, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getNavigationState<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getNavigationState.
+ */
+template<class T, typename CT> Callback_Gridder_getNavigationStatePtr
+newCallback_Gridder_getNavigationState(T* instance, void (T::*cb)(NavigationState, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getNavigationState<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getNavigationStatus.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getNavigationStatus.
+ */
+template<class T>
+class CallbackNC_Gridder_getNavigationStatus : public Callback_Gridder_getNavigationStatus_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(const NavigationStatus&);
+
+    CallbackNC_Gridder_getNavigationStatus(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        NavigationStatus ret;
+        try
+        {
+            ret = proxy->end_getNavigationStatus(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getNavigationStatus.
+ */
+template<class T> Callback_Gridder_getNavigationStatusPtr
+newCallback_Gridder_getNavigationStatus(const IceUtil::Handle<T>& instance, void (T::*cb)(const NavigationStatus&), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getNavigationStatus<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getNavigationStatus.
+ */
+template<class T> Callback_Gridder_getNavigationStatusPtr
+newCallback_Gridder_getNavigationStatus(T* instance, void (T::*cb)(const NavigationStatus&), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getNavigationStatus<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getNavigationStatus.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getNavigationStatus.
+ */
+template<class T, typename CT>
+class Callback_Gridder_getNavigationStatus : public Callback_Gridder_getNavigationStatus_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(const NavigationStatus&, const CT&);
+
+    Callback_Gridder_getNavigationStatus(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        NavigationStatus ret;
+        try
+        {
+            ret = proxy->end_getNavigationStatus(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getNavigationStatus.
+ */
+template<class T, typename CT> Callback_Gridder_getNavigationStatusPtr
+newCallback_Gridder_getNavigationStatus(const IceUtil::Handle<T>& instance, void (T::*cb)(const NavigationStatus&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getNavigationStatus<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getNavigationStatus.
+ */
+template<class T, typename CT> Callback_Gridder_getNavigationStatusPtr
+newCallback_Gridder_getNavigationStatus(T* instance, void (T::*cb)(const NavigationStatus&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getNavigationStatus<T, CT>(instance, cb, excb, sentcb);
 }
 
 /**
@@ -2627,6 +4654,614 @@ newCallback_Gridder_getPose(T* instance, void (T::*cb)(const Pose&, const CT&), 
 
 /**
  * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getTarget.
+ */
+template<class T>
+class CallbackNC_Gridder_getTarget : public Callback_Gridder_getTarget_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(const TPoint&);
+
+    CallbackNC_Gridder_getTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        TPoint ret;
+        try
+        {
+            ret = proxy->end_getTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getTarget.
+ */
+template<class T> Callback_Gridder_getTargetPtr
+newCallback_Gridder_getTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(const TPoint&), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getTarget.
+ */
+template<class T> Callback_Gridder_getTargetPtr
+newCallback_Gridder_getTarget(T* instance, void (T::*cb)(const TPoint&), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_getTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_getTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_getTarget.
+ */
+template<class T, typename CT>
+class Callback_Gridder_getTarget : public Callback_Gridder_getTarget_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(const TPoint&, const CT&);
+
+    Callback_Gridder_getTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        TPoint ret;
+        try
+        {
+            ret = proxy->end_getTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getTarget.
+ */
+template<class T, typename CT> Callback_Gridder_getTargetPtr
+newCallback_Gridder_getTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(const TPoint&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_getTarget.
+ */
+template<class T, typename CT> Callback_Gridder_getTargetPtr
+newCallback_Gridder_getTarget(T* instance, void (T::*cb)(const TPoint&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_getTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_hasReachedTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_hasReachedTarget.
+ */
+template<class T>
+class CallbackNC_Gridder_hasReachedTarget : public Callback_Gridder_hasReachedTarget_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(bool);
+
+    CallbackNC_Gridder_hasReachedTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_hasReachedTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_hasReachedTarget.
+ */
+template<class T> Callback_Gridder_hasReachedTargetPtr
+newCallback_Gridder_hasReachedTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_hasReachedTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_hasReachedTarget.
+ */
+template<class T> Callback_Gridder_hasReachedTargetPtr
+newCallback_Gridder_hasReachedTarget(T* instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_hasReachedTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_hasReachedTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_hasReachedTarget.
+ */
+template<class T, typename CT>
+class Callback_Gridder_hasReachedTarget : public Callback_Gridder_hasReachedTarget_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(bool, const CT&);
+
+    Callback_Gridder_hasReachedTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_hasReachedTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_hasReachedTarget.
+ */
+template<class T, typename CT> Callback_Gridder_hasReachedTargetPtr
+newCallback_Gridder_hasReachedTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_hasReachedTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_hasReachedTarget.
+ */
+template<class T, typename CT> Callback_Gridder_hasReachedTargetPtr
+newCallback_Gridder_hasReachedTarget(T* instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_hasReachedTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_replanPath.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_replanPath.
+ */
+template<class T>
+class CallbackNC_Gridder_replanPath : public Callback_Gridder_replanPath_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(bool);
+
+    CallbackNC_Gridder_replanPath(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_replanPath(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_replanPath.
+ */
+template<class T> Callback_Gridder_replanPathPtr
+newCallback_Gridder_replanPath(const IceUtil::Handle<T>& instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_replanPath<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_replanPath.
+ */
+template<class T> Callback_Gridder_replanPathPtr
+newCallback_Gridder_replanPath(T* instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_replanPath<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_replanPath.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_replanPath.
+ */
+template<class T, typename CT>
+class Callback_Gridder_replanPath : public Callback_Gridder_replanPath_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(bool, const CT&);
+
+    Callback_Gridder_replanPath(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_replanPath(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_replanPath.
+ */
+template<class T, typename CT> Callback_Gridder_replanPathPtr
+newCallback_Gridder_replanPath(const IceUtil::Handle<T>& instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_replanPath<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_replanPath.
+ */
+template<class T, typename CT> Callback_Gridder_replanPathPtr
+newCallback_Gridder_replanPath(T* instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_replanPath<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_resumeNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_resumeNavigation.
+ */
+template<class T>
+class CallbackNC_Gridder_resumeNavigation : public Callback_Gridder_resumeNavigation_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(bool);
+
+    CallbackNC_Gridder_resumeNavigation(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_resumeNavigation(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_resumeNavigation.
+ */
+template<class T> Callback_Gridder_resumeNavigationPtr
+newCallback_Gridder_resumeNavigation(const IceUtil::Handle<T>& instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_resumeNavigation<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_resumeNavigation.
+ */
+template<class T> Callback_Gridder_resumeNavigationPtr
+newCallback_Gridder_resumeNavigation(T* instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_resumeNavigation<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_resumeNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_resumeNavigation.
+ */
+template<class T, typename CT>
+class Callback_Gridder_resumeNavigation : public Callback_Gridder_resumeNavigation_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(bool, const CT&);
+
+    Callback_Gridder_resumeNavigation(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_resumeNavigation(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_resumeNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_resumeNavigationPtr
+newCallback_Gridder_resumeNavigation(const IceUtil::Handle<T>& instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_resumeNavigation<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_resumeNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_resumeNavigationPtr
+newCallback_Gridder_resumeNavigation(T* instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_resumeNavigation<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
  * IceProxy::RoboCompGridder::Gridder::begin_setGridDimensions.
  * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_setGridDimensions.
  */
@@ -2927,6 +5562,618 @@ template<class T, typename CT> Callback_Gridder_setLocationAndGetPathPtr
 newCallback_Gridder_setLocationAndGetPath(T* instance, void (T::*cb)(const Result&, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
 {
     return new Callback_Gridder_setLocationAndGetPath<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_setTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_setTarget.
+ */
+template<class T>
+class CallbackNC_Gridder_setTarget : public Callback_Gridder_setTarget_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(bool);
+
+    CallbackNC_Gridder_setTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_setTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_setTarget.
+ */
+template<class T> Callback_Gridder_setTargetPtr
+newCallback_Gridder_setTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_setTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_setTarget.
+ */
+template<class T> Callback_Gridder_setTargetPtr
+newCallback_Gridder_setTarget(T* instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_setTarget<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_setTarget.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_setTarget.
+ */
+template<class T, typename CT>
+class Callback_Gridder_setTarget : public Callback_Gridder_setTarget_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(bool, const CT&);
+
+    Callback_Gridder_setTarget(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_setTarget(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_setTarget.
+ */
+template<class T, typename CT> Callback_Gridder_setTargetPtr
+newCallback_Gridder_setTarget(const IceUtil::Handle<T>& instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_setTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_setTarget.
+ */
+template<class T, typename CT> Callback_Gridder_setTargetPtr
+newCallback_Gridder_setTarget(T* instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_setTarget<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_setTargetWithOptions.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_setTargetWithOptions.
+ */
+template<class T>
+class CallbackNC_Gridder_setTargetWithOptions : public Callback_Gridder_setTargetWithOptions_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(bool);
+
+    CallbackNC_Gridder_setTargetWithOptions(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_setTargetWithOptions(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_setTargetWithOptions.
+ */
+template<class T> Callback_Gridder_setTargetWithOptionsPtr
+newCallback_Gridder_setTargetWithOptions(const IceUtil::Handle<T>& instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_setTargetWithOptions<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_setTargetWithOptions.
+ */
+template<class T> Callback_Gridder_setTargetWithOptionsPtr
+newCallback_Gridder_setTargetWithOptions(T* instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_setTargetWithOptions<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_setTargetWithOptions.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_setTargetWithOptions.
+ */
+template<class T, typename CT>
+class Callback_Gridder_setTargetWithOptions : public Callback_Gridder_setTargetWithOptions_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(bool, const CT&);
+
+    Callback_Gridder_setTargetWithOptions(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_setTargetWithOptions(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_setTargetWithOptions.
+ */
+template<class T, typename CT> Callback_Gridder_setTargetWithOptionsPtr
+newCallback_Gridder_setTargetWithOptions(const IceUtil::Handle<T>& instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_setTargetWithOptions<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_setTargetWithOptions.
+ */
+template<class T, typename CT> Callback_Gridder_setTargetWithOptionsPtr
+newCallback_Gridder_setTargetWithOptions(T* instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_setTargetWithOptions<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_startNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_startNavigation.
+ */
+template<class T>
+class CallbackNC_Gridder_startNavigation : public Callback_Gridder_startNavigation_Base, public ::IceInternal::TwowayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)(bool);
+
+    CallbackNC_Gridder_startNavigation(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallbackNC<T>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_startNavigation(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::CallbackNC<T>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::CallbackNC<T>::_callback.get()->*_response)(ret);
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_startNavigation.
+ */
+template<class T> Callback_Gridder_startNavigationPtr
+newCallback_Gridder_startNavigation(const IceUtil::Handle<T>& instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_startNavigation<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_startNavigation.
+ */
+template<class T> Callback_Gridder_startNavigationPtr
+newCallback_Gridder_startNavigation(T* instance, void (T::*cb)(bool), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_startNavigation<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_startNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_startNavigation.
+ */
+template<class T, typename CT>
+class Callback_Gridder_startNavigation : public Callback_Gridder_startNavigation_Base, public ::IceInternal::TwowayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(bool, const CT&);
+
+    Callback_Gridder_startNavigation(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::TwowayCallback<T, CT>(obj, cb != 0, excb, sentcb), _response(cb)
+    {
+    }
+
+    /// \cond INTERNAL
+    virtual void completed(const ::Ice::AsyncResultPtr& result) const
+    {
+        GridderPrx proxy = GridderPrx::uncheckedCast(result->getProxy());
+        bool ret;
+        try
+        {
+            ret = proxy->end_startNavigation(result);
+        }
+        catch(const ::Ice::Exception& ex)
+        {
+            ::IceInternal::Callback<T, CT>::exception(result, ex);
+            return;
+        }
+        if(_response)
+        {
+            (::IceInternal::Callback<T, CT>::_callback.get()->*_response)(ret, CT::dynamicCast(result->getCookie()));
+        }
+    }
+    /// \endcond
+
+private:
+
+    Response _response;
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_startNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_startNavigationPtr
+newCallback_Gridder_startNavigation(const IceUtil::Handle<T>& instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_startNavigation<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_startNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_startNavigationPtr
+newCallback_Gridder_startNavigation(T* instance, void (T::*cb)(bool, const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_startNavigation<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_stopNavigation.
+ */
+template<class T>
+class CallbackNC_Gridder_stopNavigation : public Callback_Gridder_stopNavigation_Base, public ::IceInternal::OnewayCallbackNC<T>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception&);
+    typedef void (T::*Sent)(bool);
+    typedef void (T::*Response)();
+
+    CallbackNC_Gridder_stopNavigation(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::OnewayCallbackNC<T>(obj, cb, excb, sentcb)
+    {
+    }
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ */
+template<class T> Callback_Gridder_stopNavigationPtr
+newCallback_Gridder_stopNavigation(const IceUtil::Handle<T>& instance, void (T::*cb)(), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_stopNavigation<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ */
+template<class T> Callback_Gridder_stopNavigationPtr
+newCallback_Gridder_stopNavigation(const IceUtil::Handle<T>& instance, void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_stopNavigation<T>(instance, 0, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ */
+template<class T> Callback_Gridder_stopNavigationPtr
+newCallback_Gridder_stopNavigation(T* instance, void (T::*cb)(), void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_stopNavigation<T>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * @param instance The callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ */
+template<class T> Callback_Gridder_stopNavigationPtr
+newCallback_Gridder_stopNavigation(T* instance, void (T::*excb)(const ::Ice::Exception&), void (T::*sentcb)(bool) = 0)
+{
+    return new CallbackNC_Gridder_stopNavigation<T>(instance, 0, excb, sentcb);
+}
+
+/**
+ * Type-safe asynchronous callback wrapper class with cookie support used for calls to
+ * IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ * Create a wrapper instance by calling ::RoboCompGridder::newCallback_Gridder_stopNavigation.
+ */
+template<class T, typename CT>
+class Callback_Gridder_stopNavigation : public Callback_Gridder_stopNavigation_Base, public ::IceInternal::OnewayCallback<T, CT>
+{
+public:
+
+    typedef IceUtil::Handle<T> TPtr;
+
+    typedef void (T::*Exception)(const ::Ice::Exception& , const CT&);
+    typedef void (T::*Sent)(bool , const CT&);
+    typedef void (T::*Response)(const CT&);
+
+    Callback_Gridder_stopNavigation(const TPtr& obj, Response cb, Exception excb, Sent sentcb)
+        : ::IceInternal::OnewayCallback<T, CT>(obj, cb, excb, sentcb)
+    {
+    }
+};
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_stopNavigationPtr
+newCallback_Gridder_stopNavigation(const IceUtil::Handle<T>& instance, void (T::*cb)(const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_stopNavigation<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_stopNavigationPtr
+newCallback_Gridder_stopNavigation(const IceUtil::Handle<T>& instance, void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_stopNavigation<T, CT>(instance, 0, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param cb The success method of the callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_stopNavigationPtr
+newCallback_Gridder_stopNavigation(T* instance, void (T::*cb)(const CT&), void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_stopNavigation<T, CT>(instance, cb, excb, sentcb);
+}
+
+/**
+ * Creates a callback wrapper instance that delegates to your object.
+ * Use this overload when your callback methods receive a cookie value.
+ * @param instance The callback object.
+ * @param excb The exception method of the callback object.
+ * @param sentcb The sent method of the callback object.
+ * @return An object that can be passed to an asynchronous invocation of IceProxy::RoboCompGridder::Gridder::begin_stopNavigation.
+ */
+template<class T, typename CT> Callback_Gridder_stopNavigationPtr
+newCallback_Gridder_stopNavigation(T* instance, void (T::*excb)(const ::Ice::Exception&, const CT&), void (T::*sentcb)(bool, const CT&) = 0)
+{
+    return new Callback_Gridder_stopNavigation<T, CT>(instance, 0, excb, sentcb);
 }
 
 }

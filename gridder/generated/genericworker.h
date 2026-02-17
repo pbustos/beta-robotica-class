@@ -75,13 +75,26 @@ public:
 
 	virtual bool Gridder_IsPathBlocked(RoboCompGridder::TPath path) = 0;
 	virtual bool Gridder_LineOfSightToTarget(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, float robotRadius) = 0;
+	virtual void Gridder_cancelNavigation() = 0;
 	virtual RoboCompGridder::TPoint Gridder_getClosestFreePoint(RoboCompGridder::TPoint source) = 0;
 	virtual RoboCompGridder::TDimensions Gridder_getDimensions() = 0;
+	virtual float Gridder_getDistanceToTarget() = 0;
+	virtual float Gridder_getEstimatedTimeToTarget() = 0;
 	virtual RoboCompGridder::Map Gridder_getMap() = 0;
+	virtual RoboCompGridder::NavigationState Gridder_getNavigationState() = 0;
+	virtual RoboCompGridder::NavigationStatus Gridder_getNavigationStatus() = 0;
 	virtual RoboCompGridder::Result Gridder_getPaths(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor) = 0;
 	virtual RoboCompGridder::Pose Gridder_getPose() = 0;
+	virtual RoboCompGridder::TPoint Gridder_getTarget() = 0;
+	virtual bool Gridder_hasReachedTarget() = 0;
+	virtual bool Gridder_replanPath() = 0;
+	virtual bool Gridder_resumeNavigation() = 0;
 	virtual bool Gridder_setGridDimensions(RoboCompGridder::TDimensions dimensions) = 0;
 	virtual RoboCompGridder::Result Gridder_setLocationAndGetPath(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, RoboCompGridder::TPointVector freePoints, RoboCompGridder::TPointVector obstaclePoints) = 0;
+	virtual bool Gridder_setTarget(RoboCompGridder::TPoint target) = 0;
+	virtual bool Gridder_setTargetWithOptions(RoboCompGridder::TPoint target, RoboCompGridder::NavigationOptions options) = 0;
+	virtual bool Gridder_startNavigation() = 0;
+	virtual void Gridder_stopNavigation() = 0;
 
 
 protected:

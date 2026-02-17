@@ -156,6 +156,21 @@ class SpecificWorker : public GenericWorker
 		 */
 		RoboCompGridder::Pose Gridder_getPose();
 
+		RoboCompGridder::TPoint Gridder_getTarget();
+		bool Gridder_hasReachedTarget();
+		bool Gridder_replanPath();
+		bool Gridder_resumeNavigation();
+		bool Gridder_setTarget(RoboCompGridder::TPoint target);
+		bool Gridder_setTargetWithOptions(RoboCompGridder::TPoint target, RoboCompGridder::NavigationOptions options);
+		bool Gridder_startNavigation();
+		void Gridder_stopNavigation();
+		RoboCompGridder::NavigationState Gridder_getNavigationState();
+		RoboCompGridder::NavigationStatus Gridder_getNavigationStatus();
+		void Gridder_cancelNavigation();
+		float Gridder_getEstimatedTimeToTarget();
+		float Gridder_getDistanceToTarget();
+		/////////////////// END of Gridder.idsl methods ///////////////////
+
 		/**
 		 * \brief Initializes the worker one time.
 		 */
@@ -193,63 +208,73 @@ class SpecificWorker : public GenericWorker
 		//Robot
 		Eigen::Affine2f robot_pose = Eigen::Affine2f::Identity();
 
+	    // Robot kinematic model enum (defined outside struct for easier access)
+	    enum class RobotType { OMNIDIRECTIONAL, DIFFERENTIAL };
+
 	    struct Params
 	    {
-	        float ROBOT_WIDTH = 460;  // mm
-	        float ROBOT_LENGTH = 480;  // mm
-	        float ROBOT_SEMI_WIDTH = ROBOT_WIDTH / 2.f;     // mm
-	        float ROBOT_SEMI_LENGTH = ROBOT_LENGTH / 2.f;    // mm
-	        float TILE_SIZE = 100;   // mm
-	        float MIN_DISTANCE_TO_TARGET = ROBOT_WIDTH / 2.f; // mm
+	        // Robot dimensions (mm) - loaded from config
+	        float ROBOT_WIDTH = 460;
+	        float ROBOT_LENGTH = 480;
+	        float ROBOT_SEMI_WIDTH = ROBOT_WIDTH / 2.f;
+	        float ROBOT_SEMI_LENGTH = ROBOT_LENGTH / 2.f;
+	        float MIN_DISTANCE_TO_TARGET = ROBOT_WIDTH / 2.f;
+
+	        // Grid configuration - loaded from config
+	        float TILE_SIZE = 100;
+	        QRectF GRID_MAX_DIM{-500, -500, 1000, 1000};
+
+	        // LiDAR configuration - loaded from config
 	        std::string LIDAR_NAME_LOW = "bpearl";
 	        std::string LIDAR_NAME_HIGH = "helios";
-	        float MAX_LIDAR_LOW_RANGE = 100000;  // mm
-	        float MAX_LIDAR_HIGH_RANGE = 100000;  // mm
-	        float MAX_LIDAR_RANGE = MAX_LIDAR_LOW_RANGE;  // mm used in the grid
+	        float MAX_LIDAR_LOW_RANGE = 100000;
+	        float MAX_LIDAR_HIGH_RANGE = 100000;
+	        float MAX_LIDAR_RANGE = MAX_LIDAR_LOW_RANGE;
 	        int LIDAR_LOW_DECIMATION_FACTOR = 1;
 	        int LIDAR_HIGH_DECIMATION_FACTOR = 1;
-	        QRectF GRID_MAX_DIM{-500, -500, 1000, 1000};
-	    	//QRectF GRID_MAX_DIM{-5, -5, 10, 10};
-	        long PERIOD_HYSTERESIS = 2; // to avoid oscillations in the adjustment of the lidar thread period
-	        int PERIOD = 100;    // ms (20 Hz) for compute timer
+
+	        // Display settings - loaded from config
+	        bool DISPLAY = true;
+	        bool DRAW_LIDAR_POINTS = false;
+	        int MAX_LIDAR_DRAW_POINTS = 1500;
+
+	        // Timing - loaded from config
+	        long PERIOD_HYSTERESIS = 2;
+	        int PERIOD = 100;
 	        unsigned int ELAPSED_TIME_BETWEEN_PATH_UPDATES = 3000;
+
+	        // Path planning - loaded from config
 	        int NUM_PATHS_TO_SEARCH = 3;
-	        float MIN_DISTANCE_BETWEEN_PATHS = 500; // mm
-	        bool DRAW_LIDAR_POINTS = false;  // debug: draw LiDAR points (can impact performance)
-	        int MAX_LIDAR_DRAW_POINTS = 1500; // debug: limit number of points drawn
-			bool DISPLAY = true; // Whether to display the viewer (set false for headless operation)
-	        // Path planning safety factor: 0=shortest path (touch walls), 1=safest path (prefer center)
-	        float SAFETY_FACTOR = 1.0f;	// 0=touch walls, 1=prefer center
-	        size_t MAX_ASTAR_NODES = 100000;  // Maximum nodes to expand in A* before giving up
-	        float ASTAR_DISTANCE_FACTOR = 100.f;  // Multiply path distance in cells by this factor for max nodes
+	        float MIN_DISTANCE_BETWEEN_PATHS = 500;
+	        float SAFETY_FACTOR = 1.0f;
+	        size_t MAX_ASTAR_NODES = 100000;
+	        float ASTAR_DISTANCE_FACTOR = 100.f;
 
-	        // MRPT map offset to align with Webots world coordinates (in mm)
-	        //float MRPT_MAP_OFFSET_X = 26100.7f;  // mm - X offset to apply to loaded map
-	        //float MRPT_MAP_OFFSET_Y = 5600.f;  // mm - Y offset to apply to loaded map
-	        //float MRPT_MAP_ROTATION = M_PI_2;   // radians - rotation to apply (90º left = PI/2)
+	        // Localizer parameters - loaded from config
+	        bool USE_LOCALIZER = true;
+	        size_t LOCALIZER_PARTICLES = 500;
+	        float LOCALIZER_ODOM_NOISE = 0.1f;
+	        int LOCALIZER_PERIOD_MS = 50;
 
-	        // Localizer parameters
-	        bool USE_LOCALIZER = true;  // Enable/disable AMCL localization
-	        size_t LOCALIZER_PARTICLES = 500;  // Number of particles
-	        float LOCALIZER_ODOM_NOISE = 0.1f;  // Noise factor for simulated odometry
-	        int LOCALIZER_PERIOD_MS = 50;       // ms - Localizer thread period (20 Hz)
+	        // Ground Truth warmup (simulation only) - loaded from config
+	        bool USE_GT_WARMUP = true;
 
-	        // Ground Truth warmup (only for simulation - set FALSE for real robot)
-	        bool USE_GT_WARMUP = true;  // Allow GT pose during initialization warmup (Webots only)
+	        // MRPT map alignment - loaded from config
+	        float MRPT_MAP_OFFSET_X = 12000.0f;
+	        float MRPT_MAP_OFFSET_Y = -2500.0f;
+	        float MRPT_MAP_ROTATION = -M_PI_2;
+	        bool MRPT_MAP_MIRROR_X = true;
 
-	        float MRPT_MAP_OFFSET_X = 12000.0f; //26100.7f;  // mm - X offset to apply to loaded map
-	        float MRPT_MAP_OFFSET_Y = -2500.0f;//5600.f;  // mm - Y offset to apply to loaded map
-	        float MRPT_MAP_ROTATION =  -M_PI_2;   // radians - rotation to apply (90º left = PI/2)
-	        bool MRPT_MAP_MIRROR_X = true;       // Mirror X axis (negate X before rotation) if map appears flipped
+	        // MPPI controller - loaded from config
+	        int MPPI_PERIOD_MS = 50;
 
-	        // MPPI controller parameters
-	        int MPPI_PERIOD_MS = 50;            // ms - MPPI thread period (~20 Hz)
-
-	        // Robot kinematic model
-	        enum class RobotType { OMNIDIRECTIONAL, DIFFERENTIAL };
-	        RobotType ROBOT_TYPE = RobotType::DIFFERENTIAL;  // DIFFERENTIAL for non-holonomic robots
+	        // Robot kinematic model - loaded from config
+	        RobotType ROBOT_TYPE = RobotType::DIFFERENTIAL;
 	    };
 	    Params params;
+
+	    // Load parameters from ConfigLoader
+	    void loadParams(const ConfigLoader& configLoader);
 
 	    // Timer
 	    rc::Timer<> clock;

@@ -34,13 +34,26 @@ public:
 
 	bool IsPathBlocked(RoboCompGridder::TPath path, const Ice::Current&);
 	bool LineOfSightToTarget(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, float robotRadius, const Ice::Current&);
+	void cancelNavigation(const Ice::Current&);
 	RoboCompGridder::TPoint getClosestFreePoint(RoboCompGridder::TPoint source, const Ice::Current&);
 	RoboCompGridder::TDimensions getDimensions(const Ice::Current&);
+	float getDistanceToTarget(const Ice::Current&);
+	float getEstimatedTimeToTarget(const Ice::Current&);
 	RoboCompGridder::Map getMap(const Ice::Current&);
+	RoboCompGridder::NavigationState getNavigationState(const Ice::Current&);
+	RoboCompGridder::NavigationStatus getNavigationStatus(const Ice::Current&);
 	RoboCompGridder::Result getPaths(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor, const Ice::Current&);
 	RoboCompGridder::Pose getPose(const Ice::Current&);
+	RoboCompGridder::TPoint getTarget(const Ice::Current&);
+	bool hasReachedTarget(const Ice::Current&);
+	bool replanPath(const Ice::Current&);
+	bool resumeNavigation(const Ice::Current&);
 	bool setGridDimensions(RoboCompGridder::TDimensions dimensions, const Ice::Current&);
 	RoboCompGridder::Result setLocationAndGetPath(RoboCompGridder::TPoint source, RoboCompGridder::TPoint target, RoboCompGridder::TPointVector freePoints, RoboCompGridder::TPointVector obstaclePoints, const Ice::Current&);
+	bool setTarget(RoboCompGridder::TPoint target, const Ice::Current&);
+	bool setTargetWithOptions(RoboCompGridder::TPoint target, RoboCompGridder::NavigationOptions options, const Ice::Current&);
+	bool startNavigation(const Ice::Current&);
+	void stopNavigation(const Ice::Current&);
 
 private:
 
@@ -50,13 +63,26 @@ private:
 	// Array handlers for each method
 	std::array<std::function<bool(RoboCompGridder::TPath)>, 1> IsPathBlockedHandlers;
 	std::array<std::function<bool(RoboCompGridder::TPoint, RoboCompGridder::TPoint, float)>, 1> LineOfSightToTargetHandlers;
+	std::array<std::function<void(void)>, 1> cancelNavigationHandlers;
 	std::array<std::function<RoboCompGridder::TPoint(RoboCompGridder::TPoint)>, 1> getClosestFreePointHandlers;
 	std::array<std::function<RoboCompGridder::TDimensions(void)>, 1> getDimensionsHandlers;
+	std::array<std::function<float(void)>, 1> getDistanceToTargetHandlers;
+	std::array<std::function<float(void)>, 1> getEstimatedTimeToTargetHandlers;
 	std::array<std::function<RoboCompGridder::Map(void)>, 1> getMapHandlers;
+	std::array<std::function<RoboCompGridder::NavigationState(void)>, 1> getNavigationStateHandlers;
+	std::array<std::function<RoboCompGridder::NavigationStatus(void)>, 1> getNavigationStatusHandlers;
 	std::array<std::function<RoboCompGridder::Result(RoboCompGridder::TPoint, RoboCompGridder::TPoint, int, bool, bool, float)>, 1> getPathsHandlers;
 	std::array<std::function<RoboCompGridder::Pose(void)>, 1> getPoseHandlers;
+	std::array<std::function<RoboCompGridder::TPoint(void)>, 1> getTargetHandlers;
+	std::array<std::function<bool(void)>, 1> hasReachedTargetHandlers;
+	std::array<std::function<bool(void)>, 1> replanPathHandlers;
+	std::array<std::function<bool(void)>, 1> resumeNavigationHandlers;
 	std::array<std::function<bool(RoboCompGridder::TDimensions)>, 1> setGridDimensionsHandlers;
 	std::array<std::function<RoboCompGridder::Result(RoboCompGridder::TPoint, RoboCompGridder::TPoint, RoboCompGridder::TPointVector, RoboCompGridder::TPointVector)>, 1> setLocationAndGetPathHandlers;
+	std::array<std::function<bool(RoboCompGridder::TPoint)>, 1> setTargetHandlers;
+	std::array<std::function<bool(RoboCompGridder::TPoint, RoboCompGridder::NavigationOptions)>, 1> setTargetWithOptionsHandlers;
+	std::array<std::function<bool(void)>, 1> startNavigationHandlers;
+	std::array<std::function<void(void)>, 1> stopNavigationHandlers;
 
 };
 

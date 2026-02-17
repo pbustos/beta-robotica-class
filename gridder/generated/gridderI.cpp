@@ -28,6 +28,10 @@ GridderI::GridderI(GenericWorker *_worker, const size_t id): worker(_worker), id
 		[this](auto a, auto b, auto c) { return worker->Gridder_LineOfSightToTarget(a, b, c); }
 	};
 
+	cancelNavigationHandlers = {
+		[this]() { return worker->Gridder_cancelNavigation(); }
+	};
+
 	getClosestFreePointHandlers = {
 		[this](auto a) { return worker->Gridder_getClosestFreePoint(a); }
 	};
@@ -36,8 +40,24 @@ GridderI::GridderI(GenericWorker *_worker, const size_t id): worker(_worker), id
 		[this]() { return worker->Gridder_getDimensions(); }
 	};
 
+	getDistanceToTargetHandlers = {
+		[this]() { return worker->Gridder_getDistanceToTarget(); }
+	};
+
+	getEstimatedTimeToTargetHandlers = {
+		[this]() { return worker->Gridder_getEstimatedTimeToTarget(); }
+	};
+
 	getMapHandlers = {
 		[this]() { return worker->Gridder_getMap(); }
+	};
+
+	getNavigationStateHandlers = {
+		[this]() { return worker->Gridder_getNavigationState(); }
+	};
+
+	getNavigationStatusHandlers = {
+		[this]() { return worker->Gridder_getNavigationStatus(); }
 	};
 
 	getPathsHandlers = {
@@ -48,12 +68,44 @@ GridderI::GridderI(GenericWorker *_worker, const size_t id): worker(_worker), id
 		[this]() { return worker->Gridder_getPose(); }
 	};
 
+	getTargetHandlers = {
+		[this]() { return worker->Gridder_getTarget(); }
+	};
+
+	hasReachedTargetHandlers = {
+		[this]() { return worker->Gridder_hasReachedTarget(); }
+	};
+
+	replanPathHandlers = {
+		[this]() { return worker->Gridder_replanPath(); }
+	};
+
+	resumeNavigationHandlers = {
+		[this]() { return worker->Gridder_resumeNavigation(); }
+	};
+
 	setGridDimensionsHandlers = {
 		[this](auto a) { return worker->Gridder_setGridDimensions(a); }
 	};
 
 	setLocationAndGetPathHandlers = {
 		[this](auto a, auto b, auto c, auto d) { return worker->Gridder_setLocationAndGetPath(a, b, c, d); }
+	};
+
+	setTargetHandlers = {
+		[this](auto a) { return worker->Gridder_setTarget(a); }
+	};
+
+	setTargetWithOptionsHandlers = {
+		[this](auto a, auto b) { return worker->Gridder_setTargetWithOptions(a, b); }
+	};
+
+	startNavigationHandlers = {
+		[this]() { return worker->Gridder_startNavigation(); }
+	};
+
+	stopNavigationHandlers = {
+		[this]() { return worker->Gridder_stopNavigation(); }
 	};
 
 }
@@ -92,6 +144,20 @@ bool GridderI::LineOfSightToTarget(RoboCompGridder::TPoint source, RoboCompGridd
 
 }
 
+void GridderI::cancelNavigation(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < cancelNavigationHandlers.size())
+		 cancelNavigationHandlers[id]();
+	else
+		throw std::out_of_range("Invalid cancelNavigation id: " + std::to_string(id));
+
+}
+
 RoboCompGridder::TPoint GridderI::getClosestFreePoint(RoboCompGridder::TPoint source, const Ice::Current&)
 {
 
@@ -120,6 +186,34 @@ RoboCompGridder::TDimensions GridderI::getDimensions(const Ice::Current&)
 
 }
 
+float GridderI::getDistanceToTarget(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < getDistanceToTargetHandlers.size())
+		return  getDistanceToTargetHandlers[id]();
+	else
+		throw std::out_of_range("Invalid getDistanceToTarget id: " + std::to_string(id));
+
+}
+
+float GridderI::getEstimatedTimeToTarget(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < getEstimatedTimeToTargetHandlers.size())
+		return  getEstimatedTimeToTargetHandlers[id]();
+	else
+		throw std::out_of_range("Invalid getEstimatedTimeToTarget id: " + std::to_string(id));
+
+}
+
 RoboCompGridder::Map GridderI::getMap(const Ice::Current&)
 {
 
@@ -131,6 +225,34 @@ RoboCompGridder::Map GridderI::getMap(const Ice::Current&)
 		return  getMapHandlers[id]();
 	else
 		throw std::out_of_range("Invalid getMap id: " + std::to_string(id));
+
+}
+
+RoboCompGridder::NavigationState GridderI::getNavigationState(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < getNavigationStateHandlers.size())
+		return  getNavigationStateHandlers[id]();
+	else
+		throw std::out_of_range("Invalid getNavigationState id: " + std::to_string(id));
+
+}
+
+RoboCompGridder::NavigationStatus GridderI::getNavigationStatus(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < getNavigationStatusHandlers.size())
+		return  getNavigationStatusHandlers[id]();
+	else
+		throw std::out_of_range("Invalid getNavigationStatus id: " + std::to_string(id));
 
 }
 
@@ -162,6 +284,62 @@ RoboCompGridder::Pose GridderI::getPose(const Ice::Current&)
 
 }
 
+RoboCompGridder::TPoint GridderI::getTarget(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < getTargetHandlers.size())
+		return  getTargetHandlers[id]();
+	else
+		throw std::out_of_range("Invalid getTarget id: " + std::to_string(id));
+
+}
+
+bool GridderI::hasReachedTarget(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < hasReachedTargetHandlers.size())
+		return  hasReachedTargetHandlers[id]();
+	else
+		throw std::out_of_range("Invalid hasReachedTarget id: " + std::to_string(id));
+
+}
+
+bool GridderI::replanPath(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < replanPathHandlers.size())
+		return  replanPathHandlers[id]();
+	else
+		throw std::out_of_range("Invalid replanPath id: " + std::to_string(id));
+
+}
+
+bool GridderI::resumeNavigation(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < resumeNavigationHandlers.size())
+		return  resumeNavigationHandlers[id]();
+	else
+		throw std::out_of_range("Invalid resumeNavigation id: " + std::to_string(id));
+
+}
+
 bool GridderI::setGridDimensions(RoboCompGridder::TDimensions dimensions, const Ice::Current&)
 {
 
@@ -187,6 +365,62 @@ RoboCompGridder::Result GridderI::setLocationAndGetPath(RoboCompGridder::TPoint 
 		return  setLocationAndGetPathHandlers[id](source, target, freePoints, obstaclePoints);
 	else
 		throw std::out_of_range("Invalid setLocationAndGetPath id: " + std::to_string(id));
+
+}
+
+bool GridderI::setTarget(RoboCompGridder::TPoint target, const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < setTargetHandlers.size())
+		return  setTargetHandlers[id](target);
+	else
+		throw std::out_of_range("Invalid setTarget id: " + std::to_string(id));
+
+}
+
+bool GridderI::setTargetWithOptions(RoboCompGridder::TPoint target, RoboCompGridder::NavigationOptions options, const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < setTargetWithOptionsHandlers.size())
+		return  setTargetWithOptionsHandlers[id](target, options);
+	else
+		throw std::out_of_range("Invalid setTargetWithOptions id: " + std::to_string(id));
+
+}
+
+bool GridderI::startNavigation(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < startNavigationHandlers.size())
+		return  startNavigationHandlers[id]();
+	else
+		throw std::out_of_range("Invalid startNavigation id: " + std::to_string(id));
+
+}
+
+void GridderI::stopNavigation(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < stopNavigationHandlers.size())
+		 stopNavigationHandlers[id]();
+	else
+		throw std::out_of_range("Invalid stopNavigation id: " + std::to_string(id));
 
 }
 

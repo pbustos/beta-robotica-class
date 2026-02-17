@@ -32,135 +32,117 @@
 //#define HIBERNATION_ENABLED
 
 #include <genericworker.h>
-#include <grid2d/grid.h>
+#include "rapplication/rapplication.h"
+#include "grid_esdf.h"
 #include "abstract_graphic_viewer/abstract_graphic_viewer.h"
-#include <Eigen/Geometry>
-
-// MPPI Controller - descomentar para activar
-// #include "mppi_controller.h"
-
 
 /**
  * \brief Class SpecificWorker implements the core functionality of the component.
  */
 class SpecificWorker : public GenericWorker
 {
-	Q_OBJECT
-	public:
-	    /**
-	     * \brief Constructor for SpecificWorker.
-	     * \param configLoader Configuration loader for the component.
-	     * \param tprx Tuple of proxies required for the component.
-	     * \param startup_check Indicates whether to perform startup checks.
-	     */
-		SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check);
+Q_OBJECT
+public:
+    /**
+     * \brief Constructor for SpecificWorker.
+     * \param configLoader Configuration loader for the component.
+     * \param tprx Tuple of proxies required for the component.
+     * \param startup_check Indicates whether to perform startup checks.
+     */
+	SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check);
 
-		/**
-	     * \brief Destructor for SpecificWorker.
-	     */
-		~SpecificWorker();
+	/**
+     * \brief Destructor for SpecificWorker.
+     */
+	~SpecificWorker();
 
 
-	public slots:
+public slots:
 
-		/**
-		 * \brief Initializes the worker one time.
-		 */
-		void initialize();
+	/**
+	 * \brief Initializes the worker one time.
+	 */
+	void initialize();
 
-		/**
-		 * \brief Main compute loop of the worker.
-		 */
-		void compute();
+	/**
+	 * \brief Main compute loop of the worker.
+	 */
+	void compute();
+	void left_click_handler(QPointF p);
 
-		/**
-		 * \brief Handles the emergency state loop.
-		 */
-		void emergency();
+/**
+	 * \brief Handles the emergency state loop.
+	 */
+	void emergency();
 
-		/**
-		 * \brief Restores the component from an emergency state.
-		 */
-		void restore();
+	/**
+	 * \brief Restores the component from an emergency state.
+	 */
+	void restore();
 
-	private:
-		bool startup_check_flag;
-		int startup_check();
+    /**
+     * \brief Performs startup checks for the component.
+     * \return An integer representing the result of the checks.
+     */
+	int startup_check();
 
-		struct Params
-		{
-			float ROBOT_WIDTH = 460;  // mm
-			float ROBOT_LENGTH = 480;  // mm
-			float MAX_ADV_SPEED = 1000; // mm/s
-			float MAX_ROT_SPEED = 1; // rad/s
-			float MAX_SIDE_SPEED = 50; // mm/s
-			float MAX_TRANSLATION = 500; // mm/s
-			float MAX_ROTATION = 0.2;
-			float STOP_THRESHOLD = 700; // mm
-			float ADVANCE_THRESHOLD = ROBOT_WIDTH * 3; // mm
-			float LIDAR_FRONT_SECTION = 0.2; // rads, aprox 12 degrees
-			// wall
-			float LIDAR_RIGHT_SIDE_SECTION = M_PI/3; // rads, 90 degrees
-			float LIDAR_LEFT_SIDE_SECTION = -M_PI/3; // rads, 90 degrees
-			float WALL_MIN_DISTANCE = ROBOT_WIDTH*1.2;
-			// match error correction
-			float MATCH_ERROR_SIGMA = 150.f; // mm
-			float DOOR_REACHED_DIST = 300.f;
-			std::string LIDAR_NAME_LOW = "bpearl";
-			std::string LIDAR_NAME_HIGH = "helios";
-			QRectF GRID_MAX_DIM{-5000, 2500, 10000, -5000};
+private:
+	bool startup_check_flag;
 
-			// relocalization
-			float RELOCAL_CENTER_EPS = 300.f;    // mm: stop when |mean| < eps
-			float RELOCAL_KP = 0.002f;           // gain to convert mean (mm) -> speed (magnitude)
-			float RELOCAL_MAX_ADV = 300.f;       // mm/s cap while re-centering
-			float RELOCAL_MAX_SIDE = 300.f;      // mm/s cap while re-centering
-			float RELOCAL_ROT_SPEED = 0.3f;     // rad/s while aligning
-			float RELOCAL_DELTA = 5.0f * M_PI/180.f; // small probe angle in radians
-			float RELOCAL_MATCH_MAX_DIST = 2000.f;   // mm for Hungarian gating
-			float RELOCAL_DONE_COST = 500.f;
-			float RELOCAL_DONE_MATCH_MAX_ERROR = 1000.f;
+	  struct Params
+	    {
+	        float ROBOT_WIDTH = 460;  // mm
+	        float ROBOT_LENGTH = 480;  // mm
+	        float ROBOT_SEMI_WIDTH = ROBOT_WIDTH / 2.f;     // mm
+	        float ROBOT_SEMI_LENGTH = ROBOT_LENGTH / 2.f;    // mm
+	        float TILE_SIZE = 100;   // mm
+	        float MIN_DISTANCE_TO_TARGET = ROBOT_WIDTH / 2.f; // mm
+	        std::string LIDAR_NAME_LOW = "bpearl";
+	        std::string LIDAR_NAME_HIGH = "helios";
+	        float MAX_LIDAR_LOW_RANGE = 100000;  // mm
+	        float MAX_LIDAR_HIGH_RANGE = 100000;  // mm
+	        float MAX_LIDAR_RANGE = MAX_LIDAR_LOW_RANGE;  // mm used in the grid
+	        int LIDAR_LOW_DECIMATION_FACTOR = 1;
+	        int LIDAR_HIGH_DECIMATION_FACTOR = 1;
+	        QRectF GRID_MAX_DIM{-5000, -5000, 10000, 10000};
+	        long PERIOD_HYSTERESIS = 2; // to avoid oscillations in the adjustment of the lidar thread period
+	        int PERIOD = 100;    // ms (20 Hz) for compute timer
+	        unsigned int ELAPSED_TIME_BETWEEN_PATH_UPDATES = 3000;
+	        int NUM_PATHS_TO_SEARCH = 3;
+	        float MIN_DISTANCE_BETWEEN_PATHS = 500; // mm
+	        bool DRAW_LIDAR_POINTS = false;  // debug: draw LiDAR points (can impact performance)
+	        int MAX_LIDAR_DRAW_POINTS = 1500; // debug: limit number of points drawn
+			bool DISPLAY = true; // Whether to display the viewer (set false for headless operation)
 
-		};
-		Params params;
+	  		// Path planning safety factor: 0=shortest path (touch walls), 1=safest path (prefer center)
+	        float SAFETY_FACTOR = 1.0f;	// 0=touch walls, 1=prefer center
 
-		// viewer
-		AbstractGraphicViewer *viewer;
-		QGraphicsPolygonItem *robot_draw;
-		Eigen::Affine2f robot_pose;
+	  		// Grid
+	  		float MRPT_MAP_OFFSET_X = 0.f; // 12000.0f; //26100.7f;  // mm - X offset to apply to loaded map
+	  		float MRPT_MAP_OFFSET_Y = 0.f; // -2500.0f;//5600.f;  // mm - Y offset to apply to loaded map
+	  		float MRPT_MAP_ROTATION = 0.f; // -M_PI_2;   // radians - rotation to apply (90º left = PI/2)
+	  		bool MRPT_MAP_MIRROR_X = false;       // Mirror X axis (negate X before rotation) if map appears flipped
 
-		Eigen::Affine2f get_robot_pose();
-		RoboCompGridder::Result current_path_result = {};
-		bool has_target_ = false;
+	    };
+	    Params params;
 
-		void draw_lidar (const RoboCompLidar3D::TPoints &filtered_points, const Eigen::Affine2f &robot_pose, QGraphicsScene *scene);
+	//Graphics
+	AbstractGraphicViewer *viewer;
 
-		//Updates robot_pose_display with the new robot coordinates each iteration (modifies robot_pose_display class attribute)
-		Eigen::Affine2f update_robot_transform(const RoboCompWebots2Robocomp::ObjectPose &pose, Eigen::Affine2f &robot_transform);
+	RoboCompGridder::Map map;
 
-		RoboCompLidar3D::TPoints get_lidar();
+	// Grid (Sparse ESDF - VoxBlox-style)
+	GridESDF grid_esdf;
 
-		double yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
+	// Robot position variables
+	float robot_x = 0.0f;
+	float robot_y = 0.0f;
+	float robot_theta = 0.0f;
 
-		void compute_mppi_control(const RoboCompLidar3D::TPoints &lidar_data);
+	void update_ui();
+	void initialize_grid();
+	void draw_path(const std::vector<Eigen::Vector2f> &path, QGraphicsScene *scene, bool erase_only=false);
 
-		//Transforms param local_point to the room's coordinate system by multiplying with robot_pose (which already is at the room's coordinate system)
-		//Eigen::Vector2f transform_to_world(const RoboCompLidar3D::TPoint &local_point);
-
-		//Obtains the robot's rotation from the linear part of robot_pose_display
-		//float obtain_rotation();
-
-		// =====================================================================
-		// MPPI Controller - descomentar para activar
-		// =====================================================================
-		// MPPIController mppi_controller_;
-		// std::vector<Eigen::Vector2f> current_path_;  // Path from Gridder
-		// Eigen::Vector2f current_target_;             // Current target position
-		// bool has_target_ = false;                    // Flag to indicate if there is an active target
-		//
-		// // Helper methods for MPPI
-		// std::vector<Eigen::Vector2f> lidar_to_obstacles(const RoboCompLidar3D::TPoints& points);
-		// void draw_mppi_trajectory(const std::vector<MPPIController::State>& trajectory, QGraphicsScene* scene);
 };
 
 #endif

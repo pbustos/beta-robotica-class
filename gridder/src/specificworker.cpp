@@ -32,6 +32,9 @@ class TPointVector;
 */
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
 {
+	// Load parameters from config file
+	loadParams(configLoader);
+
 	this->startup_check_flag = startup_check;
 	if(this->startup_check_flag)
 	{
@@ -54,6 +57,109 @@ SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, 
 		
 	}
 }
+/**
+* \brief Load parameters from ConfigLoader
+*/
+void SpecificWorker::loadParams(const ConfigLoader& configLoader)
+{
+	qInfo() << "[Config] Loading parameters from config.toml...";
+
+	// Helper lambda to safely get config values with defaults
+	auto getFloat = [&configLoader](const std::string& key, float defaultVal) -> float {
+		try { return static_cast<float>(configLoader.get<double>("specific." + key)); }
+		catch (...) { return defaultVal; }
+	};
+	auto getInt = [&configLoader](const std::string& key, int defaultVal) -> int {
+		try { return configLoader.get<int>("specific." + key); }
+		catch (...) { return defaultVal; }
+	};
+	auto getBool = [&configLoader](const std::string& key, bool defaultVal) -> bool {
+		try { return configLoader.get<bool>("specific." + key); }
+		catch (...) { return defaultVal; }
+	};
+	auto getString = [&configLoader](const std::string& key, const std::string& defaultVal) -> std::string {
+		try { return configLoader.get<std::string>("specific." + key); }
+		catch (...) { return defaultVal; }
+	};
+
+	// Display and visualization
+	params.DISPLAY = getBool("display", params.DISPLAY);
+	params.DRAW_LIDAR_POINTS = getBool("draw_lidar_points", params.DRAW_LIDAR_POINTS);
+	params.MAX_LIDAR_DRAW_POINTS = getInt("max_lidar_draw_points", params.MAX_LIDAR_DRAW_POINTS);
+
+	// Robot dimensions
+	params.ROBOT_WIDTH = getFloat("robot_width", params.ROBOT_WIDTH);
+	params.ROBOT_LENGTH = getFloat("robot_length", params.ROBOT_LENGTH);
+	params.ROBOT_SEMI_WIDTH = params.ROBOT_WIDTH / 2.f;
+	params.ROBOT_SEMI_LENGTH = params.ROBOT_LENGTH / 2.f;
+	params.MIN_DISTANCE_TO_TARGET = params.ROBOT_WIDTH / 2.f;
+
+	// Robot kinematic model
+	std::string robot_type_str = getString("robot_type", "differential");
+	if (robot_type_str == "omnidirectional" || robot_type_str == "OMNIDIRECTIONAL")
+		params.ROBOT_TYPE = RobotType::OMNIDIRECTIONAL;
+	else
+		params.ROBOT_TYPE = RobotType::DIFFERENTIAL;
+
+	// Grid configuration
+	params.TILE_SIZE = getFloat("tile_size", params.TILE_SIZE);
+	float grid_min_x = getFloat("grid_min_x", params.GRID_MAX_DIM.x());
+	float grid_min_y = getFloat("grid_min_y", params.GRID_MAX_DIM.y());
+	float grid_width = getFloat("grid_width", params.GRID_MAX_DIM.width());
+	float grid_height = getFloat("grid_height", params.GRID_MAX_DIM.height());
+	params.GRID_MAX_DIM = QRectF(grid_min_x, grid_min_y, grid_width, grid_height);
+
+	// LiDAR configuration
+	params.LIDAR_NAME_LOW = getString("lidar_name_low", params.LIDAR_NAME_LOW);
+	params.LIDAR_NAME_HIGH = getString("lidar_name_high", params.LIDAR_NAME_HIGH);
+	params.MAX_LIDAR_LOW_RANGE = getFloat("max_lidar_low_range", params.MAX_LIDAR_LOW_RANGE);
+	params.MAX_LIDAR_HIGH_RANGE = getFloat("max_lidar_high_range", params.MAX_LIDAR_HIGH_RANGE);
+	params.MAX_LIDAR_RANGE = params.MAX_LIDAR_LOW_RANGE;  // Use low range as default
+	params.LIDAR_LOW_DECIMATION_FACTOR = getInt("lidar_low_decimation", params.LIDAR_LOW_DECIMATION_FACTOR);
+	params.LIDAR_HIGH_DECIMATION_FACTOR = getInt("lidar_high_decimation", params.LIDAR_HIGH_DECIMATION_FACTOR);
+
+	// Path planning
+	params.SAFETY_FACTOR = getFloat("safety_factor", params.SAFETY_FACTOR);
+	params.MAX_ASTAR_NODES = static_cast<size_t>(getInt("max_astar_nodes", static_cast<int>(params.MAX_ASTAR_NODES)));
+	params.ASTAR_DISTANCE_FACTOR = getFloat("astar_distance_factor", params.ASTAR_DISTANCE_FACTOR);
+	params.NUM_PATHS_TO_SEARCH = getInt("num_paths_to_search", params.NUM_PATHS_TO_SEARCH);
+	params.MIN_DISTANCE_BETWEEN_PATHS = getFloat("min_distance_between_paths", params.MIN_DISTANCE_BETWEEN_PATHS);
+	params.ELAPSED_TIME_BETWEEN_PATH_UPDATES = static_cast<unsigned int>(getInt("elapsed_time_between_path_updates",
+	                                            static_cast<int>(params.ELAPSED_TIME_BETWEEN_PATH_UPDATES)));
+
+	// MRPT map alignment
+	params.MRPT_MAP_OFFSET_X = getFloat("mrpt_map_offset_x", params.MRPT_MAP_OFFSET_X);
+	params.MRPT_MAP_OFFSET_Y = getFloat("mrpt_map_offset_y", params.MRPT_MAP_OFFSET_Y);
+	params.MRPT_MAP_ROTATION = getFloat("mrpt_map_rotation", params.MRPT_MAP_ROTATION);
+	params.MRPT_MAP_MIRROR_X = getBool("mrpt_map_mirror_x", params.MRPT_MAP_MIRROR_X);
+
+	// Localizer parameters
+	params.USE_LOCALIZER = getBool("use_localizer", params.USE_LOCALIZER);
+	params.LOCALIZER_PARTICLES = static_cast<size_t>(getInt("localizer_particles", static_cast<int>(params.LOCALIZER_PARTICLES)));
+	params.LOCALIZER_ODOM_NOISE = getFloat("localizer_odom_noise", params.LOCALIZER_ODOM_NOISE);
+	params.LOCALIZER_PERIOD_MS = getInt("localizer_period_ms", params.LOCALIZER_PERIOD_MS);
+
+	// Ground Truth warmup
+	params.USE_GT_WARMUP = getBool("use_gt_warmup", params.USE_GT_WARMUP);
+
+	// MPPI controller
+	params.MPPI_PERIOD_MS = getInt("mppi_period_ms", params.MPPI_PERIOD_MS);
+
+	// Timing
+	params.PERIOD_HYSTERESIS = static_cast<long>(getInt("period_hysteresis", static_cast<int>(params.PERIOD_HYSTERESIS)));
+	params.PERIOD = getInt("Period.Compute", params.PERIOD);  // From [Period] section
+
+	qInfo() << "[Config] Parameters loaded:";
+	qInfo() << "  - Robot:" << params.ROBOT_WIDTH << "x" << params.ROBOT_LENGTH << "mm,"
+	        << (params.ROBOT_TYPE == RobotType::DIFFERENTIAL ? "differential" : "omnidirectional");
+	qInfo() << "  - Grid: tile=" << params.TILE_SIZE << "mm, bounds="
+	        << params.GRID_MAX_DIM.x() << "," << params.GRID_MAX_DIM.y()
+	        << "," << params.GRID_MAX_DIM.width() << "," << params.GRID_MAX_DIM.height();
+	qInfo() << "  - Localizer:" << (params.USE_LOCALIZER ? "enabled" : "disabled")
+	        << ", particles=" << params.LOCALIZER_PARTICLES;
+	qInfo() << "  - GT warmup:" << (params.USE_GT_WARMUP ? "enabled (simulation)" : "disabled (real robot)");
+}
+
 /**
 * \brief Default destructor
 */
@@ -166,7 +272,7 @@ void SpecificWorker::initialize()
         mppi_params.use_footprint_sampling = true;  // Enable 8-point footprint collision detection
 
         // Set robot kinematic model
-        mppi_params.robot_type = (params.ROBOT_TYPE == Params::RobotType::DIFFERENTIAL)
+        mppi_params.robot_type = (params.ROBOT_TYPE == RobotType::DIFFERENTIAL)
             ? MPPIController::RobotType::DIFFERENTIAL
             : MPPIController::RobotType::OMNIDIRECTIONAL;
 
@@ -1547,6 +1653,454 @@ RoboCompGridder::Pose SpecificWorker::Gridder_getPose()
     return ret;
 }
 
+void SpecificWorker::Gridder_cancelNavigation()
+{
+    qInfo() << "[API] cancelNavigation called";
+
+    // Disable MPPI controller
+    mppi_enabled.store(false);
+
+    // Clear path and target
+    {
+        std::lock_guard<std::mutex> lock(mutex_current_path);
+        current_path.clear();
+    }
+    current_target = Eigen::Vector2f::Zero();
+
+    // Set state to IDLE
+    nav_state.store(NavigationState::IDLE);
+
+    // Send stop command to robot
+    try {
+        omnirobot_proxy->setSpeedBase(0.f, 0.f, 0.f);
+    } catch (const Ice::Exception &e) {
+        qWarning() << "[API] Failed to stop robot:" << e.what();
+    }
+
+    // Reset MPPI controller
+    mppi_controller.reset();
+
+    // Clear trajectory visualization
+    {
+        std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);
+        last_optimal_trajectory.clear();
+    }
+
+    // Update UI
+    QMetaObject::invokeMethod(this, [this]() {
+        pushButton_mppi->setChecked(false);
+        draw_path({}, &viewer->scene, true);  // Clear path drawing
+    }, Qt::QueuedConnection);
+
+    qInfo() << "[API] Navigation cancelled, target cleared";
+}
+
+float SpecificWorker::Gridder_getDistanceToTarget()
+{
+    // Check if we have a target
+    if (current_target.norm() < 1.f)  // Near origin means no target
+        return 0.f;
+
+    // Get current robot pose
+    const auto timestamp = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    const auto& [estimated] = buffer_estimated_pose.read(timestamp);
+    if (!estimated.has_value())
+        return -1.f;  // Unknown
+
+    const auto& robot_pose = estimated.value();
+    Eigen::Vector2f robot_pos(robot_pose.translation().x(), robot_pose.translation().y());
+
+    // Euclidean distance to target
+    return (current_target - robot_pos).norm();
+}
+
+float SpecificWorker::Gridder_getEstimatedTimeToTarget()
+{
+    float distance = Gridder_getDistanceToTarget();
+    if (distance <= 0.f)
+        return -1.f;  // Unknown or no target
+
+    // Estimate based on typical average speed (considering acceleration/deceleration)
+    // Using ~300 mm/s average (conservative estimate)
+    constexpr float avg_speed_mm_s = 300.f;
+
+    return distance / avg_speed_mm_s;  // Time in seconds
+}
+
+RoboCompGridder::NavigationState SpecificWorker::Gridder_getNavigationState()
+{
+    // Map internal NavigationState to RoboCompGridder::NavigationState
+    auto internal_state = nav_state.load();
+
+    switch (internal_state)
+    {
+        case NavigationState::IDLE:
+            return RoboCompGridder::NavigationState::IDLE;
+        case NavigationState::NAVIGATING:
+            return RoboCompGridder::NavigationState::NAVIGATING;
+        case NavigationState::GOAL_REACHED:
+            return RoboCompGridder::NavigationState::REACHED;
+        case NavigationState::BLOCKED:
+            return RoboCompGridder::NavigationState::BLOCKED;
+        default:
+            return RoboCompGridder::NavigationState::ERROR;
+    }
+}
+
+RoboCompGridder::NavigationStatus SpecificWorker::Gridder_getNavigationStatus()
+{
+    RoboCompGridder::NavigationStatus status;
+
+    // State
+    status.state = Gridder_getNavigationState();
+
+    // Current target
+    status.currentTarget.x = current_target.x();
+    status.currentTarget.y = current_target.y();
+    status.currentTarget.radius = 0.f;
+
+    // Current position and orientation
+    const auto timestamp = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    const auto& [estimated] = buffer_estimated_pose.read(timestamp);
+    if (estimated.has_value())
+    {
+        const auto& pose = estimated.value();
+        status.currentPosition.x = pose.translation().x();
+        status.currentPosition.y = pose.translation().y();
+        status.currentPosition.radius = params.ROBOT_SEMI_WIDTH;
+        status.currentOrientation = std::atan2(pose.linear()(1, 0), pose.linear()(0, 0));
+    }
+    else
+    {
+        status.currentPosition = {0.f, 0.f, 0.f};
+        status.currentOrientation = 0.f;
+    }
+
+    // Distance and time to target
+    status.distanceToTarget = Gridder_getDistanceToTarget();
+    status.estimatedTime = Gridder_getEstimatedTimeToTarget();
+
+    // Current speed (from MPPI output)
+    const auto& [mppi_out] = buffer_mppi_output.read(timestamp);
+    if (mppi_out.has_value() && mppi_out->valid)
+    {
+        status.currentSpeed = std::sqrt(mppi_out->vx * mppi_out->vx + mppi_out->vy * mppi_out->vy);
+    }
+    else
+    {
+        status.currentSpeed = 0.f;
+    }
+
+    // Path waypoints remaining
+    {
+        std::lock_guard<std::mutex> lock(mutex_current_path);
+        status.pathWaypointsRemaining = static_cast<int>(current_path.size());
+    }
+
+    // Status message
+    switch (status.state)
+    {
+        case RoboCompGridder::NavigationState::IDLE:
+            status.statusMessage = "Idle - no target set";
+            break;
+        case RoboCompGridder::NavigationState::NAVIGATING:
+            status.statusMessage = "Navigating to target";
+            break;
+        case RoboCompGridder::NavigationState::PAUSED:
+            status.statusMessage = "Navigation paused";
+            break;
+        case RoboCompGridder::NavigationState::REACHED:
+            status.statusMessage = "Target reached";
+            break;
+        case RoboCompGridder::NavigationState::BLOCKED:
+            status.statusMessage = "Path blocked - replanning needed";
+            break;
+        case RoboCompGridder::NavigationState::ERROR:
+            status.statusMessage = "Navigation error";
+            break;
+    }
+
+    return status;
+}
+
+RoboCompGridder::TPoint SpecificWorker::Gridder_getTarget()
+{
+    RoboCompGridder::TPoint ret;
+    ret.x = current_target.x();
+    ret.y = current_target.y();
+    ret.radius = 0.f;
+    return ret;
+}
+
+bool SpecificWorker::Gridder_hasReachedTarget()
+{
+    return nav_state.load() == NavigationState::GOAL_REACHED;
+}
+
+bool SpecificWorker::Gridder_replanPath()
+{
+    qInfo() << "[API] replanPath called";
+
+    // Check if we have a current target
+    if (current_target.norm() < 1.f)  // Near origin means no target
+    {
+        qWarning() << "[API] No target set, cannot replan";
+        return false;
+    }
+
+    // Get current robot pose
+    const auto timestamp = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    const auto& [estimated] = buffer_estimated_pose.read(timestamp);
+    if (!estimated.has_value())
+    {
+        qWarning() << "[API] No robot pose available for replanning";
+        return false;
+    }
+
+    const auto& robot_pose = estimated.value();
+    Eigen::Vector2f source(robot_pose.translation().x(), robot_pose.translation().y());
+
+    // Compute new path
+    auto new_path = grid_esdf.compute_path(source, current_target, params.ROBOT_SEMI_WIDTH, params.SAFETY_FACTOR);
+
+    if (new_path.empty())
+    {
+        qWarning() << "[API] Replanning failed, no path found";
+        nav_state.store(NavigationState::BLOCKED);
+        return false;
+    }
+
+    // Update path
+    {
+        std::lock_guard<std::mutex> lock(mutex_current_path);
+        current_path = new_path;
+    }
+
+    // Reset MPPI for new path
+    mppi_controller.reset();
+
+    qInfo() << "[API] Path replanned with" << new_path.size() << "waypoints";
+
+    // Draw new path in UI
+    QMetaObject::invokeMethod(this, [this, new_path]() {
+        draw_path(new_path, &viewer->scene);
+    }, Qt::QueuedConnection);
+
+    return true;
+}
+
+bool SpecificWorker::Gridder_resumeNavigation()
+{
+    qInfo() << "[API] resumeNavigation called";
+
+    // Check if we have a target to resume to
+    {
+        std::lock_guard<std::mutex> lock(mutex_current_path);
+        if (current_path.empty())
+        {
+            qWarning() << "[API] No path to resume, call setTarget first";
+            return false;
+        }
+    }
+
+    // Check current state
+    auto state = nav_state.load();
+    if (state == NavigationState::NAVIGATING)
+    {
+        qInfo() << "[API] Already navigating";
+        return true;
+    }
+
+    if (state == NavigationState::GOAL_REACHED)
+    {
+        qInfo() << "[API] Goal already reached, set new target";
+        return false;
+    }
+
+    // Resume navigation
+    mppi_enabled.store(true);
+    nav_state.store(NavigationState::NAVIGATING);
+
+    // Update UI
+    QMetaObject::invokeMethod(this, [this]() {
+        pushButton_mppi->setChecked(true);
+    }, Qt::QueuedConnection);
+
+    qInfo() << "[API] Navigation resumed";
+    return true;
+}
+
+bool SpecificWorker::Gridder_setTarget(RoboCompGridder::TPoint target)
+{
+    qInfo() << "[API] setTarget called:" << target.x << target.y;
+
+    // Check if target is valid (not blocked)
+    Eigen::Vector2f target_eigen(target.x, target.y);
+    auto target_key = grid_esdf.point_to_key(target_eigen);
+    if (grid_esdf.is_occupied_for_planning(target_key, params.ROBOT_SEMI_WIDTH))
+    {
+        qWarning() << "[API] Target is blocked, searching for closest free point";
+        // Use existing Gridder_getClosestFreePoint
+        RoboCompGridder::TPoint closest_pt;
+        closest_pt.x = target.x;
+        closest_pt.y = target.y;
+        closest_pt.radius = 0.f;
+        auto free_pt = Gridder_getClosestFreePoint(closest_pt);
+        if (free_pt.x == 0.f && free_pt.y == 0.f)
+        {
+            qWarning() << "[API] No free point found near target";
+            nav_state.store(NavigationState::BLOCKED);
+            return false;
+        }
+        target_eigen = Eigen::Vector2f(free_pt.x, free_pt.y);
+        qInfo() << "[API] Using closest free point:" << target_eigen.x() << target_eigen.y();
+    }
+
+    // Get current robot pose
+    const auto timestamp = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    const auto& [estimated] = buffer_estimated_pose.read(timestamp);
+    if (!estimated.has_value())
+    {
+        qWarning() << "[API] No robot pose available";
+        return false;
+    }
+
+    const auto& robot_pose = estimated.value();
+    Eigen::Vector2f source(robot_pose.translation().x(), robot_pose.translation().y());
+
+    // Compute path
+    auto path = grid_esdf.compute_path(source, target_eigen, params.ROBOT_SEMI_WIDTH, params.SAFETY_FACTOR);
+
+    if (path.empty())
+    {
+        qWarning() << "[API] No path found to target";
+        nav_state.store(NavigationState::BLOCKED);
+        return false;
+    }
+
+    // Update navigation state
+    {
+        std::lock_guard<std::mutex> lock(mutex_current_path);
+        current_path = path;
+    }
+    current_target = target_eigen;
+    nav_state.store(NavigationState::NAVIGATING);
+    mppi_controller.reset();
+
+    // Enable MPPI if not already enabled
+    if (!mppi_enabled.load())
+    {
+        mppi_enabled.store(true);
+        pushButton_mppi->setChecked(true);
+    }
+
+    qInfo() << "[API] Navigation started to" << target_eigen.x() << target_eigen.y()
+            << "with" << path.size() << "waypoints";
+
+    // Draw path in UI
+    QMetaObject::invokeMethod(this, [this, path]() {
+        draw_path(path, &viewer->scene);
+    }, Qt::QueuedConnection);
+
+    return true;
+}
+
+bool SpecificWorker::Gridder_setTargetWithOptions(RoboCompGridder::TPoint target, RoboCompGridder::NavigationOptions options)
+{
+    qInfo() << "[API] setTargetWithOptions called:" << target.x << target.y
+            << "maxSpeed:" << options.maxSpeed << "safetyFactor:" << options.safetyFactor;
+
+    // Apply options to MPPI controller if needed
+    if (options.maxSpeed > 0)
+    {
+        // Could adjust MPPI max speed here if controller supports it
+        qInfo() << "[API] Max speed option:" << options.maxSpeed << "(not yet implemented in MPPI)";
+    }
+
+    // Store safety factor for path planning
+    if (options.safetyFactor >= 0.f && options.safetyFactor <= 1.f)
+    {
+        params.SAFETY_FACTOR = options.safetyFactor;
+    }
+
+    // Use standard setTarget implementation
+    return Gridder_setTarget(target);
+}
+
+bool SpecificWorker::Gridder_startNavigation()
+{
+    qInfo() << "[API] startNavigation called";
+
+    // Check if we have a target
+    std::lock_guard<std::mutex> lock(mutex_current_path);
+    if (current_path.empty())
+    {
+        qWarning() << "[API] No target set, cannot start navigation";
+        return false;
+    }
+
+    // Check current state
+    auto state = nav_state.load();
+    if (state == NavigationState::NAVIGATING)
+    {
+        qInfo() << "[API] Already navigating";
+        return true;
+    }
+
+    // Enable MPPI controller
+    mppi_enabled.store(true);
+    nav_state.store(NavigationState::NAVIGATING);
+
+    // Update UI button state
+    QMetaObject::invokeMethod(this, [this]() {
+        pushButton_mppi->setChecked(true);
+    }, Qt::QueuedConnection);
+
+    qInfo() << "[API] Navigation started";
+    return true;
+}
+
+void SpecificWorker::Gridder_stopNavigation()
+{
+    qInfo() << "[API] stopNavigation called";
+
+    // Disable MPPI controller (robot will stop)
+    mppi_enabled.store(false);
+
+    // Set state to PAUSED (keep target for resume)
+    auto current_state = nav_state.load();
+    if (current_state == NavigationState::NAVIGATING)
+    {
+        nav_state.store(NavigationState::IDLE);  // Using IDLE as PAUSED equivalent
+    }
+
+    // Send stop command to robot
+    try {
+        omnirobot_proxy->setSpeedBase(0.f, 0.f, 0.f);
+    } catch (const Ice::Exception &e) {
+        qWarning() << "[API] Failed to stop robot:" << e.what();
+    }
+
+    // Update UI button state
+    QMetaObject::invokeMethod(this, [this]() {
+        pushButton_mppi->setChecked(false);
+    }, Qt::QueuedConnection);
+
+    qInfo() << "[API] Navigation stopped (target preserved)";
+}
+
 //////////////////////////////////////////////////////////////////////////////////////////////
 int SpecificWorker::startup_check()
 {
@@ -1571,3 +2125,75 @@ void SpecificWorker::restore()
     //Restore emergency component
 
 }
+
+/**************************************/
+// From the RoboCompLidar3D you can call this methods:
+// RoboCompLidar3D::TColorCloudData this->lidar3d_proxy->getColorCloudData()
+// RoboCompLidar3D::TData this->lidar3d_proxy->getLidarData(string name, float start, float len, int decimationDegreeFactor)
+// RoboCompLidar3D::TDataImage this->lidar3d_proxy->getLidarDataArrayProyectedInImage(string name)
+// RoboCompLidar3D::TDataCategory this->lidar3d_proxy->getLidarDataByCategory(TCategories categories, long timestamp)
+// RoboCompLidar3D::TData this->lidar3d_proxy->getLidarDataProyectedInImage(string name)
+// RoboCompLidar3D::TData this->lidar3d_proxy->getLidarDataWithThreshold2d(string name, float distance, int decimationDegreeFactor)
+
+/**************************************/
+// From the RoboCompLidar3D you can use this types:
+// RoboCompLidar3D::TPoint
+// RoboCompLidar3D::TDataImage
+// RoboCompLidar3D::TData
+// RoboCompLidar3D::TDataCategory
+// RoboCompLidar3D::TColorCloudData
+
+/**************************************/
+// From the RoboCompLidar3D you can call this methods:
+// RoboCompLidar3D::TColorCloudData this->lidar3d1_proxy->getColorCloudData()
+// RoboCompLidar3D::TData this->lidar3d1_proxy->getLidarData(string name, float start, float len, int decimationDegreeFactor)
+// RoboCompLidar3D::TDataImage this->lidar3d1_proxy->getLidarDataArrayProyectedInImage(string name)
+// RoboCompLidar3D::TDataCategory this->lidar3d1_proxy->getLidarDataByCategory(TCategories categories, long timestamp)
+// RoboCompLidar3D::TData this->lidar3d1_proxy->getLidarDataProyectedInImage(string name)
+// RoboCompLidar3D::TData this->lidar3d1_proxy->getLidarDataWithThreshold2d(string name, float distance, int decimationDegreeFactor)
+
+/**************************************/
+// From the RoboCompLidar3D you can use this types:
+// RoboCompLidar3D::TPoint
+// RoboCompLidar3D::TDataImage
+// RoboCompLidar3D::TData
+// RoboCompLidar3D::TDataCategory
+// RoboCompLidar3D::TColorCloudData
+
+/**************************************/
+// From the RoboCompOmniRobot you can call this methods:
+// RoboCompOmniRobot::void this->omnirobot_proxy->correctOdometer(int x, int z, float alpha)
+// RoboCompOmniRobot::void this->omnirobot_proxy->getBasePose(int x, int z, float alpha)
+// RoboCompOmniRobot::void this->omnirobot_proxy->getBaseState(RoboCompGenericBase::TBaseState state)
+// RoboCompOmniRobot::void this->omnirobot_proxy->resetOdometer()
+// RoboCompOmniRobot::void this->omnirobot_proxy->setOdometer(RoboCompGenericBase::TBaseState state)
+// RoboCompOmniRobot::void this->omnirobot_proxy->setOdometerPose(int x, int z, float alpha)
+// RoboCompOmniRobot::void this->omnirobot_proxy->setSpeedBase(float advx, float advz, float rot)
+// RoboCompOmniRobot::void this->omnirobot_proxy->stopBase()
+
+/**************************************/
+// From the RoboCompOmniRobot you can use this types:
+// RoboCompOmniRobot::TMechParams
+
+/**************************************/
+// From the RoboCompWebots2Robocomp you can call this methods:
+// RoboCompWebots2Robocomp::ObjectPose this->webots2robocomp_proxy->getObjectPose(string DEF)
+// RoboCompWebots2Robocomp::void this->webots2robocomp_proxy->resetWebots()
+// RoboCompWebots2Robocomp::void this->webots2robocomp_proxy->setDoorAngle(float angle)
+// RoboCompWebots2Robocomp::void this->webots2robocomp_proxy->setPathToHuman(int humanId, RoboCompGridder::TPath path)
+
+/**************************************/
+// From the RoboCompWebots2Robocomp you can use this types:
+// RoboCompWebots2Robocomp::Vector3
+// RoboCompWebots2Robocomp::Quaternion
+// RoboCompWebots2Robocomp::ObjectPose
+/**************************************/
+// From the RoboCompGridder you can use this types:
+// RoboCompGridder::TPoint
+// RoboCompGridder::TDimensions
+// RoboCompGridder::Result
+// RoboCompGridder::TCell
+// RoboCompGridder::Map
+// RoboCompGridder::Pose
+// RoboCompGridder::NavigationOptions
+// RoboCompGridder::NavigationStatus

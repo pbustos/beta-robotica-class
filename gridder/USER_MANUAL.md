@@ -109,21 +109,16 @@ The Gridder component supports **two robot kinematic models** for the MPPI contr
 
 ### Setting the Robot Type
 
-**File:** `src/specificworker.h` - `Params` struct
+**File:** `etc/config.toml`
 
-```cpp
-// For omnidirectional robot (default)
-RobotType ROBOT_TYPE = RobotType::OMNIDIRECTIONAL;
-
-// For differential drive robot
-RobotType ROBOT_TYPE = RobotType::DIFFERENTIAL;
+```toml
+[specific]
+# Robot kinematic model: "omnidirectional" or "differential"
+robot_type = "differential"    # For non-holonomic robots
+# robot_type = "omnidirectional"  # For mecanum/omni wheels
 ```
 
-**Remember to recompile after changing:**
-```bash
-cd /path/to/gridder
-make
-```
+**No recompilation needed** - just restart the component after changing the configuration.
 
 ### Omnidirectional Robot (Holonomic)
 
@@ -249,8 +244,8 @@ Omnidirectional can have non-zero `vx`:
 
 Before deploying on a real robot, you must:
 
-1. Set `USE_GT_WARMUP = false` in code
-2. Remove Webots2Robocomp dependency
+1. Set `use_gt_warmup = false` in `etc/config.toml`
+2. Remove Webots2Robocomp dependency from component definition
 3. Update odometry source to real hardware
 4. Load external map (MRPT format)
 
@@ -258,11 +253,12 @@ Before deploying on a real robot, you must:
 
 #### 1. Disable GT Warmup
 
-**File:** `src/specificworker.h`
+**File:** `etc/config.toml`
 
-```cpp
-// In Params struct, change:
-bool USE_GT_WARMUP = false;  // ⚠️ Set to false for real robot
+```toml
+[specific]
+# Ground Truth warmup (simulation only - set false for real robot)
+use_gt_warmup = false   # ⚠️ Set to false for real robot
 ```
 
 #### 2. Update Component Definition
@@ -423,48 +419,107 @@ if (!localizer_initialized.load())
 
 ## Configuration
 
-### Key Parameters
+All component parameters are now configured via the TOML configuration file: `etc/config.toml`
 
-**File:** `src/specificworker.h` - `Params` struct
+**Benefits of TOML configuration:**
+- ✅ No recompilation needed for parameter changes
+- ✅ Easy to version control configuration separately
+- ✅ Self-documented with comments
+- ✅ Supports different configurations per deployment
 
-#### Localization Parameters
+### Configuration File Structure
 
-```cpp
-bool USE_LOCALIZER = true;           // Enable AMCL localization
-bool USE_GT_WARMUP = true;           // false for real robot
-size_t LOCALIZER_PARTICLES = 500;    // Number of particles
-float LOCALIZER_ODOM_NOISE = 0.1f;   // Odometry noise factor
-int LOCALIZER_PERIOD_MS = 50;        // Localizer thread period (20 Hz)
+**File:** `etc/config.toml`
+
+```toml
+[specific]
+# Display and visualization
+display = true                    # Show viewer (false for headless)
+draw_lidar_points = false         # Draw LiDAR points (impacts performance)
+max_lidar_draw_points = 1500      # Limit drawn points
+
+# Robot dimensions (mm)
+robot_width = 460.0
+robot_length = 480.0
+
+# Robot kinematic model: "omnidirectional" or "differential"
+robot_type = "differential"
+
+# Grid configuration
+tile_size = 100.0                 # mm - size of each grid cell
+grid_min_x = -500.0               # mm - grid left boundary
+grid_min_y = -500.0               # mm - grid bottom boundary  
+grid_width = 1000.0               # mm - grid width
+grid_height = 1000.0              # mm - grid height
+
+# LiDAR configuration
+lidar_name_low = "bpearl"
+lidar_name_high = "helios"
+max_lidar_low_range = 100000.0    # mm
+max_lidar_high_range = 100000.0   # mm
+lidar_low_decimation = 1
+lidar_high_decimation = 1
+
+# Path planning
+safety_factor = 1.0               # 0=shortest path, 1=safest path
+max_astar_nodes = 100000          # Maximum A* nodes before giving up
+astar_distance_factor = 100.0     # Multiply path distance for max nodes
+num_paths_to_search = 3           # Alternative paths to compute
+min_distance_between_paths = 500.0  # mm
+
+# MRPT map alignment
+mrpt_map_offset_x = 12000.0       # mm - X offset for map alignment
+mrpt_map_offset_y = -2500.0       # mm - Y offset for map alignment
+mrpt_map_rotation = -1.5707963    # radians (-PI/2 = -90°)
+mrpt_map_mirror_x = true          # Mirror X axis if map appears flipped
+
+# Localizer parameters
+use_localizer = true              # Enable AMCL localization
+localizer_particles = 500         # Number of particles
+localizer_odom_noise = 0.1        # Odometry noise factor
+localizer_period_ms = 50          # ms - Localizer thread period
+
+# Ground Truth warmup (simulation only)
+use_gt_warmup = true              # false for real robot deployment
+
+# MPPI controller
+mppi_period_ms = 50               # ms - MPPI thread period
 ```
 
-#### MPPI Controller Parameters
+### Key Parameters Explained
 
-```cpp
-// Robot kinematic model
-RobotType ROBOT_TYPE = RobotType::OMNIDIRECTIONAL;  // or DIFFERENTIAL
-
-int MPPI_PERIOD_MS = 50;             // MPPI thread period (~20 Hz)
-float SAFETY_FACTOR = 1.0f;          // Path safety (0=shortest, 1=safest)
+#### Robot Type
+```toml
+robot_type = "differential"    # or "omnidirectional"
 ```
+- **omnidirectional**: Full 3-DOF (vx, vy, omega) - mecanum/omni wheels
+- **differential**: 2-DOF (vy, omega) - standard wheeled robots
 
-**Note:** After changing `ROBOT_TYPE`, you must recompile the component.
+**No recompilation needed** - just restart the component.
 
-#### Map Parameters
-
-```cpp
-float MRPT_MAP_OFFSET_X = 12000.0f;  // X offset to align map (mm)
-float MRPT_MAP_OFFSET_Y = -2500.0f;  // Y offset to align map (mm)
-float MRPT_MAP_ROTATION = -M_PI_2;   // Rotation to align map (rad)
-bool MRPT_MAP_MIRROR_X = true;       // Mirror X axis if needed
+#### Safety Factor
+```toml
+safety_factor = 1.0    # Range: 0.0 to 1.0
 ```
+- `0.0`: Shortest path (may get close to walls)
+- `1.0`: Safest path (prefers center of corridors)
 
-#### Robot Dimensions
-
-```cpp
-float ROBOT_WIDTH = 460;             // mm
-float ROBOT_LENGTH = 480;            // mm
-float ROBOT_SEMI_WIDTH = 230;        // mm (for collision checking)
+#### Ground Truth Warmup
+```toml
+use_gt_warmup = true    # Simulation mode
+use_gt_warmup = false   # Real robot mode
 ```
+- **true**: Auto-initializes using Webots ground truth
+- **false**: Requires manual positioning (Shift+Click)
+
+#### Map Alignment
+```toml
+mrpt_map_offset_x = 12000.0    # mm
+mrpt_map_offset_y = -2500.0    # mm
+mrpt_map_rotation = -1.5707963 # radians
+mrpt_map_mirror_x = true
+```
+Use these to align the loaded MRPT map with your coordinate system.
 
 ### UI Controls
 
@@ -633,13 +688,13 @@ Typical memory consumption:
 Use this checklist when deploying on a real robot:
 
 ### Pre-Deployment
-- [ ] `USE_GT_WARMUP = false` in `src/specificworker.h`
-- [ ] `ROBOT_TYPE` set correctly (OMNIDIRECTIONAL or DIFFERENTIAL)
+- [ ] `use_gt_warmup = false` in `etc/config.toml`
+- [ ] `robot_type` set correctly ("omnidirectional" or "differential") in `etc/config.toml`
 - [ ] Webots2Robocomp removed from `gridder.cdsl`
-- [ ] Webots proxy removed from `etc/config`
+- [ ] Webots proxy removed from `etc/config.toml` [Proxies] section
 - [ ] Odometry source updated to `omnirobot_proxy->getBaseState()`
 - [ ] External map loaded and aligned
-- [ ] Map offset/rotation parameters configured
+- [ ] Map offset/rotation parameters configured in `etc/config.toml`
 - [ ] Component recompiled with `make clean && make`
 
 ### Startup
@@ -673,23 +728,28 @@ Use this checklist when deploying on a real robot:
 ## Summary
 
 ### Simulation Mode (Development)
-✅ Set `USE_GT_WARMUP = true`  
-✅ Set `ROBOT_TYPE` to match your robot (OMNIDIRECTIONAL or DIFFERENTIAL)  
+✅ Set `use_gt_warmup = true` in `etc/config.toml`  
+✅ Set `robot_type` to match your robot  
 ✅ Connect Webots2Robocomp  
 ✅ Start and go - automatic initialization  
 ✅ Perfect for testing algorithms
 
 ### Real Robot Mode (Deployment)
-✅ Set `USE_GT_WARMUP = false`  
-✅ Set `ROBOT_TYPE` correctly (OMNIDIRECTIONAL or DIFFERENTIAL)  
+✅ Set `use_gt_warmup = false` in `etc/config.toml`  
+✅ Set `robot_type` correctly  
 ✅ Remove Webots dependencies  
 ✅ **Shift+Left Click** to initialize position  
 ✅ Wait for convergence  
 ✅ Start navigation
 
 ### Robot Kinematic Models
-- **Omnidirectional**: Full 3-DOF (vx, vy, omega) - can strafe
-- **Differential**: 2-DOF (vy, omega) - vx always 0
+- **omnidirectional**: Full 3-DOF (vx, vy, omega) - can strafe
+- **differential**: 2-DOF (vy, omega) - vx always 0
+
+### Configuration File
+- **Location:** `etc/config.toml`
+- **No recompilation needed** for parameter changes
+- All robot, localizer, and MPPI parameters configurable
 
 ### Mouse Controls Quick Reference
 - **Left Click**: Navigate here
@@ -702,10 +762,10 @@ Use this checklist when deploying on a real robot:
 
 **For additional technical details, see:**
 - `GRIDDER_DOCUMENTATION.md` - Complete technical reference
-- `GT_POSE_AUDIT.md` - Ground truth pose usage details
+- `GRIDDER_API.md` - API reference for external integration
 - Source code documentation in header files
 
-**Version:** 2.0  
-**Last Updated:** 2026-02-14  
+**Version:** 2.1  
+**Last Updated:** 2026-02-17  
 **Author:** RoboComp Team
 

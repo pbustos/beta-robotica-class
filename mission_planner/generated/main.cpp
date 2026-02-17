@@ -78,12 +78,7 @@
 #include "../src/specificworker.h"
 
 
-#include <Camera360RGB.h>
-#include <GenericBase.h>
 #include <Gridder.h>
-#include <Lidar3D.h>
-#include <OmniRobot.h>
-#include <Webots2Robocomp.h>
 
 #define USE_QTGUI
 
@@ -174,26 +169,14 @@ int mission_planner::run(int argc, char* argv[])
 
 	int status=EXIT_SUCCESS;
 
-	RoboCompCamera360RGB::Camera360RGBPrxPtr camera360rgb_proxy;
 	RoboCompGridder::GridderPrxPtr gridder_proxy;
-	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy;
-	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
-	RoboCompWebots2Robocomp::Webots2RobocompPrxPtr webots2robocomp_proxy;
 
 
 	//Require code
-	require<RoboCompCamera360RGB::Camera360RGBPrx, RoboCompCamera360RGB::Camera360RGBPrxPtr>(communicator(),
-	                    configLoader.get<std::string>("Proxies.Camera360RGB"), "Camera360RGBProxy", camera360rgb_proxy);
 	require<RoboCompGridder::GridderPrx, RoboCompGridder::GridderPrxPtr>(communicator(),
 	                    configLoader.get<std::string>("Proxies.Gridder"), "GridderProxy", gridder_proxy);
-	require<RoboCompLidar3D::Lidar3DPrx, RoboCompLidar3D::Lidar3DPrxPtr>(communicator(),
-	                    configLoader.get<std::string>("Proxies.Lidar3D"), "Lidar3DProxy", lidar3d_proxy);
-	require<RoboCompOmniRobot::OmniRobotPrx, RoboCompOmniRobot::OmniRobotPrxPtr>(communicator(),
-	                    configLoader.get<std::string>("Proxies.OmniRobot"), "OmniRobotProxy", omnirobot_proxy);
-	require<RoboCompWebots2Robocomp::Webots2RobocompPrx, RoboCompWebots2Robocomp::Webots2RobocompPrxPtr>(communicator(),
-	                    configLoader.get<std::string>("Proxies.Webots2Robocomp"), "Webots2RobocompProxy", webots2robocomp_proxy);
 
-	tprx = std::make_tuple(camera360rgb_proxy,gridder_proxy,lidar3d_proxy,omnirobot_proxy,webots2robocomp_proxy);
+	tprx = std::make_tuple(gridder_proxy);
 	SpecificWorker *worker = new SpecificWorker(this->configLoader, tprx, startup_check_flag);
 	QObject::connect(worker, SIGNAL(kill()), &a, SLOT(quit()));
 

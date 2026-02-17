@@ -14,8 +14,6 @@ Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 0"
 Gridder = "tcp -p 0"
 
 
-
-
 [Period]
 Compute = 100
 Emergency = 500
@@ -25,3 +23,64 @@ Warn.Connections = "0"
 Trace.Network = "0"
 Trace.Protocol = "0"
 MessageSizeMax = "20004800"
+
+# =============================================================================
+# SpecificWorker Parameters
+# =============================================================================
+[specific]
+# Display and visualization
+display = true                    # Whether to display the viewer (set false for headless operation)
+draw_lidar_points = false         # Debug: draw LiDAR points (can impact performance)
+max_lidar_draw_points = 1500      # Debug: limit number of points drawn
+
+# Robot dimensions (mm)
+robot_width = 460.0
+robot_length = 480.0
+
+# Robot kinematic model: "omnidirectional" or "differential"
+robot_type = "differential"
+
+# Grid configuration
+tile_size = 100.0                 # mm - size of each grid cell
+grid_min_x = -500.0               # mm - grid left boundary
+grid_min_y = -500.0               # mm - grid bottom boundary
+grid_width = 1000.0               # mm - grid width
+grid_height = 1000.0              # mm - grid height
+
+# LiDAR configuration
+lidar_name_low = "bpearl"
+lidar_name_high = "helios"
+max_lidar_low_range = 100000.0    # mm
+max_lidar_high_range = 100000.0   # mm
+lidar_low_decimation = 1
+lidar_high_decimation = 1
+
+# Path planning
+safety_factor = 1.0               # 0=shortest path (touch walls), 1=safest path (prefer center)
+max_astar_nodes = 100000          # Maximum nodes to expand in A* before giving up
+astar_distance_factor = 100.0     # Multiply path distance in cells by this factor for max nodes
+num_paths_to_search = 3           # Number of alternative paths to compute
+min_distance_between_paths = 500.0  # mm - minimum distance between alternative paths
+elapsed_time_between_path_updates = 3000  # ms - time between automatic path updates
+
+# MRPT map alignment (for loading external maps)
+mrpt_map_offset_x = 12000.0       # mm - X offset to apply to loaded map
+mrpt_map_offset_y = -2500.0       # mm - Y offset to apply to loaded map
+mrpt_map_rotation = -1.5707963    # radians - rotation to apply (-PI/2 = -90º)
+mrpt_map_mirror_x = true          # Mirror X axis (negate X before rotation) if map appears flipped
+
+# Localizer parameters
+use_localizer = true              # Enable/disable AMCL localization
+localizer_particles = 500         # Number of particles
+localizer_odom_noise = 0.1        # Noise factor for simulated odometry
+localizer_period_ms = 50          # ms - Localizer thread period (20 Hz)
+
+# Ground Truth warmup (simulation only - set false for real robot)
+use_gt_warmup = true              # Allow GT pose during initialization warmup (Webots only)
+
+# MPPI controller parameters
+mppi_period_ms = 50               # ms - MPPI thread period (~20 Hz)
+
+# Compute period
+period_hysteresis = 2             # To avoid oscillations in the adjustment of the period
+

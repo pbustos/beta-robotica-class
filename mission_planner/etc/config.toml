@@ -2,9 +2,7 @@
 
 [Proxies]
 # Proxies for required interfaces
-Camera360RGB = "camera360rgb:tcp -h localhost -p 0"
-Lidar3D = "lidar3d:tcp -h localhost -p 0"
-OmniRobot = "omnirobot:tcp -h localhost -p 0"
+Gridder = "gridder:tcp -h localhost -p 0"
 
 
 

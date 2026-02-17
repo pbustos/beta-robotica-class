@@ -56,27 +56,53 @@ const ::std::string iceC_RoboCompGridder_Gridder_ops[] =
 {
     "IsPathBlocked",
     "LineOfSightToTarget",
+    "cancelNavigation",
     "getClosestFreePoint",
     "getDimensions",
+    "getDistanceToTarget",
+    "getEstimatedTimeToTarget",
     "getMap",
+    "getNavigationState",
+    "getNavigationStatus",
     "getPaths",
     "getPose",
+    "getTarget",
+    "hasReachedTarget",
     "ice_id",
     "ice_ids",
     "ice_isA",
     "ice_ping",
+    "replanPath",
+    "resumeNavigation",
     "setGridDimensions",
-    "setLocationAndGetPath"
+    "setLocationAndGetPath",
+    "setTarget",
+    "setTargetWithOptions",
+    "startNavigation",
+    "stopNavigation"
 };
 const ::std::string iceC_RoboCompGridder_Gridder_IsPathBlocked_name = "IsPathBlocked";
 const ::std::string iceC_RoboCompGridder_Gridder_LineOfSightToTarget_name = "LineOfSightToTarget";
+const ::std::string iceC_RoboCompGridder_Gridder_cancelNavigation_name = "cancelNavigation";
 const ::std::string iceC_RoboCompGridder_Gridder_getClosestFreePoint_name = "getClosestFreePoint";
 const ::std::string iceC_RoboCompGridder_Gridder_getDimensions_name = "getDimensions";
+const ::std::string iceC_RoboCompGridder_Gridder_getDistanceToTarget_name = "getDistanceToTarget";
+const ::std::string iceC_RoboCompGridder_Gridder_getEstimatedTimeToTarget_name = "getEstimatedTimeToTarget";
 const ::std::string iceC_RoboCompGridder_Gridder_getMap_name = "getMap";
+const ::std::string iceC_RoboCompGridder_Gridder_getNavigationState_name = "getNavigationState";
+const ::std::string iceC_RoboCompGridder_Gridder_getNavigationStatus_name = "getNavigationStatus";
 const ::std::string iceC_RoboCompGridder_Gridder_getPaths_name = "getPaths";
 const ::std::string iceC_RoboCompGridder_Gridder_getPose_name = "getPose";
+const ::std::string iceC_RoboCompGridder_Gridder_getTarget_name = "getTarget";
+const ::std::string iceC_RoboCompGridder_Gridder_hasReachedTarget_name = "hasReachedTarget";
+const ::std::string iceC_RoboCompGridder_Gridder_replanPath_name = "replanPath";
+const ::std::string iceC_RoboCompGridder_Gridder_resumeNavigation_name = "resumeNavigation";
 const ::std::string iceC_RoboCompGridder_Gridder_setGridDimensions_name = "setGridDimensions";
 const ::std::string iceC_RoboCompGridder_Gridder_setLocationAndGetPath_name = "setLocationAndGetPath";
+const ::std::string iceC_RoboCompGridder_Gridder_setTarget_name = "setTarget";
+const ::std::string iceC_RoboCompGridder_Gridder_setTargetWithOptions_name = "setTargetWithOptions";
+const ::std::string iceC_RoboCompGridder_Gridder_startNavigation_name = "startNavigation";
+const ::std::string iceC_RoboCompGridder_Gridder_stopNavigation_name = "stopNavigation";
 
 }
 
@@ -143,6 +169,18 @@ RoboCompGridder::Gridder::_iceD_LineOfSightToTarget(::IceInternal::Incoming& inS
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_cancelNavigation(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    this->cancelNavigation(current);
+    inS.writeEmptyParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceD_getClosestFreePoint(::IceInternal::Incoming& inS, const ::Ice::Current& current)
 {
     _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
@@ -174,11 +212,67 @@ RoboCompGridder::Gridder::_iceD_getDimensions(::IceInternal::Incoming& inS, cons
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_getDistanceToTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    float ret = this->getDistanceToTarget(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_getEstimatedTimeToTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    float ret = this->getEstimatedTimeToTarget(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceD_getMap(::IceInternal::Incoming& inS, const ::Ice::Current& current)
 {
     _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
     inS.readEmptyParams();
     Map ret = this->getMap(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_getNavigationState(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    NavigationState ret = this->getNavigationState(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_getNavigationStatus(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    NavigationStatus ret = this->getNavigationStatus(current);
     auto ostr = inS.startWriteParams();
     ostr->writeAll(ret);
     inS.endWriteParams();
@@ -215,6 +309,62 @@ RoboCompGridder::Gridder::_iceD_getPose(::IceInternal::Incoming& inS, const ::Ic
     _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
     inS.readEmptyParams();
     Pose ret = this->getPose(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_getTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    TPoint ret = this->getTarget(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_hasReachedTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    bool ret = this->hasReachedTarget(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_replanPath(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    bool ret = this->replanPath(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_resumeNavigation(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    bool ret = this->resumeNavigation(current);
     auto ostr = inS.startWriteParams();
     ostr->writeAll(ret);
     inS.endWriteParams();
@@ -261,9 +411,70 @@ RoboCompGridder::Gridder::_iceD_setLocationAndGetPath(::IceInternal::Incoming& i
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_setTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    auto istr = inS.startReadParams();
+    TPoint iceP_target;
+    istr->readAll(iceP_target);
+    inS.endReadParams();
+    bool ret = this->setTarget(::std::move(iceP_target), current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_setTargetWithOptions(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    auto istr = inS.startReadParams();
+    TPoint iceP_target;
+    NavigationOptions iceP_options;
+    istr->readAll(iceP_target, iceP_options);
+    inS.endReadParams();
+    bool ret = this->setTargetWithOptions(::std::move(iceP_target), ::std::move(iceP_options), current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_startNavigation(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    bool ret = this->startNavigation(current);
+    auto ostr = inS.startWriteParams();
+    ostr->writeAll(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_stopNavigation(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::OperationMode::Normal, current.mode);
+    inS.readEmptyParams();
+    this->stopNavigation(current);
+    inS.writeEmptyParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice::Current& current)
 {
-    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_ops, iceC_RoboCompGridder_Gridder_ops + 13, current.operation);
+    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_ops, iceC_RoboCompGridder_Gridder_ops + 26, current.operation);
     if(r.first == r.second)
     {
         throw ::Ice::OperationNotExistException(__FILE__, __LINE__, current.id, current.facet, current.operation);
@@ -281,47 +492,99 @@ RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice:
         }
         case 2:
         {
-            return _iceD_getClosestFreePoint(in, current);
+            return _iceD_cancelNavigation(in, current);
         }
         case 3:
         {
-            return _iceD_getDimensions(in, current);
+            return _iceD_getClosestFreePoint(in, current);
         }
         case 4:
         {
-            return _iceD_getMap(in, current);
+            return _iceD_getDimensions(in, current);
         }
         case 5:
         {
-            return _iceD_getPaths(in, current);
+            return _iceD_getDistanceToTarget(in, current);
         }
         case 6:
         {
-            return _iceD_getPose(in, current);
+            return _iceD_getEstimatedTimeToTarget(in, current);
         }
         case 7:
         {
-            return _iceD_ice_id(in, current);
+            return _iceD_getMap(in, current);
         }
         case 8:
         {
-            return _iceD_ice_ids(in, current);
+            return _iceD_getNavigationState(in, current);
         }
         case 9:
         {
-            return _iceD_ice_isA(in, current);
+            return _iceD_getNavigationStatus(in, current);
         }
         case 10:
         {
-            return _iceD_ice_ping(in, current);
+            return _iceD_getPaths(in, current);
         }
         case 11:
         {
-            return _iceD_setGridDimensions(in, current);
+            return _iceD_getPose(in, current);
         }
         case 12:
         {
+            return _iceD_getTarget(in, current);
+        }
+        case 13:
+        {
+            return _iceD_hasReachedTarget(in, current);
+        }
+        case 14:
+        {
+            return _iceD_ice_id(in, current);
+        }
+        case 15:
+        {
+            return _iceD_ice_ids(in, current);
+        }
+        case 16:
+        {
+            return _iceD_ice_isA(in, current);
+        }
+        case 17:
+        {
+            return _iceD_ice_ping(in, current);
+        }
+        case 18:
+        {
+            return _iceD_replanPath(in, current);
+        }
+        case 19:
+        {
+            return _iceD_resumeNavigation(in, current);
+        }
+        case 20:
+        {
+            return _iceD_setGridDimensions(in, current);
+        }
+        case 21:
+        {
             return _iceD_setLocationAndGetPath(in, current);
+        }
+        case 22:
+        {
+            return _iceD_setTarget(in, current);
+        }
+        case 23:
+        {
+            return _iceD_setTargetWithOptions(in, current);
+        }
+        case 24:
+        {
+            return _iceD_startNavigation(in, current);
+        }
+        case 25:
+        {
+            return _iceD_stopNavigation(in, current);
         }
         default:
         {
@@ -362,6 +625,16 @@ RoboCompGridder::GridderPrx::_iceI_LineOfSightToTarget(const ::std::shared_ptr<:
 
 /// \cond INTERNAL
 void
+RoboCompGridder::GridderPrx::_iceI_cancelNavigation(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<void>>& outAsync, const ::Ice::Context& context)
+{
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_cancelNavigation_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
 RoboCompGridder::GridderPrx::_iceI_getClosestFreePoint(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::TPoint>>& outAsync, const TPoint& iceP_source, const ::Ice::Context& context)
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getClosestFreePoint_name);
@@ -387,10 +660,54 @@ RoboCompGridder::GridderPrx::_iceI_getDimensions(const ::std::shared_ptr<::IceIn
 
 /// \cond INTERNAL
 void
+RoboCompGridder::GridderPrx::_iceI_getDistanceToTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<float>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getDistanceToTarget_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_getDistanceToTarget_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_getEstimatedTimeToTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<float>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getEstimatedTimeToTarget_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_getEstimatedTimeToTarget_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
 RoboCompGridder::GridderPrx::_iceI_getMap(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::Map>>& outAsync, const ::Ice::Context& context)
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getMap_name);
     outAsync->invoke(iceC_RoboCompGridder_Gridder_getMap_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_getNavigationState(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::NavigationState>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getNavigationState_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_getNavigationState_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_getNavigationStatus(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::NavigationStatus>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getNavigationStatus_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_getNavigationStatus_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
         nullptr,
         nullptr);
 }
@@ -416,6 +733,50 @@ RoboCompGridder::GridderPrx::_iceI_getPose(const ::std::shared_ptr<::IceInternal
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getPose_name);
     outAsync->invoke(iceC_RoboCompGridder_Gridder_getPose_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_getTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<::RoboCompGridder::TPoint>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getTarget_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_getTarget_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_hasReachedTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_hasReachedTarget_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_hasReachedTarget_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_replanPath(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_replanPath_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_replanPath_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_resumeNavigation(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_resumeNavigation_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_resumeNavigation_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
         nullptr,
         nullptr);
 }
@@ -450,6 +811,55 @@ RoboCompGridder::GridderPrx::_iceI_setLocationAndGetPath(const ::std::shared_ptr
 /// \endcond
 
 /// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_setTarget(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>& outAsync, const TPoint& iceP_target, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_setTarget_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_setTarget_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        [&](::Ice::OutputStream* ostr)
+        {
+            ostr->writeAll(iceP_target);
+        },
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_setTargetWithOptions(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>& outAsync, const TPoint& iceP_target, const NavigationOptions& iceP_options, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_setTargetWithOptions_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_setTargetWithOptions_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        [&](::Ice::OutputStream* ostr)
+        {
+            ostr->writeAll(iceP_target, iceP_options);
+        },
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_startNavigation(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<bool>>& outAsync, const ::Ice::Context& context)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_startNavigation_name);
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_startNavigation_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
+void
+RoboCompGridder::GridderPrx::_iceI_stopNavigation(const ::std::shared_ptr<::IceInternal::OutgoingAsyncT<void>>& outAsync, const ::Ice::Context& context)
+{
+    outAsync->invoke(iceC_RoboCompGridder_Gridder_stopNavigation_name, ::Ice::OperationMode::Normal, ::Ice::FormatType::DefaultFormat, context,
+        nullptr,
+        nullptr);
+}
+/// \endcond
+
+/// \cond INTERNAL
 ::std::shared_ptr<::Ice::ObjectPrx>
 RoboCompGridder::GridderPrx::_newInstance() const
 {
@@ -476,19 +886,45 @@ const ::std::string iceC_RoboCompGridder_Gridder_IsPathBlocked_name = "IsPathBlo
 
 const ::std::string iceC_RoboCompGridder_Gridder_LineOfSightToTarget_name = "LineOfSightToTarget";
 
+const ::std::string iceC_RoboCompGridder_Gridder_cancelNavigation_name = "cancelNavigation";
+
 const ::std::string iceC_RoboCompGridder_Gridder_getClosestFreePoint_name = "getClosestFreePoint";
 
 const ::std::string iceC_RoboCompGridder_Gridder_getDimensions_name = "getDimensions";
 
+const ::std::string iceC_RoboCompGridder_Gridder_getDistanceToTarget_name = "getDistanceToTarget";
+
+const ::std::string iceC_RoboCompGridder_Gridder_getEstimatedTimeToTarget_name = "getEstimatedTimeToTarget";
+
 const ::std::string iceC_RoboCompGridder_Gridder_getMap_name = "getMap";
+
+const ::std::string iceC_RoboCompGridder_Gridder_getNavigationState_name = "getNavigationState";
+
+const ::std::string iceC_RoboCompGridder_Gridder_getNavigationStatus_name = "getNavigationStatus";
 
 const ::std::string iceC_RoboCompGridder_Gridder_getPaths_name = "getPaths";
 
 const ::std::string iceC_RoboCompGridder_Gridder_getPose_name = "getPose";
 
+const ::std::string iceC_RoboCompGridder_Gridder_getTarget_name = "getTarget";
+
+const ::std::string iceC_RoboCompGridder_Gridder_hasReachedTarget_name = "hasReachedTarget";
+
+const ::std::string iceC_RoboCompGridder_Gridder_replanPath_name = "replanPath";
+
+const ::std::string iceC_RoboCompGridder_Gridder_resumeNavigation_name = "resumeNavigation";
+
 const ::std::string iceC_RoboCompGridder_Gridder_setGridDimensions_name = "setGridDimensions";
 
 const ::std::string iceC_RoboCompGridder_Gridder_setLocationAndGetPath_name = "setLocationAndGetPath";
+
+const ::std::string iceC_RoboCompGridder_Gridder_setTarget_name = "setTarget";
+
+const ::std::string iceC_RoboCompGridder_Gridder_setTargetWithOptions_name = "setTargetWithOptions";
+
+const ::std::string iceC_RoboCompGridder_Gridder_startNavigation_name = "startNavigation";
+
+const ::std::string iceC_RoboCompGridder_Gridder_stopNavigation_name = "stopNavigation";
 
 }
 
@@ -599,6 +1035,29 @@ IceProxy::RoboCompGridder::Gridder::end_LineOfSightToTarget(const ::Ice::AsyncRe
 }
 
 ::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_cancelNavigation(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_cancelNavigation_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_cancelNavigation_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_cancelNavigation_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+void
+IceProxy::RoboCompGridder::Gridder::end_cancelNavigation(const ::Ice::AsyncResultPtr& result)
+{
+    _end(result, iceC_RoboCompGridder_Gridder_cancelNavigation_name);
+}
+
+::Ice::AsyncResultPtr
 IceProxy::RoboCompGridder::Gridder::_iceI_begin_getClosestFreePoint(const ::RoboCompGridder::TPoint& iceP_source, const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getClosestFreePoint_name, sync);
@@ -681,6 +1140,86 @@ IceProxy::RoboCompGridder::Gridder::end_getDimensions(const ::Ice::AsyncResultPt
 }
 
 ::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_getDistanceToTarget(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getDistanceToTarget_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_getDistanceToTarget_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_getDistanceToTarget_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_getDistanceToTarget_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+::Ice::Float
+IceProxy::RoboCompGridder::Gridder::end_getDistanceToTarget(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_getDistanceToTarget_name);
+    ::Ice::Float ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_getEstimatedTimeToTarget(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getEstimatedTimeToTarget_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_getEstimatedTimeToTarget_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_getEstimatedTimeToTarget_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_getEstimatedTimeToTarget_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+::Ice::Float
+IceProxy::RoboCompGridder::Gridder::end_getEstimatedTimeToTarget(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_getEstimatedTimeToTarget_name);
+    ::Ice::Float ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
 IceProxy::RoboCompGridder::Gridder::_iceI_begin_getMap(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getMap_name, sync);
@@ -703,6 +1242,86 @@ IceProxy::RoboCompGridder::Gridder::end_getMap(const ::Ice::AsyncResultPtr& resu
 {
     ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_getMap_name);
     ::RoboCompGridder::Map ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_getNavigationState(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getNavigationState_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_getNavigationState_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_getNavigationState_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_getNavigationState_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+::RoboCompGridder::NavigationState
+IceProxy::RoboCompGridder::Gridder::end_getNavigationState(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_getNavigationState_name);
+    ::RoboCompGridder::NavigationState ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_getNavigationStatus(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getNavigationStatus_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_getNavigationStatus_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_getNavigationStatus_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_getNavigationStatus_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+::RoboCompGridder::NavigationStatus
+IceProxy::RoboCompGridder::Gridder::end_getNavigationStatus(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_getNavigationStatus_name);
+    ::RoboCompGridder::NavigationStatus ret;
     if(!result->_waitForResponse())
     {
         try
@@ -808,6 +1427,166 @@ IceProxy::RoboCompGridder::Gridder::end_getPose(const ::Ice::AsyncResultPtr& res
 }
 
 ::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_getTarget(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_getTarget_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_getTarget_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_getTarget_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_getTarget_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+::RoboCompGridder::TPoint
+IceProxy::RoboCompGridder::Gridder::end_getTarget(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_getTarget_name);
+    ::RoboCompGridder::TPoint ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_hasReachedTarget(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_hasReachedTarget_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_hasReachedTarget_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_hasReachedTarget_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_hasReachedTarget_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+bool
+IceProxy::RoboCompGridder::Gridder::end_hasReachedTarget(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_hasReachedTarget_name);
+    bool ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_replanPath(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_replanPath_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_replanPath_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_replanPath_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_replanPath_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+bool
+IceProxy::RoboCompGridder::Gridder::end_replanPath(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_replanPath_name);
+    bool ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_resumeNavigation(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_resumeNavigation_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_resumeNavigation_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_resumeNavigation_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_resumeNavigation_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+bool
+IceProxy::RoboCompGridder::Gridder::end_resumeNavigation(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_resumeNavigation_name);
+    bool ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
 IceProxy::RoboCompGridder::Gridder::_iceI_begin_setGridDimensions(const ::RoboCompGridder::TDimensions& iceP_dimensions, const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
 {
     _checkTwowayOnly(iceC_RoboCompGridder_Gridder_setGridDimensions_name, sync);
@@ -892,6 +1671,154 @@ IceProxy::RoboCompGridder::Gridder::end_setLocationAndGetPath(const ::Ice::Async
     istr->read(ret);
     result->_endReadParams();
     return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_setTarget(const ::RoboCompGridder::TPoint& iceP_target, const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_setTarget_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_setTarget_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_setTarget_name, ::Ice::Normal, context);
+        ::Ice::OutputStream* ostr = result->startWriteParams(::Ice::DefaultFormat);
+        ostr->write(iceP_target);
+        result->endWriteParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_setTarget_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+bool
+IceProxy::RoboCompGridder::Gridder::end_setTarget(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_setTarget_name);
+    bool ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_setTargetWithOptions(const ::RoboCompGridder::TPoint& iceP_target, const ::RoboCompGridder::NavigationOptions& iceP_options, const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_setTargetWithOptions_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_setTargetWithOptions_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_setTargetWithOptions_name, ::Ice::Normal, context);
+        ::Ice::OutputStream* ostr = result->startWriteParams(::Ice::DefaultFormat);
+        ostr->write(iceP_target);
+        ostr->write(iceP_options);
+        result->endWriteParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_setTargetWithOptions_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+bool
+IceProxy::RoboCompGridder::Gridder::end_setTargetWithOptions(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_setTargetWithOptions_name);
+    bool ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_startNavigation(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    _checkTwowayOnly(iceC_RoboCompGridder_Gridder_startNavigation_name, sync);
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_startNavigation_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_startNavigation_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_startNavigation_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+bool
+IceProxy::RoboCompGridder::Gridder::end_startNavigation(const ::Ice::AsyncResultPtr& result)
+{
+    ::Ice::AsyncResult::_check(result, this, iceC_RoboCompGridder_Gridder_startNavigation_name);
+    bool ret;
+    if(!result->_waitForResponse())
+    {
+        try
+        {
+            result->_throwUserException();
+        }
+        catch(const ::Ice::UserException& ex)
+        {
+            throw ::Ice::UnknownUserException(__FILE__, __LINE__, ex.ice_id());
+        }
+    }
+    ::Ice::InputStream* istr = result->_startReadParams();
+    istr->read(ret);
+    result->_endReadParams();
+    return ret;
+}
+
+::Ice::AsyncResultPtr
+IceProxy::RoboCompGridder::Gridder::_iceI_begin_stopNavigation(const ::Ice::Context& context, const ::IceInternal::CallbackBasePtr& del, const ::Ice::LocalObjectPtr& cookie, bool sync)
+{
+    ::IceInternal::OutgoingAsyncPtr result = new ::IceInternal::CallbackOutgoing(this, iceC_RoboCompGridder_Gridder_stopNavigation_name, del, cookie, sync);
+    try
+    {
+        result->prepare(iceC_RoboCompGridder_Gridder_stopNavigation_name, ::Ice::Normal, context);
+        result->writeEmptyParams();
+        result->invoke(iceC_RoboCompGridder_Gridder_stopNavigation_name);
+    }
+    catch(const ::Ice::Exception& ex)
+    {
+        result->abort(ex);
+    }
+    return result;
+}
+
+void
+IceProxy::RoboCompGridder::Gridder::end_stopNavigation(const ::Ice::AsyncResultPtr& result)
+{
+    _end(result, iceC_RoboCompGridder_Gridder_stopNavigation_name);
 }
 
 /// \cond INTERNAL
@@ -996,6 +1923,18 @@ RoboCompGridder::Gridder::_iceD_LineOfSightToTarget(::IceInternal::Incoming& inS
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_cancelNavigation(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    this->cancelNavigation(current);
+    inS.writeEmptyParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceD_getClosestFreePoint(::IceInternal::Incoming& inS, const ::Ice::Current& current)
 {
     _iceCheckMode(::Ice::Normal, current.mode);
@@ -1027,11 +1966,67 @@ RoboCompGridder::Gridder::_iceD_getDimensions(::IceInternal::Incoming& inS, cons
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_getDistanceToTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    ::Ice::Float ret = this->getDistanceToTarget(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_getEstimatedTimeToTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    ::Ice::Float ret = this->getEstimatedTimeToTarget(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceD_getMap(::IceInternal::Incoming& inS, const ::Ice::Current& current)
 {
     _iceCheckMode(::Ice::Normal, current.mode);
     inS.readEmptyParams();
     Map ret = this->getMap(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_getNavigationState(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    NavigationState ret = this->getNavigationState(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_getNavigationStatus(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    NavigationStatus ret = this->getNavigationStatus(current);
     ::Ice::OutputStream* ostr = inS.startWriteParams();
     ostr->write(ret);
     inS.endWriteParams();
@@ -1082,6 +2077,62 @@ RoboCompGridder::Gridder::_iceD_getPose(::IceInternal::Incoming& inS, const ::Ic
 
 /// \cond INTERNAL
 bool
+RoboCompGridder::Gridder::_iceD_getTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    TPoint ret = this->getTarget(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_hasReachedTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    bool ret = this->hasReachedTarget(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_replanPath(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    bool ret = this->replanPath(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_resumeNavigation(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    bool ret = this->resumeNavigation(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
 RoboCompGridder::Gridder::_iceD_setGridDimensions(::IceInternal::Incoming& inS, const ::Ice::Current& current)
 {
     _iceCheckMode(::Ice::Normal, current.mode);
@@ -1120,23 +2171,98 @@ RoboCompGridder::Gridder::_iceD_setLocationAndGetPath(::IceInternal::Incoming& i
 }
 /// \endcond
 
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_setTarget(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    ::Ice::InputStream* istr = inS.startReadParams();
+    TPoint iceP_target;
+    istr->read(iceP_target);
+    inS.endReadParams();
+    bool ret = this->setTarget(iceP_target, current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_setTargetWithOptions(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    ::Ice::InputStream* istr = inS.startReadParams();
+    TPoint iceP_target;
+    NavigationOptions iceP_options;
+    istr->read(iceP_target);
+    istr->read(iceP_options);
+    inS.endReadParams();
+    bool ret = this->setTargetWithOptions(iceP_target, iceP_options, current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_startNavigation(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    bool ret = this->startNavigation(current);
+    ::Ice::OutputStream* ostr = inS.startWriteParams();
+    ostr->write(ret);
+    inS.endWriteParams();
+    return true;
+}
+/// \endcond
+
+/// \cond INTERNAL
+bool
+RoboCompGridder::Gridder::_iceD_stopNavigation(::IceInternal::Incoming& inS, const ::Ice::Current& current)
+{
+    _iceCheckMode(::Ice::Normal, current.mode);
+    inS.readEmptyParams();
+    this->stopNavigation(current);
+    inS.writeEmptyParams();
+    return true;
+}
+/// \endcond
+
 namespace
 {
 const ::std::string iceC_RoboCompGridder_Gridder_all[] =
 {
     "IsPathBlocked",
     "LineOfSightToTarget",
+    "cancelNavigation",
     "getClosestFreePoint",
     "getDimensions",
+    "getDistanceToTarget",
+    "getEstimatedTimeToTarget",
     "getMap",
+    "getNavigationState",
+    "getNavigationStatus",
     "getPaths",
     "getPose",
+    "getTarget",
+    "hasReachedTarget",
     "ice_id",
     "ice_ids",
     "ice_isA",
     "ice_ping",
+    "replanPath",
+    "resumeNavigation",
     "setGridDimensions",
-    "setLocationAndGetPath"
+    "setLocationAndGetPath",
+    "setTarget",
+    "setTargetWithOptions",
+    "startNavigation",
+    "stopNavigation"
 };
 
 }
@@ -1145,7 +2271,7 @@ const ::std::string iceC_RoboCompGridder_Gridder_all[] =
 bool
 RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice::Current& current)
 {
-    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_all, iceC_RoboCompGridder_Gridder_all + 13, current.operation);
+    ::std::pair<const ::std::string*, const ::std::string*> r = ::std::equal_range(iceC_RoboCompGridder_Gridder_all, iceC_RoboCompGridder_Gridder_all + 26, current.operation);
     if(r.first == r.second)
     {
         throw ::Ice::OperationNotExistException(__FILE__, __LINE__, current.id, current.facet, current.operation);
@@ -1163,47 +2289,99 @@ RoboCompGridder::Gridder::_iceDispatch(::IceInternal::Incoming& in, const ::Ice:
         }
         case 2:
         {
-            return _iceD_getClosestFreePoint(in, current);
+            return _iceD_cancelNavigation(in, current);
         }
         case 3:
         {
-            return _iceD_getDimensions(in, current);
+            return _iceD_getClosestFreePoint(in, current);
         }
         case 4:
         {
-            return _iceD_getMap(in, current);
+            return _iceD_getDimensions(in, current);
         }
         case 5:
         {
-            return _iceD_getPaths(in, current);
+            return _iceD_getDistanceToTarget(in, current);
         }
         case 6:
         {
-            return _iceD_getPose(in, current);
+            return _iceD_getEstimatedTimeToTarget(in, current);
         }
         case 7:
         {
-            return _iceD_ice_id(in, current);
+            return _iceD_getMap(in, current);
         }
         case 8:
         {
-            return _iceD_ice_ids(in, current);
+            return _iceD_getNavigationState(in, current);
         }
         case 9:
         {
-            return _iceD_ice_isA(in, current);
+            return _iceD_getNavigationStatus(in, current);
         }
         case 10:
         {
-            return _iceD_ice_ping(in, current);
+            return _iceD_getPaths(in, current);
         }
         case 11:
         {
-            return _iceD_setGridDimensions(in, current);
+            return _iceD_getPose(in, current);
         }
         case 12:
         {
+            return _iceD_getTarget(in, current);
+        }
+        case 13:
+        {
+            return _iceD_hasReachedTarget(in, current);
+        }
+        case 14:
+        {
+            return _iceD_ice_id(in, current);
+        }
+        case 15:
+        {
+            return _iceD_ice_ids(in, current);
+        }
+        case 16:
+        {
+            return _iceD_ice_isA(in, current);
+        }
+        case 17:
+        {
+            return _iceD_ice_ping(in, current);
+        }
+        case 18:
+        {
+            return _iceD_replanPath(in, current);
+        }
+        case 19:
+        {
+            return _iceD_resumeNavigation(in, current);
+        }
+        case 20:
+        {
+            return _iceD_setGridDimensions(in, current);
+        }
+        case 21:
+        {
             return _iceD_setLocationAndGetPath(in, current);
+        }
+        case 22:
+        {
+            return _iceD_setTarget(in, current);
+        }
+        case 23:
+        {
+            return _iceD_setTargetWithOptions(in, current);
+        }
+        case 24:
+        {
+            return _iceD_startNavigation(in, current);
+        }
+        case 25:
+        {
+            return _iceD_stopNavigation(in, current);
         }
         default:
         {

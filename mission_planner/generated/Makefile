@@ -57,10 +57,10 @@ RM = /home/pbustos/software/clion-2024.3.3/bin/cmake/linux/x64/bin/cmake -E rm -
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/pbustos/robocomp/components/beta-robotica-class/mission_planner
+CMAKE_SOURCE_DIR = /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/pbustos/robocomp/components/beta-robotica-class/mission_planner
+CMAKE_BINARY_DIR = /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -132,14 +132,14 @@ install/strip/fast: preinstall/fast
 
 # The main all target
 all: cmake_check_build_system
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/beta-robotica-class/mission_planner/CMakeFiles /home/pbustos/robocomp/components/beta-robotica-class/mission_planner/generated//CMakeFiles/progress.marks
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/beta-robotica-class/mission_planner/CMakeFiles 0
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner/CMakeFiles /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner/generated//CMakeFiles/progress.marks
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
 clean:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/clean
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/clean
 .PHONY : clean
 
 # The main clean target
@@ -148,78 +148,36 @@ clean/fast: clean
 
 # Prepare targets for installation.
 preinstall: all
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/preinstall
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/preinstall
 .PHONY : preinstall
 
 # Prepare targets for installation.
 preinstall/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/preinstall
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/preinstall
 .PHONY : preinstall/fast
 
 # clear depends
 depend:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
 .PHONY : depend
 
 # Convenience name for target.
-generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated.dir/rule
-.PHONY : generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated.dir/rule
+generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated.dir/rule:
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated.dir/rule
+.PHONY : generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated.dir/rule
 
 # Convenience name for target.
-ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated: generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated.dir/rule
-.PHONY : ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated
+ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated: generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated.dir/rule
+.PHONY : ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated
 
 # fast build rule for target.
-ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated.dir/build.make generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated.dir/build
-.PHONY : ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated/fast
-
-# Convenience name for target.
-generated/CMakeFiles/ICE_Camera360RGB_target.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_Camera360RGB_target.dir/rule
-.PHONY : generated/CMakeFiles/ICE_Camera360RGB_target.dir/rule
-
-# Convenience name for target.
-ICE_Camera360RGB_target: generated/CMakeFiles/ICE_Camera360RGB_target.dir/rule
-.PHONY : ICE_Camera360RGB_target
-
-# fast build rule for target.
-ICE_Camera360RGB_target/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_Camera360RGB_target.dir/build.make generated/CMakeFiles/ICE_Camera360RGB_target.dir/build
-.PHONY : ICE_Camera360RGB_target/fast
-
-# Convenience name for target.
-generated/CMakeFiles/ICE_GenericBase_target.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_GenericBase_target.dir/rule
-.PHONY : generated/CMakeFiles/ICE_GenericBase_target.dir/rule
-
-# Convenience name for target.
-ICE_GenericBase_target: generated/CMakeFiles/ICE_GenericBase_target.dir/rule
-.PHONY : ICE_GenericBase_target
-
-# fast build rule for target.
-ICE_GenericBase_target/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_GenericBase_target.dir/build.make generated/CMakeFiles/ICE_GenericBase_target.dir/build
-.PHONY : ICE_GenericBase_target/fast
-
-# Convenience name for target.
-generated/CMakeFiles/ICE_Lidar3D_target.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_Lidar3D_target.dir/rule
-.PHONY : generated/CMakeFiles/ICE_Lidar3D_target.dir/rule
-
-# Convenience name for target.
-ICE_Lidar3D_target: generated/CMakeFiles/ICE_Lidar3D_target.dir/rule
-.PHONY : ICE_Lidar3D_target
-
-# fast build rule for target.
-ICE_Lidar3D_target/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_Lidar3D_target.dir/build.make generated/CMakeFiles/ICE_Lidar3D_target.dir/build
-.PHONY : ICE_Lidar3D_target/fast
+ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated/fast:
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated.dir/build.make generated/CMakeFiles/ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated.dir/build
+.PHONY : ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated/fast
 
 # Convenience name for target.
 generated/CMakeFiles/ICE_Gridder_target.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_Gridder_target.dir/rule
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_Gridder_target.dir/rule
 .PHONY : generated/CMakeFiles/ICE_Gridder_target.dir/rule
 
 # Convenience name for target.
@@ -228,40 +186,12 @@ ICE_Gridder_target: generated/CMakeFiles/ICE_Gridder_target.dir/rule
 
 # fast build rule for target.
 ICE_Gridder_target/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_Gridder_target.dir/build.make generated/CMakeFiles/ICE_Gridder_target.dir/build
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_Gridder_target.dir/build.make generated/CMakeFiles/ICE_Gridder_target.dir/build
 .PHONY : ICE_Gridder_target/fast
 
 # Convenience name for target.
-generated/CMakeFiles/ICE_Webots2Robocomp_target.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_Webots2Robocomp_target.dir/rule
-.PHONY : generated/CMakeFiles/ICE_Webots2Robocomp_target.dir/rule
-
-# Convenience name for target.
-ICE_Webots2Robocomp_target: generated/CMakeFiles/ICE_Webots2Robocomp_target.dir/rule
-.PHONY : ICE_Webots2Robocomp_target
-
-# fast build rule for target.
-ICE_Webots2Robocomp_target/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_Webots2Robocomp_target.dir/build.make generated/CMakeFiles/ICE_Webots2Robocomp_target.dir/build
-.PHONY : ICE_Webots2Robocomp_target/fast
-
-# Convenience name for target.
-generated/CMakeFiles/ICE_OmniRobot_target.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_OmniRobot_target.dir/rule
-.PHONY : generated/CMakeFiles/ICE_OmniRobot_target.dir/rule
-
-# Convenience name for target.
-ICE_OmniRobot_target: generated/CMakeFiles/ICE_OmniRobot_target.dir/rule
-.PHONY : ICE_OmniRobot_target
-
-# fast build rule for target.
-ICE_OmniRobot_target/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_OmniRobot_target.dir/build.make generated/CMakeFiles/ICE_OmniRobot_target.dir/build
-.PHONY : ICE_OmniRobot_target/fast
-
-# Convenience name for target.
 generated/CMakeFiles/mission_planner.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/mission_planner.dir/rule
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/mission_planner.dir/rule
 .PHONY : generated/CMakeFiles/mission_planner.dir/rule
 
 # Convenience name for target.
@@ -270,12 +200,12 @@ mission_planner: generated/CMakeFiles/mission_planner.dir/rule
 
 # fast build rule for target.
 mission_planner/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/build
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/build
 .PHONY : mission_planner/fast
 
 # Convenience name for target.
 generated/CMakeFiles/mission_planner_autogen_timestamp_deps.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/mission_planner_autogen_timestamp_deps.dir/rule
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/mission_planner_autogen_timestamp_deps.dir/rule
 .PHONY : generated/CMakeFiles/mission_planner_autogen_timestamp_deps.dir/rule
 
 # Convenience name for target.
@@ -284,12 +214,12 @@ mission_planner_autogen_timestamp_deps: generated/CMakeFiles/mission_planner_aut
 
 # fast build rule for target.
 mission_planner_autogen_timestamp_deps/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner_autogen_timestamp_deps.dir/build.make generated/CMakeFiles/mission_planner_autogen_timestamp_deps.dir/build
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner_autogen_timestamp_deps.dir/build.make generated/CMakeFiles/mission_planner_autogen_timestamp_deps.dir/build
 .PHONY : mission_planner_autogen_timestamp_deps/fast
 
 # Convenience name for target.
 generated/CMakeFiles/mission_planner_autogen.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/mission_planner_autogen.dir/rule
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/mission_planner_autogen.dir/rule
 .PHONY : generated/CMakeFiles/mission_planner_autogen.dir/rule
 
 # Convenience name for target.
@@ -298,63 +228,15 @@ mission_planner_autogen: generated/CMakeFiles/mission_planner_autogen.dir/rule
 
 # fast build rule for target.
 mission_planner_autogen/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner_autogen.dir/build.make generated/CMakeFiles/mission_planner_autogen.dir/build
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner_autogen.dir/build.make generated/CMakeFiles/mission_planner_autogen.dir/build
 .PHONY : mission_planner_autogen/fast
-
-Camera360RGB.o: Camera360RGB.cpp.o
-.PHONY : Camera360RGB.o
-
-# target to build an object file
-Camera360RGB.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Camera360RGB.cpp.o
-.PHONY : Camera360RGB.cpp.o
-
-Camera360RGB.i: Camera360RGB.cpp.i
-.PHONY : Camera360RGB.i
-
-# target to preprocess a source file
-Camera360RGB.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Camera360RGB.cpp.i
-.PHONY : Camera360RGB.cpp.i
-
-Camera360RGB.s: Camera360RGB.cpp.s
-.PHONY : Camera360RGB.s
-
-# target to generate assembly for a file
-Camera360RGB.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Camera360RGB.cpp.s
-.PHONY : Camera360RGB.cpp.s
-
-GenericBase.o: GenericBase.cpp.o
-.PHONY : GenericBase.o
-
-# target to build an object file
-GenericBase.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/GenericBase.cpp.o
-.PHONY : GenericBase.cpp.o
-
-GenericBase.i: GenericBase.cpp.i
-.PHONY : GenericBase.i
-
-# target to preprocess a source file
-GenericBase.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/GenericBase.cpp.i
-.PHONY : GenericBase.cpp.i
-
-GenericBase.s: GenericBase.cpp.s
-.PHONY : GenericBase.s
-
-# target to generate assembly for a file
-GenericBase.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/GenericBase.cpp.s
-.PHONY : GenericBase.cpp.s
 
 Gridder.o: Gridder.cpp.o
 .PHONY : Gridder.o
 
 # target to build an object file
 Gridder.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Gridder.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Gridder.cpp.o
 .PHONY : Gridder.cpp.o
 
 Gridder.i: Gridder.cpp.i
@@ -362,7 +244,7 @@ Gridder.i: Gridder.cpp.i
 
 # target to preprocess a source file
 Gridder.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Gridder.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Gridder.cpp.i
 .PHONY : Gridder.cpp.i
 
 Gridder.s: Gridder.cpp.s
@@ -370,111 +252,39 @@ Gridder.s: Gridder.cpp.s
 
 # target to generate assembly for a file
 Gridder.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Gridder.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Gridder.cpp.s
 .PHONY : Gridder.cpp.s
 
-Lidar3D.o: Lidar3D.cpp.o
-.PHONY : Lidar3D.o
+__/src/grid_esdf.o: __/src/grid_esdf.cpp.o
+.PHONY : __/src/grid_esdf.o
 
 # target to build an object file
-Lidar3D.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Lidar3D.cpp.o
-.PHONY : Lidar3D.cpp.o
+__/src/grid_esdf.cpp.o:
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/grid_esdf.cpp.o
+.PHONY : __/src/grid_esdf.cpp.o
 
-Lidar3D.i: Lidar3D.cpp.i
-.PHONY : Lidar3D.i
-
-# target to preprocess a source file
-Lidar3D.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Lidar3D.cpp.i
-.PHONY : Lidar3D.cpp.i
-
-Lidar3D.s: Lidar3D.cpp.s
-.PHONY : Lidar3D.s
-
-# target to generate assembly for a file
-Lidar3D.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Lidar3D.cpp.s
-.PHONY : Lidar3D.cpp.s
-
-OmniRobot.o: OmniRobot.cpp.o
-.PHONY : OmniRobot.o
-
-# target to build an object file
-OmniRobot.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/OmniRobot.cpp.o
-.PHONY : OmniRobot.cpp.o
-
-OmniRobot.i: OmniRobot.cpp.i
-.PHONY : OmniRobot.i
+__/src/grid_esdf.i: __/src/grid_esdf.cpp.i
+.PHONY : __/src/grid_esdf.i
 
 # target to preprocess a source file
-OmniRobot.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/OmniRobot.cpp.i
-.PHONY : OmniRobot.cpp.i
+__/src/grid_esdf.cpp.i:
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/grid_esdf.cpp.i
+.PHONY : __/src/grid_esdf.cpp.i
 
-OmniRobot.s: OmniRobot.cpp.s
-.PHONY : OmniRobot.s
-
-# target to generate assembly for a file
-OmniRobot.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/OmniRobot.cpp.s
-.PHONY : OmniRobot.cpp.s
-
-Webots2Robocomp.o: Webots2Robocomp.cpp.o
-.PHONY : Webots2Robocomp.o
-
-# target to build an object file
-Webots2Robocomp.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Webots2Robocomp.cpp.o
-.PHONY : Webots2Robocomp.cpp.o
-
-Webots2Robocomp.i: Webots2Robocomp.cpp.i
-.PHONY : Webots2Robocomp.i
-
-# target to preprocess a source file
-Webots2Robocomp.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Webots2Robocomp.cpp.i
-.PHONY : Webots2Robocomp.cpp.i
-
-Webots2Robocomp.s: Webots2Robocomp.cpp.s
-.PHONY : Webots2Robocomp.s
+__/src/grid_esdf.s: __/src/grid_esdf.cpp.s
+.PHONY : __/src/grid_esdf.s
 
 # target to generate assembly for a file
-Webots2Robocomp.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/Webots2Robocomp.cpp.s
-.PHONY : Webots2Robocomp.cpp.s
-
-__/src/mppi_controller.o: __/src/mppi_controller.cpp.o
-.PHONY : __/src/mppi_controller.o
-
-# target to build an object file
-__/src/mppi_controller.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/mppi_controller.cpp.o
-.PHONY : __/src/mppi_controller.cpp.o
-
-__/src/mppi_controller.i: __/src/mppi_controller.cpp.i
-.PHONY : __/src/mppi_controller.i
-
-# target to preprocess a source file
-__/src/mppi_controller.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/mppi_controller.cpp.i
-.PHONY : __/src/mppi_controller.cpp.i
-
-__/src/mppi_controller.s: __/src/mppi_controller.cpp.s
-.PHONY : __/src/mppi_controller.s
-
-# target to generate assembly for a file
-__/src/mppi_controller.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/mppi_controller.cpp.s
-.PHONY : __/src/mppi_controller.cpp.s
+__/src/grid_esdf.cpp.s:
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/grid_esdf.cpp.s
+.PHONY : __/src/grid_esdf.cpp.s
 
 __/src/specificworker.o: __/src/specificworker.cpp.o
 .PHONY : __/src/specificworker.o
 
 # target to build an object file
 __/src/specificworker.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/specificworker.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/specificworker.cpp.o
 .PHONY : __/src/specificworker.cpp.o
 
 __/src/specificworker.i: __/src/specificworker.cpp.i
@@ -482,7 +292,7 @@ __/src/specificworker.i: __/src/specificworker.cpp.i
 
 # target to preprocess a source file
 __/src/specificworker.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/specificworker.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/specificworker.cpp.i
 .PHONY : __/src/specificworker.cpp.i
 
 __/src/specificworker.s: __/src/specificworker.cpp.s
@@ -490,7 +300,7 @@ __/src/specificworker.s: __/src/specificworker.cpp.s
 
 # target to generate assembly for a file
 __/src/specificworker.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/specificworker.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/__/src/specificworker.cpp.s
 .PHONY : __/src/specificworker.cpp.s
 
 genericworker.o: genericworker.cpp.o
@@ -498,7 +308,7 @@ genericworker.o: genericworker.cpp.o
 
 # target to build an object file
 genericworker.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/genericworker.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/genericworker.cpp.o
 .PHONY : genericworker.cpp.o
 
 genericworker.i: genericworker.cpp.i
@@ -506,7 +316,7 @@ genericworker.i: genericworker.cpp.i
 
 # target to preprocess a source file
 genericworker.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/genericworker.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/genericworker.cpp.i
 .PHONY : genericworker.cpp.i
 
 genericworker.s: genericworker.cpp.s
@@ -514,7 +324,7 @@ genericworker.s: genericworker.cpp.s
 
 # target to generate assembly for a file
 genericworker.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/genericworker.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/genericworker.cpp.s
 .PHONY : genericworker.cpp.s
 
 home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.o: home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
@@ -522,7 +332,7 @@ home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.o: home/robocomp/roboco
 
 # target to build an object file
 home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
 .PHONY : home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.o
 
 home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.i: home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
@@ -530,7 +340,7 @@ home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.i: home/robocomp/roboco
 
 # target to preprocess a source file
 home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
 .PHONY : home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.i
 
 home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.s: home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
@@ -538,7 +348,7 @@ home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.s: home/robocomp/roboco
 
 # target to generate assembly for a file
 home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
 .PHONY : home/robocomp/robocomp/classes/ConfigLoader/ConfigLoader.cpp.s
 
 home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.o: home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
@@ -546,7 +356,7 @@ home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.o
 
 # target to build an object file
 home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
 .PHONY : home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.o
 
 home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.i: home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
@@ -554,7 +364,7 @@ home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.i
 
 # target to preprocess a source file
 home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
 .PHONY : home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.i
 
 home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.s: home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
@@ -562,7 +372,7 @@ home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.s
 
 # target to generate assembly for a file
 home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
 .PHONY : home/robocomp/robocomp/classes/abstract_graphic_viewer/abstract_graphic_viewer.cpp.s
 
 home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.o: home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
@@ -570,7 +380,7 @@ home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.o: home/robocomp/robocomp
 
 # target to build an object file
 home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
 .PHONY : home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.o
 
 home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.i: home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
@@ -578,7 +388,7 @@ home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.i: home/robocomp/robocomp
 
 # target to preprocess a source file
 home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
 .PHONY : home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.i
 
 home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.s: home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
@@ -586,7 +396,7 @@ home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.s: home/robocomp/robocomp
 
 # target to generate assembly for a file
 home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
 .PHONY : home/robocomp/robocomp/classes/grafcetStep/GRAFCETStep.cpp.s
 
 home/robocomp/robocomp/classes/rapplication/rapplication.o: home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o
@@ -594,7 +404,7 @@ home/robocomp/robocomp/classes/rapplication/rapplication.o: home/robocomp/roboco
 
 # target to build an object file
 home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o
 .PHONY : home/robocomp/robocomp/classes/rapplication/rapplication.cpp.o
 
 home/robocomp/robocomp/classes/rapplication/rapplication.i: home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i
@@ -602,7 +412,7 @@ home/robocomp/robocomp/classes/rapplication/rapplication.i: home/robocomp/roboco
 
 # target to preprocess a source file
 home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i
 .PHONY : home/robocomp/robocomp/classes/rapplication/rapplication.cpp.i
 
 home/robocomp/robocomp/classes/rapplication/rapplication.s: home/robocomp/robocomp/classes/rapplication/rapplication.cpp.s
@@ -610,7 +420,7 @@ home/robocomp/robocomp/classes/rapplication/rapplication.s: home/robocomp/roboco
 
 # target to generate assembly for a file
 home/robocomp/robocomp/classes/rapplication/rapplication.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/rapplication/rapplication.cpp.s
 .PHONY : home/robocomp/robocomp/classes/rapplication/rapplication.cpp.s
 
 home/robocomp/robocomp/classes/sigwatch/sigwatch.o: home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o
@@ -618,7 +428,7 @@ home/robocomp/robocomp/classes/sigwatch/sigwatch.o: home/robocomp/robocomp/class
 
 # target to build an object file
 home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o
 .PHONY : home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.o
 
 home/robocomp/robocomp/classes/sigwatch/sigwatch.i: home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i
@@ -626,7 +436,7 @@ home/robocomp/robocomp/classes/sigwatch/sigwatch.i: home/robocomp/robocomp/class
 
 # target to preprocess a source file
 home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i
 .PHONY : home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.i
 
 home/robocomp/robocomp/classes/sigwatch/sigwatch.s: home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.s
@@ -634,7 +444,7 @@ home/robocomp/robocomp/classes/sigwatch/sigwatch.s: home/robocomp/robocomp/class
 
 # target to generate assembly for a file
 home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.s
 .PHONY : home/robocomp/robocomp/classes/sigwatch/sigwatch.cpp.s
 
 main.o: main.cpp.o
@@ -642,7 +452,7 @@ main.o: main.cpp.o
 
 # target to build an object file
 main.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/main.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/main.cpp.o
 .PHONY : main.cpp.o
 
 main.i: main.cpp.i
@@ -650,7 +460,7 @@ main.i: main.cpp.i
 
 # target to preprocess a source file
 main.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/main.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/main.cpp.i
 .PHONY : main.cpp.i
 
 main.s: main.cpp.s
@@ -658,7 +468,7 @@ main.s: main.cpp.s
 
 # target to generate assembly for a file
 main.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/main.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/main.cpp.s
 .PHONY : main.cpp.s
 
 mission_planner_autogen/mocs_compilation.o: mission_planner_autogen/mocs_compilation.cpp.o
@@ -666,7 +476,7 @@ mission_planner_autogen/mocs_compilation.o: mission_planner_autogen/mocs_compila
 
 # target to build an object file
 mission_planner_autogen/mocs_compilation.cpp.o:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/mission_planner_autogen/mocs_compilation.cpp.o
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/mission_planner_autogen/mocs_compilation.cpp.o
 .PHONY : mission_planner_autogen/mocs_compilation.cpp.o
 
 mission_planner_autogen/mocs_compilation.i: mission_planner_autogen/mocs_compilation.cpp.i
@@ -674,7 +484,7 @@ mission_planner_autogen/mocs_compilation.i: mission_planner_autogen/mocs_compila
 
 # target to preprocess a source file
 mission_planner_autogen/mocs_compilation.cpp.i:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/mission_planner_autogen/mocs_compilation.cpp.i
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/mission_planner_autogen/mocs_compilation.cpp.i
 .PHONY : mission_planner_autogen/mocs_compilation.cpp.i
 
 mission_planner_autogen/mocs_compilation.s: mission_planner_autogen/mocs_compilation.cpp.s
@@ -682,7 +492,7 @@ mission_planner_autogen/mocs_compilation.s: mission_planner_autogen/mocs_compila
 
 # target to generate assembly for a file
 mission_planner_autogen/mocs_compilation.cpp.s:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/mission_planner_autogen/mocs_compilation.cpp.s
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/mission_planner.dir/build.make generated/CMakeFiles/mission_planner.dir/mission_planner_autogen/mocs_compilation.cpp.s
 .PHONY : mission_planner_autogen/mocs_compilation.cpp.s
 
 # Help Target
@@ -697,37 +507,17 @@ help:
 	@echo "... install/strip"
 	@echo "... list_install_components"
 	@echo "... rebuild_cache"
-	@echo "... ICES__home_pbustos_robocomp_components_beta-robotica-class_mission_planner_generated"
-	@echo "... ICE_Camera360RGB_target"
-	@echo "... ICE_GenericBase_target"
+	@echo "... ICES__home_pbustos_robocomp_components_beta_robotica_class_private_mission_planner_generated"
 	@echo "... ICE_Gridder_target"
-	@echo "... ICE_Lidar3D_target"
-	@echo "... ICE_OmniRobot_target"
-	@echo "... ICE_Webots2Robocomp_target"
 	@echo "... mission_planner_autogen"
 	@echo "... mission_planner_autogen_timestamp_deps"
 	@echo "... mission_planner"
-	@echo "... Camera360RGB.o"
-	@echo "... Camera360RGB.i"
-	@echo "... Camera360RGB.s"
-	@echo "... GenericBase.o"
-	@echo "... GenericBase.i"
-	@echo "... GenericBase.s"
 	@echo "... Gridder.o"
 	@echo "... Gridder.i"
 	@echo "... Gridder.s"
-	@echo "... Lidar3D.o"
-	@echo "... Lidar3D.i"
-	@echo "... Lidar3D.s"
-	@echo "... OmniRobot.o"
-	@echo "... OmniRobot.i"
-	@echo "... OmniRobot.s"
-	@echo "... Webots2Robocomp.o"
-	@echo "... Webots2Robocomp.i"
-	@echo "... Webots2Robocomp.s"
-	@echo "... __/src/mppi_controller.o"
-	@echo "... __/src/mppi_controller.i"
-	@echo "... __/src/mppi_controller.s"
+	@echo "... __/src/grid_esdf.o"
+	@echo "... __/src/grid_esdf.i"
+	@echo "... __/src/grid_esdf.s"
 	@echo "... __/src/specificworker.o"
 	@echo "... __/src/specificworker.i"
 	@echo "... __/src/specificworker.s"
@@ -766,6 +556,6 @@ help:
 # No rule that depends on this can have commands that come from listfiles
 # because they might be regenerated.
 cmake_check_build_system:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/mission_planner && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
+	cd /home/pbustos/robocomp/components/beta_robotica_class_private/mission_planner && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
 .PHONY : cmake_check_build_system
 

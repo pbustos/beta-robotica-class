@@ -190,6 +190,20 @@ ICE_Webots2Robocomp_target/fast:
 .PHONY : ICE_Webots2Robocomp_target/fast
 
 # Convenience name for target.
+generated/CMakeFiles/ICE_GenericBase_target.dir/rule:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_GenericBase_target.dir/rule
+.PHONY : generated/CMakeFiles/ICE_GenericBase_target.dir/rule
+
+# Convenience name for target.
+ICE_GenericBase_target: generated/CMakeFiles/ICE_GenericBase_target.dir/rule
+.PHONY : ICE_GenericBase_target
+
+# fast build rule for target.
+ICE_GenericBase_target/fast:
+	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_GenericBase_target.dir/build.make generated/CMakeFiles/ICE_GenericBase_target.dir/build
+.PHONY : ICE_GenericBase_target/fast
+
+# Convenience name for target.
 generated/CMakeFiles/ICE_Lidar3D_target.dir/rule:
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_Lidar3D_target.dir/rule
 .PHONY : generated/CMakeFiles/ICE_Lidar3D_target.dir/rule
@@ -230,20 +244,6 @@ ICE_OmniRobot_target: generated/CMakeFiles/ICE_OmniRobot_target.dir/rule
 ICE_OmniRobot_target/fast:
 	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_OmniRobot_target.dir/build.make generated/CMakeFiles/ICE_OmniRobot_target.dir/build
 .PHONY : ICE_OmniRobot_target/fast
-
-# Convenience name for target.
-generated/CMakeFiles/ICE_GenericBase_target.dir/rule:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 generated/CMakeFiles/ICE_GenericBase_target.dir/rule
-.PHONY : generated/CMakeFiles/ICE_GenericBase_target.dir/rule
-
-# Convenience name for target.
-ICE_GenericBase_target: generated/CMakeFiles/ICE_GenericBase_target.dir/rule
-.PHONY : ICE_GenericBase_target
-
-# fast build rule for target.
-ICE_GenericBase_target/fast:
-	cd /home/pbustos/robocomp/components/beta-robotica-class/gridder && $(MAKE) $(MAKESILENT) -f generated/CMakeFiles/ICE_GenericBase_target.dir/build.make generated/CMakeFiles/ICE_GenericBase_target.dir/build
-.PHONY : ICE_GenericBase_target/fast
 
 # Convenience name for target.
 generated/CMakeFiles/gridder.dir/rule:

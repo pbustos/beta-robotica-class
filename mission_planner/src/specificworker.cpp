@@ -18,6 +18,8 @@
  */
 #include "specificworker.h"
 
+#include <Ice/Exception.h>
+
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
 {
 	this->startup_check_flag = startup_check;
@@ -54,179 +56,217 @@ void SpecificWorker::initialize()
 
 	// Viewer
 	viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM, true);
-	auto [r, e] = viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 100, QColor("Blue"));
-	robot_draw = r;
-	show ();
+	viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 0.2, QColor("Blue"));
+	viewer->show();
 
-	// mouse
-        connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, [this](QPointF p)
-        {
-	        qInfo() << "[MOUSE] New global target arrived:" << p;
+	// Request map and initialize grid
+	try
+	{ const auto pose = gridder_proxy->getPose();
+	  const QRectF initial_view(pose.x - 3000, pose.y - 3000, 6000, 6000);  // 6m x 6m area centered on robot pose
+	  viewer->fitToScene(initial_view);
+	}
+	catch (const Ice::Exception& ex){ std::cout << "Error connecting to gridder proxy: " << ex.what() << std::endl; return;}
+	initialize_grid();
 
-			// Use current robot position in world coordinates as source
+	// Connects
+	connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::left_click_handler);
 
-			const RoboCompGridder::TPoint source = {robot_pose.translation().x(), robot_pose.translation().y()};
-			const RoboCompGridder::TPoint target = {static_cast<float>(p.x()), static_cast<float>(p.y())};
-			std::vector<Eigen::Vector2f> path;
-
-			try
-			{ current_path_result = gridder_proxy->getPaths(source, target, 1, true, false, 1.0);}
-			catch (const Ice::Exception &e) {std::cerr << "Gridder error: " << e.what() << std::endl;}
-        });
 }
 
 void SpecificWorker::compute()
 {
+	// get robot_pose from gridder
+	try
+	{
+		const auto robot_pose = gridder_proxy->getPose();
+
+		// Update robot position variables
+		robot_x = robot_pose.x;
+		robot_y = robot_pose.y;
+		robot_theta = robot_pose.theta;
+
+
+		// Update UI labels
+		update_ui();
+
+	}
+	catch (const Ice::Exception& ex){std::cout << "Error getting robot pose from gridder: " << ex.what() << std::endl; return;}
+
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::update_ui()
+{
+	viewer->robot_poly()->setPos(robot_x, robot_y);
+	viewer->robot_poly()->setRotation(qRadiansToDegrees(robot_theta));
+	labelX->setText(QString::asprintf("X: %.2f", robot_x));
+	labelY->setText(QString::asprintf("Y: %.2f", robot_y));
+	labelTheta->setText(QString::asprintf("Theta: %.2f", robot_theta));
+}
+
+void SpecificWorker::initialize_grid()
+{
 	// get map from gridder
 	try
 	{
-		auto gridder_map = gridder_proxy->getMap();
+		map = gridder_proxy->getMap();
+		std::cout << "Received map from gridder with " << map.cells.size() << " cells " << map.tileSize << " tilesize" << std::endl;
+		std::string map_file = "mapa_webots.gridmap";
+		params.TILE_SIZE = static_cast<float>(map.tileSize);
+		grid_esdf.initialize(map.tileSize, &viewer->scene);
+
 	}
-	catch (const Ice::Exception &e){ std::cerr << "Gridder error: " << e.what() << std::endl;}
+	catch (const Ice::Exception& ex){std::cout << "Error getting map from gridder: " << ex.what() << std::endl; return;}
 
-	// Get robot pose from Webots and return transform
-	robot_pose = get_robot_pose();
+	// Convert MRPT cells to sparse grid format
+    // Apply rotation and offset to align MRPT map with Webots world coordinates
+    const float offset_x = params.MRPT_MAP_OFFSET_X;
+    const float offset_y = params.MRPT_MAP_OFFSET_Y;
+    const float rotation = params.MRPT_MAP_ROTATION;
+    const float cos_r = std::cos(rotation);
+    const float sin_r = std::sin(rotation);
+    const bool mirror_x = params.MRPT_MAP_MIRROR_X;
 
-	// Update visual representation of the robotc
-	robot_draw->setPos(robot_pose.translation().x(), robot_pose.translation().y());
-	robot_draw->setRotation(qRadiansToDegrees((Eigen::Rotation2Df(robot_pose.linear()).angle())));
+    if (offset_x != 0.f || offset_y != 0.f || rotation != 0.f || mirror_x)
+        qInfo() << "[MRPT Loader] Applying transform: rotation=" << rotation << "rad, offset=(" << offset_x << "," << offset_y << ")mm, mirror_x=" << mirror_x;
 
-	// Draw lidar points
-	const auto data = get_lidar();
-	draw_lidar(data, robot_pose, &viewer->scene);
+    // Track unique keys to detect collisions (multiple MRPT cells mapping to same grid cell)
+    std::unordered_set<GridESDF::Key, boost::hash<GridESDF::Key>> unique_keys;
+    size_t cells_processed = 0;
+    size_t cells_added = 0;
+    size_t cells_collided = 0;
 
-	// Compute MPPI controller
-	compute_mppi_control(data);
+    for (const auto &mrpt_cell : map.cells)
+    {
+        // All cells from loader already have occupancy > 0.78 (filtered by cell_value > 200)
+        cells_processed++;
+
+        // Apply mirror if needed (negate X before rotation)
+        float orig_x = static_cast<float>(mrpt_cell.x);
+        const float orig_y = static_cast<float>(mrpt_cell.y);
+        if (mirror_x)
+            orig_x = -orig_x;
+
+        // First rotate around origin, then apply offset
+        const float cell_x = orig_x * cos_r - orig_y * sin_r + offset_x;
+        const float cell_y = orig_x * sin_r + orig_y * cos_r + offset_y;
+        const auto key = grid_esdf.point_to_key(Eigen::Vector2f(cell_x, cell_y));
+
+        // Check if this key already exists (collision detection)
+        if (unique_keys.find(key) == unique_keys.end())
+        {
+            unique_keys.insert(key);
+            grid_esdf.add_confirmed_obstacle(key);
+            cells_added++;
+        }
+        else
+        {
+            cells_collided++;  // Multiple MRPT cells map to same grid cell
+        }
+    }
+
+    // Mark dirty once after loading all obstacles, then update visualization
+    grid_esdf.mark_visualization_dirty();
+    grid_esdf.update_visualization(true);
+
+    // Report statistics
+    qInfo() << "[MRPT Loader] SPARSE_ESDF Statistics:";
+    qInfo() << "  - MRPT cells processed:" << cells_processed;
+    qInfo() << "  - Grid cells added:" << cells_added;
+    qInfo() << "  - Collisions (MRPT->same grid cell):" << cells_collided;
+    qInfo() << "  - Final grid obstacles:" << grid_esdf.num_obstacles();
+    if (cells_collided > 0)
+    {
+        float collision_pct = 100.f * cells_collided / cells_processed;
+        qWarning() << "[MRPT Loader] WARNING:" << collision_pct << "% cells lost due to resolution mismatch!";
+    }
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-void SpecificWorker::compute_mppi_control(const RoboCompLidar3D::TPoints &lidar_data)
+////////////////  MOUSE EVENTS  ////////////////////////////////
+void SpecificWorker::left_click_handler(QPointF p)
 {
-	// =========================================================================
-	// MPPI Controller Logic
-	// =========================================================================
-	if (has_target_)
-	{
-		// 1. Request path from Gridder (if needed)
-		// try {
-		//     auto gridder_path = gridder_proxy->getPath(
-		//         robot_pose.translation().x(), robot_pose.translation().y(),
-		//         current_target_.x(), current_target_.y());
-		//     current_path_.clear();
-		//     for (const auto& p : gridder_path)
-		//         current_path_.emplace_back(p.x, p.y);
-		// } catch (const Ice::Exception& e) {
-		//     std::cerr << "Gridder error: " << e.what() << std::endl;
-		// }
+    qInfo() << "[MOUSE] New global target arrived:" << p;
 
-		// 2. Convert lidar points to obstacle positions (world frame)
-		// auto obstacles = lidar_to_obstacles(lidar_data);
+    // Use estimated robot position (from localizer) as source for path planning
 
-		// 3. Prepare current state for MPPI
-		// MPPIController::State current_state;
-		// current_state.x = robot_pose.translation().x();
-		// current_state.y = robot_pose.translation().y();
-		// current_state.theta = Eigen::Rotation2Df(robot_pose.linear()).angle();
+    const Eigen::Vector2f source{robot_x, robot_y};
+	const Eigen::Vector2f target{p.x(), p.y()};
 
-		// 4. Compute optimal control using MPPI
-		// auto control = mppi_controller_.compute(current_state, current_path_, obstacles);
+    const auto start_time = std::chrono::high_resolution_clock::now();
+	auto path = grid_esdf.compute_path(source, target, params.ROBOT_SEMI_WIDTH, params.SAFETY_FACTOR);
+    qInfo() << "A* path computed (ESDF), path size:" << path.size();
 
-		// 5. Send velocities to the robot
-		// try {
-		//     omnirobot_proxy->setSpeedBase(control.vx, control.vy, control.omega);
-		// } catch (const Ice::Exception& e) {
-		//     std::cerr << "OmniRobot error: " << e.what() << std::endl;
-		// }
+    const auto end_time = std::chrono::high_resolution_clock::now();
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+    float elapsed_sec = static_cast<float>(elapsed_ms) / 1000.f;
 
-		// 6. Draw MPPI optimal trajectory for visualization
-		// draw_mppi_trajectory(mppi_controller_.getOptimalTrajectory(), &viewer->scene);
+    if (!path.empty())
+    {
+        // Calculate path length (sum of segment distances)
+        float path_length = 0.f;
+        for (size_t i = 1; i < path.size(); ++i)
+            path_length += (path[i] - path[i-1]).norm();
 
-		// 7. Check if goal reached
-		// if (mppi_controller_.goalReached(current_state, current_path_.back()))
-		// {
-		//     has_target_ = false;
-		//     omnirobot_proxy->stopBase();
-		//     std::cout << "Goal reached!" << std::endl;
-		// }
-	}
-}
+        // Update UI displays
+        lcdNumber_length->display(static_cast<double>(path_length / 1000.f));  // Show in meters
+        lcdNumber_elapsed->display(static_cast<double>(elapsed_sec));  // Show in seconds
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-Eigen::Affine2f SpecificWorker::get_robot_pose()
+        qInfo() << "Path found with" << path.size() << "waypoints, length:"
+                << path_length/1000.f << ", time:" << elapsed_sec << "s";
+        draw_path(path, &viewer->scene);
+
+        // Draw target marker (solid circle)
+        static QGraphicsEllipseItem* target_marker = nullptr;
+        if (target_marker)
+        {
+            viewer->scene.removeItem(target_marker);
+            delete target_marker;
+        }
+        const float marker_size = 200.f;  // mm
+        target_marker = viewer->scene.addEllipse(
+            -marker_size/2, -marker_size/2, marker_size, marker_size,
+            QPen(QColor("Red"), 30),
+            QBrush(QColor(255, 0, 0, 150)));  // Semi-transparent red fill
+        target_marker->setPos(target.x(), target.y());
+        target_marker->setZValue(20);  // On top of everything
+    }
+    else
+    {
+        // Clear UI on no path
+        lcdNumber_length->display(0);
+        lcdNumber_elapsed->display(static_cast<double>(elapsed_sec));  // Show in seconds
+        qInfo() << "No path found!";
+    }
+};
+
+void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f> &path, QGraphicsScene *scene, bool erase_only)
 {
-	RoboCompWebots2Robocomp::ObjectPose pose;
-	Eigen::Affine2f robot_pose;
-	try
-	{
-		pose = webots2robocomp_proxy->getObjectPose("shadow");
-		//qInfo() << "Robot pose from Webots: x=" << pose.position.x << " y=" << pose.position.y << " z=" << pose.position.z;
-		robot_pose.translation() = Eigen::Vector2f(-pose.position.y, pose.position.x);
-		const auto yaw = yawFromQuaternion(pose.orientation);
-		robot_pose.linear() = Eigen::Rotation2Df(yaw).toRotationMatrix();
-	}
-	catch (const Ice::Exception &e){ std::cout<<e.what()<<std::endl; return {};}
-	return robot_pose;
-}
+	static std::vector<QGraphicsEllipseItem*> points;
+	static const QColor color("blue");
+	static const QPen pen(color);
+	static const QBrush brush(color);
+	static constexpr float s = 50;  // Smaller dots for thinner path
 
-// Devuelve el yaw (rotación alrededor del eje Z) en radianes
-double SpecificWorker::yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat)
-{
-	double w = quat.w;
-	double x = quat.x;
-	double y = quat.y;
-	double z = quat.z;
-	const auto norm = std::sqrt(w*w + x*x + y*y + z*z);
-	w /= norm; x /= norm; y /= norm; z /= norm;
-	return std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
-}
-
-void SpecificWorker::draw_lidar(const RoboCompLidar3D::TPoints &points,
-								const Eigen::Affine2f &robot_pose,
-								QGraphicsScene *scene)
-{
-	static std::vector<QGraphicsItem*> draw_points;
-	for (const auto &p : draw_points)
+	for(auto p : points)
 	{
 		scene->removeItem(p);
 		delete p;
 	}
-	draw_points.clear();
+	points.clear();
 
-	const QColor color("LightGreen");
-	const QPen pen(color, 10);
-	//const QBrush brush(color, Qt::SolidPattern);
-	for (const auto &p : points)
+	if(erase_only) return;
+
+	points.reserve(path.size());
+	for(const auto &p: path)
 	{
-		const auto dp = scene->addRect(-25, -25, 50, 50, pen);
-		Eigen::Vector2f worldP = robot_pose * Eigen::Vector2f(p.x, p.y);
-		dp->setPos(worldP.x(), worldP.y());
-		draw_points.push_back(dp);   // add to the list of points to be deleted next time
+		auto ptr = scene->addEllipse(-s/2, -s/2, s, s, pen, brush);
+		ptr->setPos(p.x(), p.y());
+		ptr->setZValue(10);
+		points.push_back(ptr);
 	}
 }
 
-Eigen::Affine2f SpecificWorker::update_robot_transform(const RoboCompWebots2Robocomp::ObjectPose &pose, Eigen::Affine2f &robot_pose)
-{
-	robot_pose.translation() = Eigen::Vector2f(pose.position.x, pose.position.z);
-	auto yaw = yawFromQuaternion(pose.orientation);
-	robot_pose.linear() = Eigen::Rotation2Df(yaw).toRotationMatrix();
-	return robot_pose;
-}
-
-
-
-RoboCompLidar3D::TPoints SpecificWorker::get_lidar()
-{
-	RoboCompLidar3D::TData  data;
-	try
-	{
-		data =  lidar3d_proxy->getLidarData("bpearl", 0, 2*M_PI, 1); //para mayor precision (puedo comparar ejemplos de ejecucion entre este y 0.1f round en la docu)
-		//qInfo() << "Size: "<<data.points.size();
-	}
-	catch (const Ice::Exception &e){ std::cout<<e.what()<<std::endl; return {};}
-	return data.points;
-}
-
-////////////////////////////////////////////////////////////
+/////////////////////////////// EMERGENCY AND RESTORE ////////////////////////////////
 void SpecificWorker::emergency()
 {
     std::cout << "Emergency worker" << std::endl;
@@ -235,8 +275,6 @@ void SpecificWorker::emergency()
     //if (SUCCESSFUL) //The componet is safe for continue
     //  emmit goToRestore()
 }
-
-
 
 //Execute one when exiting to emergencyState
 void SpecificWorker::restore()
@@ -247,7 +285,6 @@ void SpecificWorker::restore()
 
 }
 
-
 int SpecificWorker::startup_check()
 {
 	std::cout << "Startup check" << std::endl;
@@ -255,109 +292,39 @@ int SpecificWorker::startup_check()
 	return 0;
 }
 
+/**************************************/
+// From the RoboCompGridder you can call this methods:
+// RoboCompGridder::bool this->gridder_proxy->IsPathBlocked(TPath path)
+// RoboCompGridder::bool this->gridder_proxy->LineOfSightToTarget(TPoint source, TPoint target, float robotRadius)
+// RoboCompGridder::void this->gridder_proxy->cancelNavigation()
+// RoboCompGridder::TPoint this->gridder_proxy->getClosestFreePoint(TPoint source)
+// RoboCompGridder::TDimensions this->gridder_proxy->getDimensions()
+// RoboCompGridder::float this->gridder_proxy->getDistanceToTarget()
+// RoboCompGridder::float this->gridder_proxy->getEstimatedTimeToTarget()
+// RoboCompGridder::Map this->gridder_proxy->getMap()
+// RoboCompGridder::NavigationState this->gridder_proxy->getNavigationState()
+// RoboCompGridder::NavigationStatus this->gridder_proxy->getNavigationStatus()
+// RoboCompGridder::Result this->gridder_proxy->getPaths(TPoint source, TPoint target, int maxPaths, bool tryClosestFreePoint, bool targetIsHuman, float safetyFactor)
+// RoboCompGridder::Pose this->gridder_proxy->getPose()
+// RoboCompGridder::TPoint this->gridder_proxy->getTarget()
+// RoboCompGridder::bool this->gridder_proxy->hasReachedTarget()
+// RoboCompGridder::bool this->gridder_proxy->replanPath()
+// RoboCompGridder::bool this->gridder_proxy->resumeNavigation()
+// RoboCompGridder::bool this->gridder_proxy->setGridDimensions(TDimensions dimensions)
+// RoboCompGridder::Result this->gridder_proxy->setLocationAndGetPath(TPoint source, TPoint target, TPointVector freePoints, TPointVector obstaclePoints)
+// RoboCompGridder::bool this->gridder_proxy->setTarget(TPoint target)
+// RoboCompGridder::bool this->gridder_proxy->setTargetWithOptions(TPoint target, NavigationOptions options)
+// RoboCompGridder::bool this->gridder_proxy->startNavigation()
+// RoboCompGridder::void this->gridder_proxy->stopNavigation()
 
 /**************************************/
-// From the RoboCompCamera360RGB you can call this methods:
-// RoboCompCamera360RGB::TImage this->camera360rgb_proxy->getROI(int cx, int cy, int sx, int sy, int roiwidth, int roiheight)
-
-/**************************************/
-// From the RoboCompCamera360RGB you can use this types:
-// RoboCompCamera360RGB::TRoi
-// RoboCompCamera360RGB::TImage
-
-/**************************************/
-// From the RoboCompLidar3D you can call this methods:
-// RoboCompLidar3D::TColorCloudData this->lidar3d_proxy->getColorCloudData()
-// RoboCompLidar3D::TData this->lidar3d_proxy->getLidarData(string name, float start, float len, int decimationDegreeFactor)
-// RoboCompLidar3D::TDataImage this->lidar3d_proxy->getLidarDataArrayProyectedInImage(string name)
-// RoboCompLidar3D::TDataCategory this->lidar3d_proxy->getLidarDataByCategory(TCategories categories, long timestamp)
-// RoboCompLidar3D::TData this->lidar3d_proxy->getLidarDataProyectedInImage(string name)
-// RoboCompLidar3D::TData this->lidar3d_proxy->getLidarDataWithThreshold2d(string name, float distance, int decimationDegreeFactor)
-
-/**************************************/
-// From the RoboCompLidar3D you can use this types:
-// RoboCompLidar3D::TPoint
-// RoboCompLidar3D::TDataImage
-// RoboCompLidar3D::TData
-// RoboCompLidar3D::TDataCategory
-// RoboCompLidar3D::TColorCloudData
-
-/**************************************/
-// From the RoboCompOmniRobot you can call this methods:
-// RoboCompOmniRobot::void this->omnirobot_proxy->correctOdometer(int x, int z, float alpha)
-// RoboCompOmniRobot::void this->omnirobot_proxy->getBasePose(int x, int z, float alpha)
-// RoboCompOmniRobot::void this->omnirobot_proxy->getBaseState(RoboCompGenericBase::TBaseState state)
-// RoboCompOmniRobot::void this->omnirobot_proxy->resetOdometer()
-// RoboCompOmniRobot::void this->omnirobot_proxy->setOdometer(RoboCompGenericBase::TBaseState state)
-// RoboCompOmniRobot::void this->omnirobot_proxy->setOdometerPose(int x, int z, float alpha)
-// RoboCompOmniRobot::void this->omnirobot_proxy->setSpeedBase(float advx, float advz, float rot)
-// RoboCompOmniRobot::void this->omnirobot_proxy->stopBase()
-
-/**************************************/
-// From the RoboCompOmniRobot you can use this types:
-// RoboCompOmniRobot::TMechParams
-
-// =========================================================================
-// MPPI Helper Functions - descomentar para activar
-// =========================================================================
-
-// /**
-//  * @brief Convert lidar points to obstacle positions in world frame
-//  * @param points Lidar points in robot frame
-//  * @return Vector of obstacle positions in world frame
-//  */
-// std::vector<Eigen::Vector2f> SpecificWorker::lidar_to_obstacles(const RoboCompLidar3D::TPoints& points)
-// {
-//     std::vector<Eigen::Vector2f> obstacles;
-//     obstacles.reserve(points.size());
-//     for (const auto& p : points)
-//     {
-//         // Transform from robot frame to world frame
-//         Eigen::Vector2f local_point(p.x, p.y);
-//         Eigen::Vector2f world_point = robot_pose * local_point;
-//         obstacles.push_back(world_point);
-//     }
-//     return obstacles;
-// }
-
-// /**
-//  * @brief Draw the MPPI optimal trajectory for visualization
-//  * @param trajectory Optimal trajectory from MPPI
-//  * @param scene Graphics scene to draw on
-//  */
-// void SpecificWorker::draw_mppi_trajectory(const std::vector<MPPIController::State>& trajectory,
-//                                           QGraphicsScene* scene)
-// {
-//     static std::vector<QGraphicsItem*> trajectory_items;
-//
-//     // Clear previous trajectory
-//     for (auto* item : trajectory_items)
-//     {
-//         scene->removeItem(item);
-//         delete item;
-//     }
-//     trajectory_items.clear();
-//
-//     // Draw new trajectory
-//     const QColor color("Orange");
-//     const QPen pen(color, 3);
-//
-//     for (size_t i = 0; i < trajectory.size() - 1; ++i)
-//     {
-//         auto* line = scene->addLine(
-//             trajectory[i].x, trajectory[i].y,
-//             trajectory[i+1].x, trajectory[i+1].y,
-//             pen);
-//         trajectory_items.push_back(line);
-//     }
-//
-//     // Draw points at each state
-//     const QPen point_pen(Qt::red, 8);
-//     for (const auto& state : trajectory)
-//     {
-//         auto* point = scene->addEllipse(state.x - 10, state.y - 10, 20, 20, point_pen);
-//         trajectory_items.push_back(point);
-//     }
-// }
-
+// From the RoboCompGridder you can use this types:
+// RoboCompGridder::TPoint
+// RoboCompGridder::TDimensions
+// RoboCompGridder::Result
+// RoboCompGridder::TCell
+// RoboCompGridder::Map
+// RoboCompGridder::Pose
+// RoboCompGridder::NavigationOptions
+// RoboCompGridder::NavigationStatus
 
