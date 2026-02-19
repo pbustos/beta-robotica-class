@@ -219,6 +219,8 @@ class SpecificWorker : public GenericWorker
 	        float ROBOT_SEMI_WIDTH = ROBOT_WIDTH / 2.f;
 	        float ROBOT_SEMI_LENGTH = ROBOT_LENGTH / 2.f;
 	        float MIN_DISTANCE_TO_TARGET = ROBOT_WIDTH / 2.f;
+	    	float ROBOT_INITIAL_X = 10694;
+	    	float ROBOT_INITIAL_Y = -4101;
 
 	        // Grid configuration - loaded from config
 	        float TILE_SIZE = 100;
@@ -263,7 +265,8 @@ class SpecificWorker : public GenericWorker
 	        float MRPT_MAP_OFFSET_X = 12000.0f;
 	        float MRPT_MAP_OFFSET_Y = -2500.0f;
 	        float MRPT_MAP_ROTATION = -M_PI_2;
-	        bool MRPT_MAP_MIRROR_X = true;
+	        bool MRPT_MAP_MIRROR_X = false;
+	        int MAP_DILATION_RADIUS = 1;  // Dilate obstacles by N cells to fill gaps (0 = disabled)
 
 	        // MPPI controller - loaded from config
 	        int MPPI_PERIOD_MS = 50;
@@ -302,9 +305,18 @@ class SpecificWorker : public GenericWorker
 
 	    // Localizer (AMCL)
 	    Localizer localizer;
-	    Localizer::Pose2D last_ground_truth_pose;  // For simulating odometry
 	    std::atomic<bool> localizer_initialized{false};
 	    std::atomic<bool> map_ready_for_localization{false};  // Set after map is fully loaded
+
+	    // Odometry from velocity commands (used by localizer)
+	    struct VelocityCommand {
+	        float vx = 0.f;   // mm/s
+	        float vy = 0.f;   // mm/s
+	        float omega = 0.f; // rad/s
+	        std::chrono::steady_clock::time_point timestamp;
+	    };
+	    VelocityCommand last_velocity_command;
+	    std::mutex mutex_velocity_command;
 
 	    // FPS
 	    FPSCounter fps;
@@ -377,6 +389,9 @@ class SpecificWorker : public GenericWorker
 	    std::atomic<bool> show_trajectories{true};
 	    std::atomic<bool> show_covariance{false};
 
+	    // Robot dragging state - prevents localizer from overwriting pose during drag
+	    std::atomic<bool> robot_being_dragged{false};
+
 	    // Covariance ellipse visualization
 	    QGraphicsEllipseItem* covariance_ellipse = nullptr;
 	    void draw_covariance_ellipse();
@@ -387,6 +402,11 @@ class SpecificWorker : public GenericWorker
 	    void slot_particles_checkbox_toggled(bool checked);
 	    void slot_trajectories_checkbox_toggled(bool checked);
 	    void slot_covariance_checkbox_toggled(bool checked);
+
+	private slots:
+		void slot_robot_dragging(QPointF pos);
+		void slot_robot_drag_end(QPointF pos);
+		void slot_robot_rotate(QPointF pos);
 
 };
 

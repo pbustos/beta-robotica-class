@@ -36,6 +36,10 @@ max_lidar_draw_points = 1500      # Debug: limit number of points drawn
 robot_width = 460.0
 robot_length = 480.0
 
+# Robot initial position (mm) - used when USE_GT_WARMUP is false
+robot_initial_x = 10694.0
+robot_initial_y = -4101.0
+
 # Robot kinematic model: "omnidirectional" or "differential"
 robot_type = "differential"
 
@@ -67,6 +71,7 @@ mrpt_map_offset_x = 12000.0       # mm - X offset to apply to loaded map
 mrpt_map_offset_y = -2500.0       # mm - Y offset to apply to loaded map
 mrpt_map_rotation = -1.5707963    # radians - rotation to apply (-PI/2 = -90º)
 mrpt_map_mirror_x = true          # Mirror X axis (negate X before rotation) if map appears flipped
+map_dilation_radius = 1           # Dilate obstacles by N cells to fill gaps in walls (0 = disabled)
 
 # Localizer parameters
 use_localizer = true              # Enable/disable AMCL localization
@@ -75,7 +80,7 @@ localizer_odom_noise = 0.1        # Noise factor for simulated odometry
 localizer_period_ms = 50          # ms - Localizer thread period (20 Hz)
 
 # Ground Truth warmup (simulation only - set false for real robot)
-use_gt_warmup = true              # Allow GT pose during initialization warmup (Webots only)
+use_gt_warmup = false              # Allow GT pose during initialization warmup (Webots only)
 
 # MPPI controller parameters
 mppi_period_ms = 50               # ms - MPPI thread period (~20 Hz)

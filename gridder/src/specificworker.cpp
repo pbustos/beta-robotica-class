@@ -94,6 +94,10 @@ void SpecificWorker::loadParams(const ConfigLoader& configLoader)
 	params.ROBOT_SEMI_LENGTH = params.ROBOT_LENGTH / 2.f;
 	params.MIN_DISTANCE_TO_TARGET = params.ROBOT_WIDTH / 2.f;
 
+	// Robot initial position (used when USE_GT_WARMUP is false)
+	params.ROBOT_INITIAL_X = getFloat("robot_initial_x", params.ROBOT_INITIAL_X);
+	params.ROBOT_INITIAL_Y = getFloat("robot_initial_y", params.ROBOT_INITIAL_Y);
+
 	// Robot kinematic model
 	std::string robot_type_str = getString("robot_type", "differential");
 	if (robot_type_str == "omnidirectional" || robot_type_str == "OMNIDIRECTIONAL")
@@ -132,6 +136,7 @@ void SpecificWorker::loadParams(const ConfigLoader& configLoader)
 	params.MRPT_MAP_OFFSET_Y = getFloat("mrpt_map_offset_y", params.MRPT_MAP_OFFSET_Y);
 	params.MRPT_MAP_ROTATION = getFloat("mrpt_map_rotation", params.MRPT_MAP_ROTATION);
 	params.MRPT_MAP_MIRROR_X = getBool("mrpt_map_mirror_x", params.MRPT_MAP_MIRROR_X);
+	params.MAP_DILATION_RADIUS = getInt("map_dilation_radius", params.MAP_DILATION_RADIUS);
 
 	// Localizer parameters
 	params.USE_LOCALIZER = getBool("use_localizer", params.USE_LOCALIZER);
@@ -152,6 +157,7 @@ void SpecificWorker::loadParams(const ConfigLoader& configLoader)
 	qInfo() << "[Config] Parameters loaded:";
 	qInfo() << "  - Robot:" << params.ROBOT_WIDTH << "x" << params.ROBOT_LENGTH << "mm,"
 	        << (params.ROBOT_TYPE == RobotType::DIFFERENTIAL ? "differential" : "omnidirectional");
+	qInfo() << "  - Robot initial pos:" << params.ROBOT_INITIAL_X << "," << params.ROBOT_INITIAL_Y << "mm";
 	qInfo() << "  - Grid: tile=" << params.TILE_SIZE << "mm, bounds="
 	        << params.GRID_MAX_DIM.x() << "," << params.GRID_MAX_DIM.y()
 	        << "," << params.GRID_MAX_DIM.width() << "," << params.GRID_MAX_DIM.height();
@@ -184,6 +190,7 @@ SpecificWorker::~SpecificWorker()
 		mppi_th.join();
 	std::cout << "MPPI thread stopped" << std::endl;
 }
+
 void SpecificWorker::initialize()
 {
     std::cout << "initialize worker" << std::endl;
@@ -201,13 +208,19 @@ void SpecificWorker::initialize()
         // Viewer
         viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM, false);
         viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 0.2, QColor("Blue"));
+
+        // Initialize robot pose to configured initial position
+        estimated_robot_pose = Eigen::Affine2f::Identity();
+        estimated_robot_pose.translation() = Eigen::Vector2f{params.ROBOT_INITIAL_X, params.ROBOT_INITIAL_Y};
+        viewer->robot_poly()->setPos(params.ROBOT_INITIAL_X, params.ROBOT_INITIAL_Y);
+        qInfo() << "[Init] Robot initial position:" << params.ROBOT_INITIAL_X << params.ROBOT_INITIAL_Y;
+
         // Don't limit sceneRect - allow unlimited panning
         // viewer->setSceneRect(params.GRID_MAX_DIM);
         viewer->show();
 
         // Fit the view to show the initial grid area centered on robot
-        //QRectF initial_view(-3000, -3000, 6000, 6000);  // 6m x 6m area centered on origin
-	    QRectF initial_view(-3, -3, 6, 6);  // 6m x 6m area centered on origin
+        QRectF initial_view(params.ROBOT_INITIAL_X - 3000, params.ROBOT_INITIAL_Y - 3000, 6000, 6000);
         viewer->fitToScene(initial_view);
 
         // Initialize Sparse ESDF grid (VoxBlox-style)
@@ -466,6 +479,11 @@ void SpecificWorker::initialize()
                 qWarning() << "[ROBOT] Localizer already initialized, ignoring manual position";
             }
         });
+	    // Connect robot drag and rotate signals
+	    connect(viewer, &AbstractGraphicViewer::robot_dragging, this, &SpecificWorker::slot_robot_dragging);
+	    connect(viewer, &AbstractGraphicViewer::robot_drag_end, this, &SpecificWorker::slot_robot_drag_end);
+	    connect(viewer, &AbstractGraphicViewer::robot_rotate, this, &SpecificWorker::slot_robot_rotate);
+
         if(not params.DISPLAY)
             hide();
 
@@ -551,10 +569,13 @@ void SpecificWorker::compute()
     if (show_covariance.load() && params.USE_LOCALIZER && localizer_initialized.load())
         draw_covariance_ellipse();
 
-    // Update robot visualization
-    const float angle = std::atan2(estimated_robot_pose.linear()(1,0), estimated_robot_pose.linear()(0,0));
-    viewer->robot_poly()->setPos(estimated_robot_pose.translation().x(), estimated_robot_pose.translation().y());
-    viewer->robot_poly()->setRotation(qRadiansToDegrees(angle));
+    // Update robot visualization (skip if being dragged by mouse)
+    if (!robot_being_dragged.load())
+    {
+        const float angle = std::atan2(estimated_robot_pose.linear()(1,0), estimated_robot_pose.linear()(0,0));
+        viewer->robot_poly()->setPos(estimated_robot_pose.translation().x(), estimated_robot_pose.translation().y());
+        viewer->robot_poly()->setRotation(qRadiansToDegrees(angle));
+    }
 
     // Process MPPI output and send commands to robot
     process_mppi_output(timestamp);
@@ -607,6 +628,15 @@ void SpecificWorker::process_mppi_output(std::uint64_t timestamp)
     {
         try {
             omnirobot_proxy->setSpeedBase(mppi_out->vx, mppi_out->vy, mppi_out->omega);
+
+            // Store velocity command for odometry estimation
+            {
+                std::lock_guard<std::mutex> lock(mutex_velocity_command);
+                last_velocity_command.vx = mppi_out->vx;
+                last_velocity_command.vy = mppi_out->vy;
+                last_velocity_command.omega = mppi_out->omega;
+                last_velocity_command.timestamp = std::chrono::steady_clock::now();
+            }
         }
         catch (const Ice::Exception &e) {
             static int error_count = 0;
@@ -774,10 +804,15 @@ void SpecificWorker::read_lidar()
         try
         {
             // Get robot pose
-            const auto &[position, orientation] = webots2robocomp_proxy->getObjectPose("shadow");
             Eigen::Affine2f eig_pose;
-            eig_pose.translation() = Eigen::Vector2f(-position.y, position.x);
-            eig_pose.linear() = Eigen::Rotation2Df(yawFromQuaternion(orientation)).toRotationMatrix();
+            eig_pose = Eigen::Affine2f::Identity();
+            eig_pose.translation() = Eigen::Vector2f{params.ROBOT_INITIAL_X, params.ROBOT_INITIAL_Y};  // Default initial position
+            if (params.USE_GT_WARMUP)
+            {
+                const auto &[position, orientation] = webots2robocomp_proxy->getObjectPose("shadow");
+                eig_pose.translation() = Eigen::Vector2f(-position.y, position.x);
+                eig_pose.linear() = Eigen::Rotation2Df(yawFromQuaternion(orientation)).toRotationMatrix();
+            }
 
             // Get LiDAR data
             auto data = lidar3d1_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_LOW,
@@ -813,11 +848,13 @@ void SpecificWorker::read_lidar()
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /// Localizer Thread - runs AMCL independently at its own rate
+/// Uses velocity commands as odometry source (dead reckoning)
 /////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::run_localizer()
 {
     const auto target_period = std::chrono::milliseconds(params.LOCALIZER_PERIOD_MS);
     auto last_fps_time = std::chrono::steady_clock::now();
+    auto last_odom_time = std::chrono::steady_clock::now();
     int frame_count = 0;
 
     while (!stop_localizer_thread)
@@ -828,6 +865,14 @@ void SpecificWorker::run_localizer()
         if (!map_ready_for_localization.load())
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        // Skip update if robot is being dragged
+        if (robot_being_dragged.load())
+        {
+            last_odom_time = std::chrono::steady_clock::now();  // Reset odom timer
+            std::this_thread::sleep_for(target_period);
             continue;
         }
 
@@ -846,77 +891,86 @@ void SpecificWorker::run_localizer()
         const auto& robot_pos = robot.value();
         const auto& points_local = lidar_local.value();
 
-        // Get current ground truth pose
-        const float gt_x = robot_pos.translation().x();
-        const float gt_y = robot_pos.translation().y();
-        const auto robot_rot = robot_pos.linear();
-        const float gt_theta = std::atan2(robot_rot(1, 0), robot_rot(0, 0));
-        Localizer::Pose2D current_gt_pose{gt_x, gt_y, gt_theta};
-
-        // Initialize localizer on first valid pose
+        // Initialize localizer on first valid pose (use GT only for initial position if enabled)
         if (!localizer_initialized.load())
         {
-            localizer.resetGaussian(current_gt_pose, 500.f, 0.2f);
-            last_ground_truth_pose = current_gt_pose;
-            localizer_initialized.store(true);
-            qInfo() << "[Localizer Thread] Initialized at:" << gt_x << gt_y << "theta:" << qRadiansToDegrees(gt_theta);
+            if (params.USE_GT_WARMUP)
+            {
+                const float gt_x = robot_pos.translation().x();
+                const float gt_y = robot_pos.translation().y();
+                const float gt_theta = std::atan2(robot_pos.linear()(1, 0), robot_pos.linear()(0, 0));
+                Localizer::Pose2D init_pose{gt_x, gt_y, gt_theta};
+                localizer.resetGaussian(init_pose, 500.f, 0.2f);
+                localizer_initialized.store(true);
+                qInfo() << "[Localizer Thread] Initialized from GT at:" << gt_x << gt_y
+                        << "theta:" << qRadiansToDegrees(gt_theta);
+            }
+            // else: wait for manual initialization via Shift+Click
+            last_odom_time = std::chrono::steady_clock::now();
+            std::this_thread::sleep_for(target_period);
             continue;
         }
 
-        // Compute odometry from ground truth poses
-        auto odom = Localizer::computeOdometryDelta(last_ground_truth_pose, current_gt_pose);
+        // Compute odometry from velocity commands (dead reckoning)
+        const auto now = std::chrono::steady_clock::now();
+        const float dt = std::chrono::duration<float>(now - last_odom_time).count();  // seconds
+        last_odom_time = now;
+
+        Localizer::OdometryDelta odom;
+        {
+            std::lock_guard<std::mutex> lock(mutex_velocity_command);
+            // Convert velocity to displacement: delta = v * dt
+            // Note: velocities are in mm/s, we keep mm for consistency
+            odom.delta_x = last_velocity_command.vx * dt;
+            odom.delta_y = last_velocity_command.vy * dt;
+            odom.delta_theta = last_velocity_command.omega * dt;
+        }
 
         // Update localizer with odometry and LiDAR points
         auto estimated_pose_opt = localizer.update(odom, points_local);
 
-        // Update last pose for next iteration
-        last_ground_truth_pose = current_gt_pose;
-
         // Get the estimated pose (from update result or mean pose)
         Localizer::Pose2D estimated_pose = estimated_pose_opt.value_or(localizer.getMeanPose());
 
-        // Sanity check and publish to buffer
-        float error = std::hypot(estimated_pose.x - gt_x, estimated_pose.y - gt_y);
-        if (error < 5000.f && localizer.getEffectiveSampleSize() > 10.0)
+        // Publish to buffer if ESS is good enough
+        if (localizer.getEffectiveSampleSize() > 10.0)
         {
-            // Build Affine2f from localized pose
             Eigen::Affine2f result;
             result.translation() = Eigen::Vector2f(estimated_pose.x, estimated_pose.y);
             result.linear() = Eigen::Rotation2Df(estimated_pose.theta).toRotationMatrix();
-
-            // Write to double buffer for main thread
             buffer_estimated_pose.put<0>(std::move(result), timestamp);
         }
 
         // Update FPS counter
         frame_count++;
-        const auto now = std::chrono::steady_clock::now();
-        const auto fps_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_fps_time).count();
+        const auto fps_now = std::chrono::steady_clock::now();
+        const auto fps_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(fps_now - last_fps_time).count();
         if (fps_elapsed >= 1000)
         {
             localizer_hz.store(frame_count);
             frame_count = 0;
-            last_fps_time = now;
+            last_fps_time = fps_now;
         }
 
-        // Periodic debug
+        // Periodic debug (localizer status)
         static int debug_counter = 0;
         if (++debug_counter % 100 == 0)
         {
             auto est = localizer.getMeanPose();
-            float pos_error = std::hypot(est.x - gt_x, est.y - gt_y);
-            float angle_error = std::abs(Localizer::Pose2D::normalizeAngle(est.theta - gt_theta));
-            qInfo() << "[Localizer Thread] GT error: pos=" << static_cast<int>(pos_error)
-                    << "mm, angle=" << qRadiansToDegrees(angle_error) << "deg"
-                    << "| ESS:" << static_cast<int>(localizer.getEffectiveSampleSize());
+            Eigen::Matrix2f pos_cov;
+            float theta_var;
+            localizer.getCovariance(pos_cov, theta_var);
+            qInfo() << "[Localizer Thread] Pose:" << static_cast<int>(est.x) << static_cast<int>(est.y)
+                    << "theta:" << qRadiansToDegrees(est.theta) << "deg"
+                    << "| ESS:" << static_cast<int>(localizer.getEffectiveSampleSize())
+                    << "| σxy:" << static_cast<int>(std::sqrt(pos_cov(0,0))) << "mm";
         }
 
-        // Adaptive sleep: only sleep for remaining time to maintain target frequency
+        // Adaptive sleep
         const auto loop_end = std::chrono::steady_clock::now();
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(loop_end - loop_start);
         if (elapsed < target_period)
             std::this_thread::sleep_for(target_period - elapsed);
-        // else: loop took longer than target, don't sleep (run as fast as possible)
     }
     qInfo() << "[Localizer Thread] Stopped";
 } // Thread to run localizer
@@ -1280,7 +1334,101 @@ void SpecificWorker::slot_covariance_checkbox_toggled(bool checked)
     }
 }
 
+void SpecificWorker::slot_robot_dragging(QPointF pos)
+{
+    // Set flag to prevent localizer from overwriting pose
+    robot_being_dragged.store(true);
 
+    // Move robot to new position, keeping orientation
+    estimated_robot_pose.translation() = Eigen::Vector2f{static_cast<float>(pos.x()), static_cast<float>(pos.y())};
+    // Update visual representation
+    viewer->robot_poly()->setPos(pos.x(), pos.y());
+    qDebug() << "[MOUSE] Dragging robot to:" << pos.x() << pos.y();
+}
+
+void SpecificWorker::slot_robot_drag_end(QPointF pos)
+{
+    // Final position after drag
+    const float new_x = static_cast<float>(pos.x());
+    const float new_y = static_cast<float>(pos.y());
+
+    // Determine orientation: face toward target if path exists, otherwise keep current
+    float new_theta;
+    {
+        std::lock_guard<std::mutex> lock(mutex_current_path);
+        if (!current_path.empty())
+        {
+            // Orient toward the target (last point of path)
+            const auto& target = current_path.back();
+            const float dx = target.x() - new_x;
+            const float dy = target.y() - new_y;
+            new_theta = std::atan2(dy, dx);
+        }
+        else
+        {
+            // No target, keep current orientation
+            new_theta = std::atan2(estimated_robot_pose.linear()(1,0),
+                                   estimated_robot_pose.linear()(0,0));
+        }
+    }
+
+    // Update estimated pose with new position and orientation
+    estimated_robot_pose.translation() = Eigen::Vector2f{new_x, new_y};
+    estimated_robot_pose.linear() = Eigen::Rotation2Df(new_theta).toRotationMatrix();
+
+    // Update visual representation
+    viewer->robot_poly()->setPos(pos.x(), pos.y());
+    viewer->robot_poly()->setRotation(qRadiansToDegrees(new_theta));
+
+    // Reset localizer at new position to fix this as the new pose
+    if (params.USE_LOCALIZER)
+    {
+        Localizer::Pose2D new_pose{new_x, new_y, new_theta};
+        localizer.resetGaussian(new_pose, 200.f, 0.1f);  // Tight distribution around new position
+
+        // Also write the new pose to the buffer immediately
+        const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        Eigen::Affine2f new_affine;
+        new_affine.translation() = Eigen::Vector2f(new_x, new_y);
+        new_affine.linear() = Eigen::Rotation2Df(new_theta).toRotationMatrix();
+        buffer_estimated_pose.put<0>(std::move(new_affine), timestamp);
+
+        // Reset velocity command to zero to avoid drift after drag
+        {
+            std::lock_guard<std::mutex> lock(mutex_velocity_command);
+            last_velocity_command.vx = 0.f;
+            last_velocity_command.vy = 0.f;
+            last_velocity_command.omega = 0.f;
+        }
+
+        qInfo() << "[MOUSE] Robot drag ended at:" << new_x << new_y
+                << "- Localizer reset with theta:" << qRadiansToDegrees(new_theta) << "deg";
+    }
+    else
+    {
+        qInfo() << "[MOUSE] Robot drag ended at:" << new_x << new_y;
+    }
+
+    // Clear dragging flag - allow localizer to update again
+    robot_being_dragged.store(false);
+}
+
+void SpecificWorker::slot_robot_rotate(QPointF pos)
+{
+    // Get current robot position
+    const float robot_x = estimated_robot_pose.translation().x();
+    const float robot_y = estimated_robot_pose.translation().y();
+
+    // Calculate angle from robot to cursor position
+    const float dx = pos.x() - robot_x;
+    const float dy = pos.y() - robot_y;
+    const float new_theta = std::atan2(dy, dx);
+
+    // Update robot orientation only, keep position
+    estimated_robot_pose.translation() = Eigen::Vector2f{robot_x, robot_y};
+    estimated_robot_pose.linear() = Eigen::Rotation2Df(new_theta).toRotationMatrix();
+}
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 /// Gridder.idsl interface implementation
 /// ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -1553,12 +1701,21 @@ bool SpecificWorker::Gridder_loadMRPTMap(const std::string &filepath)
         grid_esdf.mark_visualization_dirty();
         grid_esdf.update_visualization(true);
 
+        // Dilate obstacles to fill gaps in walls
+        if (params.MAP_DILATION_RADIUS > 0)
+        {
+            qInfo() << "[MRPT Loader] Dilating obstacles by" << params.MAP_DILATION_RADIUS << "cells...";
+            grid_esdf.dilate_obstacles(params.MAP_DILATION_RADIUS);
+            grid_esdf.mark_visualization_dirty();
+            grid_esdf.update_visualization(true);
+        }
+
         // Report statistics
         qInfo() << "[MRPT Loader] SPARSE_ESDF Statistics:";
         qInfo() << "  - MRPT cells processed:" << cells_processed;
         qInfo() << "  - Grid cells added:" << cells_added;
         qInfo() << "  - Collisions (MRPT->same grid cell):" << cells_collided;
-        qInfo() << "  - Final grid obstacles:" << grid_esdf.num_obstacles();
+        qInfo() << "  - Final grid obstacles (after dilation):" << grid_esdf.num_obstacles();
         if (cells_collided > 0)
         {
             float collision_pct = 100.f * cells_collided / cells_processed;

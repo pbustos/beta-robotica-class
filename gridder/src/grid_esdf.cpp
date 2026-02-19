@@ -245,6 +245,53 @@ void GridESDF::add_confirmed_obstacle(const Key &k)
     // when loading many obstacles. Call mark_visualization_dirty() after batch loading.
 }
 
+void GridESDF::dilate_obstacles(int radius)
+{
+    if (radius <= 0) return;
+
+    // Collect all current obstacle keys
+    std::vector<Key> original_obstacles;
+    original_obstacles.reserve(obstacles_.size());
+    for (const auto& [key, cell] : obstacles_)
+    {
+        original_obstacles.push_back(key);
+    }
+
+    // For each obstacle, add neighbors within radius
+    std::unordered_set<Key, boost::hash<Key>> new_obstacles;
+    const int ts = static_cast<int>(params_.tile_size);
+
+    for (const auto& key : original_obstacles)
+    {
+        // Add all cells in a square around the obstacle
+        for (int dx = -radius; dx <= radius; ++dx)
+        {
+            for (int dy = -radius; dy <= radius; ++dy)
+            {
+                if (dx == 0 && dy == 0) continue;  // Skip self
+
+                Key neighbor_key{key.first + dx * ts, key.second + dy * ts};
+
+                // Only add if not already an obstacle
+                if (obstacles_.find(neighbor_key) == obstacles_.end())
+                {
+                    new_obstacles.insert(neighbor_key);
+                }
+            }
+        }
+    }
+
+    // Add all new obstacles
+    size_t added = 0;
+    for (const auto& key : new_obstacles)
+    {
+        add_confirmed_obstacle(key);
+        added++;
+    }
+
+    qInfo() << "[GridESDF] Dilated obstacles by" << radius << "cells, added" << added << "new cells";
+}
+
 void GridESDF::remove_obstacle(const Key &k)
 {
     auto it = obstacles_.find(k);
