@@ -27,12 +27,16 @@ QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 namespace {
 struct qt_meta_stringdata_AbstractGraphicViewer_t {
-    uint offsetsAndSizes[10];
+    uint offsetsAndSizes[18];
     char stringdata0[22];
     char stringdata1[22];
     char stringdata2[1];
     char stringdata3[12];
     char stringdata4[12];
+    char stringdata5[17];
+    char stringdata6[15];
+    char stringdata7[15];
+    char stringdata8[13];
 };
 #define QT_MOC_LITERAL(ofs, len) \
     uint(sizeof(qt_meta_stringdata_AbstractGraphicViewer_t::offsetsAndSizes) + ofs), len 
@@ -42,13 +46,21 @@ Q_CONSTINIT static const qt_meta_stringdata_AbstractGraphicViewer_t qt_meta_stri
         QT_MOC_LITERAL(22, 21),  // "new_mouse_coordinates"
         QT_MOC_LITERAL(44, 0),  // ""
         QT_MOC_LITERAL(45, 11),  // "right_click"
-        QT_MOC_LITERAL(57, 11)   // "robot_moved"
+        QT_MOC_LITERAL(57, 11),  // "robot_moved"
+        QT_MOC_LITERAL(69, 16),  // "robot_drag_start"
+        QT_MOC_LITERAL(86, 14),  // "robot_dragging"
+        QT_MOC_LITERAL(101, 14),  // "robot_drag_end"
+        QT_MOC_LITERAL(116, 12)   // "robot_rotate"
     },
     "AbstractGraphicViewer",
     "new_mouse_coordinates",
     "",
     "right_click",
-    "robot_moved"
+    "robot_moved",
+    "robot_drag_start",
+    "robot_dragging",
+    "robot_drag_end",
+    "robot_rotate"
 };
 #undef QT_MOC_LITERAL
 } // unnamed namespace
@@ -59,19 +71,27 @@ Q_CONSTINIT static const uint qt_meta_data_AbstractGraphicViewer[] = {
       10,       // revision
        0,       // classname
        0,    0, // classinfo
-       3,   14, // methods
+       7,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
        0,       // flags
-       3,       // signalCount
+       7,       // signalCount
 
  // signals: name, argc, parameters, tag, flags, initial metatype offsets
-       1,    1,   32,    2, 0x06,    1 /* Public */,
-       3,    1,   35,    2, 0x06,    3 /* Public */,
-       4,    1,   38,    2, 0x06,    5 /* Public */,
+       1,    1,   56,    2, 0x06,    1 /* Public */,
+       3,    1,   59,    2, 0x06,    3 /* Public */,
+       4,    1,   62,    2, 0x06,    5 /* Public */,
+       5,    1,   65,    2, 0x06,    7 /* Public */,
+       6,    1,   68,    2, 0x06,    9 /* Public */,
+       7,    1,   71,    2, 0x06,   11 /* Public */,
+       8,    1,   74,    2, 0x06,   13 /* Public */,
 
  // signals: parameters
+    QMetaType::Void, QMetaType::QPointF,    2,
+    QMetaType::Void, QMetaType::QPointF,    2,
+    QMetaType::Void, QMetaType::QPointF,    2,
+    QMetaType::Void, QMetaType::QPointF,    2,
     QMetaType::Void, QMetaType::QPointF,    2,
     QMetaType::Void, QMetaType::QPointF,    2,
     QMetaType::Void, QMetaType::QPointF,    2,
@@ -96,6 +116,18 @@ Q_CONSTINIT const QMetaObject AbstractGraphicViewer::staticMetaObject = { {
         QtPrivate::TypeAndForceComplete<QPointF, std::false_type>,
         // method 'robot_moved'
         QtPrivate::TypeAndForceComplete<void, std::false_type>,
+        QtPrivate::TypeAndForceComplete<QPointF, std::false_type>,
+        // method 'robot_drag_start'
+        QtPrivate::TypeAndForceComplete<void, std::false_type>,
+        QtPrivate::TypeAndForceComplete<QPointF, std::false_type>,
+        // method 'robot_dragging'
+        QtPrivate::TypeAndForceComplete<void, std::false_type>,
+        QtPrivate::TypeAndForceComplete<QPointF, std::false_type>,
+        // method 'robot_drag_end'
+        QtPrivate::TypeAndForceComplete<void, std::false_type>,
+        QtPrivate::TypeAndForceComplete<QPointF, std::false_type>,
+        // method 'robot_rotate'
+        QtPrivate::TypeAndForceComplete<void, std::false_type>,
         QtPrivate::TypeAndForceComplete<QPointF, std::false_type>
     >,
     nullptr
@@ -110,6 +142,10 @@ void AbstractGraphicViewer::qt_static_metacall(QObject *_o, QMetaObject::Call _c
         case 0: _t->new_mouse_coordinates((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
         case 1: _t->right_click((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
         case 2: _t->robot_moved((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
+        case 3: _t->robot_drag_start((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
+        case 4: _t->robot_dragging((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
+        case 5: _t->robot_drag_end((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
+        case 6: _t->robot_rotate((*reinterpret_cast< std::add_pointer_t<QPointF>>(_a[1]))); break;
         default: ;
         }
     } else if (_c == QMetaObject::IndexOfMethod) {
@@ -135,6 +171,34 @@ void AbstractGraphicViewer::qt_static_metacall(QObject *_o, QMetaObject::Call _c
                 return;
             }
         }
+        {
+            using _t = void (AbstractGraphicViewer::*)(QPointF );
+            if (_t _q_method = &AbstractGraphicViewer::robot_drag_start; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
+                *result = 3;
+                return;
+            }
+        }
+        {
+            using _t = void (AbstractGraphicViewer::*)(QPointF );
+            if (_t _q_method = &AbstractGraphicViewer::robot_dragging; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
+                *result = 4;
+                return;
+            }
+        }
+        {
+            using _t = void (AbstractGraphicViewer::*)(QPointF );
+            if (_t _q_method = &AbstractGraphicViewer::robot_drag_end; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
+                *result = 5;
+                return;
+            }
+        }
+        {
+            using _t = void (AbstractGraphicViewer::*)(QPointF );
+            if (_t _q_method = &AbstractGraphicViewer::robot_rotate; *reinterpret_cast<_t *>(_a[1]) == _q_method) {
+                *result = 6;
+                return;
+            }
+        }
     }
 }
 
@@ -157,13 +221,13 @@ int AbstractGraphicViewer::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 3)
+        if (_id < 7)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 3;
+        _id -= 7;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 3)
+        if (_id < 7)
             *reinterpret_cast<QMetaType *>(_a[0]) = QMetaType();
-        _id -= 3;
+        _id -= 7;
     }
     return _id;
 }
@@ -187,6 +251,34 @@ void AbstractGraphicViewer::robot_moved(QPointF _t1)
 {
     void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
     QMetaObject::activate(this, &staticMetaObject, 2, _a);
+}
+
+// SIGNAL 3
+void AbstractGraphicViewer::robot_drag_start(QPointF _t1)
+{
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
+    QMetaObject::activate(this, &staticMetaObject, 3, _a);
+}
+
+// SIGNAL 4
+void AbstractGraphicViewer::robot_dragging(QPointF _t1)
+{
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
+    QMetaObject::activate(this, &staticMetaObject, 4, _a);
+}
+
+// SIGNAL 5
+void AbstractGraphicViewer::robot_drag_end(QPointF _t1)
+{
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
+    QMetaObject::activate(this, &staticMetaObject, 5, _a);
+}
+
+// SIGNAL 6
+void AbstractGraphicViewer::robot_rotate(QPointF _t1)
+{
+    void *_a[] = { nullptr, const_cast<void*>(reinterpret_cast<const void*>(std::addressof(_t1))) };
+    QMetaObject::activate(this, &staticMetaObject, 6, _a);
 }
 QT_WARNING_POP
 QT_END_MOC_NAMESPACE

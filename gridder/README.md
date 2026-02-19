@@ -18,7 +18,7 @@ Gridder provides complete autonomous navigation capabilities combining sparse ES
 ### Simulation (Webots)
 ```bash
 bin/gridder etc/config
-# Left click to navigate, system auto-initializes
+# Shift+Right-click to navigate, system auto-initializes
 ```
 
 ### Real Robot
@@ -26,8 +26,8 @@ bin/gridder etc/config
 # 1. Set USE_GT_WARMUP = false in src/specificworker.h
 # 2. Recompile: make
 # 3. Run: bin/gridder etc/config
-# 4. Shift+Click to initialize position
-# 5. Navigate with Left Click
+# 4. Shift+Left-click to initialize position
+# 5. Navigate with Shift+Right-click
 ```
 
 ## Documentation
@@ -71,9 +71,12 @@ bin/gridder etc/config
 
 | Action | Function |
 |--------|----------|
-| **Left Click** | Set navigation target |
+| **Shift + Right Click** | Set navigation target |
+| **Left Click + Drag** | Move robot position |
 | **Shift + Left Click** | Initialize robot position (real robot only) |
+| **Ctrl + Left Click** | Rotate robot orientation |
 | **Ctrl + Right Click** | Cancel current target |
+| **Middle Click** | Cancel current target (alternative) |
 | **Right Drag** | Pan view |
 | **Wheel** | Zoom |
 

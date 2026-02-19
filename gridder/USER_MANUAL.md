@@ -41,16 +41,19 @@ The graphical interface provides intuitive mouse controls for navigation and set
 
 | Mouse Action | Effect | Use Case |
 |--------------|--------|----------|
-| **Left Click** | Set navigation target | Tell robot where to go |
+| **Shift + Right Click** | Set navigation target | Tell robot where to go |
+| **Left Click + Drag** | Move robot position | Reposition robot on map |
 | **Shift + Left Click** | Initialize robot position | First-time setup on real robot |
+| **Ctrl + Left Click** | Rotate robot | Adjust robot orientation |
 | **Ctrl + Right Click** | Cancel current target | Stop navigation |
+| **Middle Button Click** | Cancel current target | Alternative cancel method |
 | **Right Click + Drag** | Pan view | Move camera around map |
 | **Mouse Wheel Up/Down** | Zoom in/out | Adjust view scale |
 
 ### Detailed Mouse Actions
 
-#### Set Navigation Target (Left Click)
-1. Click anywhere on the map
+#### Set Navigation Target (Shift + Right Click)
+1. Shift+Right-click anywhere on the map
 2. System computes path from current position to target
 3. Robot begins autonomous navigation
 4. Path shown as blue line on map

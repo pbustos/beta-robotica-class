@@ -94,6 +94,9 @@ public:
     bool is_occupied_for_planning(const Key &k, float robot_radius) const;  // Obstacle + inflation
     bool is_free(const Key &k) const;  // Not obstacle = free (sparse assumption)
 
+    // Morphological operations
+    void dilate_obstacles(int radius = 1);  // Expand obstacles by 'radius' cells (fill gaps in walls)
+
     // ESDF queries
     float get_distance(const Key &k);  // Distance to nearest obstacle
     float get_distance(const Eigen::Vector2f &p);

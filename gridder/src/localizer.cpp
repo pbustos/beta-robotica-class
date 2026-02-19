@@ -185,11 +185,16 @@ Localizer::Pose2D Localizer::sampleMotionModel(const Pose2D& pose, const Odometr
     const float delta_trans = std::hypot(odometry.delta_x, odometry.delta_y);
     const float delta_rot = std::abs(odometry.delta_theta);
 
-    // Add noise proportional to motion
-    // Translation noise in mm, rotation noise in radians
-    const float trans_noise_std = params_.alpha3 * delta_trans + params_.alpha4 * delta_rot * 100.f + 1.f;  // 1mm minimum
+    // Add noise proportional to motion PLUS a minimum diffusion noise
+    // This allows particles to adapt even when odometry is zero (external motion)
+    // Increased diffusion for better response to external movements (joystick, manual drag)
+    // At 20Hz, 50mm/cycle = 1000mm/s max tracking speed
+    constexpr float MIN_TRANS_DIFFUSION = 50.f;  // mm - allows adaptation to external motion
+    constexpr float MIN_ROT_DIFFUSION = 0.05f;   // rad (~3 degrees) - allows rotation adaptation
+
+    const float trans_noise_std = params_.alpha3 * delta_trans + params_.alpha4 * delta_rot * 100.f + MIN_TRANS_DIFFUSION;
     // alpha2 converts mm to radians: divide by 1000 to get meters, then small factor
-    const float rot_noise_std = params_.alpha1 * delta_rot + params_.alpha2 * delta_trans * 0.001f + 0.001f;  // ~0.06 deg minimum
+    const float rot_noise_std = params_.alpha1 * delta_rot + params_.alpha2 * delta_trans * 0.001f + MIN_ROT_DIFFUSION;
 
     // Sample noise
     const float noise_x = normal_dist_(rng_) * trans_noise_std;
@@ -278,17 +283,17 @@ double Localizer::computeLikelihood(const Pose2D& pose,
             dist = map_->get_distance(map_->point_to_key(p_world_x, p_world_y));
 
         // Likelihood: Gaussian hit + uniform random
-        const float p_hit = z_hit_norm * std::expf(-dist * dist * inv_sigma_sq_2);
+        const float p_hit = z_hit_norm * std::exp(-dist * dist * inv_sigma_sq_2);
         const float p = p_hit + p_rand;
 
-        total_log_likelihood += std::logf(p + 1e-30f);
+        total_log_likelihood += std::log(p + 1e-30f);
         count++;
     }
 
     if (count > 0)
     {
         float avg_log_likelihood = total_log_likelihood / static_cast<float>(count);
-        return static_cast<double>(std::expf(std::max(avg_log_likelihood, -20.0f)));
+        return static_cast<double>(std::exp(std::max(avg_log_likelihood, -20.0f)));
     }
     return 1.0;
 }
