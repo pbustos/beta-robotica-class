@@ -85,8 +85,8 @@ void SpecificWorker::initialize()
     // Connect capture room button
     connect(pushButton_captureRoom, &QPushButton::toggled, this, &SpecificWorker::slot_capture_room_toggled);
 
-    // Connect mouse clicks on the scene for polygon capture
-    connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::on_scene_clicked);
+    // Connect Ctrl+Left click on the scene for polygon capture (uses robot_rotate signal)
+    connect(viewer, &AbstractGraphicViewer::robot_rotate, this, &SpecificWorker::on_scene_clicked);
 
     // Connect robot drag and rotate signals
     connect(viewer, &AbstractGraphicViewer::robot_dragging, this, &SpecificWorker::slot_robot_dragging);
@@ -100,8 +100,8 @@ void SpecificWorker::initialize()
     connect(pushButton_flipY, &QPushButton::clicked, this, &SpecificWorker::slot_flip_y);
 
     // Try to load default layout on startup (only loads vertices, doesn't init room_ai yet)
-    //load_polygon_from_file("room_layout.json");
-    load_polygon_from_file("hall_layout.svg");
+    load_polygon_from_file("beta_layout.svg");
+    //load_polygon_from_file("hall_layout.svg");
 
     // Lidar thread is created
     read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
@@ -612,8 +612,8 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
         polygon_item_backup_ = polygon_item;
         polygon_item = nullptr;
 
-        pushButton_captureRoom->setText("Click vertices...");
-        qInfo() << "Room capture started. Click on the scene to add vertices. Click near the first point to close.";
+        pushButton_captureRoom->setText("Ctrl+Click vertices...");
+        qInfo() << "Room capture started. Use Ctrl+Left click on the scene to add vertices. Ctrl+Click near the first point to close.";
         qInfo() << "Existing polygon preserved until new one is completed.";
     }
     else
@@ -624,14 +624,7 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
         {
             qInfo() << "Room polygon captured with" << room_polygon_gt.size() << "vertices";
 
-            // New polygon is valid - remove the backup polygon graphic
-            if (polygon_item_backup_)
-            {
-                viewer->scene.removeItem(polygon_item_backup_);
-                delete polygon_item_backup_;
-                polygon_item_backup_ = nullptr;
-            }
-            room_polygon_backup_.clear();
+            // Keep old polygon visible until user saves the new one
 
             // Clear vertex markers (yellow circles)
             for (auto* item : polygon_vertex_items)
@@ -788,6 +781,15 @@ void SpecificWorker::slot_save_layout()
             filename += ".json";
         save_layout_to_file(filename.toStdString());
     }
+
+    // Remove the old polygon from the UI now that the new one is saved
+    if (polygon_item_backup_)
+    {
+        viewer->scene.removeItem(polygon_item_backup_);
+        delete polygon_item_backup_;
+        polygon_item_backup_ = nullptr;
+    }
+    room_polygon_backup_.clear();
 }
 
 void SpecificWorker::slot_load_layout()
