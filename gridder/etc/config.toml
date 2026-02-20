@@ -73,18 +73,156 @@ mrpt_map_rotation = -1.5707963    # radians - rotation to apply (-PI/2 = -90º)
 mrpt_map_mirror_x = true          # Mirror X axis (negate X before rotation) if map appears flipped
 map_dilation_radius = 1           # Dilate obstacles by N cells to fill gaps in walls (0 = disabled)
 
-# Localizer parameters
-use_localizer = true              # Enable/disable AMCL localization
-localizer_particles = 500         # Number of particles
-localizer_odom_noise = 0.1        # Noise factor for simulated odometry
-localizer_period_ms = 50          # ms - Localizer thread period (20 Hz)
-
 # Ground Truth warmup (simulation only - set false for real robot)
 use_gt_warmup = false              # Allow GT pose during initialization warmup (Webots only)
 
-# MPPI controller parameters
-mppi_period_ms = 50               # ms - MPPI thread period (~20 Hz)
 
 # Compute period
 period_hysteresis = 2             # To avoid oscillations in the adjustment of the period
+
+# =============================================================================
+# Localizer Parameters (AMCL - Adaptive Monte Carlo Localization)
+# =============================================================================
+[localizer]
+# Enable/disable localization
+enabled = true
+period_ms = 50                    # ms - Localizer thread period (20 Hz)
+
+# Particle filter configuration
+min_particles = 100               # Minimum number of particles
+max_particles = 1000              # Maximum number of particles
+initial_particles = 500           # Initial number of particles
+
+# KLD-sampling parameters (adaptive particle count)
+kld_bin_size_xy = 200.0           # mm - spatial binning for KLD
+kld_bin_size_theta = 0.1          # rad - angular binning for KLD
+kld_epsilon = 0.02                # KL-distance bound
+
+# Observation model (likelihood field)
+sigma_hit = 100.0                 # mm - std dev for hit model
+z_hit = 0.95                      # Weight for hit model (vs random)
+lidar_subsample = 15              # Use every Nth lidar point for efficiency
+
+# Resampling threshold
+resample_threshold = 0.5          # Resample when ESS < threshold * N
+
+# Convergence thresholds
+position_stddev_threshold = 200.0 # mm - consider converged below this
+angle_stddev_threshold = 0.1      # rad - consider converged below this
+
+# -----------------------------------------------------------------------------
+# Motion Model Configuration
+# -----------------------------------------------------------------------------
+# Two configurations available:
+#   1. WITHOUT ODOMETRY: Higher diffusion for pure particle-based tracking
+#   2. WITH ODOMETRY: Lower diffusion when reliable odometry is available
+# -----------------------------------------------------------------------------
+
+# === CONFIGURATION 1: WITHOUT ODOMETRY (current - for joystick/external motion) ===
+# Higher diffusion allows particles to spread and track external motion
+alpha1 = 0.25                     # Rotation noise from rotation
+alpha2 = 0.10                     # Rotation noise from translation
+alpha3 = 0.25                     # Translation noise from translation
+alpha4 = 0.10                     # Translation noise from rotation
+min_trans_diffusion = 50.0        # mm per cycle (~1000mm/s tracking at 20Hz)
+min_rot_diffusion = 0.05          # rad per cycle (~3 degrees)
+
+# === CONFIGURATION 2: WITH ODOMETRY (commented - for MPPI velocity commands) ===
+# Lower diffusion when odometry provides motion information
+# alpha1 = 0.15                   # Rotation noise from rotation
+# alpha2 = 0.05                   # Rotation noise from translation
+# alpha3 = 0.15                   # Translation noise from translation
+# alpha4 = 0.05                   # Translation noise from rotation
+# min_trans_diffusion = 15.0      # mm per cycle (~300mm/s tracking at 20Hz)
+# min_rot_diffusion = 0.02        # rad per cycle (~1 degree)
+
+# =============================================================================
+# MPPI Controller Parameters (Model Predictive Path Integral)
+# =============================================================================
+[mppi]
+# Thread period
+period_ms = 50                    # ms - MPPI thread period (~20 Hz)
+
+# Core MPPI parameters
+K = 100                           # Number of sampled trajectories (initial, adapted online)
+T = 50                            # Prediction horizon (time steps)
+dt = 0.1                          # Time step (seconds)
+lambda = 50.0                     # Temperature parameter (10-100 typical)
+cost_scale = 1000.0               # Divide all costs by this to normalize
+
+# Adaptive K (sample count based on ESS)
+use_adaptive_K = true             # Enable/disable adaptive sample count
+K_min = 80                        # Minimum samples (safety floor)
+K_max = 300                       # Maximum samples (CPU ceiling)
+ess_ratio_low = 0.10              # Below this: increase K
+ess_ratio_high = 0.50             # Above this: decrease K
+K_increase_factor = 1.3           # Multiply K when ESS too low
+K_decrease_factor = 0.85          # Multiply K when ESS too high
+
+# Control noise standard deviations
+sigma_vx = 80.0                   # mm/s - lateral exploration
+sigma_vy = 150.0                  # mm/s - forward speed variation
+sigma_omega = 0.3                 # rad/s - rotation exploration
+
+# Time-correlated noise (AR(1) process)
+noise_alpha = 0.8                 # Temporal correlation [0.5-0.9]
+use_time_correlated_noise = true  # Enable/disable AR(1) noise
+
+# Adaptive covariance
+use_adaptive_covariance = true    # Enable/disable covariance adaptation
+cov_adaptation_rate = 0.01        # Beta: adaptation rate
+sigma_min_vx = 40.0               # Minimum sigma vx (mm/s)
+sigma_min_vy = 80.0               # Minimum sigma vy (mm/s)
+sigma_min_omega = 0.1             # Minimum sigma omega (rad/s)
+sigma_max_vx = 100.0              # Maximum sigma vx (mm/s)
+sigma_max_vy = 180.0              # Maximum sigma vy (mm/s)
+sigma_max_omega = 0.4             # Maximum sigma omega (rad/s)
+
+# Robot velocity limits
+max_vx = 300.0                    # mm/s - max lateral speed
+max_vy = 800.0                    # mm/s - max forward speed
+max_omega = 0.5                   # rad/s - max rotation speed
+
+# Cost weights
+w_path = 1.0                      # Weight for path following
+w_obstacle = 50.0                 # Weight for obstacle avoidance
+w_goal = 5.0                      # Weight for goal reaching
+w_smoothness = 1.0                # Weight for control smoothness
+w_speed = 0.001                   # Weight for speed
+
+# Safety parameters
+collision_buffer = 150.0          # mm - soft penalty band before collision
+safety_margin = 1000.0            # mm - outer cost zone
+obstacle_decay = 100.0            # mm - softplus decay parameter
+
+# Covariance-aware margin inflation
+use_covariance_inflation = true   # Enable covariance-aware margin
+cov_z_score = 1.64                # Risk multiplier (1.64=95%, 2.33=99%)
+cov_inflation_gate = 2.0          # Only inflate when d < gate * safety_margin
+cov_sigma_max_clamp = 0.5         # Clamp sigma_max to fraction of safety_margin
+
+# Path following
+lookahead_distance = 500.0        # mm - how far ahead to look on path
+goal_tolerance = 200.0            # mm - consider goal reached
+
+# Warm start blending
+warm_start_vx_weight = 0.2        # Weight for previous vx (0-1)
+warm_start_vy_weight = 0.5        # Weight for previous vy
+warm_start_omega_weight = 0.5     # Weight for previous omega
+
+# Obstacle cost smoothing
+obstacle_k_nearest = 10           # Number of nearest obstacles for softmin
+obstacle_softmin_beta = 0.02      # Softmin smoothing parameter (1/mm)
+
+# Nominal control parameters
+alignment_forward_threshold = 0.3     # cos(angle) > this → move forward
+alignment_backward_threshold = -0.3   # cos(angle) < this → rotate in place
+lateral_motion_gain = 0.5             # Gain for lateral motion
+nominal_slow_speed_factor = 0.3       # Speed factor when strafing/turning
+
+# Output smoothing
+output_smoothing_alpha = 0.3      # EMA filter: 0=no smoothing, 0.5=heavy
+
+# Visualization
+num_trajectories_to_draw = 10     # Number of best trajectories to visualize
 

@@ -141,14 +141,29 @@ std::optional<Localizer::Pose2D> Localizer::update(
     normalizeAndComputeStats();
 
     // 4. Resample if needed (based on ESS from cached value)
+    const double ess_ratio = cached_ess_ / static_cast<double>(particles_.size());
+
     if (cached_ess_ < params_.resample_threshold * particles_.size())
     {
+        // Standard resampling when ESS is low
         resampleKLD();
         static int resample_log_counter = 0;
         if (++resample_log_counter % 50 == 0)  // Log less frequently
         {
             qDebug() << "[Localizer] Resampled, ESS was" << cached_ess_
                      << ", new particle count:" << particles_.size();
+        }
+    }
+    else if (ess_ratio > 0.85 && particles_.size() > params_.min_particles * 2)
+    {
+        // When ESS is very high (filter stable) and we have many particles,
+        // periodically reduce particle count to save computation
+        static int stable_counter = 0;
+        if (++stable_counter >= 20)  // Every ~1 second at 20Hz
+        {
+            stable_counter = 0;
+            // Trim particles while maintaining distribution
+            trimParticlesWhenStable();
         }
     }
 
@@ -187,14 +202,9 @@ Localizer::Pose2D Localizer::sampleMotionModel(const Pose2D& pose, const Odometr
 
     // Add noise proportional to motion PLUS a minimum diffusion noise
     // This allows particles to adapt even when odometry is zero (external motion)
-    // Increased diffusion for better response to external movements (joystick, manual drag)
-    // At 20Hz, 50mm/cycle = 1000mm/s max tracking speed
-    constexpr float MIN_TRANS_DIFFUSION = 50.f;  // mm - allows adaptation to external motion
-    constexpr float MIN_ROT_DIFFUSION = 0.05f;   // rad (~3 degrees) - allows rotation adaptation
-
-    const float trans_noise_std = params_.alpha3 * delta_trans + params_.alpha4 * delta_rot * 100.f + MIN_TRANS_DIFFUSION;
-    // alpha2 converts mm to radians: divide by 1000 to get meters, then small factor
-    const float rot_noise_std = params_.alpha1 * delta_rot + params_.alpha2 * delta_trans * 0.001f + MIN_ROT_DIFFUSION;
+    // The diffusion parameters are configurable to tune for different robots/situations
+    const float trans_noise_std = params_.alpha3 * delta_trans + params_.alpha4 * delta_rot * 100.f + params_.min_trans_diffusion;
+    const float rot_noise_std = params_.alpha1 * delta_rot + params_.alpha2 * delta_trans * 0.001f + params_.min_rot_diffusion;
 
     // Sample noise
     const float noise_x = normal_dist_(rng_) * trans_noise_std;
@@ -338,8 +348,8 @@ void Localizer::normalizeAndComputeStats()
         // Accumulate for mean pose (using unnormalized weights, will divide later)
         sum_x += w * p.pose.x;
         sum_y += w * p.pose.y;
-        sum_cos += w * std::cosf(p.pose.theta);
-        sum_sin += w * std::sinf(p.pose.theta);
+        sum_cos += w * std::cos(p.pose.theta);
+        sum_sin += w * std::sin(p.pose.theta);
     }
 
     // Finalize normalization (divide by sum)
@@ -356,7 +366,7 @@ void Localizer::normalizeAndComputeStats()
     cached_mean_pose_ = {
         sum_x * inv_sum,
         sum_y * inv_sum,
-        std::atan2f(sum_sin, sum_cos)
+        std::atan2(sum_sin, sum_cos)
     };
 }
 
@@ -492,11 +502,60 @@ size_t Localizer::computeKLDSampleCount(size_t num_bins) const
     const double term = 1.0 - 2.0 / (9.0 * (k - 1)) +
                         std::sqrt(2.0 / (9.0 * (k - 1))) * z;
 
-    const double n = (k - 1) / (2.0 * eps) * term * term * term;
+    double n = (k - 1) / (2.0 * eps) * term * term * term;
+
+    // Adaptive reduction based on ESS ratio: when ESS is very high (weights uniform),
+    // we can use fewer particles. This prevents keeping many particles when converged.
+    // ESS ratio close to 1.0 means particles are well-distributed and we can reduce count.
+    const double ess_ratio = cached_ess_ / static_cast<double>(particles_.size());
+    if (ess_ratio > 0.8)  // Very uniform weights - filter is stable
+    {
+        // Scale down required particles when ESS is high
+        // At ess_ratio=1.0 → factor=0.5, at ess_ratio=0.8 → factor=1.0
+        const double reduction_factor = 1.0 - 0.5 * (ess_ratio - 0.8) / 0.2;
+        n *= reduction_factor;
+    }
 
     return static_cast<size_t>(std::clamp(n,
                                            static_cast<double>(params_.min_particles),
                                            static_cast<double>(params_.max_particles)));
+}
+
+void Localizer::trimParticlesWhenStable()
+{
+    // When the filter is stable (high ESS), we can reduce particle count
+    // while maintaining the pose distribution. This saves computation.
+
+    const size_t current_size = particles_.size();
+    const size_t target_size = std::max(params_.min_particles, current_size * 2 / 3);  // Reduce by ~33%
+
+    if (target_size >= current_size)
+        return;
+
+    // Uniform subsampling since weights are already nearly uniform (high ESS)
+    std::vector<Particle> new_particles;
+    new_particles.reserve(target_size);
+
+    // Use stride-based selection to maintain spatial coverage
+    const double stride = static_cast<double>(current_size) / static_cast<double>(target_size);
+    double idx_float = 0.0;
+
+    while (new_particles.size() < target_size && idx_float < current_size)
+    {
+        const size_t idx = static_cast<size_t>(idx_float);
+        if (idx < particles_.size())
+        {
+            Particle p = particles_[idx];
+            p.log_weight = 0.0;  // Reset to uniform weights
+            new_particles.push_back(p);
+        }
+        idx_float += stride;
+    }
+
+    particles_ = std::move(new_particles);
+
+    qDebug() << "[Localizer] Trimmed particles from" << current_size
+             << "to" << particles_.size() << "(filter stable)";
 }
 
 //////////////////////////////////////////////////////////////////////////////

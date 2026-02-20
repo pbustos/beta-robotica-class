@@ -107,11 +107,15 @@ public:
         float kld_delta = 0.01f;          // Confidence (1 - delta)
         float kld_epsilon = 0.02f;        // KL-distance bound
 
-        // Motion model noise (proportional to movement)
-        float alpha1 = 0.3f;   // Rotation noise from rotation (was 0.1)
-        float alpha2 = 0.15f;  // Rotation noise from translation (was 0.05)
-        float alpha3 = 0.3f;   // Translation noise from translation (was 0.1)
-        float alpha4 = 0.15f;  // Translation noise from rotation (was 0.05)
+        // Motion model noise (proportional to movement) - defaults for WITHOUT ODOMETRY
+        float alpha1 = 0.25f;  // Rotation noise from rotation
+        float alpha2 = 0.10f;  // Rotation noise from translation
+        float alpha3 = 0.25f;  // Translation noise from translation
+        float alpha4 = 0.10f;  // Translation noise from rotation
+
+        // Minimum diffusion noise - defaults for WITHOUT ODOMETRY
+        float min_trans_diffusion = 50.f;   // mm per cycle (~1000mm/s at 20Hz)
+        float min_rot_diffusion = 0.05f;    // rad per cycle (~3 degrees)
 
         // Observation model
         float sigma_hit = 100.f;     // mm - std dev for hit model
@@ -223,6 +227,9 @@ private:
 
     // Compute required number of samples for KLD
     size_t computeKLDSampleCount(size_t num_bins) const;
+
+    // Trim particles when filter is stable (high ESS) to save computation
+    void trimParticlesWhenStable();
 
     // Sample from motion model
     Pose2D sampleMotionModel(const Pose2D& pose, const OdometryDelta& odometry);

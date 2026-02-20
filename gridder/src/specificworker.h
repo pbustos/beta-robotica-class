@@ -252,11 +252,41 @@ class SpecificWorker : public GenericWorker
 	        size_t MAX_ASTAR_NODES = 100000;
 	        float ASTAR_DISTANCE_FACTOR = 100.f;
 
-	        // Localizer parameters - loaded from config
+	        // Localizer parameters - loaded from config [localizer] section
 	        bool USE_LOCALIZER = true;
-	        size_t LOCALIZER_PARTICLES = 500;
-	        float LOCALIZER_ODOM_NOISE = 0.1f;
 	        int LOCALIZER_PERIOD_MS = 50;
+
+	        // Particle filter configuration
+	        size_t LOCALIZER_MIN_PARTICLES = 100;
+	        size_t LOCALIZER_MAX_PARTICLES = 1000;
+	        size_t LOCALIZER_INITIAL_PARTICLES = 500;
+
+	        // KLD-sampling parameters
+	        float LOCALIZER_KLD_BIN_SIZE_XY = 200.f;
+	        float LOCALIZER_KLD_BIN_SIZE_THETA = 0.1f;
+	        float LOCALIZER_KLD_EPSILON = 0.02f;
+
+	        // Motion model noise (alpha parameters) - defaults for WITHOUT ODOMETRY
+	        float LOCALIZER_ALPHA1 = 0.25f;  // Rotation noise from rotation
+	        float LOCALIZER_ALPHA2 = 0.10f;  // Rotation noise from translation
+	        float LOCALIZER_ALPHA3 = 0.25f;  // Translation noise from translation
+	        float LOCALIZER_ALPHA4 = 0.10f;  // Translation noise from rotation
+
+	        // Minimum diffusion noise - defaults for WITHOUT ODOMETRY
+	        float LOCALIZER_MIN_TRANS_DIFFUSION = 50.f;  // mm per cycle (~1000mm/s at 20Hz)
+	        float LOCALIZER_MIN_ROT_DIFFUSION = 0.05f;   // rad per cycle (~3 degrees)
+
+	        // Observation model
+	        float LOCALIZER_SIGMA_HIT = 100.f;
+	        float LOCALIZER_Z_HIT = 0.95f;
+	        int LOCALIZER_LIDAR_SUBSAMPLE = 15;
+
+	        // Resampling
+	        float LOCALIZER_RESAMPLE_THRESHOLD = 0.5f;
+
+	        // Convergence thresholds
+	        float LOCALIZER_POSITION_STDDEV_THRESHOLD = 200.f;
+	        float LOCALIZER_ANGLE_STDDEV_THRESHOLD = 0.1f;
 
 	        // Ground Truth warmup (simulation only) - loaded from config
 	        bool USE_GT_WARMUP = true;
@@ -276,8 +306,14 @@ class SpecificWorker : public GenericWorker
 	    };
 	    Params params;
 
+	    // Config loader (stored for deferred parameter loading)
+	    const ConfigLoader* configLoader = nullptr;
+
 	    // Load parameters from ConfigLoader
 	    void loadParams(const ConfigLoader& configLoader);
+
+	    // Load MPPI parameters from ConfigLoader
+	    MPPIController::Params loadMPPIParams();
 
 	    // Timer
 	    rc::Timer<> clock;

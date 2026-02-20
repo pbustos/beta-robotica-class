@@ -60,25 +60,28 @@ SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, 
 /**
 * \brief Load parameters from ConfigLoader
 */
-void SpecificWorker::loadParams(const ConfigLoader& configLoader)
+void SpecificWorker::loadParams(const ConfigLoader& configLoader_)
 {
 	qInfo() << "[Config] Loading parameters from config.toml...";
 
+	// Store configLoader pointer for later use (loadMPPIParams)
+	configLoader = &configLoader_;
+
 	// Helper lambda to safely get config values with defaults
-	auto getFloat = [&configLoader](const std::string& key, float defaultVal) -> float {
-		try { return static_cast<float>(configLoader.get<double>("specific." + key)); }
+	auto getFloat = [&configLoader_](const std::string& key, float defaultVal) -> float {
+		try { return static_cast<float>(configLoader_.get<double>("specific." + key)); }
 		catch (...) { return defaultVal; }
 	};
-	auto getInt = [&configLoader](const std::string& key, int defaultVal) -> int {
-		try { return configLoader.get<int>("specific." + key); }
+	auto getInt = [&configLoader_](const std::string& key, int defaultVal) -> int {
+		try { return configLoader_.get<int>("specific." + key); }
 		catch (...) { return defaultVal; }
 	};
-	auto getBool = [&configLoader](const std::string& key, bool defaultVal) -> bool {
-		try { return configLoader.get<bool>("specific." + key); }
+	auto getBool = [&configLoader_](const std::string& key, bool defaultVal) -> bool {
+		try { return configLoader_.get<bool>("specific." + key); }
 		catch (...) { return defaultVal; }
 	};
-	auto getString = [&configLoader](const std::string& key, const std::string& defaultVal) -> std::string {
-		try { return configLoader.get<std::string>("specific." + key); }
+	auto getString = [&configLoader_](const std::string& key, const std::string& defaultVal) -> std::string {
+		try { return configLoader_.get<std::string>("specific." + key); }
 		catch (...) { return defaultVal; }
 	};
 
@@ -138,17 +141,47 @@ void SpecificWorker::loadParams(const ConfigLoader& configLoader)
 	params.MRPT_MAP_MIRROR_X = getBool("mrpt_map_mirror_x", params.MRPT_MAP_MIRROR_X);
 	params.MAP_DILATION_RADIUS = getInt("map_dilation_radius", params.MAP_DILATION_RADIUS);
 
-	// Localizer parameters
-	params.USE_LOCALIZER = getBool("use_localizer", params.USE_LOCALIZER);
-	params.LOCALIZER_PARTICLES = static_cast<size_t>(getInt("localizer_particles", static_cast<int>(params.LOCALIZER_PARTICLES)));
-	params.LOCALIZER_ODOM_NOISE = getFloat("localizer_odom_noise", params.LOCALIZER_ODOM_NOISE);
-	params.LOCALIZER_PERIOD_MS = getInt("localizer_period_ms", params.LOCALIZER_PERIOD_MS);
+	// Localizer parameters (from [localizer] section)
+	params.USE_LOCALIZER = getBool("localizer.enabled", params.USE_LOCALIZER);
+	params.LOCALIZER_PERIOD_MS = getInt("localizer.period_ms", params.LOCALIZER_PERIOD_MS);
+
+	// Particle filter configuration
+	params.LOCALIZER_MIN_PARTICLES = static_cast<size_t>(getInt("localizer.min_particles", static_cast<int>(params.LOCALIZER_MIN_PARTICLES)));
+	params.LOCALIZER_MAX_PARTICLES = static_cast<size_t>(getInt("localizer.max_particles", static_cast<int>(params.LOCALIZER_MAX_PARTICLES)));
+	params.LOCALIZER_INITIAL_PARTICLES = static_cast<size_t>(getInt("localizer.initial_particles", static_cast<int>(params.LOCALIZER_INITIAL_PARTICLES)));
+
+	// KLD-sampling parameters
+	params.LOCALIZER_KLD_BIN_SIZE_XY = getFloat("localizer.kld_bin_size_xy", params.LOCALIZER_KLD_BIN_SIZE_XY);
+	params.LOCALIZER_KLD_BIN_SIZE_THETA = getFloat("localizer.kld_bin_size_theta", params.LOCALIZER_KLD_BIN_SIZE_THETA);
+	params.LOCALIZER_KLD_EPSILON = getFloat("localizer.kld_epsilon", params.LOCALIZER_KLD_EPSILON);
+
+	// Motion model noise (alpha parameters)
+	params.LOCALIZER_ALPHA1 = getFloat("localizer.alpha1", params.LOCALIZER_ALPHA1);
+	params.LOCALIZER_ALPHA2 = getFloat("localizer.alpha2", params.LOCALIZER_ALPHA2);
+	params.LOCALIZER_ALPHA3 = getFloat("localizer.alpha3", params.LOCALIZER_ALPHA3);
+	params.LOCALIZER_ALPHA4 = getFloat("localizer.alpha4", params.LOCALIZER_ALPHA4);
+
+	// Minimum diffusion noise
+	params.LOCALIZER_MIN_TRANS_DIFFUSION = getFloat("localizer.min_trans_diffusion", params.LOCALIZER_MIN_TRANS_DIFFUSION);
+	params.LOCALIZER_MIN_ROT_DIFFUSION = getFloat("localizer.min_rot_diffusion", params.LOCALIZER_MIN_ROT_DIFFUSION);
+
+	// Observation model
+	params.LOCALIZER_SIGMA_HIT = getFloat("localizer.sigma_hit", params.LOCALIZER_SIGMA_HIT);
+	params.LOCALIZER_Z_HIT = getFloat("localizer.z_hit", params.LOCALIZER_Z_HIT);
+	params.LOCALIZER_LIDAR_SUBSAMPLE = getInt("localizer.lidar_subsample", params.LOCALIZER_LIDAR_SUBSAMPLE);
+
+	// Resampling
+	params.LOCALIZER_RESAMPLE_THRESHOLD = getFloat("localizer.resample_threshold", params.LOCALIZER_RESAMPLE_THRESHOLD);
+
+	// Convergence thresholds
+	params.LOCALIZER_POSITION_STDDEV_THRESHOLD = getFloat("localizer.position_stddev_threshold", params.LOCALIZER_POSITION_STDDEV_THRESHOLD);
+	params.LOCALIZER_ANGLE_STDDEV_THRESHOLD = getFloat("localizer.angle_stddev_threshold", params.LOCALIZER_ANGLE_STDDEV_THRESHOLD);
 
 	// Ground Truth warmup
 	params.USE_GT_WARMUP = getBool("use_gt_warmup", params.USE_GT_WARMUP);
 
 	// MPPI controller
-	params.MPPI_PERIOD_MS = getInt("mppi_period_ms", params.MPPI_PERIOD_MS);
+	params.MPPI_PERIOD_MS = getInt("mppi.period_ms", params.MPPI_PERIOD_MS);
 
 	// Timing
 	params.PERIOD_HYSTERESIS = static_cast<long>(getInt("period_hysteresis", static_cast<int>(params.PERIOD_HYSTERESIS)));
@@ -162,8 +195,112 @@ void SpecificWorker::loadParams(const ConfigLoader& configLoader)
 	        << params.GRID_MAX_DIM.x() << "," << params.GRID_MAX_DIM.y()
 	        << "," << params.GRID_MAX_DIM.width() << "," << params.GRID_MAX_DIM.height();
 	qInfo() << "  - Localizer:" << (params.USE_LOCALIZER ? "enabled" : "disabled")
-	        << ", particles=" << params.LOCALIZER_PARTICLES;
+	        << ", particles=" << params.LOCALIZER_INITIAL_PARTICLES;
 	qInfo() << "  - GT warmup:" << (params.USE_GT_WARMUP ? "enabled (simulation)" : "disabled (real robot)");
+}
+
+MPPIController::Params SpecificWorker::loadMPPIParams()
+{
+	MPPIController::Params p;  // Start with defaults from header
+
+	// Helper lambdas using configLoader stored in class
+	auto getFloat = [this](const std::string& key, float defaultVal) -> float {
+		try { return static_cast<float>(configLoader->get<double>(key)); }
+		catch (...) { return defaultVal; }
+	};
+	auto getInt = [this](const std::string& key, int defaultVal) -> int {
+		try { return configLoader->get<int>(key); }
+		catch (...) { return defaultVal; }
+	};
+	auto getBool = [this](const std::string& key, bool defaultVal) -> bool {
+		try { return configLoader->get<bool>(key); }
+		catch (...) { return defaultVal; }
+	};
+
+	// Core MPPI parameters
+	p.K = getInt("mppi.K", p.K);
+	p.T = getInt("mppi.T", p.T);
+	p.dt = getFloat("mppi.dt", p.dt);
+	p.lambda = getFloat("mppi.lambda", p.lambda);
+	p.cost_scale = getFloat("mppi.cost_scale", p.cost_scale);
+
+	// Adaptive K
+	p.use_adaptive_K = getBool("mppi.use_adaptive_K", p.use_adaptive_K);
+	p.K_min = getInt("mppi.K_min", p.K_min);
+	p.K_max = getInt("mppi.K_max", p.K_max);
+	p.ess_ratio_low = getFloat("mppi.ess_ratio_low", p.ess_ratio_low);
+	p.ess_ratio_high = getFloat("mppi.ess_ratio_high", p.ess_ratio_high);
+	p.K_increase_factor = getFloat("mppi.K_increase_factor", p.K_increase_factor);
+	p.K_decrease_factor = getFloat("mppi.K_decrease_factor", p.K_decrease_factor);
+
+	// Control noise
+	p.sigma_vx = getFloat("mppi.sigma_vx", p.sigma_vx);
+	p.sigma_vy = getFloat("mppi.sigma_vy", p.sigma_vy);
+	p.sigma_omega = getFloat("mppi.sigma_omega", p.sigma_omega);
+
+	// Time-correlated noise
+	p.noise_alpha = getFloat("mppi.noise_alpha", p.noise_alpha);
+	p.use_time_correlated_noise = getBool("mppi.use_time_correlated_noise", p.use_time_correlated_noise);
+
+	// Adaptive covariance
+	p.use_adaptive_covariance = getBool("mppi.use_adaptive_covariance", p.use_adaptive_covariance);
+	p.cov_adaptation_rate = getFloat("mppi.cov_adaptation_rate", p.cov_adaptation_rate);
+	p.sigma_min_vx = getFloat("mppi.sigma_min_vx", p.sigma_min_vx);
+	p.sigma_min_vy = getFloat("mppi.sigma_min_vy", p.sigma_min_vy);
+	p.sigma_min_omega = getFloat("mppi.sigma_min_omega", p.sigma_min_omega);
+	p.sigma_max_vx = getFloat("mppi.sigma_max_vx", p.sigma_max_vx);
+	p.sigma_max_vy = getFloat("mppi.sigma_max_vy", p.sigma_max_vy);
+	p.sigma_max_omega = getFloat("mppi.sigma_max_omega", p.sigma_max_omega);
+
+	// Robot limits
+	p.max_vx = getFloat("mppi.max_vx", p.max_vx);
+	p.max_vy = getFloat("mppi.max_vy", p.max_vy);
+	p.max_omega = getFloat("mppi.max_omega", p.max_omega);
+
+	// Cost weights
+	p.w_path = getFloat("mppi.w_path", p.w_path);
+	p.w_obstacle = getFloat("mppi.w_obstacle", p.w_obstacle);
+	p.w_goal = getFloat("mppi.w_goal", p.w_goal);
+	p.w_smoothness = getFloat("mppi.w_smoothness", p.w_smoothness);
+	p.w_speed = getFloat("mppi.w_speed", p.w_speed);
+
+	// Safety parameters
+	p.collision_buffer = getFloat("mppi.collision_buffer", p.collision_buffer);
+	p.safety_margin = getFloat("mppi.safety_margin", p.safety_margin);
+	p.obstacle_decay = getFloat("mppi.obstacle_decay", p.obstacle_decay);
+
+	// Covariance-aware margin
+	p.use_covariance_inflation = getBool("mppi.use_covariance_inflation", p.use_covariance_inflation);
+	p.cov_z_score = getFloat("mppi.cov_z_score", p.cov_z_score);
+	p.cov_inflation_gate = getFloat("mppi.cov_inflation_gate", p.cov_inflation_gate);
+	p.cov_sigma_max_clamp = getFloat("mppi.cov_sigma_max_clamp", p.cov_sigma_max_clamp);
+
+	// Path following
+	p.lookahead_distance = getFloat("mppi.lookahead_distance", p.lookahead_distance);
+	p.goal_tolerance = getFloat("mppi.goal_tolerance", p.goal_tolerance);
+
+	// Warm start
+	p.warm_start_vx_weight = getFloat("mppi.warm_start_vx_weight", p.warm_start_vx_weight);
+	p.warm_start_vy_weight = getFloat("mppi.warm_start_vy_weight", p.warm_start_vy_weight);
+	p.warm_start_omega_weight = getFloat("mppi.warm_start_omega_weight", p.warm_start_omega_weight);
+
+	// Obstacle cost smoothing
+	p.obstacle_k_nearest = getInt("mppi.obstacle_k_nearest", p.obstacle_k_nearest);
+	p.obstacle_softmin_beta = getFloat("mppi.obstacle_softmin_beta", p.obstacle_softmin_beta);
+
+	// Nominal control parameters
+	p.alignment_forward_threshold = getFloat("mppi.alignment_forward_threshold", p.alignment_forward_threshold);
+	p.alignment_backward_threshold = getFloat("mppi.alignment_backward_threshold", p.alignment_backward_threshold);
+	p.lateral_motion_gain = getFloat("mppi.lateral_motion_gain", p.lateral_motion_gain);
+	p.nominal_slow_speed_factor = getFloat("mppi.nominal_slow_speed_factor", p.nominal_slow_speed_factor);
+
+	// Output smoothing
+	p.output_smoothing_alpha = getFloat("mppi.output_smoothing_alpha", p.output_smoothing_alpha);
+
+	// Visualization
+	p.num_trajectories_to_draw = getInt("mppi.num_trajectories_to_draw", p.num_trajectories_to_draw);
+
+	return p;
 }
 
 /**
@@ -245,13 +382,45 @@ void SpecificWorker::initialize()
         {
             localizer.initialize(&grid_esdf, &viewer->scene);
 
-            // Configure localizer parameters
+            // Configure localizer parameters from config
             Localizer::Params loc_params;
-            loc_params.initial_particles = params.LOCALIZER_PARTICLES;
-            loc_params.min_particles = 100;
-            loc_params.max_particles = 1000;
-            loc_params.draw_particles = false;  // Controlled by UI checkbox
-            loc_params.lidar_subsample = 10;
+
+            // Particle counts
+            loc_params.min_particles = params.LOCALIZER_MIN_PARTICLES;
+            loc_params.max_particles = params.LOCALIZER_MAX_PARTICLES;
+            loc_params.initial_particles = params.LOCALIZER_INITIAL_PARTICLES;
+
+            // KLD-sampling
+            loc_params.kld_bin_size_xy = params.LOCALIZER_KLD_BIN_SIZE_XY;
+            loc_params.kld_bin_size_theta = params.LOCALIZER_KLD_BIN_SIZE_THETA;
+            loc_params.kld_epsilon = params.LOCALIZER_KLD_EPSILON;
+
+            // Motion model noise
+            loc_params.alpha1 = params.LOCALIZER_ALPHA1;
+            loc_params.alpha2 = params.LOCALIZER_ALPHA2;
+            loc_params.alpha3 = params.LOCALIZER_ALPHA3;
+            loc_params.alpha4 = params.LOCALIZER_ALPHA4;
+
+            // Minimum diffusion noise (for tracking external motion)
+            loc_params.min_trans_diffusion = params.LOCALIZER_MIN_TRANS_DIFFUSION;
+            loc_params.min_rot_diffusion = params.LOCALIZER_MIN_ROT_DIFFUSION;
+
+            // Observation model
+            loc_params.sigma_hit = params.LOCALIZER_SIGMA_HIT;
+            loc_params.z_hit = params.LOCALIZER_Z_HIT;
+            loc_params.z_rand = 1.f - params.LOCALIZER_Z_HIT;
+            loc_params.lidar_subsample = params.LOCALIZER_LIDAR_SUBSAMPLE;
+
+            // Resampling
+            loc_params.resample_threshold = params.LOCALIZER_RESAMPLE_THRESHOLD;
+
+            // Convergence
+            loc_params.position_stddev_threshold = params.LOCALIZER_POSITION_STDDEV_THRESHOLD;
+            loc_params.angle_stddev_threshold = params.LOCALIZER_ANGLE_STDDEV_THRESHOLD;
+
+            // Visualization (controlled by UI checkbox)
+            loc_params.draw_particles = false;
+
             localizer.setParams(loc_params);
 
             // Precompute distance field for fast lookups
@@ -260,7 +429,11 @@ void SpecificWorker::initialize()
 
             // Mark map as ready for localization (after precomputation)
             map_ready_for_localization.store(true);
-            qInfo() << "[Localizer] Initialized, waiting for first pose...";
+            qInfo() << "[Localizer] Initialized with" << loc_params.initial_particles << "particles";
+            qInfo() << "[Localizer] Motion model: alpha1-4:" << loc_params.alpha1 << loc_params.alpha2
+                    << loc_params.alpha3 << loc_params.alpha4;
+            qInfo() << "[Localizer] Min diffusion: trans=" << loc_params.min_trans_diffusion
+                    << "mm, rot=" << loc_params.min_rot_diffusion << "rad";
         }
 
         // Lidar thread is created
@@ -274,12 +447,11 @@ void SpecificWorker::initialize()
             std::cout << __FUNCTION__ << " Started localizer thread" << std::endl;
         }
 
-        // Initialize MPPI controller with default parameters from header
-        // Only override robot-specific values
-        MPPIController::Params mppi_params;  // Uses defaults from mppi_controller.h
-        mppi_params.robot_radius = params.ROBOT_SEMI_WIDTH;
+        // Initialize MPPI controller with parameters from config
+        MPPIController::Params mppi_params = loadMPPIParams();
 
-        // Set robot footprint dimensions for 8-point sampling
+        // Override robot-specific values from [specific] section
+        mppi_params.robot_radius = params.ROBOT_SEMI_WIDTH;
         mppi_params.robot_semi_width = params.ROBOT_SEMI_WIDTH;
         mppi_params.robot_semi_length = params.ROBOT_SEMI_LENGTH;
         mppi_params.use_footprint_sampling = true;  // Enable 8-point footprint collision detection
@@ -290,6 +462,9 @@ void SpecificWorker::initialize()
             : MPPIController::RobotType::OMNIDIRECTIONAL;
 
         mppi_controller.setParams(mppi_params);
+
+        qInfo() << "[MPPI] Initialized with K=" << mppi_params.K << ", T=" << mppi_params.T
+                << ", lambda=" << mppi_params.lambda;
 
         // MPPI thread is created
         mppi_th = std::thread(&SpecificWorker::run_mppi, this);
@@ -739,10 +914,10 @@ void SpecificWorker::draw_covariance_ellipse()
     const float lambda1 = (trace + sqrt_disc) / 2.0f;  // Larger eigenvalue
     const float lambda2 = (trace - sqrt_disc) / 2.0f;  // Smaller eigenvalue
 
-    // Standard deviations (sqrt of eigenvalues) scaled by 6 for visibility
+    // Standard deviations (sqrt of eigenvalues) scaled by 3 for 99% confidence ellipse
     // Also apply minimum size so ellipse is always visible
-    const float scale = 6.0f;  // 6-sigma for better visibility
-    const float min_size = 200.0f;  // Minimum size in mm for visibility
+    const float scale = 3.0f;  // 3-sigma for 99% confidence ellipse
+    const float min_size = 50.0f;  // Minimum size in mm for visibility
     float sigma1 = scale * std::sqrt(std::max(0.0f, lambda1));
     float sigma2 = scale * std::sqrt(std::max(0.0f, lambda2));
 
@@ -1473,8 +1648,23 @@ RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint
         // Check if line of sight is free
         if (grid_esdf.is_line_of_sight_free(src, tgt, params.ROBOT_SEMI_WIDTH))
         {
-            paths.push_back({src, tgt});
-            msg = "VLOS path (ESDF)";
+            // Interpolate points along the line for proper path following
+            // Use spacing of ~200mm between points
+            const float spacing = 200.0f;
+            const float dist = (tgt - src).norm();
+            const int num_points = std::max(2, static_cast<int>(std::ceil(dist / spacing)) + 1);
+
+            std::vector<Eigen::Vector2f> interpolated_path;
+            interpolated_path.reserve(num_points);
+
+            for (int i = 0; i < num_points; ++i)
+            {
+                float t = static_cast<float>(i) / static_cast<float>(num_points - 1);
+                interpolated_path.push_back(src + t * (tgt - src));
+            }
+
+            paths.push_back(interpolated_path);
+            msg = "VLOS path (ESDF) - interpolated " + std::to_string(num_points) + " points";
         }
         else
         {
@@ -1511,6 +1701,16 @@ RoboCompGridder::Result SpecificWorker::Gridder_getPaths(RoboCompGridder::TPoint
                 result.paths[i][j].y = point.y();
             }
         }
+
+        // Draw the first path in the UI (if we have a viewer)
+        if (!paths.empty() && viewer)
+        {
+            // Use QMetaObject::invokeMethod to safely draw from any thread
+            QMetaObject::invokeMethod(this, [this, path = paths[0]]() {
+                draw_path(path, &viewer->scene);
+            }, Qt::QueuedConnection);
+        }
+
         qInfo() << __FUNCTION__ << " " << paths.size() << " paths computed in " <<
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count() - begin << " ms" << "Status:" << msg.c_str();
