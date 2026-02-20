@@ -1282,6 +1282,22 @@ void SpecificWorker::run_mppi()
             MPPIOutput out{0.f, 0.f, 0.f, true};
             buffer_mppi_output.put<0>(std::move(out), timestamp);
 
+            // Also clear velocity command directly (for localizer odometry)
+            {
+                std::lock_guard<std::mutex> lock(mutex_velocity_command);
+                last_velocity_command.vx = 0.f;
+                last_velocity_command.vy = 0.f;
+                last_velocity_command.omega = 0.f;
+                last_velocity_command.timestamp = std::chrono::steady_clock::now();
+            }
+
+            // Send stop to robot immediately
+            try {
+                omnirobot_proxy->setSpeedBase(0.f, 0.f, 0.f);
+            } catch (const Ice::Exception &e) {
+                qWarning() << "[MPPI] Failed to stop robot:" << e.what();
+            }
+
             // Clear trajectory visualization
             {
                 std::lock_guard<std::mutex> lock(mutex_mppi_trajectory);

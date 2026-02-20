@@ -154,10 +154,11 @@ std::optional<Localizer::Pose2D> Localizer::update(
                      << ", new particle count:" << particles_.size();
         }
     }
-    else if (ess_ratio > 0.85 && particles_.size() > params_.min_particles * 2)
+    else if (ess_ratio > 0.5 && particles_.size() > params_.min_particles * 2)
     {
-        // When ESS is very high (filter stable) and we have many particles,
-        // periodically reduce particle count to save computation
+        // When ESS is reasonably high (filter stable) and we have many particles,
+        // periodically reduce particle count to save computation.
+        // Lower threshold (0.5 instead of 0.85) allows earlier reduction.
         static int stable_counter = 0;
         if (++stable_counter >= 20)  // Every ~1 second at 20Hz
         {
@@ -200,11 +201,31 @@ Localizer::Pose2D Localizer::sampleMotionModel(const Pose2D& pose, const Odometr
     const float delta_trans = std::hypot(odometry.delta_x, odometry.delta_y);
     const float delta_rot = std::abs(odometry.delta_theta);
 
-    // Add noise proportional to motion PLUS a minimum diffusion noise
-    // This allows particles to adapt even when odometry is zero (external motion)
-    // The diffusion parameters are configurable to tune for different robots/situations
-    const float trans_noise_std = params_.alpha3 * delta_trans + params_.alpha4 * delta_rot * 100.f + params_.min_trans_diffusion;
-    const float rot_noise_std = params_.alpha1 * delta_rot + params_.alpha2 * delta_trans * 0.001f + params_.min_rot_diffusion;
+    // Adaptive diffusion: when commanded velocity is ~0 (robot should be stationary),
+    // reduce diffusion to allow covariance to converge. When moving, use full diffusion.
+    // This allows the filter to be precise when stopped while still tracking external motion.
+
+    // Threshold for "stopped" (in mm displacement per cycle at 20Hz)
+    // ~5mm/cycle = ~100mm/s, below this we consider the robot commanded to stop
+    constexpr float STOPPED_TRANS_THRESHOLD = 5.0f;   // mm
+    constexpr float STOPPED_ROT_THRESHOLD = 0.01f;    // rad (~0.6 degrees)
+
+    // Calculate effective diffusion based on commanded motion
+    float effective_trans_diffusion = params_.min_trans_diffusion;
+    float effective_rot_diffusion = params_.min_rot_diffusion;
+
+    if (delta_trans < STOPPED_TRANS_THRESHOLD && delta_rot < STOPPED_ROT_THRESHOLD)
+    {
+        // Robot is commanded to be stationary - use reduced diffusion
+        // This allows covariance to converge when the robot is stopped
+        // Still maintain some minimum for sensor noise and small vibrations
+        effective_trans_diffusion = params_.min_trans_diffusion * 0.2f;  // 20% of normal
+        effective_rot_diffusion = params_.min_rot_diffusion * 0.2f;
+    }
+
+    // Add noise proportional to motion PLUS adaptive minimum diffusion
+    const float trans_noise_std = params_.alpha3 * delta_trans + params_.alpha4 * delta_rot * 100.f + effective_trans_diffusion;
+    const float rot_noise_std = params_.alpha1 * delta_rot + params_.alpha2 * delta_trans * 0.001f + effective_rot_diffusion;
 
     // Sample noise
     const float noise_x = normal_dist_(rng_) * trans_noise_std;

@@ -587,6 +587,60 @@ $$
 - $\alpha_3$ = translation noise from translation
 - $\alpha_4$ = translation noise from rotation
 
+#### 4.3.1 Adaptive Diffusion (Velocity-Based)
+
+When operating without external odometry (e.g., joystick control), the localizer uses **velocity commands from MPPI** as a proxy for odometry. A minimum diffusion noise is added to allow the filter to track external motion.
+
+**Key innovation:** When the commanded velocity is near zero (robot should be stationary), the diffusion is **reduced to 20%** of the configured value. This allows the covariance to converge when stopped while maintaining tracking ability when moving.
+
+```cpp
+// Thresholds for "stopped" detection
+constexpr float STOPPED_TRANS_THRESHOLD = 5.0f;   // mm per cycle
+constexpr float STOPPED_ROT_THRESHOLD = 0.01f;    // rad per cycle
+
+if (delta_trans < STOPPED_TRANS_THRESHOLD && delta_rot < STOPPED_ROT_THRESHOLD) {
+    // Robot commanded to be stationary - use reduced diffusion
+    effective_trans_diffusion = min_trans_diffusion * 0.2f;
+    effective_rot_diffusion = min_rot_diffusion * 0.2f;
+} else {
+    // Normal diffusion for tracking external motion
+    effective_trans_diffusion = min_trans_diffusion;
+    effective_rot_diffusion = min_rot_diffusion;
+}
+```
+
+**Effect on covariance:**
+
+| Robot State | Diffusion | Expected σxy |
+|-------------|-----------|--------------|
+| Navigating (MPPI active) | 50 mm/cycle | ~120-150 mm |
+| Stopped (goal reached) | 10 mm/cycle | ~30-50 mm |
+| Joystick control | 50 mm/cycle | ~120-150 mm |
+
+#### 4.3.2 Configuration Profiles
+
+Two profiles are available in `config.toml`:
+
+**Profile 1: Without Odometry** (default - for joystick/external motion)
+```toml
+alpha1 = 0.25
+alpha2 = 0.10
+alpha3 = 0.25
+alpha4 = 0.10
+min_trans_diffusion = 50.0   # mm per cycle (~1000mm/s at 20Hz)
+min_rot_diffusion = 0.05     # rad per cycle (~3 degrees)
+```
+
+**Profile 2: With Odometry** (for reliable encoder data)
+```toml
+alpha1 = 0.15
+alpha2 = 0.05
+alpha3 = 0.15
+alpha4 = 0.05
+min_trans_diffusion = 15.0   # mm per cycle (~300mm/s at 20Hz)
+min_rot_diffusion = 0.02     # rad per cycle (~1 degree)
+```
+
 ### 4.4 Observation Model (Correction)
 
 Particles are weighted by how well they explain the LiDAR observations:
@@ -624,6 +678,32 @@ N = \frac{k-1}{2\epsilon} \left(1 - \frac{2}{9(k-1)} + \sqrt{\frac{2}{9(k-1)}} \
 $$
 
 Where $k$ = number of occupied histogram bins.
+
+#### 4.6.1 ESS-Based Particle Reduction
+
+In addition to KLD, particle count is further adapted based on **Effective Sample Size (ESS)**:
+
+**During KLD resampling:**
+```cpp
+if (ess_ratio > 0.8) {
+    // Very uniform weights - reduce required particles by up to 50%
+    reduction_factor = 1.0 - 0.5 * (ess_ratio - 0.8) / 0.2;
+    required_particles *= reduction_factor;
+}
+```
+
+**Periodic trimming when stable:**
+```cpp
+if (ess_ratio > 0.5 && particles > min_particles * 2) {
+    // Filter is stable - trim particles to save computation
+    trimParticlesWhenStable();  // Reduces by ~33% each call
+}
+```
+
+This dual mechanism ensures:
+- Rapid particle increase when uncertainty is high
+- Gradual reduction when the filter converges
+- CPU savings of 50-80% in steady state
 
 ### 4.7 Pose Covariance Output
 
@@ -1616,80 +1696,151 @@ const size_t step = max(1, particles.size() / max_draw);
 
 ## 9. Configuration Reference
 
-### 9.1 Grid Parameters
+All parameters are configured in `etc/config.toml` organized in sections.
+
+### 9.1 Grid Parameters (`[specific]`)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `TILE_SIZE` | 100 mm | Grid cell size |
-| `MAX_LIDAR_RANGE` | 15000 mm | Maximum LiDAR range |
-| `max_esdf_distance` | 500 mm | ESDF search radius |
-| `log_odds_hit` | +1.0 | Log-odds for obstacle hit |
-| `log_odds_miss` | -0.4 | Log-odds for free space |
-| `occupancy_threshold` | 2.0 | Log-odds to confirm obstacle |
+| `tile_size` | 100 mm | Grid cell size |
+| `robot_width` | 460 mm | Robot width for collision |
+| `robot_length` | 480 mm | Robot length |
+| `safety_factor` | 1.0 | Path safety preference (0-1) |
+| `max_astar_nodes` | 100000 | A* expansion limit |
+| `map_dilation_radius` | 1 | Dilate obstacles by N cells |
 
-### 9.2 Path Planning Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `ROBOT_WIDTH` | 460 mm | Robot width for collision |
-| `SAFETY_FACTOR` | 0.5 | Path safety preference (0-1) |
-| `max_astar_nodes` | 50000 | A* expansion limit |
-| `obstacle_cost` | 100 | Cost at obstacles |
-| `free_cost` | 1 | Cost in free space |
-
-### 9.3 Localizer Parameters
+### 9.2 Path Planning Parameters (`[specific]`)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `initial_particles` | 500 | Starting particle count |
+| `safety_factor` | 1.0 | 0=shortest path, 1=safest path |
+| `num_paths_to_search` | 3 | Alternative paths to compute |
+| `min_distance_between_paths` | 500 mm | Minimum path separation |
+| `elapsed_time_between_path_updates` | 3000 ms | Auto path update interval |
+
+### 9.3 Localizer Parameters (`[localizer]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | true | Enable/disable localization |
+| `period_ms` | 50 | Thread period (20 Hz) |
 | `min_particles` | 100 | Minimum after KLD |
 | `max_particles` | 1000 | Maximum particle count |
-| `lidar_subsample` | 15 | Use every N-th point |
+| `initial_particles` | 500 | Starting particle count |
+| `kld_bin_size_xy` | 200 mm | KLD spatial binning |
+| `kld_bin_size_theta` | 0.1 rad | KLD angular binning |
+| `kld_epsilon` | 0.02 | KL-distance bound |
 | `sigma_hit` | 100 mm | Observation noise std dev |
 | `z_hit` | 0.95 | Hit model weight |
-| `z_rand` | 0.05 | Random model weight |
+| `lidar_subsample` | 15 | Use every N-th point |
 | `resample_threshold` | 0.5 | ESS ratio for resampling |
+| `position_stddev_threshold` | 200 mm | Convergence threshold |
+| `angle_stddev_threshold` | 0.1 rad | Angular convergence |
 
-### 9.4 MRPT Map Loading
+#### Motion Model Parameters (`[localizer]`)
 
-| Parameter | Description |
-|-----------|-------------|
-| `MRPT_MAP_OFFSET_X` | X translation (mm) |
-| `MRPT_MAP_OFFSET_Y` | Y translation (mm) |
-| `MRPT_MAP_ROTATION` | Rotation angle (radians) |
+| Parameter | Without Odom | With Odom | Description |
+|-----------|--------------|-----------|-------------|
+| `alpha1` | 0.25 | 0.15 | Rotation from rotation |
+| `alpha2` | 0.10 | 0.05 | Rotation from translation |
+| `alpha3` | 0.25 | 0.15 | Translation from translation |
+| `alpha4` | 0.10 | 0.05 | Translation from rotation |
+| `min_trans_diffusion` | 50 mm | 15 mm | Minimum diffusion per cycle |
+| `min_rot_diffusion` | 0.05 rad | 0.02 rad | Minimum rotation diffusion |
 
-### 9.5 MPPI Controller Parameters
+### 9.4 MRPT Map Loading (`[specific]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `mrpt_map_offset_x` | 12000 mm | X translation |
+| `mrpt_map_offset_y` | -2500 mm | Y translation |
+| `mrpt_map_rotation` | -π/2 rad | Rotation angle |
+| `mrpt_map_mirror_x` | true | Mirror X axis |
+
+### 9.5 MPPI Controller Parameters (`[mppi]`)
 
 | Parameter | Symbol | Default | Description |
 |-----------|--------|---------|-------------|
-| `K` | $K$ | 100 | Initial number of sampled trajectories |
-| `T` | $T$ | 50 | Prediction horizon (time steps) |
-| `dt` | $\Delta t$ | 0.1 s | Time step for simulation |
-| `lambda` | $\lambda$ | 50.0 | Temperature (exploration vs exploitation) |
-| `use_adaptive_K` | - | true | Enable ESS-based adaptive sample count |
-| `K_min` | - | 80 | Minimum samples (safety floor) |
-| `K_max` | - | 300 | Maximum samples (CPU ceiling) |
-| `ess_ratio_low` | - | 0.10 | ESS ratio below which K increases |
-| `ess_ratio_high` | - | 0.50 | ESS ratio above which K decreases (if not near obstacles) |
-| `sigma_vx` | $\sigma_{v_x}$ | 80 mm/s | Noise std dev for lateral velocity |
-| `sigma_vy` | $\sigma_{v_y}$ | 150 mm/s | Noise std dev for forward velocity |
-| `sigma_omega` | $\sigma_\omega$ | 0.3 rad/s | Noise std dev for angular velocity |
-| `max_vx` | - | 300 mm/s | Maximum lateral velocity |
-| `max_vy` | - | 800 mm/s | Maximum forward velocity |
-| `max_omega` | - | 0.5 rad/s | Maximum angular velocity |
-| `robot_radius` | $r$ | 250 mm | Robot radius for collision detection |
-| `safety_margin` | $d_{\text{margin}}$ | 1000 mm | Distance to start penalizing obstacles |
-| `collision_buffer` | - | 150 mm | Critical zone distance (was 120mm) |
-| `goal_tolerance` | - | 200 mm | Distance to consider goal reached |
-| `w_path` | $w_p$ | 1.0 | Weight for path following cost |
-| `w_obstacle` | $w_o$ | 50.0 | Weight for obstacle avoidance cost |
-| `w_goal` | $w_g$ | 5.0 | Weight for goal reaching cost |
-| `w_smoothness` | $w_s$ | 1.0 | Weight for control smoothness cost |
-| `w_speed` | $w_v$ | 0.001 | Weight for speed maintenance cost |
-| `robot_semi_width` | - | 230 mm | Half robot width for footprint (X) |
-| `robot_semi_length` | - | 240 mm | Half robot length for footprint (Y) |
-| `use_footprint_sampling` | - | true | Enable 8-point footprint collision |
-| `output_smoothing_alpha` | $\alpha$ | 0.3 | EMA filter for output (0=off, 0.5=heavy) |
+| `period_ms` | - | 50 | Thread period (~20 Hz) |
+| `K` | $K$ | 100 | Initial sampled trajectories |
+| `T` | $T$ | 50 | Prediction horizon (steps) |
+| `dt` | $\Delta t$ | 0.1 s | Simulation time step |
+| `lambda` | $\lambda$ | 50.0 | Temperature parameter |
+| `cost_scale` | - | 1000.0 | Cost normalization factor |
+
+#### Adaptive K Parameters (`[mppi]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `use_adaptive_K` | true | Enable ESS-based adaptation |
+| `K_min` | 80 | Safety floor |
+| `K_max` | 300 | CPU ceiling |
+| `ess_ratio_low` | 0.10 | Increase K below this |
+| `ess_ratio_high` | 0.50 | Decrease K above this |
+| `K_increase_factor` | 1.3 | Multiplier when ESS low |
+| `K_decrease_factor` | 0.85 | Multiplier when ESS high |
+
+#### Control Noise Parameters (`[mppi]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `sigma_vx` | 80 mm/s | Lateral exploration |
+| `sigma_vy` | 150 mm/s | Forward exploration |
+| `sigma_omega` | 0.3 rad/s | Rotation exploration |
+| `noise_alpha` | 0.8 | AR(1) correlation |
+| `use_time_correlated_noise` | true | Enable AR(1) |
+
+#### Adaptive Covariance (`[mppi]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `use_adaptive_covariance` | true | Enable adaptation |
+| `cov_adaptation_rate` | 0.01 | EMA rate (β) |
+| `sigma_min_vx/vy/omega` | 40/80/0.1 | Minimum sigmas |
+| `sigma_max_vx/vy/omega` | 100/180/0.4 | Maximum sigmas |
+
+#### Robot Limits (`[mppi]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_vx` | 300 mm/s | Max lateral speed |
+| `max_vy` | 800 mm/s | Max forward speed |
+| `max_omega` | 0.5 rad/s | Max rotation speed |
+
+#### Cost Weights (`[mppi]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `w_path` | 1.0 | Path following |
+| `w_obstacle` | 50.0 | Obstacle avoidance |
+| `w_goal` | 5.0 | Goal reaching |
+| `w_smoothness` | 1.0 | Control smoothness |
+| `w_speed` | 0.001 | Speed preference |
+
+#### Safety Parameters (`[mppi]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `collision_buffer` | 150 mm | Critical zone |
+| `safety_margin` | 1000 mm | Outer cost zone |
+| `obstacle_decay` | 100 mm | Softplus decay |
+| `goal_tolerance` | 200 mm | Goal reached distance |
+| `lookahead_distance` | 500 mm | Path lookahead |
+
+#### Covariance-Aware Inflation (`[mppi]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `use_covariance_inflation` | true | Enable inflation |
+| `cov_z_score` | 1.64 | Risk (1.64=95%, 2.33=99%) |
+| `cov_inflation_gate` | 2.0 | Inflation trigger |
+| `cov_sigma_max_clamp` | 0.5 | Max σ fraction |
+
+#### Output Smoothing (`[mppi]`)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `output_smoothing_alpha` | 0.3 | EMA filter (0=off) |
 
 ---
 
@@ -1713,10 +1864,20 @@ const size_t step = max(1, particles.size() / max_draw);
 
 ---
 
-*Document generated: 2026-02-15*
-*Component version: Gridder v2.4*
+*Document generated: 2026-02-20*
+*Component version: Gridder v2.5*
 
-**Recent Changes (v2.4):**
+**Recent Changes (v2.5):**
+- **Adaptive diffusion**: Reduces diffusion to 20% when robot is commanded to stop, allowing covariance to converge
+- **MPPI goal handling**: Properly stops robot and clears velocity command when goal is reached
+- **ESS-based particle reduction**: More aggressive trimming (threshold 0.5 vs 0.85) when filter is stable
+- **Configuration reorganization**: All parameters now in dedicated `[localizer]` and `[mppi]` sections in config.toml
+- **Covariance ellipse**: Scaled to 3-sigma (99% confidence) instead of 6-sigma
+- **Ice interface improvements**: 
+  - `Gridder_getPaths()` now draws the computed path in the UI
+  - Line-of-sight paths are interpolated with 200mm spacing for proper following
+
+**Changes (v2.4):**
 - Three-zone obstacle cost function (safety/critical/emergency) for better close-obstacle response
 - K adaptation safety: won't reduce K when near obstacles (narrow passages)
 - Increased K_min to 80 (was 50) for safety floor
