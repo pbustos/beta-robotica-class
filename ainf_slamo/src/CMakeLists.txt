@@ -1,4 +1,4 @@
-find_package(Qt6 COMPONENTS 3DCore 3DRender 3DExtras REQUIRED)
+find_package(Qt6 COMPONENTS 3DCore 3DRender 3DExtras Xml REQUIRED)
 
 # Find PyTorch
 # Set LibTorch path
@@ -42,7 +42,7 @@ LIST(APPEND HEADERS
 )
 
 
-LIST(APPEND LIBS ${LIBS} "${TORCH_LIBRARIES}" tbb Qt63DCore Qt63DRender Qt63DExtras Qt6PrintSupport
+LIST(APPEND LIBS ${LIBS} "${TORCH_LIBRARIES}" tbb Qt63DCore Qt63DRender Qt63DExtras Qt6PrintSupport Qt6Xml
             Eigen3::Eigen Boost::system Boost::filesystem )
 
 # no-char8_t to avoid a problem with ICE Connection lib.

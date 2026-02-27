@@ -123,7 +123,7 @@ class SpecificWorker : public GenericWorker
 	FPSCounter fps;
 	int hz = 0;
 
-	// Sync Buffer: robot pose, world points, local points
+	// Sync Buffer: robot pose (GT, for debug/stats), lidar local points
 	BufferSync<InOut<Eigen::Affine2f, Eigen::Affine2f>,
 			   InOut<std::pair<std::vector<Eigen::Vector3f>, std::int64_t>,
 					 std::pair<std::vector<Eigen::Vector3f>, std::int64_t>>> buffer_sync;
@@ -142,6 +142,15 @@ class SpecificWorker : public GenericWorker
 	bool capturing_room_polygon = false;
 	std::vector<QGraphicsEllipseItem*> polygon_vertex_items;
 	QGraphicsPolygonItem* polygon_item = nullptr;
+
+	// Extra polygons loaded from SVG (all closed paths, with their SVG color)
+	struct SvgPolygon {
+		std::vector<Eigen::Vector2f> vertices;
+		QColor color;
+		QString id;
+	};
+	std::vector<SvgPolygon> svg_extra_polygons_;
+	std::vector<QGraphicsPolygonItem*> svg_extra_polygon_items_;
 
 	// Flip state tracking
 	bool flip_x_applied_ = false;
@@ -168,6 +177,7 @@ class SpecificWorker : public GenericWorker
 	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points, const Eigen::Affine2f &robot_pose);
 	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);
 	void display_robot(const Eigen::Affine2f &robot_pose, const Eigen::Matrix3f &covariance);
+	void display_gt_error(const Eigen::Affine2f &estimated_pose, const std::optional<Eigen::Affine2f> &gt_pose_opt);
 	float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
 	float estimate_orientation_from_points(const std::vector<Eigen::Vector3f> &pts) const;
 	void update_ui(const rc::RoomConceptAI::UpdateResult &res, const rc::VelocityCommand &current_velocity, int fps_val);
@@ -179,15 +189,22 @@ class SpecificWorker : public GenericWorker
 	// Layout save/load
 	void save_layout_to_file(const std::string& filename);
 	void save_layout_to_svg(const std::string& filename);
-	void load_layout_from_file(const std::string& filename);
-	void load_polygon_from_file(const std::string& filename);  // Only loads vertices, doesn't init room_ai
-	void load_polygon_from_svg(const QString& svg_content);    // Parse SVG path/polygon data
+	void load_layout_from_file(const std::string& filename, const std::string& gt_polygon_id = "");
+	void load_polygon_from_file(const std::string& filename, const std::string& gt_polygon_id = "");  // Only loads vertices, doesn't init room_ai
+	void load_polygon_from_svg(const QString& svg_content, const std::string& gt_polygon_id = "");    // Parse SVG path/polygon data
+	// Returns list of closed polygon ids found in an SVG file (for UI selection)
+	std::vector<std::string> get_svg_polygon_ids(const std::string& filename);
 
 	// Pose persistence (for fast restart)
 	void save_last_pose();
 	bool load_last_pose();  // Returns true if pose was loaded successfully
 	void perform_grid_search(const std::vector<Eigen::Vector3f>& lidar_points);
 	static constexpr const char* LAST_POSE_FILE = "./last_pose.json";
+
+	// GT calibration: offset from Webots frame to map frame
+	Eigen::Affine2f gt_offset_ = Eigen::Affine2f::Identity();
+	bool gt_calibrated_ = false;
+	void calibrate_gt_offset(const Eigen::Affine2f &estimated_pose, const Eigen::Affine2f &webots_pose);
 
 private slots:
 	void slot_capture_room_toggled(bool checked);
@@ -198,6 +215,7 @@ private slots:
 	void slot_robot_dragging(QPointF pos);
 	void slot_robot_drag_end(QPointF pos);
 	void slot_robot_rotate(QPointF pos);
+	void slot_calibrate_gt();
 
 };
 

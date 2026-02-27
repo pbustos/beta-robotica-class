@@ -210,6 +210,16 @@
         </widget>
        </item>
        <item>
+        <widget class="QPushButton" name="pushButton_calibrateGT">
+         <property name="text">
+          <string>Calibrate GT</string>
+         </property>
+         <property name="toolTip">
+          <string>Compute offset between Webots and map frames (requires low SDF)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="Line" name="line_separator">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -278,6 +288,61 @@
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_robotTheta">
+           <property name="digitCount">
+            <number>5</number>
+           </property>
+           <property name="segmentStyle">
+            <enum>QLCDNumber::Flat</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="Line" name="line_separator_gt">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="verticalLayout_gt_xy_err">
+         <item>
+          <widget class="QLabel" name="label_gt_xy_err">
+           <property name="text">
+            <string>GT Δxy (cm)</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLCDNumber" name="lcdNumber_gt_xy_err">
+           <property name="digitCount">
+            <number>6</number>
+           </property>
+           <property name="segmentStyle">
+            <enum>QLCDNumber::Flat</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="verticalLayout_gt_ang_err">
+         <item>
+          <widget class="QLabel" name="label_gt_ang_err">
+           <property name="text">
+            <string>GT Δθ (°)</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLCDNumber" name="lcdNumber_gt_ang_err">
            <property name="digitCount">
             <number>5</number>
            </property>

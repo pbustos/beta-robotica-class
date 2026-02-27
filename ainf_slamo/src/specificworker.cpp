@@ -24,6 +24,8 @@
 #include <QTextStream>
 #include <QRegularExpression>
 #include <QDateTime>
+#include <QDomDocument>
+#include <QInputDialog>
 #include <unistd.h>  // For sysconf
 #include <cmath>     // For std::fabs
 #include <limits>    // For std::numeric_limits
@@ -98,16 +100,23 @@ void SpecificWorker::initialize()
     connect(pushButton_loadLayout, &QPushButton::clicked, this, &SpecificWorker::slot_load_layout);
     connect(pushButton_flipX, &QPushButton::clicked, this, &SpecificWorker::slot_flip_x);
     connect(pushButton_flipY, &QPushButton::clicked, this, &SpecificWorker::slot_flip_y);
+    connect(pushButton_calibrateGT, &QPushButton::clicked, this, &SpecificWorker::slot_calibrate_gt);
 
     // Try to load default layout on startup (only loads vertices, doesn't init room_ai yet)
-    load_polygon_from_file("beta_layout.svg");
-    //load_polygon_from_file("hall_layout.svg");
+    // Config keys: layout_file (path), gt_polygon_id (id of the polygon to use as GT, optional)
+    std::string layout_file = "";
+    std::string gt_polygon_id;
+    try { layout_file  = configLoader.get<std::string>("layout_file");  } catch(...) {}
+    try { gt_polygon_id = configLoader.get<std::string>("gt_polygon_id"); } catch(...) {}
+    load_polygon_from_file(layout_file, gt_polygon_id);
+
 
     // Lidar thread is created
     read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
     std::cout << __FUNCTION__ << " Started lidar reader" << std::endl;
 
-    // Wait for first robot pose + lidar so we can initialize the concept with a data-driven guess
+    // Wait for first lidar so we can initialize the concept with a data-driven guess
+    // GT pose from webots (robot) is optional — used only for debug/statistics
     const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     int startup_check_counter = 0;
@@ -118,13 +127,15 @@ void SpecificWorker::initialize()
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         const auto &[r, ll] = buffer_sync.read(timestamp);
         robot = r; lidar_local = ll;
-    }while (++startup_check_counter < 20 and (not robot.has_value() or not lidar_local.has_value()));
+    }while (++startup_check_counter < 20 and not lidar_local.has_value());
 
-    if (not robot.has_value() or not lidar_local.has_value())
+    if (not lidar_local.has_value())
     {
-        qWarning() << "initialize(): No data from buffer_sync. Exiting.";
+        qWarning() << "initialize(): No lidar data from buffer_sync. Exiting.";
         std::terminate();
     }
+    if (not robot.has_value())
+        qWarning() << "initialize(): GT pose from webots not available — debug error stats will be disabled.";
 
     // Center view in (0,0) since GT room is centered there
     const float view_side_m = 6.f;
@@ -204,8 +215,9 @@ void SpecificWorker::compute()
     const auto timestamp = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     const auto &[robot_pose_gt_, lidar_local_] = buffer_sync.read(timestamp);
-    if (not lidar_local_.has_value() or not robot_pose_gt_.has_value())
-    { qWarning() << "No data from buffer_sync: robot has value?"; return; };
+    // Only lidar is required; GT pose is optional (debug/stats only)
+    if (not lidar_local_.has_value())
+    { qWarning() << "No lidar data from buffer_sync"; return; };
     const auto &lidar_local = lidar_local_.value().first;
 
     if(room_ai.is_initialized())
@@ -213,9 +225,15 @@ void SpecificWorker::compute()
         // Pass velocity and dt to update
         if(const auto res = room_ai.update(lidar_local_.value(), velocity_history_); res.ok)
         {
-			update_ui(res, velocity_history_.back(), fps_val);
+            update_ui(res, velocity_history_.back(), fps_val);
             display_robot(res.robot_pose, res.covariance);
             draw_lidar_points(lidar_local, res.robot_pose);
+
+            // GT debug/statistics: compute and display pose error vs ground truth if available
+            // Auto-calibrate GT offset on first low-SDF reading
+            if (!gt_calibrated_ && robot_pose_gt_.has_value() && res.sdf_mse < 0.10f)
+                calibrate_gt_offset(res.robot_pose, robot_pose_gt_.value());
+            display_gt_error(res.robot_pose, robot_pose_gt_);
 
             // Draw room rectangle (only if not using polygon)
             draw_estimated_room(res.state);
@@ -363,6 +381,118 @@ void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eige
 	// Position and rotate the ellipse to match robot pose
 	cov_ellipse_item_->setPos(display_x, display_y);
 	cov_ellipse_item_->setRotation(qRadiansToDegrees(ellipse_angle));
+}
+
+void SpecificWorker::display_gt_error(const Eigen::Affine2f &estimated_pose,
+                                      const std::optional<Eigen::Affine2f> &gt_pose_opt)
+{
+    // If GT pose is not available (webots not connected), blank the displays
+    if (!gt_pose_opt.has_value())
+    {
+        lcdNumber_gt_xy_err->display(0.0);
+        lcdNumber_gt_ang_err->display(0.0);
+        lcdNumber_gt_xy_err->setStyleSheet("background-color: #888888;");  // Grey = no data
+        lcdNumber_gt_ang_err->setStyleSheet("background-color: #888888;");
+        return;
+    }
+
+    // Transform raw Webots pose to map frame using calibration offset
+    const Eigen::Affine2f gt = gt_offset_ * gt_pose_opt.value();
+
+    // Position error in cm
+    const float dx = estimated_pose.translation().x() - gt.translation().x();
+    const float dy = estimated_pose.translation().y() - gt.translation().y();
+    const float xy_err_cm = std::sqrt(dx*dx + dy*dy) * 100.f;
+
+    // Angular error in degrees (wrap to [-180, 180])
+    const float est_ang = std::atan2(estimated_pose.linear()(1,0), estimated_pose.linear()(0,0));
+    const float gt_ang  = std::atan2(gt.linear()(1,0), gt.linear()(0,0));
+    float ang_err_deg = qRadiansToDegrees(est_ang - gt_ang);
+    // Wrap
+    while (ang_err_deg >  180.f) ang_err_deg -= 360.f;
+    while (ang_err_deg < -180.f) ang_err_deg += 360.f;
+    ang_err_deg = std::abs(ang_err_deg);
+
+    lcdNumber_gt_xy_err->display(static_cast<double>(xy_err_cm));
+    lcdNumber_gt_ang_err->display(static_cast<double>(ang_err_deg));
+
+    // Color coding for position error: green <5cm, yellow <15cm, red >=15cm
+    QString xy_color;
+    if      (xy_err_cm < 5.f)  xy_color = "background-color: #90EE90;";
+    else if (xy_err_cm < 15.f) xy_color = "background-color: #FFFF00;";
+    else                        xy_color = "background-color: #FF6B6B;";
+    lcdNumber_gt_xy_err->setStyleSheet(xy_color);
+
+    // Color coding for angular error: green <3°, yellow <10°, red >=10°
+    QString ang_color;
+    if      (ang_err_deg < 3.f)  ang_color = "background-color: #90EE90;";
+    else if (ang_err_deg < 10.f) ang_color = "background-color: #FFFF00;";
+    else                          ang_color = "background-color: #FF6B6B;";
+    lcdNumber_gt_ang_err->setStyleSheet(ang_color);
+
+    // Also draw GT robot ghost on the viewer for visual comparison
+    static QGraphicsEllipseItem *gt_marker = nullptr;
+    static QGraphicsLineItem   *gt_heading = nullptr;
+    constexpr float R = 0.25f;  // visual radius in meters (scene units)
+    if (!gt_marker)
+    {
+        gt_marker = viewer->scene.addEllipse(-R, -R, 2*R, 2*R,
+                                             QPen(QColor("magenta"), 0.02, Qt::DashLine));
+        gt_marker->setZValue(50);
+    }
+    if (!gt_heading)
+    {
+        gt_heading = viewer->scene.addLine(0, 0, R, 0,
+                                           QPen(QColor("magenta"), 0.02));
+        gt_heading->setZValue(50);
+    }
+    const float gx  = gt.translation().x();
+    const float gy  = gt.translation().y();
+    const float gan = std::atan2(gt.linear()(1,0), gt.linear()(0,0));
+    gt_marker->setPos(gx, gy);
+    gt_heading->setPos(gx, gy);
+    gt_heading->setRotation(qRadiansToDegrees(gan));
+}
+
+void SpecificWorker::calibrate_gt_offset(const Eigen::Affine2f &estimated_pose, const Eigen::Affine2f &webots_pose)
+{
+    // Compute offset T such that:  T * webots_pose ≈ estimated_pose
+    // => T = estimated_pose * webots_pose.inverse()
+    gt_offset_ = estimated_pose * webots_pose.inverse();
+    gt_calibrated_ = true;
+
+    const float tx = gt_offset_.translation().x();
+    const float ty = gt_offset_.translation().y();
+    const float ang = std::atan2(gt_offset_.linear()(1,0), gt_offset_.linear()(0,0));
+    qInfo() << "GT calibrated: offset = (" << tx << "," << ty << ") rot =" << qRadiansToDegrees(ang) << "°";
+}
+
+void SpecificWorker::slot_calibrate_gt()
+{
+    if (!room_ai.is_initialized())
+    {
+        qWarning() << "Cannot calibrate GT: room_ai not initialized";
+        return;
+    }
+
+    // Read current GT pose from buffer
+    const auto timestamp = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const auto &[robot_pose_gt_, lidar_local_] = buffer_sync.read(timestamp);
+    if (!robot_pose_gt_.has_value())
+    {
+        qWarning() << "Cannot calibrate GT: no Webots pose available";
+        return;
+    }
+
+    // Get the current estimated pose from room_ai
+    const auto state = room_ai.get_current_state();
+    Eigen::Affine2f estimated;
+    estimated.setIdentity();
+    estimated.translation() = Eigen::Vector2f(state[2], state[3]);
+    estimated.linear() = Eigen::Rotation2Df(state[4]).toRotationMatrix();
+
+    calibrate_gt_offset(estimated, robot_pose_gt_.value());
 }
 
 void SpecificWorker::read_lidar()
@@ -720,7 +850,7 @@ void SpecificWorker::draw_room_polygon()
     if (room_polygon_gt.size() < 2)
         return;
 
-    // Remove old polygon item
+    // Remove old main polygon item
     if (polygon_item)
     {
         viewer->scene.removeItem(polygon_item);
@@ -728,23 +858,42 @@ void SpecificWorker::draw_room_polygon()
         polygon_item = nullptr;
     }
 
-    // Create QPolygonF from vertices - polygon is FIXED in room frame (where user clicked)
+    // Remove old extra polygon items
+    for (auto* item : svg_extra_polygon_items_)
+    {
+        if (item) { viewer->scene.removeItem(item); delete item; }
+    }
+    svg_extra_polygon_items_.clear();
+
+    // --- Draw main room_polygon_gt ---
     QPolygonF poly;
     for (const auto& v : room_polygon_gt)
-    {
         poly << QPointF(v.x(), v.y());
-    }
 
-    // Close the polygon if capture is complete
     if (!capturing_room_polygon && room_polygon_gt.size() >= 3)
-    {
         poly << QPointF(room_polygon_gt.front().x(), room_polygon_gt.front().y());
-    }
 
-    // Draw polygon - stays fixed in room frame (thicker pen for nominal room)
     QPen pen(capturing_room_polygon ? Qt::yellow : Qt::magenta, capturing_room_polygon ? 0.08 : 0.15);
     polygon_item = viewer->scene.addPolygon(poly, pen, QBrush(Qt::NoBrush));
     polygon_item->setZValue(8);
+
+    // --- Draw extra polygons from SVG with their original colors ---
+    if (!capturing_room_polygon)
+    {
+        for (const auto& sp : svg_extra_polygons_)
+        {
+            if (sp.vertices.size() < 2) continue;
+            QPolygonF epoly;
+            for (const auto& v : sp.vertices)
+                epoly << QPointF(v.x(), v.y());
+            epoly << QPointF(sp.vertices.front().x(), sp.vertices.front().y());  // close
+
+            QPen epen(sp.color, 0.12);
+            auto* item = viewer->scene.addPolygon(epoly, epen, QBrush(Qt::NoBrush));
+            item->setZValue(7);
+            svg_extra_polygon_items_.push_back(item);
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -804,7 +953,31 @@ void SpecificWorker::slot_load_layout()
     if (filename.isEmpty())
         return;
 
-    load_layout_from_file(filename.toStdString());
+    // For SVG files, check how many closed polygons exist and let the user pick
+    std::string gt_id;
+    if (filename.endsWith(".svg", Qt::CaseInsensitive))
+    {
+        const auto ids = get_svg_polygon_ids(filename.toStdString());
+        if (ids.size() > 1)
+        {
+            QStringList items;
+            for (const auto& id : ids)
+                items << QString::fromStdString(id);
+
+            bool ok = false;
+            QString chosen = QInputDialog::getItem(this,
+                "Select GT Polygon",
+                QString("The SVG contains %1 closed polygons.\nSelect the one to use as Ground Truth:").arg(ids.size()),
+                items, 0, false, &ok,
+                Qt::Dialog);
+
+            if (!ok)
+                return;   // user cancelled
+            gt_id = chosen.toStdString();
+        }
+    }
+
+    load_layout_from_file(filename.toStdString(), gt_id);
 }
 
 void SpecificWorker::slot_flip_x()
@@ -1080,9 +1253,9 @@ void SpecificWorker::save_layout_to_svg(const std::string& filename)
             << "(" << room_polygon_gt.size() << " vertices)";
 }
 
-void SpecificWorker::load_layout_from_file(const std::string& filename)
+void SpecificWorker::load_layout_from_file(const std::string& filename, const std::string& gt_polygon_id)
 {
-    load_polygon_from_file(filename);
+    load_polygon_from_file(filename, gt_polygon_id);
 
     // If polygon was loaded, initialize room_ai
     if (room_polygon_gt.size() >= 3)
@@ -1093,7 +1266,7 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
     }
 }
 
-void SpecificWorker::load_polygon_from_file(const std::string& filename)
+void SpecificWorker::load_polygon_from_file(const std::string& filename, const std::string& gt_polygon_id)
 {
     QFile file(QString::fromStdString(filename));
     if (!file.open(QIODevice::ReadOnly))
@@ -1101,6 +1274,7 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
         qInfo() << "No default layout file found at" << QString::fromStdString(filename);
         return;
     }
+    qInfo() << "Loading layout from" << QString::fromStdString(filename);
 
     QByteArray data = file.readAll();
     file.close();
@@ -1119,7 +1293,7 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
     if (content.trimmed().startsWith("<?xml") || content.trimmed().startsWith("<svg"))
     {
         // Parse SVG file
-        load_polygon_from_svg(content);
+        load_polygon_from_svg(content, gt_polygon_id);
         return;
     }
 
@@ -1189,165 +1363,353 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
             << "with" << room_polygon_gt.size() << "vertices";
 }
 
-void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
+std::vector<std::string> SpecificWorker::get_svg_polygon_ids(const std::string& filename)
 {
-    // Extract path data from SVG
-    // Look for path element with 'd' attribute
-    QRegularExpression pathRegex(R"(<path[^>]*\sd=\"([^\"]+)\")", QRegularExpression::DotMatchesEverythingOption);
-    QRegularExpressionMatch pathMatch = pathRegex.match(svg_content);
+    QFile file(QString::fromStdString(filename));
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    QString content = QString::fromUtf8(file.readAll());
+    file.close();
 
-    QString pathData;
-    if (pathMatch.hasMatch())
+    std::vector<std::string> ids;
+    QDomDocument doc;
+    if (!doc.setContent(content)) return ids;
+
+    int anonCount = 0;
+    std::function<void(const QDomElement&)> walk = [&](const QDomElement& elem)
     {
-        pathData = pathMatch.captured(1);
+        if (elem.tagName() == "path")
+        {
+            QString d = elem.attribute("d");
+            if (d.contains('Z') || d.contains('z'))
+            {
+                QString id = elem.attribute("id");
+                if (id.isEmpty())
+                    id = QString("(no id) path #%1").arg(anonCount++);
+                ids.push_back(id.toStdString());
+            }
+        }
+        QDomNode child = elem.firstChild();
+        while (!child.isNull()) {
+            if (child.isElement()) walk(child.toElement());
+            child = child.nextSibling();
+        }
+    };
+    walk(doc.documentElement());
+    return ids;
+}
+
+void SpecificWorker::load_polygon_from_svg(const QString& svg_content, const std::string& gt_polygon_id)
+{
+    // -----------------------------------------------------------------------
+    // Helper: parse an SVG path 'd' attribute into a list of absolute points.
+    // Returns empty vector if the path is NOT closed (no Z/z command).
+    // -----------------------------------------------------------------------
+    auto parsePath = [](const QString& pathData, bool requireClosed) -> std::vector<Eigen::Vector2f>
+    {
+        std::vector<Eigen::Vector2f> pts;
+        bool isClosed = false;
+
+        QRegularExpression cmdRegex(R"(([MmLlHhVvCcSsQqTtAaZz])\s*([-\d\.\s,eE+]*))");
+        QRegularExpressionMatchIterator it = cmdRegex.globalMatch(pathData);
+
+        float cx = 0, cy = 0, sx = 0, sy = 0;
+        bool firstPoint = true;
+
+        auto parseNums = [](const QString& s) -> std::vector<float> {
+            std::vector<float> nums;
+            QRegularExpression numRe(R"([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)");
+            auto nit = numRe.globalMatch(s);
+            while (nit.hasNext()) nums.push_back(nit.next().captured(0).toFloat());
+            return nums;
+        };
+
+        while (it.hasNext())
+        {
+            auto m = it.next();
+            QString cmd = m.captured(1);
+            auto nums = parseNums(m.captured(2).trimmed());
+
+            if (cmd == "M")
+            {
+                if (nums.size() >= 2) { cx = nums[0]; cy = nums[1]; sx = cx; sy = cy;
+                    pts.emplace_back(cx, -cy); firstPoint = false;
+                    for (size_t i = 2; i + 1 < nums.size(); i += 2)
+                    { cx = nums[i]; cy = nums[i+1]; pts.emplace_back(cx, -cy); } }
+            }
+            else if (cmd == "m")
+            {
+                if (nums.size() >= 2) {
+                    if (firstPoint) { cx = nums[0]; cy = nums[1]; }
+                    else            { cx += nums[0]; cy += nums[1]; }
+                    sx = cx; sy = cy; pts.emplace_back(cx, -cy); firstPoint = false;
+                    for (size_t i = 2; i + 1 < nums.size(); i += 2)
+                    { cx += nums[i]; cy += nums[i+1]; pts.emplace_back(cx, -cy); } }
+            }
+            else if (cmd == "L")
+            { for (size_t i = 0; i + 1 < nums.size(); i += 2)
+                { cx = nums[i]; cy = nums[i+1]; pts.emplace_back(cx, -cy); } }
+            else if (cmd == "l")
+            { for (size_t i = 0; i + 1 < nums.size(); i += 2)
+                { cx += nums[i]; cy += nums[i+1]; pts.emplace_back(cx, -cy); } }
+            else if (cmd == "H") { for (auto v : nums) { cx = v;  pts.emplace_back(cx, -cy); } }
+            else if (cmd == "h") { for (auto v : nums) { cx += v; pts.emplace_back(cx, -cy); } }
+            else if (cmd == "V") { for (auto v : nums) { cy = v;  pts.emplace_back(cx, -cy); } }
+            else if (cmd == "v") { for (auto v : nums) { cy += v; pts.emplace_back(cx, -cy); } }
+            else if (cmd == "C")
+            { for (size_t i = 0; i + 5 < nums.size(); i += 6)
+                { cx = nums[i+4]; cy = nums[i+5]; pts.emplace_back(cx, -cy); } }
+            else if (cmd == "c")
+            { for (size_t i = 0; i + 5 < nums.size(); i += 6)
+                { cx += nums[i+4]; cy += nums[i+5]; pts.emplace_back(cx, -cy); } }
+            else if (cmd == "Z" || cmd == "z")
+            { cx = sx; cy = sy; isClosed = true; }
+        }
+
+        if (requireClosed && !isClosed) return {};
+
+        // Remove duplicate closing point
+        if (pts.size() > 2)
+            if (std::fabs(pts.front().x() - pts.back().x()) < 0.01f &&
+                std::fabs(pts.front().y() - pts.back().y()) < 0.01f)
+                pts.pop_back();
+
+        return pts;
+    };
+
+    // -----------------------------------------------------------------------
+    // Helper: apply SVG matrix(a,b,c,d,e,f) transform to a list of points.
+    // parsePath already stores Y-flipped (-cy), so we must undo+redo the flip.
+    // -----------------------------------------------------------------------
+    auto applyMatrix = [](std::vector<Eigen::Vector2f>& pts, const std::array<float,6>& mat)
+    {
+        float a=mat[0], b=mat[1], c=mat[2], d=mat[3], e=mat[4], f=mat[5];
+        for (auto& p : pts)
+        {
+            float px = p.x(), py = -p.y();   // undo Y-flip
+            float tx = a*px + c*py + e;
+            float ty = b*px + d*py + f;
+            p = Eigen::Vector2f(tx, -ty);    // re-apply Y-flip
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // Helper: extract matrix from a transform="matrix(...)" attribute string.
+    // -----------------------------------------------------------------------
+    auto extractMatrix = [](const QString& attr, std::array<float,6>& mat) -> bool
+    {
+        QRegularExpression re(R"(matrix\(\s*([-\d\.eE+]+)\s*,\s*([-\d\.eE+]+)\s*,\s*([-\d\.eE+]+)\s*,\s*([-\d\.eE+]+)\s*,\s*([-\d\.eE+]+)\s*,\s*([-\d\.eE+]+)\s*\))");
+        auto m = re.match(attr);
+        if (!m.hasMatch()) return false;
+        for (int i = 0; i < 6; ++i) mat[i] = m.captured(i+1).toFloat();
+        return true;
+    };
+
+    // -----------------------------------------------------------------------
+    // Helper: extract stroke color from a style="..." or stroke="..." attribute
+    // -----------------------------------------------------------------------
+    auto extractColor = [](const QString& pathElement) -> QColor
+    {
+        // Try style="...stroke:#rrggbb..."
+        QRegularExpression styleRe(R"(style\s*=\s*\"[^\"]*stroke\s*:\s*(#[0-9a-fA-F]{3,6}))");
+        auto m = styleRe.match(pathElement);
+        if (m.hasMatch()) return QColor(m.captured(1));
+        // Try stroke="#rrggbb"
+        QRegularExpression strokeRe(R"(\bstroke\s*=\s*\"(#[0-9a-fA-F]{3,6})\")");
+        m = strokeRe.match(pathElement);
+        if (m.hasMatch()) return QColor(m.captured(1));
+        return Qt::white;
+    };
+
+    // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Struct to hold a parsed path with its metadata
+    // -----------------------------------------------------------------------
+    struct ParsedPath {
+        std::vector<Eigen::Vector2f> pts;
+        QColor color;
+        QString id;
+    };
+    std::vector<ParsedPath> allPaths;
+
+    // -----------------------------------------------------------------------
+    // Step 1: Parse ALL <path> elements in the file.
+    // For paths inside a <g transform="matrix(...)"> apply the group transform.
+    // -----------------------------------------------------------------------
+
+    // We need to handle nested groups. Strategy:
+    // - First collect all <g> blocks with a matrix transform and the paths inside them
+    // - Then collect top-level paths
+
+    // Regex to match a full <path .../> or <path ...></path> element
+    QRegularExpression pathElemRe(R"(<path\b([^>]*)(?:/>|>(?:.*?)</path>))",
+                                   QRegularExpression::DotMatchesEverythingOption);
+
+    // Process groups with transform first
+    QRegularExpression gBlockRe(R"(<g\b([^>]*)>((?:(?!<g\b).)*?)</g>)",
+                                  QRegularExpression::DotMatchesEverythingOption);
+    // We use a simpler approach: scan the whole content for path elements and also
+    // track which group they belong to by looking at context.
+    // Simplest robust approach: use QDomDocument to parse the SVG properly.
+
+    // Use Qt's XML parser for robustness
+    QDomDocument doc;
+    QString parseErr;
+    int errLine, errCol;
+    if (!doc.setContent(svg_content, false, &parseErr, &errLine, &errCol))
+    {
+        qWarning() << "[SVG] XML parse error at line" << errLine << "col" << errCol << ":" << parseErr;
+        // Fall back to regex approach (skip groups for now)
     }
     else
     {
-        // Try to find polygon points attribute
-        QRegularExpression polygonRegex(R"(<polygon[^>]*\spoints=\"([^\"]+)\")", QRegularExpression::DotMatchesEverythingOption);
-        QRegularExpressionMatch polygonMatch = polygonRegex.match(svg_content);
-        if (polygonMatch.hasMatch())
+        // Recursive lambda to walk the DOM tree
+        std::function<void(const QDomElement&, std::array<float,6>)> walkElement;
+        walkElement = [&](const QDomElement& elem, std::array<float,6> parentMat)
         {
-            // Parse simple polygon points "x1,y1 x2,y2 ..."
-            QString points = polygonMatch.captured(1);
-            QStringList pointPairs = points.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-            for (const QString& pair : pointPairs)
+            QString tag = elem.tagName();
+
+            // Accumulate transform from this element
+            std::array<float,6> currentMat = parentMat;
+            if (elem.hasAttribute("transform"))
             {
-                QStringList coords = pair.split(',');
-                if (coords.size() >= 2)
+                std::array<float,6> localMat = {1,0,0,1,0,0};
+                if (extractMatrix(elem.attribute("transform"), localMat))
                 {
-                    float x = coords[0].toFloat();
-                    float y = -coords[1].toFloat();  // Flip Y back from SVG coordinates
-                    room_polygon_gt.emplace_back(x, y);
+                    // Compose: currentMat = parentMat * localMat
+                    // matrix mul: [a,b,c,d,e,f] composed
+                    float a1=parentMat[0],b1=parentMat[1],c1=parentMat[2],
+                          d1=parentMat[3],e1=parentMat[4],f1=parentMat[5];
+                    float a2=localMat[0], b2=localMat[1], c2=localMat[2],
+                          d2=localMat[3], e2=localMat[4], f2=localMat[5];
+                    currentMat[0] = a1*a2 + c1*b2;
+                    currentMat[1] = b1*a2 + d1*b2;
+                    currentMat[2] = a1*c2 + c1*d2;
+                    currentMat[3] = b1*c2 + d1*d2;
+                    currentMat[4] = a1*e2 + c1*f2 + e1;
+                    currentMat[5] = b1*e2 + d1*f2 + f1;
                 }
             }
-            qInfo() << "SVG polygon loaded with" << room_polygon_gt.size() << "vertices";
-            return;
-        }
 
-        qWarning() << "No path or polygon element found in SVG";
+            if (tag == "path")
+            {
+                QString d = elem.attribute("d");
+                if (!d.isEmpty())
+                {
+                    auto pts = parsePath(d, /*requireClosed=*/true);
+                    if (pts.size() >= 3)
+                    {
+                        // Build element string for color extraction (re-serialize attributes)
+                        QString elemStr = "<path";
+                        auto attrs = elem.attributes();
+                        for (int i = 0; i < attrs.count(); ++i)
+                            elemStr += " " + attrs.item(i).nodeName() + "=\"" + attrs.item(i).nodeValue() + "\"";
+
+                        // Apply accumulated transform
+                        bool isIdentity = (currentMat[0]==1 && currentMat[1]==0 && currentMat[2]==0 &&
+                                           currentMat[3]==1 && currentMat[4]==0 && currentMat[5]==0);
+                        if (!isIdentity) applyMatrix(pts, currentMat);
+
+                        ParsedPath pp;
+                        pp.pts   = std::move(pts);
+                        pp.color = extractColor(elemStr);
+                        pp.id    = elem.attribute("id");
+                        allPaths.push_back(std::move(pp));
+
+                        qInfo() << "[SVG] Found closed path id=" << pp.id
+                                << "color=" << allPaths.back().color.name()
+                                << "vertices=" << allPaths.back().pts.size();
+                    }
+                }
+            }
+            else
+            {
+                // Recurse into children
+                QDomNode child = elem.firstChild();
+                while (!child.isNull())
+                {
+                    if (child.isElement())
+                        walkElement(child.toElement(), currentMat);
+                    child = child.nextSibling();
+                }
+            }
+        };
+
+        std::array<float,6> identity = {1,0,0,1,0,0};
+        walkElement(doc.documentElement(), identity);
+    }
+
+    if (allPaths.empty())
+    {
+        qWarning() << "[SVG] No closed paths found.";
         return;
     }
 
-    // Parse SVG path data (supports M, L, C, Z commands and implicit line commands)
-    // We extract only the line endpoints, ignoring curves for simplicity
-    QRegularExpression cmdRegex(R"(([MLCZmlcz])\s*([-\d\.\s,eE+]*))");
-    QRegularExpressionMatchIterator it = cmdRegex.globalMatch(pathData);
+    qInfo() << "[SVG] Total closed paths found:" << allPaths.size();
 
-    float currentX = 0, currentY = 0;
-    float startX = 0, startY = 0;  // For Z command to close path
-    bool firstPoint = true;
+    // -----------------------------------------------------------------------
+    // Step 2: Select the best polygon as room_polygon_gt.
+    // Priority: explicit gt_polygon_id param > id == "room_contour" > largest area (excluding lidar)
+    // -----------------------------------------------------------------------
+    int bestIdx = -1;
 
-    while (it.hasNext())
+    // 1. Explicit id requested by the caller
+    if (!gt_polygon_id.empty())
     {
-        QRegularExpressionMatch match = it.next();
-        QString cmd = match.captured(1);
-        QString args = match.captured(2).trimmed();
+        for (int i = 0; i < (int)allPaths.size(); ++i)
+            if (allPaths[i].id.toStdString() == gt_polygon_id) { bestIdx = i; break; }
+        if (bestIdx < 0)
+            qWarning() << "[SVG] Requested gt_polygon_id '" << QString::fromStdString(gt_polygon_id)
+                       << "' not found among closed paths — falling back to auto-selection.";
+    }
 
-        // Parse numbers from args (including scientific notation like 5.5e-4)
-        QRegularExpression numRegex(R"([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)");
-        QRegularExpressionMatchIterator numIt = numRegex.globalMatch(args);
-        std::vector<float> numbers;
-        while (numIt.hasNext())
-        {
-            numbers.push_back(numIt.next().captured(0).toFloat());
-        }
+    // 2. Look for room_contour id
+    if (bestIdx < 0)
+        for (int i = 0; i < (int)allPaths.size(); ++i)
+            if (allPaths[i].id == "room_contour") { bestIdx = i; break; }
 
-        if (cmd == "M" || cmd == "m")  // MoveTo
+    // 3. Pick the largest non-green (non-lidar) polygon
+    if (bestIdx < 0)
+    {
+        float maxArea = 0;
+        for (int i = 0; i < (int)allPaths.size(); ++i)
         {
-            if (numbers.size() >= 2)
+            if (allPaths[i].color == QColor("#00ff00") || allPaths[i].color.green() == 255) continue;
+            const auto& pts = allPaths[i].pts;
+            float area = 0;
+            for (size_t j = 0; j < pts.size(); ++j)
             {
-                // First m/M is always absolute for the first point
-                if (cmd == "m" && !firstPoint)
-                {
-                    currentX += numbers[0];
-                    currentY += numbers[1];
-                }
-                else
-                {
-                    currentX = numbers[0];
-                    currentY = numbers[1];
-                }
-                startX = currentX;
-                startY = currentY;
-                // SVG Y is inverted, flip it back
-                room_polygon_gt.emplace_back(currentX, -currentY);
-                firstPoint = false;
-
-                // After M/m, subsequent coordinate pairs are implicit L/l commands
-                for (size_t i = 2; i + 1 < numbers.size(); i += 2)
-                {
-                    // After m, implicit commands are relative (l)
-                    // After M, implicit commands are absolute (L)
-                    if (cmd == "m")
-                    {
-                        currentX += numbers[i];
-                        currentY += numbers[i+1];
-                    }
-                    else
-                    {
-                        currentX = numbers[i];
-                        currentY = numbers[i+1];
-                    }
-                    room_polygon_gt.emplace_back(currentX, -currentY);
-                }
+                size_t k = (j + 1) % pts.size();
+                area += pts[j].x() * pts[k].y() - pts[k].x() * pts[j].y();
             }
-        }
-        else if (cmd == "L" || cmd == "l")  // LineTo
-        {
-            for (size_t i = 0; i + 1 < numbers.size(); i += 2)
-            {
-                if (cmd == "l")
-                {
-                    currentX += numbers[i];
-                    currentY += numbers[i+1];
-                }
-                else
-                {
-                    currentX = numbers[i];
-                    currentY = numbers[i+1];
-                }
-                room_polygon_gt.emplace_back(currentX, -currentY);
-            }
-        }
-        else if (cmd == "C" || cmd == "c")  // CurveTo (cubic Bezier) - take endpoint only
-        {
-            // C takes 6 numbers: x1,y1, x2,y2, x,y (control points and endpoint)
-            for (size_t i = 0; i + 5 < numbers.size(); i += 6)
-            {
-                if (cmd == "c")
-                {
-                    currentX += numbers[i+4];
-                    currentY += numbers[i+5];
-                }
-                else
-                {
-                    currentX = numbers[i+4];
-                    currentY = numbers[i+5];
-                }
-                room_polygon_gt.emplace_back(currentX, -currentY);
-            }
-        }
-        else if (cmd == "Z" || cmd == "z")  // ClosePath
-        {
-            // Path is closed, no need to add point
+            area = std::fabs(area) * 0.5f;
+            if (area > maxArea) { maxArea = area; bestIdx = i; }
         }
     }
 
-    // Remove the closing point if it's the same as the first point
-    if (room_polygon_gt.size() > 2)
-    {
-        const auto& first = room_polygon_gt.front();
-        const auto& last = room_polygon_gt.back();
-        if (std::fabs(first.x() - last.x()) < 0.01f && std::fabs(first.y() - last.y()) < 0.01f)
-        {
-            room_polygon_gt.pop_back();
-            qInfo() << "Removed duplicate closing point";
-        }
-    }
+    if (bestIdx < 0) bestIdx = 0;  // absolute fallback
 
-    qInfo() << "SVG path loaded with" << room_polygon_gt.size() << "vertices";
+    room_polygon_gt = allPaths[bestIdx].pts;
+    qInfo() << "[SVG] room_polygon_gt set to path id='" << allPaths[bestIdx].id
+            << "' with" << room_polygon_gt.size() << "vertices";
+
+    // -----------------------------------------------------------------------
+    // Step 3: Store the remaining polygons in svg_extra_polygons_
+    // -----------------------------------------------------------------------
+    svg_extra_polygons_.clear();
+    for (int i = 0; i < (int)allPaths.size(); ++i)
+    {
+        if (i == bestIdx) continue;
+        SvgPolygon sp;
+        sp.vertices = allPaths[i].pts;
+        sp.color    = allPaths[i].color;
+        sp.id       = allPaths[i].id;
+        svg_extra_polygons_.push_back(std::move(sp));
+        qInfo() << "[SVG] Extra polygon id='" << svg_extra_polygons_.back().id
+                << "' color=" << svg_extra_polygons_.back().color.name()
+                << "vertices=" << svg_extra_polygons_.back().vertices.size();
+    }
 }
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 /// Pose Persistence

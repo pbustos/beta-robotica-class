@@ -14,6 +14,12 @@ Proxies.TopicManager = "IceStorm/TopicManager:default -p 9999"
 Period.Compute = 100
 Period.Emergency = 500
 
+# SVG/JSON layout file to load at startup
+layout_file = "completo_unified.svg"
+# ID of the polygon to use as Ground Truth: chema | hall | beta
+# Leave empty for auto-selection (largest non-lidar polygon)
+gt_polygon_id = "hall"
+
 Ice.Warn.Connections = "0"
 Ice.Trace.Network = "0"
 Ice.Trace.Protocol = "0"
