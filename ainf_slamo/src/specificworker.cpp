@@ -67,7 +67,6 @@ SpecificWorker::~SpecificWorker()
 	    read_lidar_th.join();
 }
 
-
 void SpecificWorker::initialize()
 {
     std::cout << "Initializing worker" << std::endl;
@@ -108,7 +107,26 @@ void SpecificWorker::initialize()
     std::string gt_polygon_id;
     try { layout_file  = configLoader.get<std::string>("layout_file");  } catch(...) {}
     try { gt_polygon_id = configLoader.get<std::string>("gt_polygon_id"); } catch(...) {}
+    try { params.USE_WEBOTS = configLoader.get<bool>("use_webots"); } catch(...) {}
     load_polygon_from_file(layout_file, gt_polygon_id);
+
+    // Show mode indicator in UI
+    if (params.USE_WEBOTS)
+    {
+        label_mode->setText("WEBOTS");
+        label_mode->setStyleSheet("background-color: #87CEEB; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+    }
+    else
+    {
+        label_mode->setText("ROBOT");
+        label_mode->setStyleSheet("background-color: #FF8C00; color: white; padding: 2px; border-radius: 2px; font-size: 8pt;");
+        pushButton_calibrateGT->setVisible(false);
+        lcdNumber_gt_xy_err->setVisible(false);
+        lcdNumber_gt_ang_err->setVisible(false);
+        label_gt_xy_err->setVisible(false);
+        label_gt_ang_err->setVisible(false);
+        qInfo() << "Webots disabled (use_webots=false). Running in real robot mode.";
+    }
 
 
     // Lidar thread is created
@@ -230,10 +248,13 @@ void SpecificWorker::compute()
             draw_lidar_points(lidar_local, res.robot_pose);
 
             // GT debug/statistics: compute and display pose error vs ground truth if available
-            // Auto-calibrate GT offset on first low-SDF reading
-            if (!gt_calibrated_ && robot_pose_gt_.has_value() && res.sdf_mse < 0.10f)
-                calibrate_gt_offset(res.robot_pose, robot_pose_gt_.value());
-            display_gt_error(res.robot_pose, robot_pose_gt_);
+            if (params.USE_WEBOTS)
+            {
+                // Auto-calibrate GT offset on first low-SDF reading
+                if (!gt_calibrated_ && robot_pose_gt_.has_value() && res.sdf_mse < 0.10f)
+                    calibrate_gt_offset(res.robot_pose, robot_pose_gt_.value());
+                display_gt_error(res.robot_pose, robot_pose_gt_);
+            }
 
             // Draw room rectangle (only if not using polygon)
             draw_estimated_room(res.state);
@@ -287,48 +308,50 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
 	const float sigma_xy_cm = std::sqrt(res.covariance(0,0) + res.covariance(1,1)) * 100.0f; // m to cm
 	const float sdf_median_cm = res.sdf_mse * 100.0f;  // Median SDF error in cm (already in meters)
 	const float innovation_cm = res.innovation_norm * 100.0f;  // Innovation norm in cm
-	const float cpu_usage = get_cpu_usage();
 
 	lcdNumber_fps->display(fps_val);
-	lcdNumber_loss->display(sdf_median_cm);  // Median SDF error in cm
+	lcdNumber_loss->display(sdf_median_cm);
 	lcdNumber_sigma->display(sigma_xy_cm);
 	lcdNumber_velocity->display(std::abs(current_velocity.adv_y));
-	lcdNumber_innov->display(innovation_cm);  // Innovation as health indicator
-	lcdNumber_cpu->display(static_cast<int>(cpu_usage));
+	lcdNumber_innov->display(innovation_cm);
 
-	// Color sigma based on absolute uncertainty values
-	// Green: < 5cm, Yellow: 5-10cm, Orange: 10-20cm, Red: > 20cm
-	QString sigma_color;
-	if (sigma_xy_cm < 5.0f)
-		sigma_color = "background-color: #90EE90;";  // Light green - very low uncertainty
-	else if (sigma_xy_cm < 10.0f)
-		sigma_color = "background-color: #FFFF00;";  // Yellow - moderate uncertainty
-	else if (sigma_xy_cm < 20.0f)
-		sigma_color = "background-color: #FFA500;";  // Orange - high uncertainty
-	else
-		sigma_color = "background-color: #FF6B6B;";  // Red - very high uncertainty
-	lcdNumber_sigma->setStyleSheet(sigma_color);
+	// Only update CPU and color stylesheets every 10 frames to save overhead
+	static int ui_slow_counter = 0;
+	if (++ui_slow_counter >= 10)
+	{
+		ui_slow_counter = 0;
+		const float cpu_usage = get_cpu_usage();
+		lcdNumber_cpu->display(static_cast<int>(cpu_usage));
 
-	// Color the innovation display based on health
-	// Green: < 5cm, Yellow: 5-15cm, Red: > 15cm
-	QString innov_color;
-	if (innovation_cm < 5.0f)
-		innov_color = "background-color: #90EE90;";  // Light green
-	else if (innovation_cm < 15.0f)
-		innov_color = "background-color: #FFFF00;";  // Yellow
-	else
-		innov_color = "background-color: #FF6B6B;";  // Light red
-	lcdNumber_innov->setStyleSheet(innov_color);
+		// Helper lambda: only call setStyleSheet when the color key changes
+		static QString last_sigma_color, last_innov_color, last_cpu_color;
 
-	// Color CPU based on usage
-	QString cpu_color;
-	if (cpu_usage < 30.0f)
-		cpu_color = "background-color: #90EE90;";  // Light green
-	else if (cpu_usage < 60.0f)
-		cpu_color = "background-color: #FFFF00;";  // Yellow
-	else
-		cpu_color = "background-color: #FF6B6B;";  // Red
-	lcdNumber_cpu->setStyleSheet(cpu_color);
+		auto set_style_if_changed = [](QLCDNumber *w, const QString &style, QString &last) {
+			if (style != last) { w->setStyleSheet(style); last = style; }
+		};
+
+		// Color sigma
+		QString sigma_color;
+		if (sigma_xy_cm < 5.0f)       sigma_color = "background-color: #90EE90;";
+		else if (sigma_xy_cm < 10.0f)  sigma_color = "background-color: #FFFF00;";
+		else if (sigma_xy_cm < 20.0f)  sigma_color = "background-color: #FFA500;";
+		else                            sigma_color = "background-color: #FF6B6B;";
+		set_style_if_changed(lcdNumber_sigma, sigma_color, last_sigma_color);
+
+		// Color innovation
+		QString innov_color;
+		if (innovation_cm < 5.0f)       innov_color = "background-color: #90EE90;";
+		else if (innovation_cm < 15.0f)  innov_color = "background-color: #FFFF00;";
+		else                              innov_color = "background-color: #FF6B6B;";
+		set_style_if_changed(lcdNumber_innov, innov_color, last_innov_color);
+
+		// Color CPU
+		QString cpu_color;
+		if (cpu_usage < 30.0f)       cpu_color = "background-color: #90EE90;";
+		else if (cpu_usage < 60.0f)  cpu_color = "background-color: #FFFF00;";
+		else                          cpu_color = "background-color: #FF6B6B;";
+		set_style_if_changed(lcdNumber_cpu, cpu_color, last_cpu_color);
+	}
 }
 
 void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eigen::Matrix3f &covariance)
@@ -386,13 +409,18 @@ void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eige
 void SpecificWorker::display_gt_error(const Eigen::Affine2f &estimated_pose,
                                       const std::optional<Eigen::Affine2f> &gt_pose_opt)
 {
-    // If GT pose is not available (webots not connected), blank the displays
+    static QGraphicsEllipseItem *gt_marker = nullptr;
+    static QGraphicsLineItem   *gt_heading = nullptr;
+
+    // If GT pose is not available (webots not connected), blank the displays and hide marker
     if (!gt_pose_opt.has_value())
     {
         lcdNumber_gt_xy_err->display(0.0);
         lcdNumber_gt_ang_err->display(0.0);
         lcdNumber_gt_xy_err->setStyleSheet("background-color: #888888;");  // Grey = no data
         lcdNumber_gt_ang_err->setStyleSheet("background-color: #888888;");
+        if (gt_marker) gt_marker->setVisible(false);
+        if (gt_heading) gt_heading->setVisible(false);
         return;
     }
 
@@ -416,23 +444,27 @@ void SpecificWorker::display_gt_error(const Eigen::Affine2f &estimated_pose,
     lcdNumber_gt_xy_err->display(static_cast<double>(xy_err_cm));
     lcdNumber_gt_ang_err->display(static_cast<double>(ang_err_deg));
 
-    // Color coding for position error: green <5cm, yellow <15cm, red >=15cm
+    // Color coding — only update stylesheet when color changes
+    static QString last_xy_color, last_ang_color;
+    auto set_if_changed = [](QLCDNumber *w, const QString &style, QString &last) {
+        if (style != last) { w->setStyleSheet(style); last = style; }
+    };
+
+    // Position error: green <5cm, yellow <15cm, red >=15cm
     QString xy_color;
     if      (xy_err_cm < 5.f)  xy_color = "background-color: #90EE90;";
     else if (xy_err_cm < 15.f) xy_color = "background-color: #FFFF00;";
     else                        xy_color = "background-color: #FF6B6B;";
-    lcdNumber_gt_xy_err->setStyleSheet(xy_color);
+    set_if_changed(lcdNumber_gt_xy_err, xy_color, last_xy_color);
 
-    // Color coding for angular error: green <3°, yellow <10°, red >=10°
+    // Angular error: green <3°, yellow <10°, red >=10°
     QString ang_color;
     if      (ang_err_deg < 3.f)  ang_color = "background-color: #90EE90;";
     else if (ang_err_deg < 10.f) ang_color = "background-color: #FFFF00;";
     else                          ang_color = "background-color: #FF6B6B;";
-    lcdNumber_gt_ang_err->setStyleSheet(ang_color);
+    set_if_changed(lcdNumber_gt_ang_err, ang_color, last_ang_color);
 
-    // Also draw GT robot ghost on the viewer for visual comparison
-    static QGraphicsEllipseItem *gt_marker = nullptr;
-    static QGraphicsLineItem   *gt_heading = nullptr;
+    // Draw GT robot ghost on the viewer for visual comparison
     constexpr float R = 0.25f;  // visual radius in meters (scene units)
     if (!gt_marker)
     {
@@ -442,16 +474,21 @@ void SpecificWorker::display_gt_error(const Eigen::Affine2f &estimated_pose,
     }
     if (!gt_heading)
     {
+        // Heading line along local X axis (same convention as robot_polygon via add_robot)
         gt_heading = viewer->scene.addLine(0, 0, R, 0,
                                            QPen(QColor("magenta"), 0.02));
         gt_heading->setZValue(50);
     }
+    gt_marker->setVisible(true);
+    gt_heading->setVisible(true);
+
     const float gx  = gt.translation().x();
     const float gy  = gt.translation().y();
-    const float gan = std::atan2(gt.linear()(1,0), gt.linear()(0,0));
+    // Use the same angle convention as display_robot: qRadiansToDegrees(atan2(sin,cos))
+    const float gan = qRadiansToDegrees(std::atan2(gt.linear()(1,0), gt.linear()(0,0)));
     gt_marker->setPos(gx, gy);
     gt_heading->setPos(gx, gy);
-    gt_heading->setRotation(qRadiansToDegrees(gan));
+    gt_heading->setRotation(gan);
 }
 
 void SpecificWorker::calibrate_gt_offset(const Eigen::Affine2f &estimated_pose, const Eigen::Affine2f &webots_pose)
@@ -504,11 +541,15 @@ void SpecificWorker::read_lidar()
             std::chrono::system_clock::now().time_since_epoch()).count();
         try
         {
-            // Get robot pose
-            const auto &[position, orientation] = webots2robocomp_proxy->getObjectPose("shadow");
-            Eigen::Affine2f eig_pose;
-            eig_pose.translation() = Eigen::Vector2f(-position.y/1000.f, position.x/1000.f);
-            eig_pose.linear() = Eigen::Rotation2Df(yawFromQuaternion(orientation)).toRotationMatrix();
+            // Get robot GT pose from Webots (only for debug/stats, not used by algorithm)
+            if (params.USE_WEBOTS)
+            {
+                const auto &[position, orientation] = webots2robocomp_proxy->getObjectPose("shadow");
+                Eigen::Affine2f eig_pose;
+                eig_pose.translation() = Eigen::Vector2f(-position.y/1000.f, position.x/1000.f);
+                eig_pose.linear() = Eigen::Rotation2Df(yawFromQuaternion(orientation)).toRotationMatrix();
+                buffer_sync.put<0>(std::move(eig_pose), timestamp);
+            }
 
             // Get LiDAR data
             const auto data = lidar3d_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_HIGH,
@@ -518,7 +559,7 @@ void SpecificWorker::read_lidar()
             // // Store local points (original LiDAR frame) and transform to world frame
             std::vector<Eigen::Vector3f> points_local;
             points_local.reserve(data.points.size());
-            const float low_height_offset = params.LIDAR_HIGH_MIN_HEIGHT*params.LIDAR_HIGH_MIN_HEIGHT;
+            const float low_height_offset = params.LIDAR_HIGH_MIN_HEIGHT*params.LIDAR_HIGH_MIN_HEIGHT;  //TODO: change to use actual height instead of squared height for filtering
             const float high_height_offset = (params.LIDAR_HIGH_MAX_HEIGHT * params.LIDAR_HIGH_MAX_HEIGHT);
             const float body_offset = params.ROBOT_SEMI_WIDTH * params.ROBOT_SEMI_WIDTH; // Filter points that are too close to the robot's center (e.g. points on the robot itself)
             for (const auto &p : data.points)
@@ -534,8 +575,7 @@ void SpecificWorker::read_lidar()
                 }
             }
 
-            // Put all in sync buffer with same timestamp
-        	buffer_sync.put<0>(std::move(eig_pose), timestamp);
+            // Put lidar data in sync buffer
             buffer_sync.put<1>(std::move(std::make_pair(points_local, data.timestamp)), timestamp);
 
             // Adjust period with hysteresis

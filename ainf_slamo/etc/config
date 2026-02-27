@@ -1,5 +1,5 @@
 # Proxies for required interfaces
-Proxies.Lidar3D = "lidar3d:tcp -h localhost -p 11990"
+Proxies.Lidar3D = "lidar3d:tcp -h localhost -p 11990" #HELIOS
 Proxies.Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 10006"
 Proxies.OmniRobot = "omnirobot:tcp -h localhost -p 10004"
 
@@ -11,14 +11,18 @@ Endpoints.JoystickAdapterPrefix = ""
 # This property is used by the clients to connect to IceStorm.
 Proxies.TopicManager = "IceStorm/TopicManager:default -p 9999"
 
-Period.Compute = 100
+Period.Compute = 50
 Period.Emergency = 500
 
 # SVG/JSON layout file to load at startup
 layout_file = "completo_unified.svg"
-# ID of the polygon to use as Ground Truth: chema | hall | beta
+# ID of the polygon to use as Ground Truth: chema  hall  beta
 # Leave empty for auto-selection (largest non-lidar polygon)
 gt_polygon_id = "hall"
+
+# Set to false when running on a real robot (disables Webots GT pose and related UI)
+# Note: keep the Proxies.Webots2Robocomp line above even when false — the proxy is created but never used
+use_webots = true
 
 Ice.Warn.Connections = "0"
 Ice.Trace.Network = "0"

@@ -102,6 +102,7 @@ class SpecificWorker : public GenericWorker
 
 	struct Params
 	{
+		bool USE_WEBOTS = true;  // When false, disables all Webots connections (for real robot)
 		float ROBOT_WIDTH = 0.460;  // m
 		float ROBOT_LENGTH = 0.480;  // m
 		float ROBOT_SEMI_WIDTH = ROBOT_WIDTH / 2.f;     // m
@@ -114,7 +115,7 @@ class SpecificWorker : public GenericWorker
 		float LIDAR_HIGH_MIN_HEIGHT = 1.2; // m, points below this height in the high lidar will be ignored (e.g. to filter tables)
 		float LIDAR_HIGH_MAX_HEIGHT = 1.4f; // m, points above this height in the high lidar will be ignored (e.g. to filter ceiling)
 		QRectF GRID_MAX_DIM{-8, -5, 16, 10};
-		int MAX_LIDAR_DRAW_POINTS = 1500;
+		int MAX_LIDAR_DRAW_POINTS = 500;
 	};
 	Params params;
 

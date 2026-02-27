@@ -16,31 +16,44 @@
   <layout class="QVBoxLayout" name="verticalLayout_2">
    <item>
     <layout class="QVBoxLayout" name="verticalLayout">
+     <!-- ====== ROW 1: Status displays ====== -->
      <item>
-      <layout class="QHBoxLayout" name="horizontalLayout">
-       <property name="sizeConstraint">
-        <enum>QLayout::SetMinimumSize</enum>
-       </property>
+      <layout class="QHBoxLayout" name="horizontalLayout_row1">
+       <item>
+        <widget class="QLabel" name="label_mode">
+         <property name="text">
+          <string>MODE</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>50</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <pointsize>8</pointsize>
+           <weight>75</weight>
+           <bold>true</bold>
+          </font>
+         </property>
+        </widget>
+       </item>
        <item>
         <layout class="QVBoxLayout" name="verticalLayout_fps">
          <item>
           <widget class="QLabel" name="label_fps">
-           <property name="text">
-            <string>FPS</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>FPS</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_fps">
-           <property name="digitCount">
-            <number>3</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>3</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
@@ -49,22 +62,14 @@
         <layout class="QVBoxLayout" name="verticalLayout_loss">
          <item>
           <widget class="QLabel" name="label_loss">
-           <property name="text">
-            <string>SDF med</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>SDF med</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_loss">
-           <property name="digitCount">
-            <number>6</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>6</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
@@ -73,22 +78,14 @@
         <layout class="QVBoxLayout" name="verticalLayout_sigma">
          <item>
           <widget class="QLabel" name="label_sigma">
-           <property name="text">
-            <string>σ (cm)</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>σ (cm)</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_sigma">
-           <property name="digitCount">
-            <number>5</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>5</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
@@ -97,22 +94,14 @@
         <layout class="QVBoxLayout" name="verticalLayout_velocity">
          <item>
           <widget class="QLabel" name="label_velocity">
-           <property name="text">
-            <string>Vel (m/s)</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>Vel (m/s)</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_velocity">
-           <property name="digitCount">
-            <number>5</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>5</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
@@ -121,22 +110,14 @@
         <layout class="QVBoxLayout" name="verticalLayout_innov">
          <item>
           <widget class="QLabel" name="label_innov">
-           <property name="text">
-            <string>Innov(cm)</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>Innov(cm)</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_innov">
-           <property name="digitCount">
-            <number>5</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>5</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
@@ -145,107 +126,35 @@
         <layout class="QVBoxLayout" name="verticalLayout_cpu">
          <item>
           <widget class="QLabel" name="label_cpu">
-           <property name="text">
-            <string>CPU %</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>CPU %</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_cpu">
-           <property name="digitCount">
-            <number>3</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>3</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton_captureRoom">
-         <property name="text">
-          <string>Capture Room</string>
-         </property>
-         <property name="checkable">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="pushButton_saveLayout">
-         <property name="text">
-          <string>Save Layout</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="pushButton_loadLayout">
-         <property name="text">
-          <string>Load Layout</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="pushButton_flipX">
-         <property name="text">
-          <string>Flip X</string>
-         </property>
-         <property name="toolTip">
-          <string>Mirror robot position on X axis (fixes symmetry issues)</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="pushButton_flipY">
-         <property name="text">
-          <string>Flip Y</string>
-         </property>
-         <property name="toolTip">
-          <string>Mirror robot position on Y axis (fixes symmetry issues)</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="pushButton_calibrateGT">
-         <property name="text">
-          <string>Calibrate GT</string>
-         </property>
-         <property name="toolTip">
-          <string>Compute offset between Webots and map frames (requires low SDF)</string>
-         </property>
-        </widget>
-       </item>
-       <item>
         <widget class="Line" name="line_separator">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
+         <property name="orientation"><enum>Qt::Vertical</enum></property>
         </widget>
        </item>
        <item>
         <layout class="QVBoxLayout" name="verticalLayout_robotX">
          <item>
           <widget class="QLabel" name="label_robotX">
-           <property name="text">
-            <string>X (m)</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>X (m)</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_robotX">
-           <property name="digitCount">
-            <number>6</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>6</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
@@ -254,22 +163,14 @@
         <layout class="QVBoxLayout" name="verticalLayout_robotY">
          <item>
           <widget class="QLabel" name="label_robotY">
-           <property name="text">
-            <string>Y (m)</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>Y (m)</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_robotY">
-           <property name="digitCount">
-            <number>6</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>6</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
@@ -278,53 +179,35 @@
         <layout class="QVBoxLayout" name="verticalLayout_robotTheta">
          <item>
           <widget class="QLabel" name="label_robotTheta">
-           <property name="text">
-            <string>θ (°)</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>θ (°)</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_robotTheta">
-           <property name="digitCount">
-            <number>5</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>5</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
        </item>
        <item>
         <widget class="Line" name="line_separator_gt">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
+         <property name="orientation"><enum>Qt::Vertical</enum></property>
         </widget>
        </item>
        <item>
         <layout class="QVBoxLayout" name="verticalLayout_gt_xy_err">
          <item>
           <widget class="QLabel" name="label_gt_xy_err">
-           <property name="text">
-            <string>GT Δxy (cm)</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>GT Δxy (cm)</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_gt_xy_err">
-           <property name="digitCount">
-            <number>6</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>6</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
@@ -333,28 +216,71 @@
         <layout class="QVBoxLayout" name="verticalLayout_gt_ang_err">
          <item>
           <widget class="QLabel" name="label_gt_ang_err">
-           <property name="text">
-            <string>GT Δθ (°)</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
+           <property name="text"><string>GT Δθ (°)</string></property>
+           <property name="alignment"><set>Qt::AlignCenter</set></property>
           </widget>
          </item>
          <item>
           <widget class="QLCDNumber" name="lcdNumber_gt_ang_err">
-           <property name="digitCount">
-            <number>5</number>
-           </property>
-           <property name="segmentStyle">
-            <enum>QLCDNumber::Flat</enum>
-           </property>
+           <property name="digitCount"><number>5</number></property>
+           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
           </widget>
          </item>
         </layout>
        </item>
       </layout>
      </item>
+     <!-- ====== ROW 2: Buttons ====== -->
+     <item>
+      <layout class="QHBoxLayout" name="horizontalLayout_row2">
+       <item>
+        <widget class="QPushButton" name="pushButton_captureRoom">
+         <property name="text"><string>Capture Room</string></property>
+         <property name="checkable"><bool>true</bool></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_saveLayout">
+         <property name="text"><string>Save Layout</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_loadLayout">
+         <property name="text"><string>Load Layout</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_flipX">
+         <property name="text"><string>Flip X</string></property>
+         <property name="toolTip"><string>Mirror robot position on X axis (fixes symmetry issues)</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_flipY">
+         <property name="text"><string>Flip Y</string></property>
+         <property name="toolTip"><string>Mirror robot position on Y axis (fixes symmetry issues)</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_calibrateGT">
+         <property name="text"><string>Calibrate GT</string></property>
+         <property name="toolTip"><string>Compute offset between Webots and map frames (requires low SDF)</string></property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer_buttons">
+         <property name="orientation"><enum>Qt::Horizontal</enum></property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </item>
+     <!-- ====== Viewer frame ====== -->
      <item>
       <widget class="QFrame" name="frame">
        <property name="sizePolicy">

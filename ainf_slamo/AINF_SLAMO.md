@@ -47,10 +47,10 @@ without symbolic calculus.
 
 ```
 ┌───────────────┐   Webots2Robocomp   ┌──────────────────────┐
-│  Webots sim   │ ──────────────────► │  read_lidar() thread │
-│  (robot + GT) │                     │  • robot pose GT      │
-└───────────────┘                     │  • LiDAR 3D points   │
-                                      └──────────┬───────────┘
+│  Webots sim   │ ─ ─ ─ ─ ─ ─ ─ ─ ► │  read_lidar() thread │
+│  (GT only,    │  (optional, for     │  • GT pose (optional) │
+│   debug)      │   use_webots=true)  │  • LiDAR 3D points   │
+└───────────────┘                     └──────────┬───────────┘
                                                  │ buffer_sync
                                                  ▼
                                       ┌──────────────────────┐
@@ -64,6 +64,11 @@ without symbolic calculus.
                          Predict step     Free Energy min.   Covariance update
                          (EKF predict)    (Adam optimizer)   (Bayesian fusion)
 ```
+
+> **Note:** The Webots GT pose is used **only** for debug error statistics
+> (GT Δxy, GT Δθ displays). The localisation algorithm relies exclusively on
+> LiDAR + odometry. Set `use_webots = false` in `etc/config` for real robot
+> operation.
 
 ---
 
@@ -95,21 +100,21 @@ and a recognition density $q(\mathbf{s})$.  It minimises the
 $$\mathcal{F}[q] = \underbrace{-\mathbb{E}_{q}[\ln p(\mathbf{o} \mid \mathbf{s})]}_{\text{Likelihood (sensory fit)}}
                  + \underbrace{D_{\mathrm{KL}}[q(\mathbf{s}) \,\|\, p(\mathbf{s})]}_{\text{Complexity (prior fit)}}$$
 
-In the Laplace (Gaussian) approximation $q(\mathbf{s}) = \mathcal{N}(\boldsymbol{\mu}, \boldsymbol{\Sigma})$,
+In the Laplace (Gaussian) approximation $q(\mathbf{s}) = \mathcal{N}(\pmb{\mu}, \pmb{\Sigma})$,
 this reduces to:
 
-$$\mathcal{F} = \frac{1}{2\sigma_{\mathrm{obs}}^2}\,\mathcal{L}_{\mathrm{lik}}(\boldsymbol{\mu})
-              + \frac{1}{2}(\boldsymbol{\mu} - \boldsymbol{\mu}_{\mathrm{prior}})^{\top}
-                \boldsymbol{\Pi}_{\mathrm{prior}}
-                (\boldsymbol{\mu} - \boldsymbol{\mu}_{\mathrm{prior}})$$
+$$\mathcal{F} = \frac{1}{2\sigma_{\mathrm{obs}}^2}\,\mathcal{L}_{\mathrm{lik}}(\pmb{\mu})
+              + \frac{1}{2}(\pmb{\mu} - \pmb{\mu}_{\mathrm{prior}})^{\top}
+                \pmb{\Pi}_{\mathrm{prior}}
+                (\pmb{\mu} - \pmb{\mu}_{\mathrm{prior}})$$
 
 where:
 
 | Symbol | Meaning |
 |--------|---------|
-| $\boldsymbol{\mu} = [x, y, \phi]^{\top}$ | Current mean state (robot pose) |
-| $\boldsymbol{\mu}_{\mathrm{prior}}$ | Predicted pose from odometry |
-| $\boldsymbol{\Pi}_{\mathrm{prior}} = \boldsymbol{\Sigma}_{\mathrm{prior}}^{-1}$ | Precision (inverse predicted covariance) |
+| $\pmb{\mu} = [x, y, \phi]^{\top}$ | Current mean state (robot pose) |
+| $\pmb{\mu}_{\mathrm{prior}}$ | Predicted pose from odometry |
+| $\pmb{\Pi}_{\mathrm{prior}} = \pmb{\Sigma}_{\mathrm{prior}}^{-1}$ | Precision (inverse predicted covariance) |
 | $\sigma_{\mathrm{obs}} = 0.05\,\mathrm{m}$ | Observation noise std (5 cm) |
 | $\mathcal{L}_{\mathrm{lik}}$ | Huber-robust LiDAR likelihood loss |
 
@@ -196,11 +201,11 @@ people) which would otherwise pull the robot pose towards incorrect positions.
 
 The Mahalanobis distance between the current pose and the predicted pose:
 
-$$\mathcal{L}_{\mathrm{prior}} = \frac{1}{2}\,(\mathbf{s} - \boldsymbol{\mu}_{\mathrm{pred}})^{\top}
-\boldsymbol{\Pi}_{\mathrm{prior}}\,
-(\mathbf{s} - \boldsymbol{\mu}_{\mathrm{pred}})$$
+$$\mathcal{L}_{\mathrm{prior}} = \frac{1}{2}\,(\mathbf{s} - \pmb{\mu}_{\mathrm{pred}})^{\top}
+\pmb{\Pi}_{\mathrm{prior}}\,
+(\mathbf{s} - \pmb{\mu}_{\mathrm{pred}})$$
 
-where $\boldsymbol{\Pi}_{\mathrm{prior}} = \boldsymbol{\Sigma}_{\mathrm{pred}}^{-1}$ is the
+where $\pmb{\Pi}_{\mathrm{prior}} = \pmb{\Sigma}_{\mathrm{pred}}^{-1}$ is the
 precision matrix of the propagated covariance.
 
 This term anchors the solution to the motion model: if the LiDAR is ambiguous
@@ -228,9 +233,9 @@ curvature.
 
 The **predicted pose** is:
 
-$$\boldsymbol{\mu}_{\mathrm{pred}} = \boldsymbol{\mu}_{k-1} + \Delta\mathbf{s}$$
+$$\pmb{\mu}_{\mathrm{pred}} = \pmb{\mu}_{k-1} + \Delta\mathbf{s}$$
 
-This becomes the prior mean $\boldsymbol{\mu}_{\mathrm{prior}}$ used in
+This becomes the prior mean $\pmb{\mu}_{\mathrm{prior}}$ used in
 $\mathcal{L}_{\mathrm{prior}}$.
 
 ---
@@ -238,10 +243,10 @@ $\mathcal{L}_{\mathrm{prior}}$.
 ## 8. EKF-Style Covariance Propagation
 
 The uncertainty of the robot pose is tracked as a $3\times3$ covariance matrix
-$\boldsymbol{\Sigma}$.  During prediction, it is propagated by the linearised
+$\pmb{\Sigma}$.  During prediction, it is propagated by the linearised
 motion model (**EKF predict** step):
 
-$$\boldsymbol{\Sigma}_{\mathrm{pred}} = \mathbf{F}\,\boldsymbol{\Sigma}_{k-1}\,\mathbf{F}^{\top} + \mathbf{Q}$$
+$$\pmb{\Sigma}_{\mathrm{pred}} = \mathbf{F}\,\pmb{\Sigma}_{k-1}\,\mathbf{F}^{\top} + \mathbf{Q}$$
 
 ### 8.1 Motion Model Jacobian
 
@@ -261,9 +266,9 @@ where $(\Delta x^l, \Delta y^l)$ is the odometry displacement in the **robot fra
 
 The noise covariance $\mathbf{Q}$ is **anisotropic** and motion-dependent:
 
-$$\boldsymbol{\sigma}_{\mathrm{fwd}} = \sigma_{\mathrm{base}} + k_{\mathrm{trans}}\,|\Delta y^l|$$
-$$\boldsymbol{\sigma}_{\mathrm{lat}} = \sigma_{\mathrm{base}} + 0.3\,k_{\mathrm{trans}}\,|\Delta x^l|$$
-$$\boldsymbol{\sigma}_{\theta} = \sigma_{\theta,\mathrm{base}} + k_{\mathrm{rot}}\,|\Delta\phi|$$
+$$\pmb{\sigma}_{\mathrm{fwd}} = \sigma_{\mathrm{base}} + k_{\mathrm{trans}}\,|\Delta y^l|$$
+$$\pmb{\sigma}_{\mathrm{lat}} = \sigma_{\mathrm{base}} + 0.3\,k_{\mathrm{trans}}\,|\Delta x^l|$$
+$$\pmb{\sigma}_{\theta} = \sigma_{\theta,\mathrm{base}} + k_{\mathrm{rot}}\,|\Delta\phi|$$
 
 Transformed to the global frame:
 
@@ -294,7 +299,7 @@ Default parameters:
 Given the predicted pose as initialisation, the Adam optimiser minimises
 $\mathcal{F}$ w.r.t. $(x, y, \phi)$:
 
-$$\boldsymbol{\mu}_{k} = \arg\min_{x,y,\phi}\;\mathcal{F}(x, y, \phi)$$
+$$\pmb{\mu}_{k} = \arg\min_{x,y,\phi}\;\mathcal{F}(x, y, \phi)$$
 
 Two separate **Adam** parameter groups are used, one for position and one for
 rotation, allowing different learning rates:
@@ -325,19 +330,19 @@ $\mathbf{H}_{ii} \approx \mathbb{E}\!\left[(\partial_i \ln p)^2\right]$.
 
 The **posterior precision** fuses prior precision and likelihood curvature:
 
-$$\boldsymbol{\Pi}_{\mathrm{post}} = \boldsymbol{\Pi}_{\mathrm{prior}} + \mathbf{H}_{\mathrm{lik}} + \lambda\,\mathbf{I}$$
+$$\pmb{\Pi}_{\mathrm{post}} = \pmb{\Pi}_{\mathrm{prior}} + \mathbf{H}_{\mathrm{lik}} + \lambda\,\mathbf{I}$$
 
 with regularisation $\lambda = 10^{-4}$ for numerical stability.
 
 The **posterior covariance** is:
 
-$$\boldsymbol{\Sigma}_{k} = \boldsymbol{\Pi}_{\mathrm{post}}^{-1}$$
+$$\pmb{\Sigma}_{k} = \pmb{\Pi}_{\mathrm{post}}^{-1}$$
 
 This mirrors the **Kalman gain** update:
 
-$$\boldsymbol{\Sigma}_{k} = (\boldsymbol{\Sigma}_{\mathrm{pred}}^{-1} + \mathbf{H}_{\mathrm{lik}})^{-1}$$
+$$\pmb{\Sigma}_{k} = (\pmb{\Sigma}_{\mathrm{pred}}^{-1} + \mathbf{H}_{\mathrm{lik}})^{-1}$$
 
-A **condition number** check $\kappa(\boldsymbol{\Pi}_{\mathrm{post}}) < 10^6$ guards
+A **condition number** check $\kappa(\pmb{\Pi}_{\mathrm{post}}) < 10^6$ guards
 against ill-conditioned updates; if violated, the propagated covariance is kept.
 
 ---
@@ -347,14 +352,14 @@ against ill-conditioned updates; if violated, the propagated covariance is kept.
 The **innovation** (Kalman residual) is the difference between the optimised
 pose and the predicted pose:
 
-$$\boldsymbol{\nu} = \boldsymbol{\mu}_{k} - \boldsymbol{\mu}_{\mathrm{pred}}
+$$\pmb{\nu} = \pmb{\mu}_{k} - \pmb{\mu}_{\mathrm{pred}}
 = \begin{bmatrix} x_k - \hat{x} \\ y_k - \hat{y} \\ \phi_k - \hat{\phi} \end{bmatrix}$$
 
 The angle difference is normalised to $[-\pi, \pi]$.
 
 The **innovation norm** (position only):
 
-$$\|\boldsymbol{\nu}_{xy}\| = \sqrt{\nu_x^2 + \nu_y^2}$$
+$$\|\pmb{\nu}_{xy}\| = \sqrt{\nu_x^2 + \nu_y^2}$$
 
 is displayed in the UI as a health indicator:
 
@@ -429,7 +434,7 @@ the full Adam optimisation is **skipped entirely**, saving ~60 % CPU.
 Conditions for early exit:
 
 1. $k > k_{\mathrm{min}} = 20$ (system must be stable first)
-2. $\mathrm{tr}(\boldsymbol{\Sigma}_{xy}) < \epsilon_{\mathrm{cov}} = 0.1\,\mathrm{m}^2$ (low uncertainty)
+2. $\mathrm{tr}(\pmb{\Sigma}_{xy}) < \epsilon_{\mathrm{cov}} = 0.1\,\mathrm{m}^2$ (low uncertainty)
 3. $\bar{e}_{\mathrm{pred}} < \sigma_{\mathrm{sdf}} \cdot \gamma$ with $\sigma_{\mathrm{sdf}} = 0.15\,\mathrm{m}$, $\gamma = 0.5$ (threshold ≈ 7.5 cm)
 
 When early exit fires, the pose is updated from the prediction alone and the
@@ -461,7 +466,7 @@ $$(\hat{x}, \hat{y}, \hat{\phi}) = \arg\min_{x \in \mathcal{G}_x,\, y \in \mathc
 \frac{1}{N}\sum_i \mathrm{SDF}(\mathbf{p}_i)^2$$
 
 After the search, the best pose is set and the covariance is reset to
-$\boldsymbol{\Sigma}_0 = 0.1\,\mathbf{I}_3$.
+$\pmb{\Sigma}_0 = 0.1\,\mathbf{I}_3$.
 
 ### 15.3 Last Pose Recovery
 

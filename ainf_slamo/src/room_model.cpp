@@ -191,46 +191,31 @@ torch::Tensor Model::sdf_box(const torch::Tensor& points_robot,
 
 torch::Tensor Model::sdf_polygon(const torch::Tensor& points_room_xy) const
 {
-    // Process segment by segment to avoid large intermediate tensors
-    const auto device = points_room_xy.device();
+    // Fully vectorized: broadcast [N,1,2] vs [1,S,2] for all segments at once
+    // Segment tensors (seg_a_, seg_ab_, seg_ab_sq_) are already on device_ from init
 
-    // Move segment data to the same device as points
-    const auto seg_a = seg_a_.to(device);
-    const auto seg_ab = seg_ab_.to(device);
-    const auto seg_ab_sq = seg_ab_sq_.to(device);
+    // points: [N, 2] → [N, 1, 2];  segments: [S, 2] → [1, S, 2]
+    const auto pts = points_room_xy.unsqueeze(1);  // [N, 1, 2]
+    const auto a_  = seg_a_.unsqueeze(0);           // [1, S, 2]
+    const auto ab_ = seg_ab_.unsqueeze(0);          // [1, S, 2]
 
-    const int64_t num_points = points_room_xy.size(0);
-    const int64_t num_segs = seg_a.size(0);
+    // ap = pts - a  →  [N, S, 2]
+    const auto ap = pts - a_;
 
-    // Initialize with large distance
-    auto min_dist_sq = torch::full({num_points}, 1e10f, points_room_xy.options());
+    // t = clamp(dot(ap, ab) / |ab|², 0, 1)  →  [N, S]
+    auto t = torch::sum(ap * ab_, /*dim=*/2) / (seg_ab_sq_.unsqueeze(0) + 1e-8f);
+    t = torch::clamp(t, 0.0f, 1.0f);
 
-    // Process each segment - keeps tensors small and autograd intact
-    for (int64_t i = 0; i < num_segs; ++i)
-    {
-        const auto a = seg_a[i];      // [2]
-        const auto ab = seg_ab[i];    // [2]
-        const float ab_sq = seg_ab_sq[i].item<float>();
+    // closest = a + t * ab  →  [N, S, 2]
+    const auto closest = a_ + t.unsqueeze(2) * ab_;
 
-        // ap = points - a  [N, 2]
-        const auto ap = points_room_xy - a;
+    // dist² = |pts - closest|²  →  [N, S]
+    const auto diff = pts - closest;
+    const auto dist_sq = torch::sum(diff * diff, /*dim=*/2);
 
-        // t = clamp(dot(ap, ab) / |ab|², 0, 1)  [N]
-        auto t = torch::sum(ap * ab, /*dim=*/1) / (ab_sq + 1e-8f);
-        t = torch::clamp(t, 0.0f, 1.0f);
+    // Min over segments → [N]
+    const auto min_dist_sq = std::get<0>(torch::min(dist_sq, /*dim=*/1));
 
-        // closest = a + t * ab  [N, 2]
-        const auto closest = a + t.unsqueeze(1) * ab;
-
-        // dist² = |points - closest|²  [N]
-        const auto diff = points_room_xy - closest;
-        const auto dist_sq = torch::sum(diff * diff, /*dim=*/1);
-
-        // Update minimum
-        min_dist_sq = torch::minimum(min_dist_sq, dist_sq);
-    }
-
-    // Return sqrt with epsilon for numerical stability
     return torch::sqrt(min_dist_sq + 1e-8f);
 }
 
