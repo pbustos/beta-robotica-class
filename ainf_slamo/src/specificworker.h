@@ -38,6 +38,7 @@
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include "room_concept_ai.h"
 #include "pointcloud_center_estimator.h"
+#include "polygon_path_planner.h"
 #include <boost/circular_buffer.hpp>
 #include "common_types.h"
 
@@ -151,6 +152,14 @@ class SpecificWorker : public GenericWorker
 	// Active inference room concept
 	rc::RoomConceptAI room_ai;
 
+	// Path planner
+	rc::PolygonPathPlanner path_planner_;
+	std::vector<Eigen::Vector2f> current_path_;
+	std::vector<QGraphicsItem*> path_draw_items_;
+	QGraphicsEllipseItem* target_marker_ = nullptr;
+	void draw_path(const std::vector<Eigen::Vector2f>& path);
+	void clear_path();
+
 	// CPU usage tracking
 	float get_cpu_usage();
 	clock_t last_sys_cpu_time_ = 0;
@@ -200,6 +209,7 @@ private slots:
 	void slot_robot_drag_end(QPointF pos);
 	void slot_robot_rotate(QPointF pos);
 	void slot_calibrate_gt();
+	void slot_new_target(QPointF pos);
 
 };
 

@@ -101,6 +101,9 @@ void SpecificWorker::initialize()
     connect(pushButton_flipY, &QPushButton::clicked, this, &SpecificWorker::slot_flip_y);
     connect(pushButton_calibrateGT, &QPushButton::clicked, this, &SpecificWorker::slot_calibrate_gt);
 
+    // Connect Shift+Right click on the scene for navigation target
+    connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::slot_new_target);
+
     // Try to load default layout on startup (only loads vertices, doesn't init room_ai yet)
     // Config keys: layout_file (SVG path)
     std::string layout_file = "";
@@ -193,6 +196,7 @@ void SpecificWorker::initialize()
     {
         // Use pre-loaded polygon from file
         room_ai.set_polygon_room(room_polygon_);
+        path_planner_.set_polygon(room_polygon_);
         draw_room_polygon();
         qInfo() << "RoomConceptAI initialized with loaded polygon:" << room_polygon_.size() << "vertices";
 
@@ -732,6 +736,102 @@ void SpecificWorker::FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimatio
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
+/// Navigation target (Shift+Right click)
+////////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::slot_new_target(QPointF pos)
+{
+    if (!room_ai.is_initialized() || !path_planner_.is_ready())
+    {
+        qWarning() << "Cannot set target: room not initialized or planner not ready";
+        return;
+    }
+
+    const Eigen::Vector2f target(pos.x(), pos.y());
+
+    // Get current robot pose
+    const auto state = room_ai.get_current_state();
+    const Eigen::Vector2f robot_pos(state[2], state[3]);
+
+    // Plan path
+    const auto path = path_planner_.plan(robot_pos, target);
+    if (path.empty())
+    {
+        qWarning() << "No path found to target (" << pos.x() << "," << pos.y() << ")";
+        clear_path();
+        return;
+    }
+
+    current_path_ = path;
+    draw_path(path);
+
+    // Compute total path length
+    float total = 0.f;
+    for (size_t i = 1; i < path.size(); ++i)
+        total += (path[i] - path[i - 1]).norm();
+
+    qInfo() << "Path planned:" << path.size() << "waypoints," << total << "m to ("
+            << pos.x() << "," << pos.y() << ")";
+}
+
+void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
+{
+    // Remove previous path drawing
+    clear_path();
+
+    if (path.size() < 2) return;
+
+    // Draw path segments as cyan lines
+    const QPen path_pen(QColor(0, 220, 220), 0.04);  // Cyan, thick
+    for (size_t i = 0; i + 1 < path.size(); ++i)
+    {
+        auto* line = viewer->scene.addLine(
+            path[i].x(), path[i].y(),
+            path[i + 1].x(), path[i + 1].y(),
+            path_pen);
+        line->setZValue(20);
+        path_draw_items_.push_back(line);
+    }
+
+    // Draw waypoint dots
+    const QPen wp_pen(Qt::NoPen);
+    const QBrush wp_brush(QColor(0, 220, 220));
+    for (size_t i = 1; i + 1 < path.size(); ++i)  // skip start and goal
+    {
+        constexpr float r = 0.06f;
+        auto* dot = viewer->scene.addEllipse(-r, -r, 2*r, 2*r, wp_pen, wp_brush);
+        dot->setPos(path[i].x(), path[i].y());
+        dot->setZValue(21);
+        path_draw_items_.push_back(dot);
+    }
+
+    // Draw target marker (larger, red circle)
+    const auto& goal = path.back();
+    if (target_marker_ == nullptr)
+    {
+        constexpr float tr = 0.12f;
+        target_marker_ = viewer->scene.addEllipse(-tr, -tr, 2*tr, 2*tr,
+            QPen(QColor(255, 50, 50), 0.03), QBrush(QColor(255, 50, 50, 120)));
+        target_marker_->setZValue(22);
+    }
+    target_marker_->setPos(goal.x(), goal.y());
+    target_marker_->setVisible(true);
+}
+
+void SpecificWorker::clear_path()
+{
+    for (auto* item : path_draw_items_)
+    {
+        viewer->scene.removeItem(item);
+        delete item;
+    }
+    path_draw_items_.clear();
+    current_path_.clear();
+
+    if (target_marker_)
+        target_marker_->setVisible(false);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
 /// Subscription to emergencyState signal from Hibernation interface
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::emergency()
@@ -803,6 +903,7 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
             // Vertices are already in room frame (where user clicked)
             // Pass them directly to room_ai
             room_ai.set_polygon_room(room_polygon_);
+        path_planner_.set_polygon(room_polygon_);
 
             // Draw final polygon (fixed in room frame)
             draw_room_polygon();
@@ -980,6 +1081,7 @@ void SpecificWorker::slot_flip_x()
     if (room_ai.is_initialized())
     {
         room_ai.set_polygon_room(room_polygon_);
+        path_planner_.set_polygon(room_polygon_);
     }
 
     // Redraw the polygon
@@ -1009,6 +1111,7 @@ void SpecificWorker::slot_flip_y()
     if (room_ai.is_initialized())
     {
         room_ai.set_polygon_room(room_polygon_);
+        path_planner_.set_polygon(room_polygon_);
     }
 
     // Redraw the polygon
@@ -1200,6 +1303,7 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
     if (room_polygon_.size() >= 3)
     {
         room_ai.set_polygon_room(room_polygon_);
+        path_planner_.set_polygon(room_polygon_);
         draw_room_polygon();
         qInfo() << "Layout loaded and room_ai initialized with" << room_polygon_.size() << "vertices";
     }
@@ -1515,6 +1619,7 @@ bool SpecificWorker::load_last_pose()
 
         if (room_ai.is_initialized())
             room_ai.set_polygon_room(room_polygon_);
+        path_planner_.set_polygon(room_polygon_);
         draw_room_polygon();
         qInfo() << "Applied saved flip_x";
     }
@@ -1526,6 +1631,7 @@ bool SpecificWorker::load_last_pose()
 
         if (room_ai.is_initialized())
             room_ai.set_polygon_room(room_polygon_);
+        path_planner_.set_polygon(room_polygon_);
         draw_room_polygon();
         qInfo() << "Applied saved flip_y";
     }
