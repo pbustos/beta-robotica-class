@@ -61,9 +61,9 @@ class SpecificWorker : public GenericWorker
 	     */
 		~SpecificWorker();
 
-		void JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data);
+	void FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimation::FullPoseEuler pose);
 
-	public slots:
+	void JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data);
 
 		/**
 		 * \brief Initializes the worker one time.
@@ -112,6 +112,7 @@ class SpecificWorker : public GenericWorker
 		float LIDAR_HIGH_MAX_HEIGHT = 2.2f; // m, points above this height in the high lidar will be ignored (e.g. to filter ceiling)
 		QRectF GRID_MAX_DIM{-8, -5, 16, 10};
 		int MAX_LIDAR_DRAW_POINTS = 500;
+		float ODOMETRY_NOISE_FACTOR = 0.1f;  // Gaussian noise std added to odometry (fraction of reading)
 	};
 	Params params;
 
@@ -143,6 +144,9 @@ class SpecificWorker : public GenericWorker
 
 	// Velocity commands (boost circular buffer is thread safe)
 	boost::circular_buffer<rc::VelocityCommand> velocity_history_{20};
+
+	// Measured odometry readings from FullPoseEstimationPub (encoders/IMU)
+	boost::circular_buffer<rc::OdometryReading> odometry_history_{20};
 
 	// Active inference room concept
 	rc::RoomConceptAI room_ai;

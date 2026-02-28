@@ -41,6 +41,8 @@
 #include <unordered_map>
 
 
+#include <FullPoseEstimation.h>
+#include <FullPoseEstimationPub.h>
 #include <GenericBase.h>
 #include <Gridder.h>
 #include <JoystickAdapter.h>
@@ -72,6 +74,8 @@ public:
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d_proxy;
 	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
 	RoboCompWebots2Robocomp::Webots2RobocompPrxPtr webots2robocomp_proxy;
+
+	virtual void FullPoseEstimationPub_newFullPose (RoboCompFullPoseEstimation::FullPoseEuler pose) = 0;
 
 	virtual void JoystickAdapter_sendData (RoboCompJoystickAdapter::TData data) = 0;
 

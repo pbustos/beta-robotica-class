@@ -77,8 +77,11 @@
 #include "genericworker.h"
 #include "../src/specificworker.h"
 
+#include <fullposeestimationpubI.h>
 #include <joystickadapterI.h>
 
+#include <FullPoseEstimation.h>
+#include <FullPoseEstimationPub.h>
 #include <GenericBase.h>
 #include <Gridder.h>
 #include <JoystickAdapter.h>
@@ -234,6 +237,8 @@ int ainf_slamo::run(int argc, char* argv[])
 
 	int status=EXIT_SUCCESS;
 
+	std::shared_ptr<IceStorm::TopicPrx> fullposeestimationpub_topic;
+	Ice::ObjectPrxPtr fullposeestimationpub;
 	std::shared_ptr<IceStorm::TopicPrx> joystickadapter_topic;
 	Ice::ObjectPrxPtr joystickadapter;
 
@@ -277,6 +282,10 @@ int ainf_slamo::run(int argc, char* argv[])
 	{
 
 		//Subscribe code
+		subscribe<FullPoseEstimationPubI>(communicator(),
+		                    topicManager, configLoader.get<std::string>("Endpoints.FullPoseEstimationPubTopic"),
+						    configLoader.get<std::string>("Endpoints.FullPoseEstimationPubPrefix"), "FullPoseEstimationPub", worker,  0,
+						    fullposeestimationpub_topic, fullposeestimationpub, PROGRAM_NAME);
 		subscribe<JoystickAdapterI>(communicator(),
 		                    topicManager, configLoader.get<std::string>("Endpoints.JoystickAdapterTopic"),
 						    configLoader.get<std::string>("Endpoints.JoystickAdapterPrefix"), "JoystickAdapter", worker,  0,
@@ -296,9 +305,16 @@ int ainf_slamo::run(int argc, char* argv[])
 
 		try
 		{
-			std::cout << "Unsubscribing topic: joystickadapter " <<std::endl;
-			joystickadapter_topic->unsubscribe(joystickadapter);
-
+			if (fullposeestimationpub_topic)
+			{
+				std::cout << "Unsubscribing topic: fullposeestimationpub " <<std::endl;
+				fullposeestimationpub_topic->unsubscribe(fullposeestimationpub);
+			}
+			if (joystickadapter_topic)
+			{
+				std::cout << "Unsubscribing topic: joystickadapter " <<std::endl;
+				joystickadapter_topic->unsubscribe(joystickadapter);
+			}
 		}
 		catch(const Ice::Exception& ex)
 		{

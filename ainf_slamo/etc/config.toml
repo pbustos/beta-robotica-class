@@ -6,6 +6,12 @@ Lidar3D = "lidar3d:tcp -h localhost -p 0"
 OmniRobot = "omnirobot:tcp -h localhost -p 0"
 Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 0"
 
+[Endpoints]
+# Endpoints for subscriptions interfaces
+FullPoseEstimationPubTopic = "tcp -p 0"
+FullPoseEstimationPubPrefix = ""
+JoystickAdapterTopic = "tcp -p 0"
+JoystickAdapterPrefix = ""
 
 
 

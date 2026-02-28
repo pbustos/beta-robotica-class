@@ -5,6 +5,8 @@ Proxies.OmniRobot = "omnirobot:tcp -h localhost -p 10004"
 
 
 # Endpoints for subscriptions interfaces
+Endpoints.FullPoseEstimationPubTopic = "tcp -p 0"
+Endpoints.FullPoseEstimationPubPrefix = ""
 Endpoints.JoystickAdapterTopic = "tcp -p 0"
 Endpoints.JoystickAdapterPrefix = ""
 

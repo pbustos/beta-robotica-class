@@ -374,7 +374,8 @@ namespace rc
 
     RoomConceptAI::UpdateResult RoomConceptAI::update(
                 const std::pair<std::vector<Eigen::Vector3f>, int64_t> &lidar,
-                const boost::circular_buffer<VelocityCommand> &velocity_history)
+                const boost::circular_buffer<VelocityCommand> &velocity_history,
+                const boost::circular_buffer<OdometryReading> &odometry_history)
     {
         UpdateResult res;
         if(lidar.first.empty())
@@ -437,35 +438,72 @@ namespace rc
                     current_covariance(i, j) = cov_acc[i][j];
         }
 
-        // ===== ACTIVE INFERENCE: Set prediction as prior for optimization =====
+        // ===== ACTIVE INFERENCE: Dual-prior fusion (command + odometry) =====
         Eigen::Vector2f pred_pos;
         float pred_theta;
 
         if (last_update_result.ok && odometry_prior.valid)
         {
-            // Compute predicted pose: x_pred = x_prev + delta
-            pred_pos = last_update_result.robot_pose.translation()
+            // --- Command prior: predict from commanded velocity ---
+            const Eigen::Vector2f cmd_pos = last_update_result.robot_pose.translation()
                      + odometry_prior.delta_pose.head<2>();
-            pred_theta = std::atan2(last_update_result.robot_pose.linear()(1, 0),
+            float cmd_theta = std::atan2(last_update_result.robot_pose.linear()(1, 0),
                                     last_update_result.robot_pose.linear()(0, 0))
                        + odometry_prior.delta_pose[2];
+            while (cmd_theta > M_PI) cmd_theta -= 2.0f * M_PI;
+            while (cmd_theta < -M_PI) cmd_theta += 2.0f * M_PI;
 
-            // Normalize angle to [-pi, pi]
-            while (pred_theta > M_PI) pred_theta -= 2.0f * M_PI;
-            while (pred_theta < -M_PI) pred_theta += 2.0f * M_PI;
+            const Eigen::Vector3f pred_cmd(cmd_pos.x(), cmd_pos.y(), cmd_theta);
 
-            // Initialize optimizer state with prediction (crucial for Active Inference)
-            // Use data().copy_() to modify values without breaking the computation graph
-            model_->robot_pos.data().copy_(torch::tensor({pred_pos.x(), pred_pos.y()},
-                torch::TensorOptions().device(get_device())));
-            model_->robot_theta.data().copy_(torch::tensor({pred_theta},
-                torch::TensorOptions().device(get_device())));
+            // --- Measured odometry prior: predict from encoder/IMU readings ---
+            auto measured_prior = compute_measured_odometry_prior(odometry_history, lidar);
 
-            // Compute precision matrix (inverse of PROPAGATED covariance)
-            Eigen::Matrix3f prior_precision = current_covariance.inverse();
+            if (measured_prior.valid)
+            {
+                const Eigen::Vector2f odom_pos = last_update_result.robot_pose.translation()
+                         + measured_prior.delta_pose.head<2>();
+                float odom_theta = std::atan2(last_update_result.robot_pose.linear()(1, 0),
+                                        last_update_result.robot_pose.linear()(0, 0))
+                           + measured_prior.delta_pose[2];
+                while (odom_theta > M_PI) odom_theta -= 2.0f * M_PI;
+                while (odom_theta < -M_PI) odom_theta += 2.0f * M_PI;
 
-            // Set prediction for prior loss computation
-            model_->set_prediction(pred_pos, pred_theta, prior_precision);
+                const Eigen::Vector3f pred_odom(odom_pos.x(), odom_pos.y(), odom_theta);
+
+                // Compute covariances: command prior is less trusted, odometry is tighter
+                const Eigen::Matrix3f cov_cmd = compute_motion_covariance(odometry_prior, false);
+                const Eigen::Matrix3f cov_odom = compute_motion_covariance(measured_prior, true);
+
+                // Fuse into single Gaussian: μ_fused, Σ_fused
+                const auto [fused_mean, fused_precision] = fuse_priors(
+                    pred_cmd, cov_cmd, pred_odom, cov_odom);
+
+                pred_pos = fused_mean.head<2>();
+                pred_theta = fused_mean[2];
+
+                // Initialize optimizer state with fused prediction
+                model_->robot_pos.data().copy_(torch::tensor({pred_pos.x(), pred_pos.y()},
+                    torch::TensorOptions().device(get_device())));
+                model_->robot_theta.data().copy_(torch::tensor({pred_theta},
+                    torch::TensorOptions().device(get_device())));
+
+                // Set fused prediction for prior loss computation
+                model_->set_prediction(pred_pos, pred_theta, fused_precision);
+            }
+            else
+            {
+                // No odometry available: fall back to command-only prior
+                pred_pos = cmd_pos;
+                pred_theta = cmd_theta;
+
+                model_->robot_pos.data().copy_(torch::tensor({pred_pos.x(), pred_pos.y()},
+                    torch::TensorOptions().device(get_device())));
+                model_->robot_theta.data().copy_(torch::tensor({pred_theta},
+                    torch::TensorOptions().device(get_device())));
+
+                Eigen::Matrix3f prior_precision = current_covariance.inverse();
+                model_->set_prediction(pred_pos, pred_theta, prior_precision);
+            }
         }
 
         // ===== MINIMISATION STEP (Minimize Variational Free Energy) =====
@@ -852,30 +890,29 @@ namespace rc
      * Compute motion-based covariance consistently
      * σ = base + k * distance
      */
-    Eigen::Matrix3f RoomConceptAI::compute_motion_covariance(const OdometryPrior &odometry_prior)
+    Eigen::Matrix3f RoomConceptAI::compute_motion_covariance(const OdometryPrior &odometry_prior,
+                                                             bool is_measured_odometry)
     {
+        // Select noise model: odometry (encoder/IMU) is tighter than commanded velocity
+        const float noise_trans = is_measured_odometry ? params.odom_noise_trans : params.cmd_noise_trans;
+        const float noise_rot   = is_measured_odometry ? params.odom_noise_rot   : params.cmd_noise_rot;
+        const float noise_base  = is_measured_odometry ? params.odom_noise_base  : params.cmd_noise_base;
+
         float motion_magnitude = std::sqrt(
             odometry_prior.delta_pose[0] * odometry_prior.delta_pose[0] +
             odometry_prior.delta_pose[1] * odometry_prior.delta_pose[1]
         );
 
-        // Proper motion model: uncertainty grows with distance
-        // BUT: when stationary, use much tighter uncertainty to prevent drift
+        // Uncertainty grows with distance; when stationary use tight constraint
         float base_uncertainty;
         if (motion_magnitude < 0.01f) {
-            // Stationary: Very tight constraint (1mm)
-            base_uncertainty = 0.001f;  // 1mm when not moving
+            base_uncertainty = 0.001f;  // 1mm when stationary
         } else {
-            // Moving: Normal base uncertainty
-            base_uncertainty = 0.005f;  // 5mm base when moving
+            base_uncertainty = noise_base;
         }
 
-        float noise_per_meter = prediction_params.NOISE_TRANS;  // Use configured value
-        float position_std = base_uncertainty + noise_per_meter * motion_magnitude;
-
-        float base_rot_std = 0.01f;  // 10 mrad base
-        float noise_per_radian = prediction_params.NOISE_ROT;
-        float rotation_std = base_rot_std + noise_per_radian * std::abs(odometry_prior.delta_pose[2]);
+        float position_std = base_uncertainty + noise_trans * motion_magnitude;
+        float rotation_std = 0.01f + noise_rot * std::abs(odometry_prior.delta_pose[2]);
 
         Eigen::Matrix3f cov = Eigen::Matrix3f::Identity();
         cov(0, 0) = position_std * position_std;
@@ -955,7 +992,7 @@ namespace rc
         if (not room->robot_prev_pose.has_value())
         {
             // Fallback: simple additive noise
-            prediction.propagated_cov = room->prev_cov + prediction_params.NOISE_TRANS * prediction_params.NOISE_TRANS *
+            prediction.propagated_cov = room->prev_cov + params.cmd_noise_trans * params.cmd_noise_trans *
                 torch::eye(dim, torch::TensorOptions().dtype(torch::kFloat32).device(device));
             return prediction;
         }
@@ -1002,17 +1039,17 @@ namespace rc
         float lateral_motion = std::abs(dx_local);   // Lateral (X in robot frame)
 
         // Base noise ensures covariance grows even when stationary
-        float base_trans_noise = prediction_params.NOISE_BASE;  // Base uncertainty (2cm default)
+        float base_trans_noise = params.cmd_noise_base;  // Base uncertainty (2cm default)
 
         // Forward uncertainty: grows with forward motion
-        float forward_noise = base_trans_noise + prediction_params.NOISE_TRANS * forward_motion;
+        float forward_noise = base_trans_noise + params.cmd_noise_trans * forward_motion;
 
         // Lateral uncertainty: smaller for differential drive (30% of forward)
-        float lateral_noise = base_trans_noise + 0.3f * prediction_params.NOISE_TRANS * lateral_motion;
+        float lateral_noise = base_trans_noise + 0.3f * params.cmd_noise_trans * lateral_motion;
 
         // Rotation noise: base + motion-dependent
-        float base_rot_noise = prediction_params.NOISE_BASE * 0.5f;  // Half of trans noise for rotation
-        float rot_noise = base_rot_noise + prediction_params.NOISE_ROT * std::abs(dtheta);
+        float base_rot_noise = params.cmd_noise_base * 0.5f;  // Half of trans noise for rotation
+        float rot_noise = base_rot_noise + params.cmd_noise_rot * std::abs(dtheta);
 
         torch::Tensor Q = torch::zeros({dim, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
 
@@ -1050,4 +1087,123 @@ namespace rc
         prediction.have_propagated = true;
         return prediction;
     }
+
+    Eigen::Vector3f RoomConceptAI::integrate_odometry_over_window(
+                const Eigen::Affine2f& robot_pose,
+                const boost::circular_buffer<OdometryReading> &odometry_history,
+                const int64_t &t_start_ms,
+                const int64_t &t_end_ms)
+    {
+        using clock = std::chrono::high_resolution_clock;
+        const auto t_start = clock::time_point(std::chrono::milliseconds(t_start_ms));
+        const auto t_end = clock::time_point(std::chrono::milliseconds(t_end_ms));
+
+        Eigen::Vector3f total_delta = Eigen::Vector3f::Zero();
+        float running_theta = std::atan2(robot_pose.linear()(1,0), robot_pose.linear()(0,0));
+
+        // Integrate over all odometry readings in [t_start, t_end]
+        for (size_t i = 0; i < odometry_history.size(); ++i)
+        {
+            const auto& odom = odometry_history[i];
+
+            // Get time window for this reading
+            auto cmd_start = odom.timestamp;
+            auto cmd_end = (i + 1 < odometry_history.size())
+                           ? odometry_history[i + 1].timestamp
+                           : t_end;
+
+            // Clip to [t_start, t_end]
+            if (cmd_end < t_start) continue;
+            if (cmd_start > t_end) break;
+
+            auto effective_start = std::max(cmd_start, t_start);
+            auto effective_end = std::min(cmd_end, t_end);
+
+            const float dt = std::chrono::duration<float>(effective_end - effective_start).count();
+            if (dt <= 0) continue;
+
+            // Odometry velocities are in robot frame: adv=forward(Y), side=lateral(X), rot=angular
+            const float dx_local = odom.side * dt;   // lateral (X in robot frame)
+            const float dy_local = odom.adv * dt;    // forward (Y in robot frame)
+            const float dtheta = -odom.rot * dt;     // same sign convention as commanded
+
+            // Transform to global frame using running theta
+            total_delta[0] += dx_local * std::cos(running_theta) - dy_local * std::sin(running_theta);
+            total_delta[1] += dx_local * std::sin(running_theta) + dy_local * std::cos(running_theta);
+            total_delta[2] += dtheta;
+
+            running_theta += dtheta;
+        }
+
+        return total_delta;
+    }
+
+    RoomConceptAI::OdometryPrior RoomConceptAI::compute_measured_odometry_prior(
+             const boost::circular_buffer<OdometryReading>& odometry_history,
+             const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar)
+    {
+        OdometryPrior prior;
+        prior.valid = false;
+        const auto& [points, lidar_timestamp] = lidar;
+
+        if (last_lidar_timestamp == 0 || odometry_history.empty() || !last_update_result.ok)
+            return prior;
+
+        const auto dt = lidar_timestamp - last_lidar_timestamp;
+        if (dt <= 0)
+            return prior;
+        prior.dt = static_cast<float>(dt);
+
+        prior.delta_pose = integrate_odometry_over_window(
+            last_update_result.robot_pose,
+            odometry_history,
+            last_lidar_timestamp,
+            lidar_timestamp);
+
+        prior.valid = true;
+
+        // Compute covariance using odometry noise model (tighter than command)
+        Eigen::Matrix3f cov_eigen = compute_motion_covariance(prior, true);
+        prior.covariance = torch::eye(3, torch::TensorOptions().dtype(torch::kFloat32).device(get_device()));
+        prior.covariance[0][0] = cov_eigen(0, 0);
+        prior.covariance[1][1] = cov_eigen(1, 1);
+        prior.covariance[2][2] = cov_eigen(2, 2);
+
+        return prior;
+    }
+
+    std::pair<Eigen::Vector3f, Eigen::Matrix3f> RoomConceptAI::fuse_priors(
+        const Eigen::Vector3f &pred_cmd, const Eigen::Matrix3f &cov_cmd,
+        const Eigen::Vector3f &pred_odom, const Eigen::Matrix3f &cov_odom) const
+    {
+        // Bayesian fusion of two Gaussian priors:
+        //   Σ_fused⁻¹ = Σ_cmd⁻¹ + Σ_odom⁻¹
+        //   μ_fused = Σ_fused * (Σ_cmd⁻¹ * μ_cmd + Σ_odom⁻¹ * μ_odom)
+        constexpr float reg = 1e-6f;
+        const Eigen::Matrix3f prec_cmd = (cov_cmd + reg * Eigen::Matrix3f::Identity()).inverse();
+        const Eigen::Matrix3f prec_odom = (cov_odom + reg * Eigen::Matrix3f::Identity()).inverse();
+
+        const Eigen::Matrix3f fused_precision = prec_cmd + prec_odom;
+        const Eigen::Matrix3f fused_cov = fused_precision.inverse();
+
+        // Handle angle wrapping: compute angular difference carefully
+        Eigen::Vector3f pred_odom_adj = pred_odom;
+        float angle_diff = pred_odom[2] - pred_cmd[2];
+        while (angle_diff > M_PI) angle_diff -= 2.0f * M_PI;
+        while (angle_diff < -M_PI) angle_diff += 2.0f * M_PI;
+        pred_odom_adj[2] = pred_cmd[2] + angle_diff;  // Unwrap relative to cmd
+
+        const Eigen::Vector3f fused_mean = fused_cov * (prec_cmd * pred_cmd + prec_odom * pred_odom_adj);
+
+        // Normalize fused angle
+        float theta = fused_mean[2];
+        while (theta > M_PI) theta -= 2.0f * M_PI;
+        while (theta < -M_PI) theta += 2.0f * M_PI;
+
+        Eigen::Vector3f result = fused_mean;
+        result[2] = theta;
+
+        return {result, fused_precision};
+    }
+
 } // namespace rc

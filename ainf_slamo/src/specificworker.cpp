@@ -28,6 +28,7 @@
 #include <unistd.h>  // For sysconf
 #include <cmath>     // For std::fabs
 #include <limits>    // For std::numeric_limits
+#include <random>    // For odometry noise
 
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
 {
@@ -150,7 +151,7 @@ void SpecificWorker::initialize()
         std::terminate();
     }
     if (!robot.has_value())
-        qWarning() << "initialize(): GT pose from webots not available — debug error stats will be disabled.";
+        qWarning() << "initialize(): GT pose from webots not available — debug/error stats will be disabled.";
 
     // Center view in (0,0) since GT room is centered there
     const float view_side_m = 6.f;
@@ -223,8 +224,10 @@ void SpecificWorker::compute()
 
     if(room_ai.is_initialized())
     {
-        // Pass velocity and dt to update
-        if(const auto res = room_ai.update(lidar_local_.value(), velocity_history_); res.ok)
+        // Pass velocity, odometry and lidar to update
+        if(const auto res = room_ai.update(lidar_local_.value(),
+                                           velocity_history_,
+                                           odometry_history_); res.ok)
         {
             update_ui(res, velocity_history_.back(), fps_val);
             display_robot(res.robot_pose, res.covariance);
@@ -251,6 +254,7 @@ void SpecificWorker::compute()
             }
         }
     }
+    else qWarning() << "room not initialized";
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -458,7 +462,7 @@ void SpecificWorker::display_gt_error(const Eigen::Affine2f &estimated_pose,
     if (!gt_heading)
     {
         // Heading line along local X axis (same convention as robot_polygon via add_robot)
-        gt_heading = viewer->scene.addLine(0, 0, R, 0,
+        gt_heading = viewer->scene.addLine(0, 0, 0, R,
                                            QPen(QColor("magenta"), 0.02));
         gt_heading->setZValue(50);
     }
@@ -689,7 +693,6 @@ float SpecificWorker::yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternio
 ///////////////////////////////////////////////////////////////////////////////
 /////SUBSCRIPTION to sendData method from JoystickAdapter interface
 //////////////////////////////////////////////////////////////////////////////////
-
 void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data)
 {
 	rc::VelocityCommand cmd;
@@ -704,6 +707,28 @@ void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData dat
 	}
     cmd.timestamp = std::chrono::high_resolution_clock::now();
 	velocity_history_.push_back(cmd);
+}
+
+//SUBSCRIPTION to newFullPose method from FullPoseEstimationPub interface
+void SpecificWorker::FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimation::FullPoseEuler pose)
+{
+    // Add configurable Gaussian noise to simulate realistic odometry uncertainty
+    static std::mt19937 gen{std::random_device{}()};
+    const float nf = params.ODOMETRY_NOISE_FACTOR;
+
+    auto add_noise = [&](float value) -> float
+    {
+        if (nf <= 0.f || value == 0.f) return value;
+        std::normal_distribution<float> dist(0.f, std::abs(value) * nf);
+        return value + dist(gen);
+    };
+
+    rc::OdometryReading odom;
+    odom.adv  = add_noise(pose.adv);    // forward velocity, m/s
+    odom.side = add_noise(pose.side);   // lateral velocity, m/s
+    odom.rot  = add_noise(pose.rot);    // angular velocity, rad/s
+    odom.timestamp = std::chrono::high_resolution_clock::now();
+    odometry_history_.push_back(odom);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1209,7 +1234,6 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
     qInfo() << "Polygon loaded from" << QString::fromStdString(filename)
             << "with" << room_polygon_.size() << "vertices";
 }
-
 
 void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
 {

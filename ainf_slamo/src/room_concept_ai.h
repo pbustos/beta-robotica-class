@@ -92,6 +92,18 @@ public:
         float weight_boost_factor = 2.0f;          // Multiplier for emphasized parameters
         float weight_reduction_factor = 0.5f;      // Multiplier for de-emphasized parameters
         float weight_smoothing_alpha = 0.3f;       // EMA smoothing for weight transitions
+
+        // ===== Dual-Prior Fusion (command + odometry) =====
+        // ===== Prior covariance model =====
+        // Process noise for commanded velocity prior (open-loop, less reliable)
+        float cmd_noise_trans = 0.20f;   // Fractional position noise per meter of motion
+        float cmd_noise_rot   = 0.10f;   // Fractional rotation noise per radian of rotation
+        float cmd_noise_base  = 0.05f;   // Base position noise even when stationary (m)
+
+        // Process noise for measured odometry prior (encoder/IMU, more reliable)
+        float odom_noise_trans = 0.08f;  // Fractional position noise per meter of motion
+        float odom_noise_rot   = 0.04f;  // Fractional rotation noise per radian of rotation
+        float odom_noise_base  = 0.01f;  // Base position noise even when stationary (m)
     };
 
     // Get the torch device based on params
@@ -154,7 +166,8 @@ public:
     }
 
     UpdateResult update(const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar,
-                        const boost::circular_buffer<rc::VelocityCommand> &velocity_history);
+                        const boost::circular_buffer<rc::VelocityCommand> &velocity_history,
+                        const boost::circular_buffer<rc::OdometryReading> &odometry_history);
 
     Params params;
 
@@ -187,17 +200,6 @@ private:
    // Compute velocity-adaptive weights based on motion profile
    Eigen::Vector3f compute_velocity_adaptive_weights(const OdometryPrior& odometry_prior);
 
-    struct PredictionParameters
-   {
-       // Process noise - controls how fast covariance grows during prediction
-       // Higher values = faster covariance growth = more frequent optimizations
-       // These are realistic values for a differential drive robot with encoder noise
-       float NOISE_TRANS = 0.20f;  // 20% error per meter of motion (realistic wheel slip)
-       float NOISE_ROT = 0.10f;    // ~6° stddev per radian of rotation
-       float NOISE_BASE = 0.05f;   // Base noise even when stationary (5cm drift)
-   };
-    PredictionParameters prediction_params;
-
     struct PredictionState
     {
         torch::Tensor propagated_cov;  // Predicted covariance
@@ -206,13 +208,30 @@ private:
         std::vector<float> predicted_pose; // Robot pose after prediction
     };
 
-    Eigen::Matrix3f compute_motion_covariance(const OdometryPrior &odometry_prior);
+    Eigen::Matrix3f compute_motion_covariance(const OdometryPrior &odometry_prior,
+                                              bool is_measured_odometry = false);
     RoomConceptAI::OdometryPrior compute_odometry_prior(
                     const boost::circular_buffer<VelocityCommand>& velocity_history,
                     const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar);
     Eigen::Vector3f integrate_velocity_over_window(const Eigen::Affine2f &robot_pose,
                                                    const boost::circular_buffer<VelocityCommand> &velocity_history,
                                                    const int64_t &t_start_ms, const int64_t &t_end_ms);
+
+    /// Integrate measured odometry (adv, side, rot) over the same time window
+    Eigen::Vector3f integrate_odometry_over_window(const Eigen::Affine2f &robot_pose,
+                                                   const boost::circular_buffer<OdometryReading> &odometry_history,
+                                                   const int64_t &t_start_ms, const int64_t &t_end_ms);
+
+    /// Compute odometry prior from measured velocities (encoder/IMU feedback)
+    OdometryPrior compute_measured_odometry_prior(
+                    const boost::circular_buffer<OdometryReading>& odometry_history,
+                    const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar);
+
+    /// Fuse command prior and measured odometry prior into a single Gaussian
+    /// Returns: (fused_mean, fused_precision) where mean is [x, y, theta]
+    std::pair<Eigen::Vector3f, Eigen::Matrix3f> fuse_priors(
+        const Eigen::Vector3f &pred_cmd, const Eigen::Matrix3f &cov_cmd,
+        const Eigen::Vector3f &pred_odom, const Eigen::Matrix3f &cov_odom) const;
 
     PredictionState predict_step(std::shared_ptr<Model> &room,
                                   const OdometryPrior &odometry_prior,
