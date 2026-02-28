@@ -94,11 +94,9 @@ class SpecificWorker : public GenericWorker
 	private:
 	    bool startup_check_flag;
 
-	//Graphics
+	// Graphics
 	AbstractGraphicViewer *viewer;
 
-	//Robot
-	Eigen::Affine2f robot_pose = Eigen::Affine2f::Identity();
 
 	struct Params
 	{
@@ -107,13 +105,11 @@ class SpecificWorker : public GenericWorker
 		float ROBOT_LENGTH = 0.480;  // m
 		float ROBOT_SEMI_WIDTH = ROBOT_WIDTH / 2.f;     // m
 		float ROBOT_SEMI_LENGTH = ROBOT_LENGTH / 2.f;    // m
-		float MIN_DISTANCE_TO_TARGET = ROBOT_WIDTH / 2.f; // m
 		std::string LIDAR_NAME_HIGH = "helios";
 		float MAX_LIDAR_HIGH_RANGE = 100;  // m
 		int LIDAR_LOW_DECIMATION_FACTOR = 1;
-		int LIDAR_HIGH_DECIMATION_FACTOR = 1;
 		float LIDAR_HIGH_MIN_HEIGHT = 1.2; // m, points below this height in the high lidar will be ignored (e.g. to filter tables)
-		float LIDAR_HIGH_MAX_HEIGHT = 1.4f; // m, points above this height in the high lidar will be ignored (e.g. to filter ceiling)
+		float LIDAR_HIGH_MAX_HEIGHT = 2.2f; // m, points above this height in the high lidar will be ignored (e.g. to filter ceiling)
 		QRectF GRID_MAX_DIM{-8, -5, 16, 10};
 		int MAX_LIDAR_DRAW_POINTS = 500;
 	};
@@ -122,7 +118,6 @@ class SpecificWorker : public GenericWorker
 	// Timer
 	rc::Timer<> clock;
 	FPSCounter fps;
-	int hz = 0;
 
 	// Sync Buffer: robot pose (GT, for debug/stats), lidar local points
 	BufferSync<InOut<Eigen::Affine2f, Eigen::Affine2f>,
@@ -134,39 +129,26 @@ class SpecificWorker : public GenericWorker
 	std::atomic<bool> stop_lidar_thread{false};
 	void read_lidar();
 
-	// GT Room
-	QRectF room_rect_gt;
-	std::vector<Eigen::Vector2f> room_polygon_gt;  // Polygon vertices for GT room (in room frame)
-	std::vector<Eigen::Vector2f> room_polygon_original_;  // Original polygon before any flips
+	// Room model
+	std::vector<Eigen::Vector2f> room_polygon_;  // Room model polygon vertices (loaded from SVG or captured)
 	std::vector<Eigen::Vector2f> room_polygon_backup_;  // Backup of polygon during capture
 	QGraphicsPolygonItem* polygon_item_backup_ = nullptr;  // Backup of polygon graphic item
 	bool capturing_room_polygon = false;
 	std::vector<QGraphicsEllipseItem*> polygon_vertex_items;
 	QGraphicsPolygonItem* polygon_item = nullptr;
 
-	// Extra polygons loaded from SVG (all closed paths, with their SVG color)
-	struct SvgPolygon {
-		std::vector<Eigen::Vector2f> vertices;
-		QColor color;
-		QString id;
-	};
-	std::vector<SvgPolygon> svg_extra_polygons_;
-	std::vector<QGraphicsPolygonItem*> svg_extra_polygon_items_;
-
 	// Flip state tracking
 	bool flip_x_applied_ = false;
 	bool flip_y_applied_ = false;
 
-	// velocity commands. boost buffer is thread safe
+	// Velocity commands (boost circular buffer is thread safe)
 	boost::circular_buffer<rc::VelocityCommand> velocity_history_{20};
-    rc::VelocityCommand compute_current_odometry(long lidar_timestamp_ms, float delay = 0.0f);
 
 	// Active inference room concept
 	rc::RoomConceptAI room_ai;
 
 	// CPU usage tracking
 	float get_cpu_usage();
-	clock_t last_cpu_time_ = 0;
 	clock_t last_sys_cpu_time_ = 0;
 	clock_t last_user_cpu_time_ = 0;
 	int num_processors_ = 1;
@@ -188,13 +170,10 @@ class SpecificWorker : public GenericWorker
 	void on_scene_clicked(QPointF pos);
 
 	// Layout save/load
-	void save_layout_to_file(const std::string& filename);
-	void save_layout_to_svg(const std::string& filename);
-	void load_layout_from_file(const std::string& filename, const std::string& gt_polygon_id = "");
-	void load_polygon_from_file(const std::string& filename, const std::string& gt_polygon_id = "");  // Only loads vertices, doesn't init room_ai
-	void load_polygon_from_svg(const QString& svg_content, const std::string& gt_polygon_id = "");    // Parse SVG path/polygon data
-	// Returns list of closed polygon ids found in an SVG file (for UI selection)
-	std::vector<std::string> get_svg_polygon_ids(const std::string& filename);
+    void save_layout_to_svg(const std::string& filename);
+    void load_layout_from_file(const std::string& filename);
+    void load_polygon_from_file(const std::string& filename);
+    void load_polygon_from_svg(const QString& svg_content);
 
 	// Pose persistence (for fast restart)
 	void save_last_pose();
@@ -221,9 +200,6 @@ private slots:
 };
 
 #endif
-
-
-
 
 
 

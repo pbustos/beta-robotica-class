@@ -14,11 +14,8 @@ Proxies.TopicManager = "IceStorm/TopicManager:default -p 9999"
 Period.Compute = 50
 Period.Emergency = 500
 
-# SVG/JSON layout file to load at startup
+# SVG layout file to load at startup (must contain exactly one closed polygon)
 layout_file = "completo_unified.svg"
-# ID of the polygon to use as Ground Truth: chema  hall  beta
-# Leave empty for auto-selection (largest non-lidar polygon)
-gt_polygon_id = "hall"
 
 # Set to false when running on a real robot (disables Webots GT pose and related UI)
 # Note: keep the Proxies.Webots2Robocomp line above even when false — the proxy is created but never used

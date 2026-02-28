@@ -25,7 +25,6 @@
 #include <QRegularExpression>
 #include <QDateTime>
 #include <QDomDocument>
-#include <QInputDialog>
 #include <unistd.h>  // For sysconf
 #include <cmath>     // For std::fabs
 #include <limits>    // For std::numeric_limits
@@ -102,13 +101,11 @@ void SpecificWorker::initialize()
     connect(pushButton_calibrateGT, &QPushButton::clicked, this, &SpecificWorker::slot_calibrate_gt);
 
     // Try to load default layout on startup (only loads vertices, doesn't init room_ai yet)
-    // Config keys: layout_file (path), gt_polygon_id (id of the polygon to use as GT, optional)
+    // Config keys: layout_file (SVG path)
     std::string layout_file = "";
-    std::string gt_polygon_id;
     try { layout_file  = configLoader.get<std::string>("layout_file");  } catch(...) {}
-    try { gt_polygon_id = configLoader.get<std::string>("gt_polygon_id"); } catch(...) {}
     try { params.USE_WEBOTS = configLoader.get<bool>("use_webots"); } catch(...) {}
-    load_polygon_from_file(layout_file, gt_polygon_id);
+    load_polygon_from_file(layout_file);
 
     // Show mode indicator in UI
     if (params.USE_WEBOTS)
@@ -145,14 +142,14 @@ void SpecificWorker::initialize()
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         const auto &[r, ll] = buffer_sync.read(timestamp);
         robot = r; lidar_local = ll;
-    }while (++startup_check_counter < 20 and not lidar_local.has_value());
+    }while (++startup_check_counter < 20 && !lidar_local.has_value());
 
-    if (not lidar_local.has_value())
+    if (!lidar_local.has_value())
     {
         qWarning() << "initialize(): No lidar data from buffer_sync. Exiting.";
         std::terminate();
     }
-    if (not robot.has_value())
+    if (!robot.has_value())
         qWarning() << "initialize(): GT pose from webots not available — debug error stats will be disabled.";
 
     // Center view in (0,0) since GT room is centered there
@@ -160,25 +157,12 @@ void SpecificWorker::initialize()
     viewer->fitToScene(QRectF(- view_side_m/2.f, - view_side_m/2.f, view_side_m, view_side_m));
     viewer->centerOn(0, 0);
 
-    // Room dimensions for initial rectangular model (will be replaced if polygon is captured)
-    room_rect_gt = QRectF(-7, -4, 14, 8);  // 14m x 8m area centered on origin
-    // Don't draw rectangle here - will be drawn by draw_estimated_room or draw_room_polygon
+    // Default room dimensions for fallback rectangular model
+    constexpr float room_width = 14.f;   // m
+    constexpr float room_length = 8.f;   // m
 
-    const float room_width = room_rect_gt.width();
-    const float room_length = room_rect_gt.height();
-
-    // Estimate room center from lidar (robot frame) and derive robot pose wrt room center
+    // Estimate room center from lidar for initial pose
     const auto &pts = lidar_local.value().first;
-    RoboCompLidar3D::TPoints lidar_points;
-    lidar_points.reserve(pts.size());
-    for(const auto &p : pts)
-    {
-        RoboCompLidar3D::TPoint tp;	// TODO: change RoomConceptAI to use Eigen::Vector3f directly and avoid this copy
-        tp.x = p.x();
-        tp.y = p.y();
-        tp.z = p.z();
-        lidar_points.push_back(tp);
-    }
 
     rc::PointcloudCenterEstimator estimator;
     Eigen::Vector2d room_center_in_robot = Eigen::Vector2d::Zero();
@@ -204,12 +188,12 @@ void SpecificWorker::initialize()
     const Eigen::Vector2f init_xy = -(R * room_center_in_robot.cast<float>());
 
     // Initialize room_ai: use loaded polygon if available, otherwise use rectangle
-    if (!room_polygon_gt.empty())
+    if (!room_polygon_.empty())
     {
         // Use pre-loaded polygon from file
-        room_ai.set_polygon_room(room_polygon_gt);
+        room_ai.set_polygon_room(room_polygon_);
         draw_room_polygon();
-        qInfo() << "RoomConceptAI initialized with loaded polygon:" << room_polygon_gt.size() << "vertices";
+        qInfo() << "RoomConceptAI initialized with loaded polygon:" << room_polygon_.size() << "vertices";
 
         // Perform grid search or load saved pose to solve kidnapping problem
         perform_grid_search(pts);
@@ -222,10 +206,8 @@ void SpecificWorker::initialize()
             << room_width << room_length << init_xy.x() << init_xy.y() << init_phi
             << "  (room_center_in_robot=" << room_center_in_robot.x() << room_center_in_robot.y() << ")";
     }
-
 	setPeriod("Compute", 50);
 }
-
 
 void SpecificWorker::compute()
 {
@@ -233,8 +215,9 @@ void SpecificWorker::compute()
     const auto timestamp = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     const auto &[robot_pose_gt_, lidar_local_] = buffer_sync.read(timestamp);
+
     // Only lidar is required; GT pose is optional (debug/stats only)
-    if (not lidar_local_.has_value())
+    if (!lidar_local_.has_value())
     { qWarning() << "No lidar data from buffer_sync"; return; };
     const auto &lidar_local = lidar_local_.value().first;
 
@@ -556,23 +539,19 @@ void SpecificWorker::read_lidar()
                                                                    params.MAX_LIDAR_HIGH_RANGE*1000.f,  // Convert to mm
                                                                    params.LIDAR_LOW_DECIMATION_FACTOR);
 
-            // // Store local points (original LiDAR frame) and transform to world frame
+            // Store local points in robot frame, filtering by height and body proximity
             std::vector<Eigen::Vector3f> points_local;
             points_local.reserve(data.points.size());
-            const float low_height_offset = params.LIDAR_HIGH_MIN_HEIGHT*params.LIDAR_HIGH_MIN_HEIGHT;  //TODO: change to use actual height instead of squared height for filtering
-            const float high_height_offset = (params.LIDAR_HIGH_MAX_HEIGHT * params.LIDAR_HIGH_MAX_HEIGHT);
-            const float body_offset = params.ROBOT_SEMI_WIDTH * params.ROBOT_SEMI_WIDTH; // Filter points that are too close to the robot's center (e.g. points on the robot itself)
+            const float body_offset_sq = params.ROBOT_SEMI_WIDTH * params.ROBOT_SEMI_WIDTH;
             for (const auto &p : data.points)
             {
                 const float pmx = p.x / 1000.f;
                 const float pmy = p.y / 1000.f;
                 const float pmz = p.z / 1000.f;
-                if (pmx*pmx + pmy*pmy > body_offset and
-                    pmz > low_height_offset and
-                    pmz < high_height_offset) // Filter points below min height (e.g. to ignore tables)
-                {
+                if (pmx*pmx + pmy*pmy > body_offset_sq &&
+                    pmz > params.LIDAR_HIGH_MIN_HEIGHT &&
+                    pmz < params.LIDAR_HIGH_MAX_HEIGHT)
                     points_local.emplace_back(pmx, pmy, pmz);
-                }
             }
 
             // Put lidar data in sync buffer
@@ -616,7 +595,7 @@ void SpecificWorker::draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state
     static QGraphicsRectItem* estimated_room_item = nullptr;
 
     // If using polygon mode, remove rectangle and return
-    if (!room_polygon_gt.empty())
+    if (!room_polygon_.empty())
     {
         if (estimated_room_item != nullptr)
         {
@@ -713,9 +692,7 @@ float SpecificWorker::yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternio
 
 void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data)
 {
-	// Parse velocity command (assuming axes[0]=adv_x, axes[1]=adv_z, axes[2]=rot)
 	rc::VelocityCommand cmd;
-	// Parse velocity command (assuming axes[0]=adv_x, axes[1]=adv_z, axes[2]=rot)
 	for (const auto &axis: data.axes)
 	{
 		if (axis.name == "rotate")
@@ -735,17 +712,11 @@ void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData dat
 void SpecificWorker::emergency()
 {
     std::cout << "Emergency worker" << std::endl;
-    //emergencyCODE
-    //
-    //if (SUCCESSFUL) //The componet is safe for continue
-    //  emmit goToRestore()
 }
 
 void SpecificWorker::restore()
 {
     std::cout << "Restore worker" << std::endl;
-    //restoreCODE
-    //Restore emergency component
 
 }
 
@@ -766,8 +737,8 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
     if (checked)
     {
         // Start capturing - backup existing polygon (don't remove it yet)
-        room_polygon_backup_ = room_polygon_gt;
-        room_polygon_gt.clear();
+        room_polygon_backup_ = room_polygon_;
+        room_polygon_.clear();
 
         // Clear previous vertex markers (these are only for capture mode)
         for (auto* item : polygon_vertex_items)
@@ -790,9 +761,9 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
     {
         pushButton_captureRoom->setText("Capture Room");
 
-        if (room_polygon_gt.size() >= 3)
+        if (room_polygon_.size() >= 3)
         {
-            qInfo() << "Room polygon captured with" << room_polygon_gt.size() << "vertices";
+            qInfo() << "Room polygon captured with" << room_polygon_.size() << "vertices";
 
             // Keep old polygon visible until user saves the new one
 
@@ -806,7 +777,7 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
 
             // Vertices are already in room frame (where user clicked)
             // Pass them directly to room_ai
-            room_ai.set_polygon_room(room_polygon_gt);
+            room_ai.set_polygon_room(room_polygon_);
 
             // Draw final polygon (fixed in room frame)
             draw_room_polygon();
@@ -816,7 +787,7 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
             qWarning() << "Need at least 3 vertices for a valid polygon. Restoring previous polygon.";
 
             // Restore the backup polygon
-            room_polygon_gt = room_polygon_backup_;
+            room_polygon_ = room_polygon_backup_;
             room_polygon_backup_.clear();
 
             // Remove any partial new polygon drawing
@@ -856,9 +827,9 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
 
     // Check if clicking near the first point to close the polygon
     constexpr float close_threshold = 0.3f;  // 30cm
-    if (room_polygon_gt.size() >= 3)
+    if (room_polygon_.size() >= 3)
     {
-        const float dist_to_first = (click_pos - room_polygon_gt.front()).norm();
+        const float dist_to_first = (click_pos - room_polygon_.front()).norm();
         if (dist_to_first < close_threshold)
         {
             // Close the polygon
@@ -868,7 +839,7 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
     }
 
     // Add new vertex in room frame coordinates
-    room_polygon_gt.push_back(click_pos);
+    room_polygon_.push_back(click_pos);
 
     // Draw vertex marker
     const float radius = 0.15f;
@@ -882,12 +853,12 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
     // Draw temporary polygon outline
     draw_room_polygon();
 
-    qInfo() << "Added vertex" << room_polygon_gt.size() << "at (" << pos.x() << "," << pos.y() << ")";
+    qInfo() << "Added vertex" << room_polygon_.size() << "at (" << pos.x() << "," << pos.y() << ")";
 }
 
 void SpecificWorker::draw_room_polygon()
 {
-    if (room_polygon_gt.size() < 2)
+    if (room_polygon_.size() < 2)
         return;
 
     // Remove old main polygon item
@@ -898,42 +869,17 @@ void SpecificWorker::draw_room_polygon()
         polygon_item = nullptr;
     }
 
-    // Remove old extra polygon items
-    for (auto* item : svg_extra_polygon_items_)
-    {
-        if (item) { viewer->scene.removeItem(item); delete item; }
-    }
-    svg_extra_polygon_items_.clear();
-
-    // --- Draw main room_polygon_gt ---
+    // --- Draw main room_polygon_ ---
     QPolygonF poly;
-    for (const auto& v : room_polygon_gt)
+    for (const auto& v : room_polygon_)
         poly << QPointF(v.x(), v.y());
 
-    if (!capturing_room_polygon && room_polygon_gt.size() >= 3)
-        poly << QPointF(room_polygon_gt.front().x(), room_polygon_gt.front().y());
+    if (!capturing_room_polygon && room_polygon_.size() >= 3)
+        poly << QPointF(room_polygon_.front().x(), room_polygon_.front().y());
 
     QPen pen(capturing_room_polygon ? Qt::yellow : Qt::magenta, capturing_room_polygon ? 0.08 : 0.15);
     polygon_item = viewer->scene.addPolygon(poly, pen, QBrush(Qt::NoBrush));
     polygon_item->setZValue(8);
-
-    // --- Draw extra polygons from SVG with their original colors ---
-    if (!capturing_room_polygon)
-    {
-        for (const auto& sp : svg_extra_polygons_)
-        {
-            if (sp.vertices.size() < 2) continue;
-            QPolygonF epoly;
-            for (const auto& v : sp.vertices)
-                epoly << QPointF(v.x(), v.y());
-            epoly << QPointF(sp.vertices.front().x(), sp.vertices.front().y());  // close
-
-            QPen epen(sp.color, 0.12);
-            auto* item = viewer->scene.addPolygon(epoly, epen, QBrush(Qt::NoBrush));
-            item->setZValue(7);
-            svg_extra_polygon_items_.push_back(item);
-        }
-    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -941,7 +887,7 @@ void SpecificWorker::draw_room_polygon()
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::slot_save_layout()
 {
-    if (room_polygon_gt.empty())
+    if (room_polygon_.empty())
     {
         qWarning() << "No polygon to save - capture a room first";
         return;
@@ -951,25 +897,17 @@ void SpecificWorker::slot_save_layout()
     QString filename = QFileDialog::getSaveFileName(this,
         "Save Room Layout",
         "./room_layout",
-        "JSON Files (*.json);;SVG Files (*.svg)",
+        "SVG Files (*.svg)",
         nullptr,
         QFileDialog::DontUseNativeDialog);
 
     if (filename.isEmpty())
         return;
 
-    // Check file extension and save in appropriate format
-    if (filename.endsWith(".svg", Qt::CaseInsensitive))
-    {
-        save_layout_to_svg(filename.toStdString());
-    }
-    else
-    {
-        // Default to JSON if no extension or .json extension
-        if (!filename.endsWith(".json", Qt::CaseInsensitive))
-            filename += ".json";
-        save_layout_to_file(filename.toStdString());
-    }
+    if (!filename.endsWith(".svg", Qt::CaseInsensitive))
+        filename += ".svg";
+
+    save_layout_to_svg(filename.toStdString());
 
     // Remove the old polygon from the UI now that the new one is saved
     if (polygon_item_backup_)
@@ -986,50 +924,26 @@ void SpecificWorker::slot_load_layout()
     QString filename = QFileDialog::getOpenFileName(this,
         "Load Room Layout",
         "./",
-        "Layout Files (*.json *.svg);;JSON Files (*.json);;SVG Files (*.svg)",
+        "SVG Files (*.svg)",
         nullptr,
         QFileDialog::DontUseNativeDialog);
 
     if (filename.isEmpty())
         return;
 
-    // For SVG files, check how many closed polygons exist and let the user pick
-    std::string gt_id;
-    if (filename.endsWith(".svg", Qt::CaseInsensitive))
-    {
-        const auto ids = get_svg_polygon_ids(filename.toStdString());
-        if (ids.size() > 1)
-        {
-            QStringList items;
-            for (const auto& id : ids)
-                items << QString::fromStdString(id);
-
-            bool ok = false;
-            QString chosen = QInputDialog::getItem(this,
-                "Select GT Polygon",
-                QString("The SVG contains %1 closed polygons.\nSelect the one to use as Ground Truth:").arg(ids.size()),
-                items, 0, false, &ok,
-                Qt::Dialog);
-
-            if (!ok)
-                return;   // user cancelled
-            gt_id = chosen.toStdString();
-        }
-    }
-
-    load_layout_from_file(filename.toStdString(), gt_id);
+    load_layout_from_file(filename.toStdString());
 }
 
 void SpecificWorker::slot_flip_x()
 {
-    if (room_polygon_gt.empty())
+    if (room_polygon_.empty())
     {
         qWarning() << "Cannot flip: no room polygon defined";
         return;
     }
 
     // Flip all polygon vertices on X axis
-    for (auto& vertex : room_polygon_gt)
+    for (auto& vertex : room_polygon_)
     {
         vertex.x() = -vertex.x();
     }
@@ -1040,7 +954,7 @@ void SpecificWorker::slot_flip_x()
     // Update the room model with flipped polygon
     if (room_ai.is_initialized())
     {
-        room_ai.set_polygon_room(room_polygon_gt);
+        room_ai.set_polygon_room(room_polygon_);
     }
 
     // Redraw the polygon
@@ -1051,14 +965,14 @@ void SpecificWorker::slot_flip_x()
 
 void SpecificWorker::slot_flip_y()
 {
-    if (room_polygon_gt.empty())
+    if (room_polygon_.empty())
     {
         qWarning() << "Cannot flip: no room polygon defined";
         return;
     }
 
     // Flip all polygon vertices on Y axis
-    for (auto& vertex : room_polygon_gt)
+    for (auto& vertex : room_polygon_)
     {
         vertex.y() = -vertex.y();
     }
@@ -1069,7 +983,7 @@ void SpecificWorker::slot_flip_y()
     // Update the room model with flipped polygon
     if (room_ai.is_initialized())
     {
-        room_ai.set_polygon_room(room_polygon_gt);
+        room_ai.set_polygon_room(room_polygon_);
     }
 
     // Redraw the polygon
@@ -1135,49 +1049,9 @@ void SpecificWorker::slot_robot_rotate(QPointF pos)
     room_ai.set_robot_pose(robot_x, robot_y, new_theta);
 }
 
-void SpecificWorker::save_layout_to_file(const std::string& filename)
-{
-    if (room_polygon_gt.empty())
-    {
-        qWarning() << "No polygon to save";
-        return;
-    }
-
-    QJsonObject root;
-    root["type"] = "polygon";
-    root["version"] = 1;
-
-    QJsonArray vertices;
-    for (const auto& v : room_polygon_gt)
-    {
-        QJsonObject vertex;
-        vertex["x"] = static_cast<double>(v.x());
-        vertex["y"] = static_cast<double>(v.y());
-        vertices.append(vertex);
-    }
-    root["vertices"] = vertices;
-
-    // Save room dimensions for reference
-    root["room_width"] = static_cast<double>(room_rect_gt.width());
-    root["room_height"] = static_cast<double>(room_rect_gt.height());
-
-    QJsonDocument doc(root);
-    QFile file(QString::fromStdString(filename));
-    if (file.open(QIODevice::WriteOnly))
-    {
-        file.write(doc.toJson());
-        file.close();
-        qInfo() << "Layout saved to" << QString::fromStdString(filename);
-    }
-    else
-    {
-        qWarning() << "Failed to save layout to" << QString::fromStdString(filename);
-    }
-}
-
 void SpecificWorker::save_layout_to_svg(const std::string& filename)
 {
-    if (room_polygon_gt.empty())
+    if (room_polygon_.empty())
     {
         qWarning() << "No polygon to save";
         return;
@@ -1189,7 +1063,7 @@ void SpecificWorker::save_layout_to_svg(const std::string& filename)
     float max_x = std::numeric_limits<float>::lowest();
     float max_y = std::numeric_limits<float>::lowest();
 
-    for (const auto& v : room_polygon_gt)
+    for (const auto& v : room_polygon_)
     {
         min_x = std::min(min_x, v.x());
         min_y = std::min(min_y, v.y());
@@ -1267,10 +1141,10 @@ void SpecificWorker::save_layout_to_svg(const std::string& filename)
     out << "      points=\"";
 
     // Write polygon points (flip Y for SVG coordinate system)
-    for (size_t i = 0; i < room_polygon_gt.size(); ++i)
+    for (size_t i = 0; i < room_polygon_.size(); ++i)
     {
         if (i > 0) out << " ";
-        out << room_polygon_gt[i].x() << "," << -room_polygon_gt[i].y();
+        out << room_polygon_[i].x() << "," << -room_polygon_[i].y();
     }
 
     out << "\"\n";
@@ -1278,9 +1152,9 @@ void SpecificWorker::save_layout_to_svg(const std::string& filename)
 
     // Add vertex circles for easier editing
     out << "    <!-- Vertex markers -->\n";
-    for (size_t i = 0; i < room_polygon_gt.size(); ++i)
+    for (size_t i = 0; i < room_polygon_.size(); ++i)
     {
-        out << "    <circle cx=\"" << room_polygon_gt[i].x() << "\" cy=\"" << -room_polygon_gt[i].y()
+        out << "    <circle cx=\"" << room_polygon_[i].x() << "\" cy=\"" << -room_polygon_[i].y()
             << "\" r=\"0.08\" fill=\"#ffff00\" stroke=\"#000000\" stroke-width=\"0.01\""
             << " inkscape:label=\"Vertex " << i << "\"/>\n";
     }
@@ -1290,23 +1164,23 @@ void SpecificWorker::save_layout_to_svg(const std::string& filename)
 
     file.close();
     qInfo() << "SVG layout saved to" << QString::fromStdString(filename)
-            << "(" << room_polygon_gt.size() << " vertices)";
+            << "(" << room_polygon_.size() << " vertices)";
 }
 
-void SpecificWorker::load_layout_from_file(const std::string& filename, const std::string& gt_polygon_id)
+void SpecificWorker::load_layout_from_file(const std::string& filename)
 {
-    load_polygon_from_file(filename, gt_polygon_id);
+    load_polygon_from_file(filename);
 
     // If polygon was loaded, initialize room_ai
-    if (room_polygon_gt.size() >= 3)
+    if (room_polygon_.size() >= 3)
     {
-        room_ai.set_polygon_room(room_polygon_gt);
+        room_ai.set_polygon_room(room_polygon_);
         draw_room_polygon();
-        qInfo() << "Layout loaded and room_ai initialized with" << room_polygon_gt.size() << "vertices";
+        qInfo() << "Layout loaded and room_ai initialized with" << room_polygon_.size() << "vertices";
     }
 }
 
-void SpecificWorker::load_polygon_from_file(const std::string& filename, const std::string& gt_polygon_id)
+void SpecificWorker::load_polygon_from_file(const std::string& filename)
 {
     QFile file(QString::fromStdString(filename));
     if (!file.open(QIODevice::ReadOnly))
@@ -1320,7 +1194,7 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename, const s
     file.close();
 
     // Clear previous polygon
-    room_polygon_gt.clear();
+    room_polygon_.clear();
     for (auto* item : polygon_vertex_items)
     {
         viewer->scene.removeItem(item);
@@ -1328,117 +1202,16 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename, const s
     }
     polygon_vertex_items.clear();
 
-    // Check if file is SVG or JSON based on content
+    // Parse SVG file
     QString content = QString::fromUtf8(data);
-    if (content.trimmed().startsWith("<?xml") || content.trimmed().startsWith("<svg"))
-    {
-        // Parse SVG file
-        load_polygon_from_svg(content, gt_polygon_id);
-        return;
-    }
-
-    // Parse as JSON
-    QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
-    if (parseError.error != QJsonParseError::NoError)
-    {
-        qWarning() << "Failed to parse layout file:" << parseError.errorString();
-        return;
-    }
-
-    QJsonObject root = doc.object();
-
-    // Check for different JSON formats
-    QJsonArray vertices;
-    if (root.contains("type") && root["type"].toString() == "polygon")
-    {
-        // Original format: room_layout.json style
-        vertices = root["vertices"].toArray();
-    }
-    else if (root.contains("external_contour"))
-    {
-        // Hall format: hall_layout.json style with external_contour
-        vertices = root["external_contour"].toArray();
-        qInfo() << "Loading hall layout format";
-
-        // Log metadata info if present
-        if (root.contains("metadata"))
-        {
-            QJsonObject metadata = root["metadata"].toObject();
-            if (metadata.contains("scale_factor"))
-            {
-                // The coordinates are already in meters, scale_factor was used for conversion
-                qInfo() << "Hall layout scale_factor:" << metadata["scale_factor"].toDouble();
-            }
-        }
-    }
-    else
-    {
-        qWarning() << "Unknown layout format - expected 'type: polygon' or 'external_contour'";
-        return;
-    }
-
-    // Load vertices (both formats use x, y coordinates)
-    for (const auto& v : vertices)
-    {
-        QJsonObject vertex = v.toObject();
-        float x = static_cast<float>(vertex["x"].toDouble());
-        float y = static_cast<float>(vertex["y"].toDouble());
-        room_polygon_gt.emplace_back(x, y);
-    }
-
-    // Remove the closing point if it's the same as the first point (hall format includes it)
-    if (room_polygon_gt.size() > 2)
-    {
-        const auto& first = room_polygon_gt.front();
-        const auto& last = room_polygon_gt.back();
-        if (std::fabs(first.x() - last.x()) < 0.01f && std::fabs(first.y() - last.y()) < 0.01f)
-        {
-            room_polygon_gt.pop_back();
-            qInfo() << "Removed duplicate closing point";
-        }
-    }
+    load_polygon_from_svg(content);
 
     qInfo() << "Polygon loaded from" << QString::fromStdString(filename)
-            << "with" << room_polygon_gt.size() << "vertices";
+            << "with" << room_polygon_.size() << "vertices";
 }
 
-std::vector<std::string> SpecificWorker::get_svg_polygon_ids(const std::string& filename)
-{
-    QFile file(QString::fromStdString(filename));
-    if (!file.open(QIODevice::ReadOnly)) return {};
-    QString content = QString::fromUtf8(file.readAll());
-    file.close();
 
-    std::vector<std::string> ids;
-    QDomDocument doc;
-    if (!doc.setContent(content)) return ids;
-
-    int anonCount = 0;
-    std::function<void(const QDomElement&)> walk = [&](const QDomElement& elem)
-    {
-        if (elem.tagName() == "path")
-        {
-            QString d = elem.attribute("d");
-            if (d.contains('Z') || d.contains('z'))
-            {
-                QString id = elem.attribute("id");
-                if (id.isEmpty())
-                    id = QString("(no id) path #%1").arg(anonCount++);
-                ids.push_back(id.toStdString());
-            }
-        }
-        QDomNode child = elem.firstChild();
-        while (!child.isNull()) {
-            if (child.isElement()) walk(child.toElement());
-            child = child.nextSibling();
-        }
-    };
-    walk(doc.documentElement());
-    return ids;
-}
-
-void SpecificWorker::load_polygon_from_svg(const QString& svg_content, const std::string& gt_polygon_id)
+void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
 {
     // -----------------------------------------------------------------------
     // Helper: parse an SVG path 'd' attribute into a list of absolute points.
@@ -1545,60 +1318,24 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content, const std
     };
 
     // -----------------------------------------------------------------------
-    // Helper: extract stroke color from a style="..." or stroke="..." attribute
-    // -----------------------------------------------------------------------
-    auto extractColor = [](const QString& pathElement) -> QColor
-    {
-        // Try style="...stroke:#rrggbb..."
-        QRegularExpression styleRe(R"(style\s*=\s*\"[^\"]*stroke\s*:\s*(#[0-9a-fA-F]{3,6}))");
-        auto m = styleRe.match(pathElement);
-        if (m.hasMatch()) return QColor(m.captured(1));
-        // Try stroke="#rrggbb"
-        QRegularExpression strokeRe(R"(\bstroke\s*=\s*\"(#[0-9a-fA-F]{3,6})\")");
-        m = strokeRe.match(pathElement);
-        if (m.hasMatch()) return QColor(m.captured(1));
-        return Qt::white;
-    };
-
-    // -----------------------------------------------------------------------
-    // -----------------------------------------------------------------------
     // Struct to hold a parsed path with its metadata
     // -----------------------------------------------------------------------
     struct ParsedPath {
         std::vector<Eigen::Vector2f> pts;
-        QColor color;
         QString id;
     };
     std::vector<ParsedPath> allPaths;
 
     // -----------------------------------------------------------------------
-    // Step 1: Parse ALL <path> elements in the file.
+    // Parse <path> elements using Qt's XML parser for robustness.
     // For paths inside a <g transform="matrix(...)"> apply the group transform.
     // -----------------------------------------------------------------------
-
-    // We need to handle nested groups. Strategy:
-    // - First collect all <g> blocks with a matrix transform and the paths inside them
-    // - Then collect top-level paths
-
-    // Regex to match a full <path .../> or <path ...></path> element
-    QRegularExpression pathElemRe(R"(<path\b([^>]*)(?:/>|>(?:.*?)</path>))",
-                                   QRegularExpression::DotMatchesEverythingOption);
-
-    // Process groups with transform first
-    QRegularExpression gBlockRe(R"(<g\b([^>]*)>((?:(?!<g\b).)*?)</g>)",
-                                  QRegularExpression::DotMatchesEverythingOption);
-    // We use a simpler approach: scan the whole content for path elements and also
-    // track which group they belong to by looking at context.
-    // Simplest robust approach: use QDomDocument to parse the SVG properly.
-
-    // Use Qt's XML parser for robustness
     QDomDocument doc;
     QString parseErr;
     int errLine, errCol;
     if (!doc.setContent(svg_content, false, &parseErr, &errLine, &errCol))
     {
         qWarning() << "[SVG] XML parse error at line" << errLine << "col" << errCol << ":" << parseErr;
-        // Fall back to regex approach (skip groups for now)
     }
     else
     {
@@ -1615,8 +1352,6 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content, const std
                 std::array<float,6> localMat = {1,0,0,1,0,0};
                 if (extractMatrix(elem.attribute("transform"), localMat))
                 {
-                    // Compose: currentMat = parentMat * localMat
-                    // matrix mul: [a,b,c,d,e,f] composed
                     float a1=parentMat[0],b1=parentMat[1],c1=parentMat[2],
                           d1=parentMat[3],e1=parentMat[4],f1=parentMat[5];
                     float a2=localMat[0], b2=localMat[1], c2=localMat[2],
@@ -1638,32 +1373,23 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content, const std
                     auto pts = parsePath(d, /*requireClosed=*/true);
                     if (pts.size() >= 3)
                     {
-                        // Build element string for color extraction (re-serialize attributes)
-                        QString elemStr = "<path";
-                        auto attrs = elem.attributes();
-                        for (int i = 0; i < attrs.count(); ++i)
-                            elemStr += " " + attrs.item(i).nodeName() + "=\"" + attrs.item(i).nodeValue() + "\"";
-
                         // Apply accumulated transform
                         bool isIdentity = (currentMat[0]==1 && currentMat[1]==0 && currentMat[2]==0 &&
                                            currentMat[3]==1 && currentMat[4]==0 && currentMat[5]==0);
                         if (!isIdentity) applyMatrix(pts, currentMat);
 
                         ParsedPath pp;
-                        pp.pts   = std::move(pts);
-                        pp.color = extractColor(elemStr);
-                        pp.id    = elem.attribute("id");
+                        pp.pts = std::move(pts);
+                        pp.id  = elem.attribute("id");
                         allPaths.push_back(std::move(pp));
 
-                        qInfo() << "[SVG] Found closed path id=" << pp.id
-                                << "color=" << allPaths.back().color.name()
+                        qInfo() << "[SVG] Found closed path id=" << allPaths.back().id
                                 << "vertices=" << allPaths.back().pts.size();
                     }
                 }
             }
             else
             {
-                // Recurse into children
                 QDomNode child = elem.firstChild();
                 while (!child.isNull())
                 {
@@ -1686,70 +1412,11 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content, const std
 
     qInfo() << "[SVG] Total closed paths found:" << allPaths.size();
 
-    // -----------------------------------------------------------------------
-    // Step 2: Select the best polygon as room_polygon_gt.
-    // Priority: explicit gt_polygon_id param > id == "room_contour" > largest area (excluding lidar)
-    // -----------------------------------------------------------------------
-    int bestIdx = -1;
-
-    // 1. Explicit id requested by the caller
-    if (!gt_polygon_id.empty())
-    {
-        for (int i = 0; i < (int)allPaths.size(); ++i)
-            if (allPaths[i].id.toStdString() == gt_polygon_id) { bestIdx = i; break; }
-        if (bestIdx < 0)
-            qWarning() << "[SVG] Requested gt_polygon_id '" << QString::fromStdString(gt_polygon_id)
-                       << "' not found among closed paths — falling back to auto-selection.";
-    }
-
-    // 2. Look for room_contour id
-    if (bestIdx < 0)
-        for (int i = 0; i < (int)allPaths.size(); ++i)
-            if (allPaths[i].id == "room_contour") { bestIdx = i; break; }
-
-    // 3. Pick the largest non-green (non-lidar) polygon
-    if (bestIdx < 0)
-    {
-        float maxArea = 0;
-        for (int i = 0; i < (int)allPaths.size(); ++i)
-        {
-            if (allPaths[i].color == QColor("#00ff00") || allPaths[i].color.green() == 255) continue;
-            const auto& pts = allPaths[i].pts;
-            float area = 0;
-            for (size_t j = 0; j < pts.size(); ++j)
-            {
-                size_t k = (j + 1) % pts.size();
-                area += pts[j].x() * pts[k].y() - pts[k].x() * pts[j].y();
-            }
-            area = std::fabs(area) * 0.5f;
-            if (area > maxArea) { maxArea = area; bestIdx = i; }
-        }
-    }
-
-    if (bestIdx < 0) bestIdx = 0;  // absolute fallback
-
-    room_polygon_gt = allPaths[bestIdx].pts;
-    qInfo() << "[SVG] room_polygon_gt set to path id='" << allPaths[bestIdx].id
-            << "' with" << room_polygon_gt.size() << "vertices";
-
-    // -----------------------------------------------------------------------
-    // Step 3: Store the remaining polygons in svg_extra_polygons_
-    // -----------------------------------------------------------------------
-    svg_extra_polygons_.clear();
-    for (int i = 0; i < (int)allPaths.size(); ++i)
-    {
-        if (i == bestIdx) continue;
-        SvgPolygon sp;
-        sp.vertices = allPaths[i].pts;
-        sp.color    = allPaths[i].color;
-        sp.id       = allPaths[i].id;
-        svg_extra_polygons_.push_back(std::move(sp));
-        qInfo() << "[SVG] Extra polygon id='" << svg_extra_polygons_.back().id
-                << "' color=" << svg_extra_polygons_.back().color.name()
-                << "vertices=" << svg_extra_polygons_.back().vertices.size();
-    }
+    // Use the first closed path as the room polygon
+    room_polygon_ = allPaths[0].pts;
+    qInfo() << "[SVG] room_polygon_ set to path id='" << allPaths[0].id
+            << "' with" << room_polygon_.size() << "vertices";
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 /// Pose Persistence
@@ -1818,23 +1485,23 @@ bool SpecificWorker::load_last_pose()
     // The polygon is loaded fresh from file, so we need to apply flips if they were saved
     if (saved_flip_x)
     {
-        for (auto& vertex : room_polygon_gt)
+        for (auto& vertex : room_polygon_)
             vertex.x() = -vertex.x();
         flip_x_applied_ = true;
 
         if (room_ai.is_initialized())
-            room_ai.set_polygon_room(room_polygon_gt);
+            room_ai.set_polygon_room(room_polygon_);
         draw_room_polygon();
         qInfo() << "Applied saved flip_x";
     }
     if (saved_flip_y)
     {
-        for (auto& vertex : room_polygon_gt)
+        for (auto& vertex : room_polygon_)
             vertex.y() = -vertex.y();
         flip_y_applied_ = true;
 
         if (room_ai.is_initialized())
-            room_ai.set_polygon_room(room_polygon_gt);
+            room_ai.set_polygon_room(room_polygon_);
         draw_room_polygon();
         qInfo() << "Applied saved flip_y";
     }

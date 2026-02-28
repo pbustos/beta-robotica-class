@@ -76,8 +76,7 @@ public:
 
     // Pre-computed segment data for polygon SDF
     torch::Tensor seg_a_;      // [num_segs, 2] segment start points
-    torch::Tensor seg_b_;      // [num_segs, 2] segment end points
-    torch::Tensor seg_ab_;     // [num_segs, 2] segment vectors (b - a)
+    torch::Tensor seg_ab_;     // [num_segs, 2] segment vectors (end - start)
     torch::Tensor seg_ab_sq_;  // [num_segs] squared length of each segment
 
     // Set the device for all tensors
@@ -115,12 +114,6 @@ private:
 
     // SDF for polygon room
     torch::Tensor sdf_polygon(const torch::Tensor& points_room_xy) const;
-
-    // Differentiable distance from point to line segment
-    static torch::Tensor point_to_segment_distance_sq(
-        const torch::Tensor& points,  // [N, 2]
-        const torch::Tensor& a,       // [2] segment start
-        const torch::Tensor& b);      // [2] segment end
 };
 
 } // namespace rc

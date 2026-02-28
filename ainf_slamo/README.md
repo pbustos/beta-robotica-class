@@ -28,28 +28,7 @@ sudo apt install build-essential cmake git unzip wget \
     libqt6statemachineqml6 libqt6statemachine6
 ```
 
-### 2. libQGLViewer (Qt6)
-
-```bash
-mkdir -p ~/software
-git clone https://github.com/GillesDebunne/libQGLViewer.git ~/software/libQGLViewer
-cd ~/software/libQGLViewer
-qmake6 *.pro && make -j12 && sudo make install && sudo ldconfig
-cd -
-```
-
-### 3. toml++
-
-Required for the `.toml` configuration format:
-
-```bash
-git clone https://github.com/marzer/tomlplusplus.git ~/software/tomlplusplus
-cd ~/software/tomlplusplus
-cmake -B build && sudo make install -C build -j12
-cd -
-```
-
-### 4. LibTorch (C++ PyTorch)
+### 2. LibTorch (C++ PyTorch)
 
 LibTorch is the C++ distribution of PyTorch and is required for the
 Active Inference / SDF optimisation pipeline.

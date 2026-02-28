@@ -54,8 +54,8 @@ void Model::init_from_polygon(const std::vector<Eigen::Vector2f>& vertices,
         torch::TensorOptions().dtype(torch::kLong).device(device_));
     auto indices_b = (indices_a + 1) % num_verts;
     seg_a_ = polygon_vertices.index_select(0, indices_a).contiguous();
-    seg_b_ = polygon_vertices.index_select(0, indices_b).contiguous();
-    seg_ab_ = (seg_b_ - seg_a_).contiguous();
+    const auto seg_b = polygon_vertices.index_select(0, indices_b).contiguous();
+    seg_ab_ = (seg_b - seg_a_).contiguous();
     seg_ab_sq_ = torch::sum(seg_ab_ * seg_ab_, /*dim=*/1).contiguous();
 
     // Compute bounding box for half_extents (for compatibility)
@@ -238,30 +238,6 @@ std::vector<torch::Tensor> Model::optim_parameters() const
     return {robot_pos, robot_theta};
 }
 
-torch::Tensor Model::point_to_segment_distance_sq(
-    const torch::Tensor& points,
-    const torch::Tensor& a,
-    const torch::Tensor& b)
-{
-    // Vector from a to b
-    auto ab = b - a;  // [2]
-    // Vector from a to each point
-    auto ap = points - a;  // [N, 2]
-
-    // Project point onto line: t = dot(ap, ab) / dot(ab, ab)
-    auto ab_sq = torch::sum(ab * ab);  // scalar
-    auto t = torch::sum(ap * ab, /*dim=*/1) / (ab_sq + 1e-8f);  // [N]
-
-    // Clamp t to [0, 1] to stay on segment
-    t = torch::clamp(t, 0.0f, 1.0f);  // [N]
-
-    // Closest point on segment: a + t * ab
-    auto closest = a + t.unsqueeze(1) * ab;  // [N, 2]
-
-    // Distance squared
-    auto diff = points - closest;  // [N, 2]
-    return torch::sum(diff * diff, /*dim=*/1);  // [N]
-}
 
 } // namespace rc
 
