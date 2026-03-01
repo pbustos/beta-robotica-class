@@ -156,11 +156,6 @@ void SpecificWorker::initialize()
     if (!robot.has_value())
         qWarning() << "initialize(): GT pose from webots not available — debug/error stats will be disabled.";
 
-    // Center view in (0,0) since GT room is centered there
-    const float view_side_m = 6.f;
-    viewer->fitToScene(QRectF(- view_side_m/2.f, - view_side_m/2.f, view_side_m, view_side_m));
-    viewer->centerOn(0, 0);
-
     // Default room dimensions for fallback rectangular model
     constexpr float room_width = 14.f;   // m
     constexpr float room_length = 8.f;   // m
@@ -211,6 +206,14 @@ void SpecificWorker::initialize()
             << room_width << room_length << init_xy.x() << init_xy.y() << init_phi
             << "  (room_center_in_robot=" << room_center_in_robot.x() << room_center_in_robot.y() << ")";
     }
+
+   // Center view around the robot initial position
+    const float view_side_m = 6.f;
+    const float robot_cx = init_xy.x();
+    const float robot_cy = init_xy.y();
+    viewer->fitToScene(QRectF(robot_cx - view_side_m/2.f, robot_cy - view_side_m/2.f, view_side_m, view_side_m));
+    viewer->centerOn(robot_cx, robot_cy);
+
 	setPeriod("Compute", 50);
 }
 
@@ -752,6 +755,12 @@ void SpecificWorker::slot_new_target(QPointF pos)
     const auto state = room_ai.get_current_state();
     const Eigen::Vector2f robot_pos(state[2], state[3]);
 
+    qInfo() << "[PathPlanner] Robot at (" << robot_pos.x() << "," << robot_pos.y()
+            << ") Target at (" << target.x() << "," << target.y() << ")"
+            << " Navigable polygon:" << path_planner_.get_navigable_polygon().size() << "vertices"
+            << " Inside(robot):" << path_planner_.is_inside(robot_pos)
+            << " Inside(target):" << path_planner_.is_inside(target);
+
     // Plan path
     const auto path = path_planner_.plan(robot_pos, target);
     if (path.empty())
@@ -779,6 +788,49 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
     clear_path();
 
     if (path.size() < 2) return;
+
+    // Draw original polygon vertices as green circles (debug)
+    const auto& orig_poly = path_planner_.get_original_polygon();
+    for (const auto& v : orig_poly)
+    {
+        constexpr float r = 0.1f;
+        auto* dot = viewer->scene.addEllipse(-r, -r, 2*r, 2*r,
+            QPen(QColor(0, 200, 0), 0.02), QBrush(QColor(0, 200, 0, 80)));
+        dot->setPos(v.x(), v.y());
+        dot->setZValue(17);
+        path_draw_items_.push_back(dot);
+    }
+
+    // Draw inner polygon boundary as orange dashed line (the barrier paths cannot cross)
+    if (navigable_poly_item_)
+    {
+        viewer->scene.removeItem(navigable_poly_item_);
+        delete navigable_poly_item_;
+        navigable_poly_item_ = nullptr;
+    }
+    const auto& inner_poly = path_planner_.get_inner_polygon();
+    if (inner_poly.size() >= 3)
+    {
+        QPolygonF qpoly;
+        for (const auto& v : inner_poly)
+            qpoly << QPointF(v.x(), v.y());
+        qpoly << QPointF(inner_poly.front().x(), inner_poly.front().y());
+        QPen inner_pen(QColor(255, 140, 0, 200), 0.03, Qt::DashLine);  // orange dashed
+        navigable_poly_item_ = viewer->scene.addPolygon(qpoly, inner_pen, Qt::NoBrush);
+        navigable_poly_item_->setZValue(19);
+    }
+
+    // Draw navigation nodes as yellow dots
+    const auto& nav_poly = path_planner_.get_navigable_polygon();
+    for (const auto& v : nav_poly)
+    {
+        constexpr float r = 0.08f;
+        auto* dot = viewer->scene.addEllipse(-r, -r, 2*r, 2*r,
+            QPen(QColor(255, 255, 0, 200), 0.01), QBrush(QColor(255, 255, 0, 120)));
+        dot->setPos(v.x(), v.y());
+        dot->setZValue(18);
+        path_draw_items_.push_back(dot);
+    }
 
     // Draw path segments as cyan lines
     const QPen path_pen(QColor(0, 220, 220), 0.04);  // Cyan, thick

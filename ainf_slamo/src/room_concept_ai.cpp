@@ -591,8 +591,24 @@ namespace rc
                     // Use PROPAGATED covariance (uncertainty grows when we skip optimization)
                     // current_covariance was already updated with prediction.propagated_cov above
                     res.covariance = current_covariance;
-                    res.innovation = Eigen::Vector3f::Zero();  // No correction applied
-                    res.innovation_norm = 0.0f;
+
+                    // Compute innovation even on early exit: smoothed pose vs prediction
+                    if (model_->has_prediction)
+                    {
+                        res.innovation[0] = smoothed_x - model_->predicted_pos[0].item<float>();
+                        res.innovation[1] = smoothed_y - model_->predicted_pos[1].item<float>();
+                        float p_theta = model_->predicted_theta[0].item<float>();
+                        res.innovation[2] = smoothed_phi - p_theta;
+                        while (res.innovation[2] > M_PI) res.innovation[2] -= 2.0f * M_PI;
+                        while (res.innovation[2] < -M_PI) res.innovation[2] += 2.0f * M_PI;
+                        res.innovation_norm = std::sqrt(res.innovation[0]*res.innovation[0] +
+                                                        res.innovation[1]*res.innovation[1]);
+                    }
+                    else
+                    {
+                        res.innovation = Eigen::Vector3f::Zero();
+                        res.innovation_norm = 0.0f;
+                    }
 
                     // Update current_covariance to reflect the propagated uncertainty
                     // (This is already done above in the prediction step, but we store it in result)

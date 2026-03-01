@@ -157,6 +157,7 @@ class SpecificWorker : public GenericWorker
 	std::vector<Eigen::Vector2f> current_path_;
 	std::vector<QGraphicsItem*> path_draw_items_;
 	QGraphicsEllipseItem* target_marker_ = nullptr;
+	QGraphicsPolygonItem* navigable_poly_item_ = nullptr;  // debug: shrunken polygon
 	void draw_path(const std::vector<Eigen::Vector2f>& path);
 	void clear_path();
 
