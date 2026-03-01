@@ -1,7 +1,7 @@
 # AINF_SLAMO — Technical Documentation
 
 **Active Inference SLAM with LiDAR and a Known Room Model**
-Version 1.0 — February 2026
+Version 1.1 — March 2026
 
 ---
 
@@ -13,7 +13,7 @@ Version 1.0 — February 2026
 4. [Active Inference Framework](#4-active-inference-framework)
 5. [Generative Model — Room SDF](#5-generative-model--room-sdf)
 6. [Variational Free Energy](#6-variational-free-energy)
-7. [Odometry Prior and Prediction Step](#7-odometry-prior-and-prediction-step)
+7. [Dual-Prior Fusion (Command + Odometry)](#7-dual-prior-fusion-command--odometry)
 8. [EKF-Style Covariance Propagation](#8-ekf-style-covariance-propagation)
 9. [Variational Update — Gradient Descent on F](#9-variational-update--gradient-descent-on-f)
 10. [Covariance Update (Bayesian Fusion)](#10-covariance-update-bayesian-fusion)
@@ -22,9 +22,10 @@ Version 1.0 — February 2026
 13. [Pose Smoothing (EMA Filter)](#13-pose-smoothing-ema-filter)
 14. [Prediction-Based Early Exit](#14-prediction-based-early-exit)
 15. [Initialisation and Kidnapping Recovery](#15-initialisation-and-kidnapping-recovery)
-16. [Complete Algorithm Loop](#16-complete-algorithm-loop)
-17. [Parameters Reference](#17-parameters-reference)
-18. [Key Implementation Notes](#18-key-implementation-notes)
+16. [Polygon Path Planner](#16-polygon-path-planner)
+17. [Complete Algorithm Loop](#17-complete-algorithm-loop)
+18. [Parameters Reference](#18-parameters-reference)
+19. [Key Implementation Notes](#19-key-implementation-notes)
 
 ---
 
@@ -53,22 +54,27 @@ without symbolic calculus.
 └───────────────┘                     └──────────┬───────────┘
                                                  │ buffer_sync
                                                  ▼
-                                      ┌──────────────────────┐
-  JoystickAdapter ──── velocity ─────►│   compute() @ 20 Hz  │
-                                      │   RoomConceptAI::     │
-                                      │     update()          │
+  JoystickAdapter ─── cmd velocity ──►┌──────────────────────┐
+                                      │   compute() @ 20 Hz  │
+  FullPoseEstimationPub               │   RoomConceptAI::     │
+    (encoders/IMU) ── odom velocity ─►│     update()          │
                                       └──────────┬───────────┘
                                                  │
-                              ┌──────────────────┼──────────────────┐
-                              ▼                  ▼                  ▼
-                         Predict step     Free Energy min.   Covariance update
-                         (EKF predict)    (Adam optimizer)   (Bayesian fusion)
+                 ┌───────────────────────────┬────┴────┬──────────────────┐
+                 ▼                           ▼         ▼                  ▼
+          Dual-Prior Fusion           EKF Predict   VFE minim.    Covariance update
+          (cmd ⊕ odometry)            (propagate)   (Adam optim)  (Bayesian fusion)
+
+  Shift+Right click ──────►┌──────────────────────┐
+    (set target)           │  PolygonPathPlanner   │───► path drawn on viewer
+                           │  (Visibility Graph)   │
+                           └──────────────────────┘
 ```
 
 > **Note:** The Webots GT pose is used **only** for debug error statistics
 > (GT Δxy, GT Δθ displays). The localisation algorithm relies exclusively on
-> LiDAR + odometry. Set `use_webots = false` in `etc/config` for real robot
-> operation.
+> LiDAR + dual odometry priors. Set `use_webots = false` in `etc/config` for
+> real robot operation.
 
 ---
 
@@ -213,30 +219,82 @@ This term anchors the solution to the motion model: if the LiDAR is ambiguous
 
 ---
 
-## 7. Odometry Prior and Prediction Step
+## 7. Dual-Prior Fusion (Command + Odometry)
 
-Between two consecutive LiDAR scans at times $t_{k-1}$ and $t_k$, the odometry
-integration provides a *delta pose* in the **global frame**:
+Between two consecutive LiDAR scans at times $t_{k-1}$ and $t_k$, **two
+independent velocity sources** are integrated to produce two motion priors:
 
-$$\Delta\mathbf{s} = \begin{bmatrix} \Delta x \\ \Delta y \\ \Delta\phi \end{bmatrix}
-= \sum_{j} \int_{t_{j}}^{t_{j+1}} \begin{bmatrix}
+| Source | Interface | Variables | Nature |
+|--------|-----------|-----------|--------|
+| **Commanded velocity** | `JoystickAdapter` | `adv_x`, `adv_y`, `rot` | Open-loop intent (before robot moves) |
+| **Measured odometry** | `FullPoseEstimationPub` | `adv`, `side`, `rot` | Closed-loop feedback from encoders/IMU |
+
+Both are in the **robot frame** (m/s, rad/s).
+
+### 7.1 Velocity Integration
+
+Each source is integrated over the time window $[t_{k-1}, t_k]$ using the
+velocity command/reading buffer, segment-by-segment, with a running heading
+$\theta(t)$:
+
+$$\Delta\mathbf{s} = \sum_{j} \int_{t_{j}}^{t_{j+1}} \begin{bmatrix}
     v^r_x \cos\theta(t) - v^r_y \sin\theta(t) \\
     v^r_x \sin\theta(t) + v^r_y \cos\theta(t) \\
     -\omega
 \end{bmatrix} dt$$
 
-where $(v^r_x, v^r_y, \omega)$ are the velocity commands in robot frame.
+This yields two predicted poses:
 
-The integration is performed segment-by-segment over the velocity-command buffer,
-updating the running heading $\theta$ after each segment to account for
-curvature.
+$$\pmb{\mu}_{\mathrm{cmd}} = \pmb{\mu}_{k-1} + \Delta\mathbf{s}_{\mathrm{cmd}}, \qquad
+\pmb{\mu}_{\mathrm{odom}} = \pmb{\mu}_{k-1} + \Delta\mathbf{s}_{\mathrm{odom}}$$
 
-The **predicted pose** is:
+### 7.2 Per-Prior Covariance
 
-$$\pmb{\mu}_{\mathrm{pred}} = \pmb{\mu}_{k-1} + \Delta\mathbf{s}$$
+Each prior has its own noise model with separate configurable parameters:
 
-This becomes the prior mean $\pmb{\mu}_{\mathrm{prior}}$ used in
-$\mathcal{L}_{\mathrm{prior}}$.
+$$\sigma_{\mathrm{pos}} = \sigma_{\mathrm{base}} + k_{\mathrm{trans}} \cdot |\Delta\mathbf{t}|, \qquad
+\sigma_{\theta} = \sigma_{\theta,\mathrm{base}} + k_{\mathrm{rot}} \cdot |\Delta\phi|$$
+
+| Parameter | Command prior | Odometry prior |
+|-----------|:---:|:---:|
+| $k_{\mathrm{trans}}$ | `cmd_noise_trans` = 0.20 | `odom_noise_trans` = 0.08 |
+| $k_{\mathrm{rot}}$ | `cmd_noise_rot` = 0.10 | `odom_noise_rot` = 0.04 |
+| $\sigma_{\mathrm{base}}$ | `cmd_noise_base` = 0.05 m | `odom_noise_base` = 0.01 m |
+
+The odometry prior is approximately **2.5× more precise** than the command
+prior, reflecting that measured velocities are more trustworthy than
+commanded velocities (which are subject to slip, motor lag, etc.).
+
+### 7.3 Bayesian Gaussian Fusion
+
+The two priors are fused into a single Gaussian before being passed to the
+optimiser as the Active Inference prior:
+
+$$\pmb{\Pi}_{\mathrm{fused}} = \pmb{\Sigma}_{\mathrm{cmd}}^{-1} + \pmb{\Sigma}_{\mathrm{odom}}^{-1}$$
+
+$$\pmb{\mu}_{\mathrm{fused}} = \pmb{\Sigma}_{\mathrm{fused}} \left(
+    \pmb{\Sigma}_{\mathrm{cmd}}^{-1}\,\pmb{\mu}_{\mathrm{cmd}} +
+    \pmb{\Sigma}_{\mathrm{odom}}^{-1}\,\pmb{\mu}_{\mathrm{odom}}
+\right)$$
+
+$$\pmb{\Sigma}_{\mathrm{fused}} = \pmb{\Pi}_{\mathrm{fused}}^{-1}$$
+
+The angle component is unwrapped relative to the command prior before fusion
+to avoid discontinuities near $\pm\pi$.
+
+When **no odometry readings** are available (e.g. disconnected sensor), the
+system gracefully falls back to the command-only prior.
+
+### 7.4 Odometry Noise Injection
+
+For simulation and robustness testing, configurable Gaussian noise can be
+added to the measured odometry readings:
+
+$$v'_i = v_i + \mathcal{N}(0,\; |v_i| \cdot \alpha_{\mathrm{noise}})$$
+
+where $\alpha_{\mathrm{noise}} =$ `ODOMETRY_NOISE_FACTOR` (default 0.1 = 10%
+of reading magnitude). This allows evaluating system performance under
+degraded odometry conditions.
 
 ---
 
@@ -284,13 +342,13 @@ When **stationary** ($|\Delta\mathbf{s}| < 0.01\,\mathrm{m}$), a very tight base
 noise ($\sigma_{\mathrm{base}} = 0.001\,\mathrm{m}$) prevents spurious covariance
 growth.
 
-Default parameters:
+Default parameters (command prior, used for EKF propagation):
 
-| Symbol | Value | Meaning |
-|--------|-------|---------|
-| $\sigma_{\mathrm{base}}$ | $0.05\,\mathrm{m}$ | Base position noise |
-| $k_{\mathrm{trans}}$ | $0.20$ | Noise per metre of motion |
-| $k_{\mathrm{rot}}$ | $0.10$ | Noise per radian of rotation |
+| Symbol | Value | Param name |
+|--------|-------|------------|
+| $\sigma_{\mathrm{base}}$ | $0.05\,\mathrm{m}$ | `cmd_noise_base` |
+| $k_{\mathrm{trans}}$ | $0.20$ | `cmd_noise_trans` |
+| $k_{\mathrm{rot}}$ | $0.10$ | `cmd_noise_rot` |
 
 ---
 
@@ -476,36 +534,113 @@ avoiding the grid search delay.
 
 ---
 
-## 16. Complete Algorithm Loop
+## 16. Polygon Path Planner
+
+The `PolygonPathPlanner` class (`polygon_path_planner.h/.cpp`) provides
+**grid-free shortest-path planning** inside the room layout polygon.
+
+### 16.1 Algorithm: Visibility Graph + Dijkstra
+
+The planner computes the **exact shortest path** between two points inside a
+simple (possibly concave) polygon, without any grid discretisation.
+
+**Pipeline:**
+
+1. **Minkowski Inward Offset** — The room polygon is shrunk inward by the
+   robot radius (`robot_radius = 0.25 m`). This guarantees that any path within
+   the shrunken polygon is collision-free for the physical robot. The algorithm
+   detects polygon winding (CW/CCW), computes inward normals per edge, offsets
+   the edge lines, and intersects consecutive offset lines to find the new
+   vertices.
+
+2. **Visibility Graph Construction** — A graph is built where nodes are the
+   vertices of the shrunken polygon. An edge connects two vertices if the
+   straight segment between them lies entirely inside the polygon (i.e., they
+   are *mutually visible*). Visibility is checked by: (a) no intersection with
+   any polygon boundary edge, and (b) the segment midpoint is inside the
+   polygon (handles concavities). Adjacent polygon edges are always connected.
+
+3. **Path Query** — Given a start and goal position:
+   - If there is direct line of sight → return `[start, goal]`.
+   - Otherwise, start and goal are added as temporary nodes connected to all
+     visible polygon vertices. Dijkstra's algorithm finds the shortest path.
+
+**Complexity:** For a polygon with $n$ vertices (typically 6–20):
+- Precomputation: $O(n^3)$ visibility checks — negligible for small $n$.
+- Query: $O(n^2)$ to connect start/goal + $O(n \log n)$ Dijkstra.
+- Memory: $O(n^2)$ for the graph — a few hundred entries.
+
+### 16.2 Future: Interior Obstacles
+
+The Visibility Graph extends naturally to **polygonal obstacles inside the room**
+(furniture, columns). The only change is:
+
+- Obstacle polygons are **expanded outward** by `robot_radius` (Minkowski outward
+  offset).
+- Obstacle vertices are added to the visibility graph.
+- The visibility check tests against **all** boundary segments (room + obstacles).
+
+The `plan()` interface remains unchanged.
+
+### 16.3 User Interaction
+
+- **Shift + Right Click** on the viewer sets a navigation target.
+- The path is planned from the current robot pose to the target.
+- The result is drawn as a **cyan polyline** with waypoint dots and a **red
+  target marker**.
+
+### 16.4 Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `robot_radius` | 0.25 m | Minkowski inward offset for safe clearance |
+| `waypoint_reached_dist` | 0.15 m | Distance threshold to consider a waypoint reached |
+| `max_path_length` | 50.0 m | Reject paths longer than this |
+
+---
+
+## 17. Complete Algorithm Loop
 
 ```
 LOOP every 50 ms:
 
   1. READ lidar points {p_i} in robot frame, lidar timestamp t_k
      READ current velocity commands from circular buffer
+     READ measured odometry readings from circular buffer
 
   2. ORIENTATION SEARCH (first call only)
      ├── Test 16 (position × angle) candidate poses
      └── Keep the one with lowest mean SDF²
 
-  3. ODOMETRY PRIOR
-     ├── Δs = integrate_velocity(t_{k-1}, t_k)          [7]
-     └── μ_pred = μ_{k-1} + Δs
+  3. COMMAND PRIOR  (from commanded velocity)
+     ├── Δs_cmd = integrate_velocity(cmd_history, t_{k-1}, t_k)
+     ├── μ_cmd = μ_{k-1} + Δs_cmd
+     └── Σ_cmd = motion_covariance(Δs_cmd, cmd_noise_*)
 
-  4. EKF PREDICT
+  4. MEASURED ODOMETRY PRIOR  (from encoder/IMU feedback)
+     ├── Δs_odom = integrate_odometry(odom_history, t_{k-1}, t_k)
+     ├── μ_odom = μ_{k-1} + Δs_odom
+     └── Σ_odom = motion_covariance(Δs_odom, odom_noise_*)
+
+  5. DUAL-PRIOR BAYESIAN FUSION                           [7.3]
+     ├── Π_fused = Σ_cmd⁻¹ + Σ_odom⁻¹
+     ├── μ_fused = Σ_fused (Σ_cmd⁻¹ μ_cmd + Σ_odom⁻¹ μ_odom)
+     └── (fallback: cmd-only prior if no odometry available)
+
+  6. EKF PREDICT
      ├── F = motion Jacobian (linearised at θ_{k-1})     [8.1]
      ├── Q = anisotropic process noise                   [8.2]
      └── Σ_pred = F Σ_{k-1} F^T + Q
 
-  5. SET PRIOR for optimisation
-     ├── Π_prior = Σ_pred⁻¹
-     └── Model.set_prediction(μ_pred, Π_prior)
+  7. SET PRIOR for optimisation
+     ├── Π_prior = Π_fused  (or Σ_pred⁻¹ if no fusion)
+     └── Model.set_prediction(μ_fused, Π_prior)
 
-  6. EARLY EXIT CHECK
-     ├── Evaluate mean |SDF| at μ_pred                   [14]
+  8. EARLY EXIT CHECK
+     ├── Evaluate mean |SDF| at μ_fused                  [14]
      └── IF small enough: return smoothed prediction → END
 
-  7. ADAM OPTIMISATION  (minimise F = L_lik + L_prior)
+  9. ADAM OPTIMISATION  (minimise F = L_lik + L_prior)
      ├── Subsample lidar to ≤ 500 points
      ├── For each iteration:
      │   ├── Compute SDF for all points (auto-diff)
@@ -516,26 +651,26 @@ LOOP every 50 ms:
      │   └── Check convergence criteria
      └── → optimal pose (x*, y*, φ*)
 
-  8. COVARIANCE UPDATE (Bayesian fusion)
+ 10. COVARIANCE UPDATE (Bayesian fusion)
      ├── Compute ∇L_lik at optimal pose                  [10]
      ├── H_lik ≈ diagonal Fisher information
      ├── Π_post = Π_prior + H_lik + λI
      └── Σ_k = Π_post⁻¹
 
-  9. POSE SMOOTHING (EMA)                                [13]
+ 11. POSE SMOOTHING (EMA)                                [13]
      └── (x,y,φ)_smooth = EMA((x*,y*,φ*), prev_smooth, α=0.3)
 
- 10. INNOVATION
-     ├── ν = (x,y,φ)_smooth - μ_pred                    [11]
+ 12. INNOVATION
+     ├── ν = (x,y,φ)_smooth - μ_fused                   [11]
      └── Display ‖ν_xy‖ in UI
 
- 11. STORE for next cycle
+ 13. STORE for next cycle
      └── μ_{k} = smooth pose,  Σ_{k} = posterior cov
 ```
 
 ---
 
-## 17. Parameters Reference
+## 18. Parameters Reference
 
 ### Optimisation
 
@@ -554,13 +689,29 @@ LOOP every 50 ms:
 | `sigma_obs` | 0.05 m | Observation noise std (likelihood width) |
 | `huber_delta` | 0.15 m | Huber loss transition point |
 
-### Prediction / EKF
+### Prediction / Dual-Prior Covariance
+
+**Command prior** (open-loop, from joystick/controller):
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `NOISE_TRANS` | 0.20 | Position noise per metre of motion |
-| `NOISE_ROT` | 0.10 | Rotation noise per radian |
-| `NOISE_BASE` | 0.05 m | Base process noise (stationary) |
+| `cmd_noise_trans` | 0.20 | Position noise per metre of motion |
+| `cmd_noise_rot` | 0.10 | Rotation noise per radian |
+| `cmd_noise_base` | 0.05 m | Base process noise (stationary) |
+
+**Measured odometry prior** (closed-loop, from encoders/IMU):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `odom_noise_trans` | 0.08 | Position noise per metre of motion |
+| `odom_noise_rot` | 0.04 | Rotation noise per radian |
+| `odom_noise_base` | 0.01 m | Base process noise (stationary) |
+
+**Odometry noise injection** (simulation only):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `ODOMETRY_NOISE_FACTOR` | 0.10 | Gaussian noise std as fraction of reading |
 
 ### Prediction-Based Early Exit
 
@@ -589,9 +740,17 @@ LOOP every 50 ms:
 |-----------|---------|-------------|
 | `pose_smoothing` | 0.3 | EMA alpha (0 = no smoothing, 1 = no update) |
 
+### Path Planner
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `robot_radius` | 0.25 m | Minkowski inward offset (safe clearance) |
+| `waypoint_reached_dist` | 0.15 m | Distance to consider waypoint reached |
+| `max_path_length` | 50.0 m | Reject paths longer than this |
+
 ---
 
-## 18. Key Implementation Notes
+## 19. Key Implementation Notes
 
 ### LibTorch Autograd
 All SDF computations are implemented as differentiable PyTorch operations.
@@ -620,7 +779,24 @@ torch::set_num_threads(2);
 torch::set_num_interop_threads(1);
 ```
 
+### Dual-Prior Graceful Degradation
+The dual-prior fusion in §7 degrades gracefully:
+- If **no odometry** readings arrive (e.g. `FullPoseEstimationPub` is
+  disconnected), the system automatically falls back to the command-only prior,
+  preserving the original single-prior behaviour.
+- If **no velocity commands** arrive (robot not under joystick control), the
+  command prior predicts zero motion; the measured odometry still provides a
+  valid prior.
+- When **both** agree the robot is stationary, the covariance stays extremely
+  tight, enabling aggressive early exit and minimal CPU usage.
+
+### Path Planner — Pure Geometry
+The `PolygonPathPlanner` has **no dependency on PyTorch, Qt, or Boost**. It
+uses only Eigen and the STL, making it lightweight and independently testable.
+The visibility graph is precomputed once when the polygon changes and reused
+for all path queries.
+
 ---
 
-*This document was generated from the source code of `ainf_slamo` (February 2026).*
+*This document was generated from the source code of `ainf_slamo` (March 2026).*
 
