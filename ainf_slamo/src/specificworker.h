@@ -39,6 +39,7 @@
 #include "room_concept_ai.h"
 #include "pointcloud_center_estimator.h"
 #include "polygon_path_planner.h"
+#include "trajectory_controller.h"
 #include <boost/circular_buffer.hpp>
 #include "common_types.h"
 
@@ -160,6 +161,18 @@ class SpecificWorker : public GenericWorker
 	QGraphicsPolygonItem* navigable_poly_item_ = nullptr;  // debug: shrunken polygon
 	void draw_path(const std::vector<Eigen::Vector2f>& path);
 	void clear_path();
+
+	// Trajectory controller (ESDF-based sampling local control)
+	rc::TrajectoryController trajectory_controller_;
+	std::chrono::steady_clock::time_point last_joystick_time_;
+	static constexpr float JOYSTICK_TIMEOUT_SEC = 0.5f;
+	void send_velocity_command(float adv, float side, float rot);
+	void draw_trajectory_debug(const rc::TrajectoryController::ControlOutput &ctrl,
+	                           const Eigen::Affine2f &robot_pose);
+	// Trajectory debug graphic items
+	std::vector<std::vector<QGraphicsLineItem*>> traj_draw_items_;  // [traj_idx][segment]
+	QGraphicsEllipseItem* traj_carrot_marker_ = nullptr;
+	QGraphicsLineItem* traj_robot_to_carrot_ = nullptr;
 
 	// CPU usage tracking
 	float get_cpu_usage();

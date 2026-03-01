@@ -58,6 +58,13 @@ SpecificWorker::~SpecificWorker()
 {
 	std::cout << "Destroying SpecificWorker" << std::endl;
 
+	// Stop trajectory controller
+	if (trajectory_controller_.is_active())
+	{
+		trajectory_controller_.stop();
+		try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+	}
+
 	// Save the last known pose for fast restart
 	save_last_pose();
 
@@ -258,6 +265,24 @@ void SpecificWorker::compute()
             {
                 save_last_pose();
                 pose_save_counter = 0;
+            }
+
+            // ===== LOCAL TRAJECTORY CONTROLLER =====
+            // Run if a path is active and joystick is not overriding
+            if (trajectory_controller_.is_active())
+            {
+                const auto ctrl = trajectory_controller_.compute(lidar_local, res.robot_pose);
+                if (ctrl.goal_reached)
+                {
+                    send_velocity_command(0.f, 0.f, 0.f);
+                    clear_path();
+                    qInfo() << "[TrajectoryCtrl] Navigation complete.";
+                }
+                else
+                {
+                    send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
+                    draw_trajectory_debug(ctrl, res.robot_pose);
+                }
             }
         }
     }
@@ -714,6 +739,19 @@ void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData dat
 	}
     cmd.timestamp = std::chrono::high_resolution_clock::now();
 	velocity_history_.push_back(cmd);
+
+	// Track joystick activity to override trajectory controller
+	if (std::abs(cmd.adv_y) > 0.01f || std::abs(cmd.rot) > 0.01f)
+	{
+		last_joystick_time_ = std::chrono::steady_clock::now();
+		if (trajectory_controller_.is_active())
+		{
+			trajectory_controller_.stop();
+			clear_path();
+			try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+			qInfo() << "Trajectory controller stopped: joystick override";
+		}
+	}
 }
 
 //SUBSCRIPTION to newFullPose method from FullPoseEstimationPub interface
@@ -778,8 +816,105 @@ void SpecificWorker::slot_new_target(QPointF pos)
     for (size_t i = 1; i < path.size(); ++i)
         total += (path[i] - path[i - 1]).norm();
 
+    // Activate the trajectory controller to follow the path
+    trajectory_controller_.set_path(path);
+
     qInfo() << "Path planned:" << path.size() << "waypoints," << total << "m to ("
             << pos.x() << "," << pos.y() << ")";
+}
+
+void SpecificWorker::send_velocity_command(float adv, float side, float rot)
+{
+    try
+    {
+        omnirobot_proxy->setSpeedBase(side*1000.f, adv*1000.f, rot);
+    }
+    catch (const Ice::Exception &e)
+    {
+        static int err_count = 0;
+        if (++err_count % 100 == 1)
+            qWarning() << "OmniRobot proxy error:" << e.what();
+    }
+}
+
+void SpecificWorker::draw_trajectory_debug(const rc::TrajectoryController::ControlOutput &ctrl,
+                                            const Eigen::Affine2f &robot_pose)
+{
+    const float rx = robot_pose.translation().x();
+    const float ry = robot_pose.translation().y();
+
+    // ---- 1. Draw all sampled trajectories ----
+    const int num_traj = static_cast<int>(ctrl.trajectories_room.size());
+
+    // Grow item pool if needed
+    while (static_cast<int>(traj_draw_items_.size()) < num_traj)
+        traj_draw_items_.emplace_back();
+
+    for (int t = 0; t < static_cast<int>(traj_draw_items_.size()); ++t)
+    {
+        if (t >= num_traj)
+        {
+            for (auto* seg : traj_draw_items_[t])
+                seg->setVisible(false);
+            continue;
+        }
+
+        const auto& traj = ctrl.trajectories_room[t];
+        const bool is_best = (t == ctrl.best_trajectory_idx);
+        const QColor color = is_best ? QColor(0, 220, 0) : QColor(150, 150, 150, 100);
+        const float width = is_best ? 0.06f : 0.02f;
+        const int z = is_best ? 32 : 28;
+
+        auto& segments = traj_draw_items_[t];
+
+        while (segments.size() < traj.size())
+        {
+            auto* item = viewer->scene.addLine(0, 0, 0, 0, QPen(color, width));
+            item->setZValue(z);
+            segments.push_back(item);
+        }
+
+        for (size_t s = 0; s + 1 < traj.size(); ++s)
+        {
+            segments[s]->setLine(traj[s].x(), traj[s].y(), traj[s+1].x(), traj[s+1].y());
+            segments[s]->setPen(QPen(color, width));
+            segments[s]->setZValue(z);
+            segments[s]->setVisible(true);
+        }
+        for (size_t s = (traj.empty() ? 0 : traj.size() - 1); s < segments.size(); ++s)
+            segments[s]->setVisible(false);
+    }
+
+    // ---- 2. Carrot marker (bright orange filled circle) ----
+    {
+        constexpr float cr = 0.15f;
+        if (!traj_carrot_marker_)
+        {
+            traj_carrot_marker_ = viewer->scene.addEllipse(
+                -cr, -cr, 2*cr, 2*cr,
+                QPen(QColor(255, 140, 0), 0.03f),
+                QBrush(QColor(255, 140, 0, 180)));
+            traj_carrot_marker_->setZValue(33);
+        }
+        traj_carrot_marker_->setPos(ctrl.carrot_room.x(), ctrl.carrot_room.y());
+        traj_carrot_marker_->setVisible(true);
+    }
+
+    // ---- 3. Dashed line from robot to carrot (orange) ----
+    {
+        if (!traj_robot_to_carrot_)
+        {
+            traj_robot_to_carrot_ = viewer->scene.addLine(
+                rx, ry, ctrl.carrot_room.x(), ctrl.carrot_room.y(),
+                QPen(QColor(255, 165, 0, 200), 0.02f, Qt::DashLine));
+            traj_robot_to_carrot_->setZValue(29);
+        }
+        else
+        {
+            traj_robot_to_carrot_->setLine(rx, ry, ctrl.carrot_room.x(), ctrl.carrot_room.y());
+            traj_robot_to_carrot_->setVisible(true);
+        }
+    }
 }
 
 void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
@@ -871,6 +1006,13 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
 
 void SpecificWorker::clear_path()
 {
+    // Stop the trajectory controller if active
+    if (trajectory_controller_.is_active())
+    {
+        trajectory_controller_.stop();
+        try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+    }
+
     for (auto* item : path_draw_items_)
     {
         viewer->scene.removeItem(item);
@@ -881,6 +1023,13 @@ void SpecificWorker::clear_path()
 
     if (target_marker_)
         target_marker_->setVisible(false);
+
+    // Hide trajectory controller debug items
+    for (auto& segs : traj_draw_items_)
+        for (auto* item : segs)
+            item->setVisible(false);
+    if (traj_carrot_marker_) traj_carrot_marker_->setVisible(false);
+    if (traj_robot_to_carrot_) traj_robot_to_carrot_->setVisible(false);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////

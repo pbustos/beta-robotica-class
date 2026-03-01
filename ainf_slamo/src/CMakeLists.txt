@@ -31,8 +31,7 @@ LIST(APPEND SOURCES
   ../src/room_model.cpp
   ../src/pointcloud_center_estimator.cpp
   ../src/polygon_path_planner.cpp
-
-
+  ../src/trajectory_controller.cpp
 )
 
 # Headers set
@@ -41,6 +40,7 @@ LIST(APPEND HEADERS
   ../src/room_concept_ai.h
   ../src/room_model.h
   ../src/polygon_path_planner.h
+  ../src/trajectory_controller.h
 )
 
 
