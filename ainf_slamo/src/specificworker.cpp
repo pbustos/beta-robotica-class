@@ -275,12 +275,14 @@ void SpecificWorker::compute()
                 if (ctrl.goal_reached)
                 {
                     send_velocity_command(0.f, 0.f, 0.f);
+                    velocity_history_.push_back(rc::VelocityCommand(0.f, 0.f, 0.f));
                     clear_path();
                     qInfo() << "[TrajectoryCtrl] Navigation complete.";
                 }
                 else
                 {
                     send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
+                    velocity_history_.push_back(rc::VelocityCommand(ctrl.side, ctrl.adv, ctrl.rot));
                     draw_trajectory_debug(ctrl, res.robot_pose);
                 }
             }

@@ -51,8 +51,8 @@ public:
     {
         // Kinematic limits
         float max_adv   = 0.6f;
-        float max_side  = 0.3f;
-        float max_rot   = 1.0f;
+        float max_side  = 0.3f;  // not used
+        float max_rot   = 0.8f;
 
         // Safety
         float d_safe       = 0.4f;

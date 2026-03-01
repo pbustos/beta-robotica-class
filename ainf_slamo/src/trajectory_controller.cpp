@@ -196,12 +196,21 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
 // ============================================================================
 // Adaptive feedback — EFE-based smooth adaptation
 //
-// Uses EMA of log(1+G_best) to smoothly transition between regimes:
-//   T(t) = T_base + (T_max - T_base) · tanh(β · ReLU(Ĝ(t) - G₀))
+// Uses EMA of log(1+G_best) as a "difficulty" metric (0 = cruise, 1 = stuck).
 //
-// Same formula applied to num_seeds, steps, and spread.
-// When EFE is low (clear path) → few seeds, short horizon, narrow spread
-// When EFE is high (stuck/blocked) → many seeds, long horizon, wide spread
+// Two regimes with opposite behaviour:
+//
+//   CRUISE (difficulty ≈ 0, free path):
+//     - Long trajectories (max_steps) — eager to reach the goal
+//     - Narrow spread (min_spread)    — focused on the goal direction
+//     - Few seeds (min_seeds)         — not much to explore
+//     - Fast speed (max_adv)          — go go go
+//
+//   EXPLORE (difficulty ≈ 1, blocked):
+//     - Short trajectories (min_steps) — don't plan far into the unknown
+//     - Wide spread (max_spread)       — search for gaps
+//     - Many seeds (max_seeds)         — cover all directions
+//     - Slow speed                     — cautious
 // ============================================================================
 
 void TrajectoryController::update_adaptive(const std::vector<SimResult>& results,
@@ -236,33 +245,31 @@ void TrajectoryController::update_adaptive(const std::vector<SimResult>& results
         adaptive_.best_angle = angle;
     }
 
-    // ---- EFE-based smooth adaptation ----
-    // EMA of log(1 + G_best) as difficulty metric
+    // ---- EFE-based smooth difficulty metric ----
     const float log_G = std::log(1.f + G_best);
     adaptive_.efe_smoothed = adaptive_.efe_gamma * adaptive_.efe_smoothed
                            + (1.f - adaptive_.efe_gamma) * log_G;
 
-    // Difficulty factor: 0 (easy/cruise) to 1 (hard/explore)
-    // tanh(sensitivity * ReLU(efe_smoothed - threshold))
     const float relu_diff = std::max(0.f, adaptive_.efe_smoothed - adaptive_.efe_threshold);
     const float difficulty = std::tanh(adaptive_.efe_sensitivity * relu_diff);
 
     // Collision boost: extra difficulty if many seeds collide
-    const float coll_boost = std::max(0.f, (coll_ratio - 0.3f) / 0.7f);  // 0..1
-    const float effective_difficulty = std::min(1.f, difficulty + 0.5f * coll_boost);
+    const float coll_boost = std::max(0.f, (coll_ratio - 0.3f) / 0.7f);
+    const float d = std::min(1.f, difficulty + 0.5f * coll_boost);  // 0..1
+    const float ease = 1.f - d;  // inverted: 1 = free, 0 = blocked
 
-    // Interpolate between min and max for each parameter
     const float min_spread = params.min_spread_deg * static_cast<float>(M_PI) / 180.f;
     const float max_spread = params.max_spread_deg * static_cast<float>(M_PI) / 180.f;
 
+    // Seeds and spread GROW with difficulty (explore more when blocked)
     adaptive_.num_seeds = params.min_seeds +
-        static_cast<int>(effective_difficulty * static_cast<float>(params.max_seeds - params.min_seeds));
-    adaptive_.steps = params.min_steps +
-        static_cast<int>(effective_difficulty * static_cast<float>(params.max_steps - params.min_steps));
-    adaptive_.spread = min_spread + effective_difficulty * (max_spread - min_spread);
+        static_cast<int>(d * static_cast<float>(params.max_seeds - params.min_seeds));
+    adaptive_.spread = min_spread + d * (max_spread - min_spread);
 
-    // Drive speed: slower when exploring (high difficulty), faster when cruising
-    adaptive_.drive_speed = params.max_adv * (1.f - 0.6f * effective_difficulty);
+    // Steps and speed GROW with ease (eager when free, cautious when blocked)
+    adaptive_.steps = params.min_steps +
+        static_cast<int>(ease * static_cast<float>(params.max_steps - params.min_steps));
+    adaptive_.drive_speed = params.max_adv * (0.4f + 0.6f * ease);  // 40%..100% of max
     adaptive_.drive_speed = std::clamp(adaptive_.drive_speed,
                                         0.1f,
                                         std::min(params.max_adv, std::max(0.15f, carrot_dist * 0.5f)));
