@@ -92,6 +92,9 @@ public:
 
         // Output smoothing
         float velocity_smoothing = 0.3f;
+
+        // MPPI temperature: lower = more selective, higher = more averaging
+        float mppi_lambda       = 5.0f;
     };
 
     struct ControlOutput
@@ -161,7 +164,6 @@ private:
         int   steps     = 20;
         float spread    = 1.0f;             // half-angle (radians)
         float drive_speed = 0.6f;
-        int   commit_duration = 10;
         float best_angle = 0.f;             // angle of the best seed last cycle
         float collision_ratio = 0.f;        // fraction of seeds that collided
         float best_G = 1e9f;                // best G from last cycle
@@ -179,12 +181,6 @@ private:
                          int best_idx,
                          const Eigen::Vector2f& carrot_robot);
 
-    // Trajectory commitment (prevents oscillation)
-    Seed committed_seed_;
-    float committed_G_ = 1e9f;
-    int commit_ticks_ = 0;
-    int commit_step_ = 0;
-    static constexpr int MIN_COMMIT_TICKS = 10;
 
     // RNG for exploration noise
     std::mt19937 rng_{std::random_device{}()};

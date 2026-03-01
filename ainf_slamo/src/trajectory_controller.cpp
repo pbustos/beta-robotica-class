@@ -22,15 +22,11 @@ void TrajectoryController::set_path(const std::vector<Eigen::Vector2f>& path_roo
     has_prev_vel_ = false;
     smoothed_vel_ = Eigen::Vector3f::Zero();
     prev_best_cmd_ = Eigen::Vector3f::Zero();
-    commit_ticks_ = 0;
-    commit_step_ = 0;
-    committed_G_ = 1e9f;
     // Reset adaptive to base params
     adaptive_.num_seeds = params.num_seeds;
     adaptive_.steps = params.trajectory_steps;
     adaptive_.spread = 1.0f;
     adaptive_.drive_speed = params.max_adv;
-    adaptive_.commit_duration = MIN_COMMIT_TICKS;
     adaptive_.best_angle = 0.f;
     adaptive_.collision_ratio = 0.f;
     adaptive_.best_G = 1e9f;
@@ -47,9 +43,6 @@ void TrajectoryController::stop()
     has_prev_vel_ = false;
     smoothed_vel_ = Eigen::Vector3f::Zero();
     prev_best_cmd_ = Eigen::Vector3f::Zero();
-    commit_ticks_ = 0;
-    commit_step_ = 0;
-    committed_G_ = 1e9f;
 }
 
 std::optional<Eigen::Vector2f> TrajectoryController::current_waypoint_room() const
@@ -109,37 +102,39 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     // Update adaptive state for next cycle
     update_adaptive(results, seeds, best_idx, carrot_robot);
 
-    // 6. Command selection: commitment controls which command is EXECUTED
+    // 6. MPPI weighted average: softmax over all seeds' first-step commands
+    //    w_i = exp(-(G_i - G_min) / λ)   normalized so Σ w_i = 1
+    //    u* = Σ w_i · u_i
     float cmd_adv = 0.f, cmd_rot = 0.f;
-    bool following_commit = false;
-
-    if (commit_ticks_ > 0 && commit_step_ < static_cast<int>(committed_seed_.adv.size()))
     {
-        const float esdf_here = query_esdf(0.f, 0.f);
-        if (esdf_here > params.robot_radius)
+        const float lambda = params.mppi_lambda;
+        const float G_min = best_G;  // for numerical stability
+
+        // Compute unnormalized weights
+        std::vector<float> weights(seeds.size());
+        float w_sum = 0.f;
+        for (size_t i = 0; i < seeds.size(); ++i)
         {
-            cmd_adv = committed_seed_.adv[commit_step_];
-            cmd_rot = committed_seed_.rot[commit_step_];
-            commit_step_++;
-            commit_ticks_--;
-            following_commit = true;
+            weights[i] = std::exp(-(results[i].G_total - G_min) / lambda);
+            w_sum += weights[i];
         }
-        else
-            commit_ticks_ = 0;  // abort: collision imminent
-    }
 
-    if (!following_commit && best_idx >= 0)
-    {
-        // Commit to the new best seed
-        committed_seed_ = seeds[best_idx];
-        committed_G_ = best_G;
-        commit_ticks_ = adaptive_.commit_duration;
-        commit_step_ = 0;
-
-        cmd_adv = committed_seed_.adv[0];
-        cmd_rot = committed_seed_.rot[0];
-        commit_step_ = 1;
-        commit_ticks_--;
+        // Weighted average of first-step commands
+        if (w_sum > 1e-10f)
+        {
+            for (size_t i = 0; i < seeds.size(); ++i)
+            {
+                const float w = weights[i] / w_sum;
+                cmd_adv += w * seeds[i].adv[0];
+                cmd_rot += w * seeds[i].rot[0];
+            }
+        }
+        else if (best_idx >= 0)
+        {
+            // Fallback: all weights collapsed → use best
+            cmd_adv = seeds[best_idx].adv[0];
+            cmd_rot = seeds[best_idx].rot[0];
+        }
     }
 
     // 7. Viz: all trajectories in room frame (always fresh every tick)
@@ -156,7 +151,7 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     }
     out.best_trajectory_idx = best_idx;
 
-    // 10. Smooth
+    // 8. Smooth + Gaussian brake
     Eigen::Vector3f raw(cmd_adv, 0.f, cmd_rot);
     if (has_prev_vel_)
         smoothed_vel_ = params.velocity_smoothing * smoothed_vel_ + (1.f - params.velocity_smoothing) * raw;
@@ -165,7 +160,6 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
 
     // Gaussian brake: modulate advance with rotation.
     // adv_out = adv * exp(-k * (rot / max_rot)²)
-    // k=2.0: at full rotation advance drops to ~13%, at half rotation ~60%
     constexpr float gauss_k = 2.0f;
     const float rot_ratio = smoothed_vel_[2] / params.max_rot;
     const float brake = std::exp(-gauss_k * rot_ratio * rot_ratio);
@@ -178,22 +172,22 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     static int dbg = 0;
     if (++dbg % 20 == 0)
     {
-        // Compute difficulty for display
         const float relu_d = std::max(0.f, adaptive_.efe_smoothed - adaptive_.efe_threshold);
         const float diff = std::tanh(adaptive_.efe_sensitivity * relu_d);
-        std::cout << "[TrajCtrl] " << (following_commit ? "FOLLOW" : "REPLAN")
+        std::cout << "[TrajCtrl] MPPI"
                   << " seeds=" << adaptive_.num_seeds
                   << " steps=" << adaptive_.steps
                   << " spread=" << static_cast<int>(adaptive_.spread * 180.f / M_PI) << "°"
                   << " diff=" << static_cast<int>(diff * 100) << "%"
                   << " collR=" << static_cast<int>(adaptive_.collision_ratio * 100) << "%"
-                  << " efeS=" << std::fixed << std::setprecision(1) << adaptive_.efe_smoothed
+                  << " λ=" << std::fixed << std::setprecision(1) << params.mppi_lambda
                   << " cmd(adv=" << cmd_adv << " rot=" << cmd_rot << ")"
                   << " sent(adv=" << out.adv << " rot=" << out.rot << ")"
-                  << " G=" << committed_G_
+                  << " bestG=" << best_G
                   << " carrot=" << static_cast<int>(std::atan2(carrot_robot.x(), carrot_robot.y()) * 180.f / M_PI) << "°"
                   << " dist=" << out.dist_to_goal
-                  << " esdf=" << out.min_esdf << "\n";
+                  << " esdf=" << out.min_esdf
+                  << " brake=" << static_cast<int>(brake * 100) << "%\n";
     }
 
     return out;
@@ -272,10 +266,6 @@ void TrajectoryController::update_adaptive(const std::vector<SimResult>& results
     adaptive_.drive_speed = std::clamp(adaptive_.drive_speed,
                                         0.1f,
                                         std::min(params.max_adv, std::max(0.15f, carrot_dist * 0.5f)));
-
-    // Commit duration: longer when exploring to prevent oscillation
-    adaptive_.commit_duration = MIN_COMMIT_TICKS +
-        static_cast<int>(effective_difficulty * 2.f * static_cast<float>(MIN_COMMIT_TICKS));
 }
 
 // ============================================================================
