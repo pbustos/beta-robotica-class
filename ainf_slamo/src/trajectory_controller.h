@@ -5,54 +5,23 @@
 #include <random>
 #include <Eigen/Dense>
 
-// ---- PyTorch vs Qt macros ----
-#ifdef slots
-  #define RC_QT_SLOTS_WAS_DEFINED
-  #undef slots
-#endif
-#ifdef signals
-  #define RC_QT_SIGNALS_WAS_DEFINED
-  #undef signals
-#endif
-#ifdef emit
-  #define RC_QT_EMIT_WAS_DEFINED
-  #undef emit
-#endif
-
-#include <torch/torch.h>
-
-#ifdef RC_QT_SLOTS_WAS_DEFINED
-  #define slots Q_SLOTS
-  #undef RC_QT_SLOTS_WAS_DEFINED
-#endif
-#ifdef RC_QT_SIGNALS_WAS_DEFINED
-  #define signals Q_SIGNALS
-  #undef RC_QT_SIGNALS_WAS_DEFINED
-#endif
-#ifdef RC_QT_EMIT_WAS_DEFINED
-  #define emit Q_EMIT
-  #undef RC_QT_EMIT_WAS_DEFINED
-#endif
-
 namespace rc
 {
 /**
- * TrajectoryController — Multi-seed gradient-optimized local controller with ESDF.
+ * TrajectoryController — MPPI-based local controller with ESDF.
  *
- * Adaptive seed generation based on previous-cycle score feedback:
- *   - Good best score → few seeds, narrow spread, short horizon (cruise)
- *   - Many colliding / high-G seeds → wide spread, longer horizon (explore)
- *   - Spread biased towards the direction of the best-scoring seed
+ * Proper MPPI: warm-start + Gaussian perturbations + AR(1) noise.
+ * All K samples are perturbations of the previous optimal sequence.
+ * Weighted average over the FULL T-step sequence (not just first step).
  */
 class TrajectoryController
 {
 public:
     struct Params
     {
-        // Kinematic limits
-        float max_adv   = 0.6f;
-        float max_side  = 0.3f;  // not used
-        float max_rot   = 0.8f;
+        // Kinematic limits (differential drive: adv + rot only)
+        float max_adv   = 0.6f;   // m/s forward
+        float max_rot   = 0.8f;   // rad/s
 
         // Safety
         float d_safe       = 0.4f;
@@ -62,29 +31,40 @@ public:
         float carrot_lookahead = 1.5f;
         float goal_threshold   = 0.25f;
 
-        // Trajectory seeds (base values — adapted at runtime)
-        int   num_seeds        = 7;
-        int   trajectory_steps = 20;
-        float trajectory_dt    = 0.15f;
+        // MPPI sampling parameters
+        int   num_samples      = 50;       // K: number of sampled trajectories
+        int   trajectory_steps = 30;       // T: prediction horizon (time steps)
+        float trajectory_dt    = 0.15f;    // dt per step
 
-        // Adaptive ranges
-        int   min_seeds        = 3;
-        int   max_seeds        = 20;
-        int   min_steps        = 15;
-        int   max_steps        = 150;
-        float min_spread_deg   = 15.f;    // minimum angular spread (degrees)
-        float max_spread_deg   = 360.f;   // maximum angular spread (degrees)
+        // MPPI temperature
+        float mppi_lambda       = 5.0f;    // lower = more selective
 
-        // Gradient optimization
-        int   optim_iterations = 3;
+        // Noise standard deviations (for Gaussian perturbations)
+        float sigma_adv   = 0.12f;         // m/s noise on advance
+        float sigma_rot   = 0.35f;         // rad/s noise on rotation (wide enough for laterals)
+
+        // AR(1) temporal noise correlation
+        float noise_alpha  = 0.75f;        // 0 = white noise, 1 = fully correlated
+        // Adaptive sigma limits
+        float sigma_min_adv   = 0.04f;
+        float sigma_min_rot   = 0.10f;
+        float sigma_max_adv   = 0.25f;
+        float sigma_max_rot   = 0.60f;     // allow wide rotation exploration near obstacles
+
+        // Nominal control blending (warm start weights)
+        float warm_start_adv_weight = 0.5f;  // blend prev vs nominal for adv
+        float warm_start_rot_weight = 0.5f;  // blend prev vs nominal for rot
+
+        // Gradient optimization (post-processing refinement)
+        int   optim_iterations = 2;
         float optim_lr         = 0.05f;
 
-        // EFE weights
+        // EFE weights (scoring)
         float lambda_goal      = 4.0f;
         float lambda_obstacle  = 10.0f;
         float lambda_smooth    = 0.5f;
-        float lambda_velocity  = 0.01f;   // velocity magnitude penalty
-        float lambda_delta_vel = 0.05f;   // action change penalty
+        float lambda_velocity  = 0.01f;
+        float lambda_delta_vel = 0.05f;
 
         // ESDF grid
         float grid_resolution  = 0.05f;
@@ -93,8 +73,8 @@ public:
         // Output smoothing
         float velocity_smoothing = 0.3f;
 
-        // MPPI temperature: lower = more selective, higher = more averaging
-        float mppi_lambda       = 5.0f;
+        // Visualization
+        int num_trajectories_to_draw = 10;
     };
 
     struct ControlOutput
@@ -137,11 +117,25 @@ private:
     std::vector<float> esdf_data_;
     int esdf_N_ = 0;
 
+    // Output smoothing
     Eigen::Vector3f smoothed_vel_ = Eigen::Vector3f::Zero();
-    Eigen::Vector3f prev_best_cmd_ = Eigen::Vector3f::Zero();
     bool has_prev_vel_ = false;
 
-    // A trajectory seed: sequence of (adv, rot) commands
+    // ---- MPPI state ----
+    // Previous optimal control sequence (T steps of [adv, rot])
+    // This is the core warm-start: each cycle shifts it and samples around it
+    struct ControlStep { float adv = 0.f; float rot = 0.f; };
+    std::vector<ControlStep> prev_optimal_;
+
+    // Adaptive noise sigmas
+    float adaptive_sigma_adv_;
+    float adaptive_sigma_rot_;
+
+    // RNG
+    std::mt19937 rng_{std::random_device{}()};
+    std::normal_distribution<float> normal_{0.f, 1.f};
+
+    // A trajectory sample: sequence of (adv, rot) commands
     struct Seed
     {
         std::vector<float> adv;
@@ -157,34 +151,6 @@ private:
         bool  collides = false;
     };
 
-    // ---------- Adaptive parameters (feedback from previous cycle) ----------
-    struct AdaptiveState
-    {
-        int   num_seeds = 7;
-        int   steps     = 20;
-        float spread    = 1.0f;             // half-angle (radians)
-        float drive_speed = 0.6f;
-        float best_angle = 0.f;             // angle of the best seed last cycle
-        float collision_ratio = 0.f;        // fraction of seeds that collided
-        float best_G = 1e9f;                // best G from last cycle
-
-        // EFE-based adaptive horizon (EMA of log(1+G))
-        float efe_smoothed = 0.f;
-        float efe_gamma    = 0.85f;          // EMA decay
-        float efe_threshold = 5.0f;          // log-G above this → explore
-        float efe_sensitivity = 0.4f;        // tanh scaling factor
-    };
-    AdaptiveState adaptive_;
-
-    void update_adaptive(const std::vector<SimResult>& results,
-                         const std::vector<Seed>& seeds,
-                         int best_idx,
-                         const Eigen::Vector2f& carrot_robot);
-
-
-    // RNG for exploration noise
-    std::mt19937 rng_{std::random_device{}()};
-
     // ---- Methods ----
     void build_esdf(const std::vector<Eigen::Vector3f>& lidar_points);
     float query_esdf(float rx, float ry) const;
@@ -193,11 +159,11 @@ private:
     Eigen::Vector2f compute_carrot(const Eigen::Affine2f& robot_pose) const;
     void advance_waypoints(const Eigen::Affine2f& robot_pose);
 
-    std::vector<Seed> generate_seeds(const Eigen::Vector2f& carrot_robot);
-    // Geometric seed generators (no ESDF dependency — pure direction blending)
-    Seed make_curve_seed(float carrot_angle, float offset_angle, int steps, float speed);
-    Seed make_momentum_seed(int steps, float speed, float carrot_angle);
-    Seed make_spread_seed(float target_angle, float carrot_angle, int steps, float speed);
+    // Nominal control toward carrot (initial guess for warm-start)
+    Seed compute_nominal(const Eigen::Vector2f& carrot_robot, int steps) const;
+
+    // MPPI sampling: generate K perturbations around prev_optimal_
+    std::vector<Seed> sample_trajectories(const Eigen::Vector2f& carrot_robot);
 
     SimResult simulate_and_score(const Seed& seed, const Eigen::Vector2f& carrot_robot);
     void optimize_seed(Seed& seed, const Eigen::Vector2f& carrot_robot);

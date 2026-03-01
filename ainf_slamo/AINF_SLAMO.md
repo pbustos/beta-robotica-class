@@ -1,7 +1,7 @@
 # AINF_SLAMO — Technical Documentation
 
-**Active Inference SLAM with LiDAR and a Known Room Model**
-Version 1.1 — March 2026
+**Active Inference SLAM with LiDAR, MPPI Navigation and a Known Room Model**
+Version 2.0 — March 2026
 
 ---
 
@@ -23,24 +23,32 @@ Version 1.1 — March 2026
 14. [Prediction-Based Early Exit](#14-prediction-based-early-exit)
 15. [Initialisation and Kidnapping Recovery](#15-initialisation-and-kidnapping-recovery)
 16. [Polygon Path Planner](#16-polygon-path-planner)
-17. [Complete Algorithm Loop](#17-complete-algorithm-loop)
-18. [Parameters Reference](#18-parameters-reference)
-19. [Key Implementation Notes](#19-key-implementation-notes)
+17. [MPPI Trajectory Controller](#17-mppi-trajectory-controller)
+18. [Complete Algorithm Loop](#18-complete-algorithm-loop)
+19. [Parameters Reference](#19-parameters-reference)
+20. [Key Implementation Notes](#20-key-implementation-notes)
 
 ---
 
 ## 1. Overview
 
 **AINF_SLAMO** estimates the 2-D pose of a robot inside a room whose geometry is
-known *a priori* (the *nominal model*).  Sensor data comes from a 3-D LiDAR whose
-returns are projected onto the ground plane.
+known *a priori* (the *nominal model*) and navigates through it.  Sensor data
+comes from a 3-D LiDAR whose returns are projected onto the ground plane.
 
-The approach is grounded in **Active Inference** (Karl Friston, 2010): the system
-minimises a *Variational Free Energy* functional that combines a sensor
-**likelihood** (how well the LiDAR hits the room walls) with a motion-model
-**prior** (where the odometry says the robot should be).  Differentiation is done
-automatically by **LibTorch** (C++ PyTorch), allowing gradient-based optimisation
-without symbolic calculus.
+The system has two main subsystems:
+
+- **Localisation** — grounded in **Active Inference** (Karl Friston, 2010): the
+  system minimises a *Variational Free Energy* functional that combines a sensor
+  **likelihood** (how well the LiDAR hits the room walls) with a motion-model
+  **prior** (where the odometry says the robot should be).  Differentiation is
+  done automatically by **LibTorch** (C++ PyTorch).
+
+- **Navigation** — an **MPPI (Model Predictive Path Integral)** trajectory
+  controller generates smooth velocity commands using the LiDAR-based ESDF
+  (Euclidean Signed Distance Field).  The controller uses **warm-start**,
+  **AR(1) correlated noise**, and **structured exploration injections** to handle
+  both open corridors and narrow doorways.
 
 ---
 
@@ -66,9 +74,19 @@ without symbolic calculus.
           (cmd ⊕ odometry)            (propagate)   (Adam optim)  (Bayesian fusion)
 
   Shift+Right click ──────►┌──────────────────────┐
-    (set target)           │  PolygonPathPlanner   │───► path drawn on viewer
-                           │  (Visibility Graph)   │
-                           └──────────────────────┘
+    (set target)           │  PolygonPathPlanner   │───► path waypoints
+                           │  (Visibility Graph)   │         │
+                           └──────────────────────┘         ▼
+                                                 ┌──────────────────────┐
+                          LiDAR points ─────────►│  TrajectoryController │
+                          Robot pose ───────────►│  (MPPI + ESDF)        │
+                                                 │  • Warm-start seq.    │
+                                                 │  • AR(1) sampling     │
+                                                 │  • Injection seeds    │
+                                                 └──────────┬───────────┘
+                                                            │
+                                                            ▼
+                                                   (adv, rot) → robot
 ```
 
 > **Note:** The Webots GT pose is used **only** for debug error statistics
@@ -599,7 +617,174 @@ The `plan()` interface remains unchanged.
 
 ---
 
-## 17. Complete Algorithm Loop
+## 17. MPPI Trajectory Controller
+
+The `TrajectoryController` class (`trajectory_controller.h/.cpp`) provides
+**reactive local navigation** that follows the path produced by the
+`PolygonPathPlanner` while avoiding obstacles detected by the LiDAR.
+
+It implements a proper **Model Predictive Path Integral (MPPI)** controller
+(Williams et al., 2017) with three key extensions: **warm-start sequence**,
+**AR(1) temporally correlated noise**, and **structured exploration injections**.
+
+### 17.1 MPPI Overview
+
+At each control cycle (20 Hz), the controller:
+
+1. Builds a local **ESDF** (Euclidean Signed Distance Field) from LiDAR points
+   in the robot frame.
+2. Computes a **carrot** point on the path ahead of the robot.
+3. **Warm-starts**: shifts the previous optimal control sequence by one step
+   and blends it with a nominal control (proportional to the carrot).
+4. **Samples** $K=50$ candidate trajectories as perturbations of the
+   warm-started sequence plus structured injection seeds.
+5. Optionally **refines** each sample with gradient-based ESDF optimization.
+6. **Scores** each trajectory using an Expected Free Energy (EFE) cost.
+7. Computes the **MPPI weighted average** over the **full T-step sequence**:
+
+$$u^*_t = \frac{\sum_{k=1}^{K} w_k \cdot u^k_t}{\sum_{k=1}^{K} w_k}, \qquad
+w_k = \exp\!\left(-\frac{G_k - G_{\min}}{\lambda}\right)$$
+
+8. Stores the full optimal sequence for the next cycle's warm-start.
+9. Applies **EMA smoothing** and a **Gaussian brake** (advance modulated by
+   rotation) to the first-step command before sending it to the robot.
+
+### 17.2 Warm-Start Mechanism
+
+The controller maintains `prev_optimal_[T]`, the full T-step optimal control
+sequence from the previous cycle. Each cycle:
+
+1. **Shift** left: `prev_optimal_[t] ← prev_optimal_[t+1]` for all $t$.
+2. **Blend** with nominal control toward the carrot:
+
+$$u^{\text{base}}_t = w \cdot u^{\text{prev}}_t + (1-w) \cdot u^{\text{nominal}}_t$$
+
+with configurable weights ($w_{\text{adv}} = w_{\text{rot}} = 0.5$).
+
+All K random samples are perturbations of this blended sequence, ensuring
+temporal coherence — the plan evolves smoothly rather than being reconstructed
+from scratch each cycle.
+
+### 17.3 AR(1) Temporally Correlated Noise
+
+Each random sample $k$ perturbs the warm-started base with an AR(1) process:
+
+$$\varepsilon_t = \alpha\,\varepsilon_{t-1} + \sqrt{1-\alpha^2}\;\sigma\;\mathcal{N}(0,1)$$
+
+with $\alpha = 0.75$ (default). This produces trajectories that are **smooth
+curves** rather than zigzags — the noise changes slowly along the horizon,
+generating natural arcs that a differential-drive robot can physically execute.
+
+The noise sigmas ($\sigma_{\text{adv}}$, $\sigma_{\text{rot}}$) adapt online:
+
+| Situation | $\sigma_{\text{adv}}$ | $\sigma_{\text{rot}}$ |
+|-----------|:---:|:---:|
+| Many collisions (>50%) | ↓ 0.85× | ↑ 1.10× |
+| Free space, far from obstacles | ↑ 1.01× | ↓ 0.95× |
+| Clamped to | [0.04, 0.25] m/s | [0.10, 0.60] rad/s |
+
+This ensures **wider lateral exploration near obstacles** (high $\sigma_{\text{rot}}$)
+and **tight, nodding-free control in open space** (low $\sigma_{\text{rot}}$).
+
+### 17.4 Structured Exploration Injections
+
+Pure Gaussian perturbations around a forward-pointing nominal tend to all point
+in roughly the same direction. When there is a wall ahead, they all collide and
+the weighted average collapses.
+
+To guarantee lateral coverage, the controller **injects deterministic seeds**
+at fixed angular offsets from the carrot direction. Each injection follows a
+`sqrt(phase)` blending curve from the offset angle back toward the carrot:
+
+$$\theta^{\text{desired}}_t = \theta_{\text{carrot}} + \Delta\theta \cdot \bigl(1 - \sqrt{t/T}\bigr)$$
+
+The number of injections scales with proximity to obstacles (ESDF at robot):
+
+| ESDF / d_safe | Injections | Offsets |
+|:---:|:---:|---|
+| > 1.5 (free) | 2 | ±30° |
+| < 1.5 | 4 | ±30°, ±60° |
+| < 1.0 (close) | 6 | ±30°, ±60°, ±90° |
+| < 0.6 (danger) | 8 | ±30°, ±60°, ±90°, ±120° |
+
+The remaining $K - n_{\text{inject}}$ samples are AR(1) random perturbations.
+This hybrid approach combines the **temporal coherence** of MPPI with the
+**guaranteed coverage** of geometric seeds.
+
+### 17.5 ESDF (Euclidean Signed Distance Field)
+
+A local 2-D ESDF grid is built each cycle from the LiDAR points in robot frame:
+
+- **Resolution**: 5 cm/cell, covering ±4 m around the robot (160×160 grid).
+- **Construction**: Two-pass (forward + backward) distance transform on an
+  occupancy grid. Each occupied cell gets distance 0; free cells get the
+  minimum distance to any occupied cell, scaled by the grid resolution.
+- **Querying**: Bilinear interpolation for smooth distance values.
+  Gradient via central differences, normalised to unit length.
+
+The ESDF provides:
+- **Collision detection**: trajectory is cut when ESDF < `robot_radius`.
+- **Obstacle cost**: quadratic hinge penalty when ESDF < `d_safe`.
+- **Gradient refinement**: `optimize_seed()` uses the ESDF gradient to push
+  trajectory points away from obstacles while pulling toward the carrot.
+
+### 17.6 Trajectory Scoring (EFE)
+
+Each trajectory sample is scored by an **Expected Free Energy** composed of:
+
+$$G = G_{\text{goal}} + G_{\text{obs}} + G_{\text{smooth}} + G_{\text{vel}} + G_{\text{delta}} + G_{\text{progress}} + G_{\text{collision}}$$
+
+| Component | Formula | Weight |
+|-----------|---------|--------|
+| **Goal** | Endpoint distance to carrot + heading alignment + backward penalty | `lambda_goal` = 4.0 |
+| **Obstacle** | Discounted sum of quadratic + exponential ESDF penalties | `lambda_obstacle` = 10.0 |
+| **Smooth** | $(u_0 - u^{\text{base}}_0)^2$ — continuity with warm-start | `lambda_smooth` = 0.5 |
+| **Velocity** | $\sum (v^2 + 4\omega^2)$ — penalise unnecessary rotation 4× | `lambda_velocity` = 0.01 |
+| **Delta** | $\sum (\Delta v^2 + 4\Delta\omega^2)$ — penalise jerky commands | `lambda_delta_vel` = 0.05 |
+| **Progress** | Penalise per-step motion away from carrot (discounted) | `lambda_goal` |
+| **Collision** | +1000 if trajectory enters ESDF < `robot_radius` | — |
+
+### 17.7 Gaussian Brake
+
+Before sending the command to the robot, the advance velocity is modulated by
+the rotation magnitude:
+
+$$v_{\text{out}} = v_{\text{smooth}} \cdot \exp\!\left(-k \cdot \left(\frac{\omega}{\omega_{\max}}\right)^2\right), \qquad k = 2$$
+
+This causes the robot to slow down during sharp turns, staying nearly in place
+during tight manoeuvres — critical for doorway navigation.
+
+### 17.8 Integration with Localisation
+
+When the trajectory controller is active, the velocity commands it sends to the
+robot are also fed into the **velocity command history** used by the Active
+Inference localisation. This closes the loop: the controller's commands serve as
+a high-quality prediction prior for the next localisation update.
+
+### 17.9 Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `num_samples` | 50 | K: total trajectory samples per cycle |
+| `trajectory_steps` | 30 | T: prediction horizon steps |
+| `trajectory_dt` | 0.15 s | Time step per horizon step |
+| `mppi_lambda` | 5.0 | MPPI temperature (lower = more selective) |
+| `sigma_adv` | 0.12 m/s | Initial advance noise std |
+| `sigma_rot` | 0.35 rad/s | Initial rotation noise std |
+| `noise_alpha` | 0.75 | AR(1) temporal correlation |
+| `warm_start_adv_weight` | 0.5 | Blend weight for previous adv sequence |
+| `warm_start_rot_weight` | 0.5 | Blend weight for previous rot sequence |
+| `d_safe` | 0.4 m | Safety distance for obstacle penalties |
+| `robot_radius` | 0.3 m | Hard collision threshold |
+| `carrot_lookahead` | 1.5 m | Lookahead distance on path |
+| `goal_threshold` | 0.25 m | Distance to consider goal reached |
+| `optim_iterations` | 2 | ESDF gradient refinement passes per seed |
+| `velocity_smoothing` | 0.3 | EMA alpha for output smoothing |
+| `num_trajectories_to_draw` | 10 | Trajectories shown in viewer |
+
+---
+
+## 18. Complete Algorithm Loop
 
 ```
 LOOP every 50 ms:
@@ -622,14 +807,14 @@ LOOP every 50 ms:
      ├── μ_odom = μ_{k-1} + Δs_odom
      └── Σ_odom = motion_covariance(Δs_odom, odom_noise_*)
 
-  5. DUAL-PRIOR BAYESIAN FUSION                           [7.3]
+  5. DUAL-PRIOR BAYESIAN FUSION                           [§7.3]
      ├── Π_fused = Σ_cmd⁻¹ + Σ_odom⁻¹
      ├── μ_fused = Σ_fused (Σ_cmd⁻¹ μ_cmd + Σ_odom⁻¹ μ_odom)
      └── (fallback: cmd-only prior if no odometry available)
 
   6. EKF PREDICT
-     ├── F = motion Jacobian (linearised at θ_{k-1})     [8.1]
-     ├── Q = anisotropic process noise                   [8.2]
+     ├── F = motion Jacobian (linearised at θ_{k-1})     [§8.1]
+     ├── Q = anisotropic process noise                   [§8.2]
      └── Σ_pred = F Σ_{k-1} F^T + Q
 
   7. SET PRIOR for optimisation
@@ -637,8 +822,8 @@ LOOP every 50 ms:
      └── Model.set_prediction(μ_fused, Π_prior)
 
   8. EARLY EXIT CHECK
-     ├── Evaluate mean |SDF| at μ_fused                  [14]
-     └── IF small enough: return smoothed prediction → END
+     ├── Evaluate mean |SDF| at μ_fused                  [§14]
+     └── IF small enough: return smoothed prediction → SKIP to 12
 
   9. ADAM OPTIMISATION  (minimise F = L_lik + L_prior)
      ├── Subsample lidar to ≤ 500 points
@@ -646,31 +831,42 @@ LOOP every 50 ms:
      │   ├── Compute SDF for all points (auto-diff)
      │   ├── Compute F (Huber likelihood + Mahalanobis prior)
      │   ├── Backward pass → gradients
-     │   ├── Scale gradients by velocity-adaptive weights [12]
+     │   ├── Scale gradients by velocity-adaptive weights [§12]
      │   ├── Adam step  (η_pos=0.05, η_rot=0.01)
      │   └── Check convergence criteria
      └── → optimal pose (x*, y*, φ*)
 
  10. COVARIANCE UPDATE (Bayesian fusion)
-     ├── Compute ∇L_lik at optimal pose                  [10]
+     ├── Compute ∇L_lik at optimal pose                  [§10]
      ├── H_lik ≈ diagonal Fisher information
      ├── Π_post = Π_prior + H_lik + λI
      └── Σ_k = Π_post⁻¹
 
- 11. POSE SMOOTHING (EMA)                                [13]
+ 11. POSE SMOOTHING (EMA)                                [§13]
      └── (x,y,φ)_smooth = EMA((x*,y*,φ*), prev_smooth, α=0.3)
 
  12. INNOVATION
-     ├── ν = (x,y,φ)_smooth - μ_fused                   [11]
+     ├── ν = (x,y,φ)_smooth - μ_fused                   [§11]
      └── Display ‖ν_xy‖ in UI
 
- 13. STORE for next cycle
+ 13. TRAJECTORY CONTROLLER (if path active)              [§17]
+     ├── Build local ESDF from lidar points
+     ├── Warm-start: shift prev_optimal_ + blend nominal
+     ├── Sample K trajectories (injections + AR(1) perturbations)
+     ├── Optimize each sample with ESDF gradient
+     ├── Score (EFE) and compute MPPI weighted average
+     ├── Store optimal sequence for next cycle
+     ├── Apply EMA smoothing + Gaussian brake
+     ├── Send (adv, rot) to robot
+     └── Feed commands into velocity_history for localisation
+
+ 14. STORE for next cycle
      └── μ_{k} = smooth pose,  Σ_{k} = posterior cov
 ```
 
 ---
 
-## 18. Parameters Reference
+## 19. Parameters Reference
 
 ### Optimisation
 
@@ -748,9 +944,36 @@ LOOP every 50 ms:
 | `waypoint_reached_dist` | 0.15 m | Distance to consider waypoint reached |
 | `max_path_length` | 50.0 m | Reject paths longer than this |
 
+### MPPI Trajectory Controller
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `num_samples` | 50 | K: total trajectory samples per cycle |
+| `trajectory_steps` | 30 | T: prediction horizon steps |
+| `trajectory_dt` | 0.15 s | Time step per horizon step |
+| `mppi_lambda` | 5.0 | Temperature (lower = more selective) |
+| `sigma_adv` | 0.12 m/s | Initial advance noise std |
+| `sigma_rot` | 0.35 rad/s | Initial rotation noise std |
+| `noise_alpha` | 0.75 | AR(1) temporal correlation coefficient |
+| `sigma_min_adv` / `sigma_max_adv` | 0.04 / 0.25 m/s | Adaptive sigma clamp range |
+| `sigma_min_rot` / `sigma_max_rot` | 0.10 / 0.60 rad/s | Adaptive sigma clamp range |
+| `warm_start_adv_weight` | 0.5 | Blend weight: prev vs nominal (advance) |
+| `warm_start_rot_weight` | 0.5 | Blend weight: prev vs nominal (rotation) |
+| `max_adv` | 0.6 m/s | Maximum forward velocity |
+| `max_rot` | 0.8 rad/s | Maximum angular velocity |
+| `d_safe` | 0.4 m | Safety distance for obstacle cost |
+| `robot_radius` | 0.3 m | Hard collision threshold in ESDF |
+| `carrot_lookahead` | 1.5 m | Path lookahead distance |
+| `goal_threshold` | 0.25 m | Distance to consider goal reached |
+| `optim_iterations` | 2 | ESDF gradient refinement passes |
+| `optim_lr` | 0.05 | Learning rate for seed optimization |
+| `velocity_smoothing` | 0.3 | EMA alpha for output smoothing |
+| `grid_resolution` | 0.05 m | ESDF grid cell size |
+| `grid_half_size` | 4.0 m | ESDF grid extent from robot |
+
 ---
 
-## 19. Key Implementation Notes
+## 20. Key Implementation Notes
 
 ### LibTorch Autograd
 All SDF computations are implemented as differentiable PyTorch operations.
@@ -796,7 +1019,25 @@ uses only Eigen and the STL, making it lightweight and independently testable.
 The visibility graph is precomputed once when the polygon changes and reused
 for all path queries.
 
+### Trajectory Controller — Pure C++ MPPI
+The `TrajectoryController` has **no dependency on PyTorch**. It uses only Eigen,
+the STL, and `<random>`. The ESDF is built and queried entirely in the robot
+frame using a simple 2-D grid — no GPU or tensor operations. The MPPI weighted
+average is computed over raw `std::vector<float>` sequences, making it
+lightweight enough to run 50 samples × 30 steps at 20 Hz on a single CPU core.
+
+### Hybrid MPPI Design
+The trajectory controller combines two sampling strategies:
+- **Structured injection seeds** (2–8 deterministic lateral offsets) guarantee
+  spatial coverage for obstacle avoidance and doorway navigation.
+- **AR(1) Gaussian perturbations** (42–48 random samples around the warm-started
+  sequence) provide temporal coherence and smooth convergence.
+
+This hybrid avoids the failure modes of both pure geometric seeds (cancel-out
+near obstacles) and pure random sampling (insufficient lateral coverage with
+moderate K).
+
 ---
 
-*This document was generated from the source code of `ainf_slamo` (March 2026).*
+*This document was generated from the source code of `ainf_slamo` (March 2026, v2.0).*
 

@@ -3,9 +3,7 @@
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
-#include <numeric>
 #include <limits>
-#include <random>
 
 namespace rc
 {
@@ -21,16 +19,12 @@ void TrajectoryController::set_path(const std::vector<Eigen::Vector2f>& path_roo
     active_ = path_room.size() >= 2;
     has_prev_vel_ = false;
     smoothed_vel_ = Eigen::Vector3f::Zero();
-    prev_best_cmd_ = Eigen::Vector3f::Zero();
-    // Reset adaptive to base params
-    adaptive_.num_seeds = params.num_seeds;
-    adaptive_.steps = params.trajectory_steps;
-    adaptive_.spread = 1.0f;
-    adaptive_.drive_speed = params.max_adv;
-    adaptive_.best_angle = 0.f;
-    adaptive_.collision_ratio = 0.f;
-    adaptive_.best_G = 1e9f;
-    adaptive_.efe_smoothed = 0.f;
+
+    // Initialize prev_optimal_ to zeros (no prior plan)
+    prev_optimal_.assign(params.trajectory_steps, {0.f, 0.f});
+    adaptive_sigma_adv_ = params.sigma_adv;
+    adaptive_sigma_rot_ = params.sigma_rot;
+
     if (active_)
         std::cout << "[TrajectoryCtrl] Path set: " << path_room_.size() << " waypoints\n";
 }
@@ -42,7 +36,7 @@ void TrajectoryController::stop()
     wp_index_ = 0;
     has_prev_vel_ = false;
     smoothed_vel_ = Eigen::Vector3f::Zero();
-    prev_best_cmd_ = Eigen::Vector3f::Zero();
+    prev_optimal_.clear();
 }
 
 std::optional<Eigen::Vector2f> TrajectoryController::current_waypoint_room() const
@@ -53,7 +47,7 @@ std::optional<Eigen::Vector2f> TrajectoryController::current_waypoint_room() con
 }
 
 // ============================================================================
-// Main compute
+// Main compute — Proper MPPI with warm-start + Gaussian perturbations
 // ============================================================================
 
 TrajectoryController::ControlOutput TrajectoryController::compute(
@@ -62,6 +56,9 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
 {
     ControlOutput out;
     if (!active_ || path_room_.empty()) { active_ = false; out.goal_reached = true; return out; }
+
+    const int T = params.trajectory_steps;
+    const int K = params.num_samples;
 
     // 1. ESDF
     build_esdf(lidar_points);
@@ -82,84 +79,156 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     out.current_wp_index = wp_index_;
     out.min_esdf = query_esdf(0.f, 0.f);
 
-    // 5. ALWAYS generate, optimize and score seeds (for viz + adaptive feedback)
-    auto seeds = generate_seeds(carrot_robot);
-    std::vector<SimResult> results(seeds.size());
+    // 5. Warm-start: shift previous optimal sequence by one step
+    if (static_cast<int>(prev_optimal_.size()) != T)
+        prev_optimal_.assign(T, {0.f, 0.f});
+
+    // Shift left: discard step 0, duplicate last
+    for (int t = 0; t < T - 1; ++t)
+        prev_optimal_[t] = prev_optimal_[t + 1];
+    // Last step: keep same (will be overwritten by sampling)
+
+    // 6. Compute nominal control and blend with warm-started sequence
+    Seed nominal = compute_nominal(carrot_robot, T);
+    for (int t = 0; t < T; ++t)
+    {
+        const float wa = params.warm_start_adv_weight;
+        const float wr = params.warm_start_rot_weight;
+        prev_optimal_[t].adv = wa * prev_optimal_[t].adv + (1.f - wa) * nominal.adv[t];
+        prev_optimal_[t].rot = wr * prev_optimal_[t].rot + (1.f - wr) * nominal.rot[t];
+    }
+
+    // 7. Sample K trajectories as perturbations of prev_optimal_ with AR(1) noise
+    auto seeds = sample_trajectories(carrot_robot);
+
+    // 8. Simulate, optimize, and score each sample
+    std::vector<SimResult> results(K);
     int best_idx = -1;
     float best_G = std::numeric_limits<float>::max();
 
-    for (size_t i = 0; i < seeds.size(); ++i)
+    for (int k = 0; k < K; ++k)
     {
-        optimize_seed(seeds[i], carrot_robot);
-        results[i] = simulate_and_score(seeds[i], carrot_robot);
-        if (results[i].G_total < best_G)
+        optimize_seed(seeds[k], carrot_robot);
+        results[k] = simulate_and_score(seeds[k], carrot_robot);
+        if (results[k].G_total < best_G)
         {
-            best_G = results[i].G_total;
-            best_idx = static_cast<int>(i);
+            best_G = results[k].G_total;
+            best_idx = k;
         }
     }
 
-    // Update adaptive state for next cycle
-    update_adaptive(results, seeds, best_idx, carrot_robot);
-
-    // 6. MPPI weighted average: softmax over all seeds' first-step commands
-    //    w_i = exp(-(G_i - G_min) / λ)   normalized so Σ w_i = 1
-    //    u* = Σ w_i · u_i
-    float cmd_adv = 0.f, cmd_rot = 0.f;
+    // 9. MPPI weighted average over the FULL T-step sequence
+    //    w_k = exp(-(G_k - G_min) / λ)
+    //    u*_t = Σ w_k · u_k_t   for each t in [0, T)
+    std::vector<ControlStep> optimal(T, {0.f, 0.f});
     {
         const float lambda = params.mppi_lambda;
-        const float G_min = best_G;  // for numerical stability
+        const float G_min = best_G;
 
-        // Compute unnormalized weights
-        std::vector<float> weights(seeds.size());
+        std::vector<float> weights(K);
         float w_sum = 0.f;
-        for (size_t i = 0; i < seeds.size(); ++i)
+        int num_collisions = 0;
+
+        for (int k = 0; k < K; ++k)
         {
-            weights[i] = std::exp(-(results[i].G_total - G_min) / lambda);
-            w_sum += weights[i];
+            if (results[k].collides)
+            {
+                weights[k] = 0.f;  // colliding trajectories get zero weight
+                num_collisions++;
+            }
+            else
+            {
+                weights[k] = std::exp(-(results[k].G_total - G_min) / lambda);
+            }
+            w_sum += weights[k];
         }
 
-        // Weighted average of first-step commands
         if (w_sum > 1e-10f)
         {
-            for (size_t i = 0; i < seeds.size(); ++i)
+            for (int k = 0; k < K; ++k)
             {
-                const float w = weights[i] / w_sum;
-                cmd_adv += w * seeds[i].adv[0];
-                cmd_rot += w * seeds[i].rot[0];
+                const float w = weights[k] / w_sum;
+                if (w > 1e-10f)
+                {
+                    const int steps_k = static_cast<int>(seeds[k].adv.size());
+                    for (int t = 0; t < std::min(T, steps_k); ++t)
+                    {
+                        optimal[t].adv += w * seeds[k].adv[t];
+                        optimal[t].rot += w * seeds[k].rot[t];
+                    }
+                }
             }
         }
         else if (best_idx >= 0)
         {
-            // Fallback: all weights collapsed → use best
-            cmd_adv = seeds[best_idx].adv[0];
-            cmd_rot = seeds[best_idx].rot[0];
+            // Fallback: use best trajectory
+            const int steps_b = static_cast<int>(seeds[best_idx].adv.size());
+            for (int t = 0; t < std::min(T, steps_b); ++t)
+            {
+                optimal[t].adv = seeds[best_idx].adv[t];
+                optimal[t].rot = seeds[best_idx].rot[t];
+            }
         }
+
+        // 10. Adaptive sigma based on collision ratio and ESDF
+        const float valid_ratio = 1.f - static_cast<float>(num_collisions) / static_cast<float>(K);
+        const float esdf_at_robot = query_esdf(0.f, 0.f);
+        const bool near_obstacle = (esdf_at_robot < params.d_safe * 1.5f);
+
+        if (valid_ratio < 0.5f)
+        {
+            // Many collisions: reduce advance (don't push into walls)
+            // but INCREASE rotation (explore lateral escape routes)
+            adaptive_sigma_adv_ *= 0.85f;
+            adaptive_sigma_rot_ *= 1.1f;
+        }
+        else if (valid_ratio > 0.9f && !near_obstacle)
+        {
+            // Free space: slightly reduce rotation sigma (reduce nodding)
+            // keep advance sigma moderate
+            adaptive_sigma_adv_ *= 1.01f;
+            adaptive_sigma_rot_ *= 0.95f;
+        }
+        adaptive_sigma_adv_ = std::clamp(adaptive_sigma_adv_, params.sigma_min_adv, params.sigma_max_adv);
+        adaptive_sigma_rot_ = std::clamp(adaptive_sigma_rot_, params.sigma_min_rot, params.sigma_max_rot);
     }
 
-    // 7. Viz: all trajectories in room frame (always fresh every tick)
-    const Eigen::Matrix2f R = robot_pose.linear();
-    const Eigen::Vector2f t = robot_pose.translation();
-    out.trajectories_room.resize(seeds.size());
-    for (size_t i = 0; i < results.size(); ++i)
+    // Store optimal sequence for next cycle's warm-start
+    prev_optimal_ = optimal;
+
+    // 11. Extract first-step command
+    float cmd_adv = optimal[0].adv;
+    float cmd_rot = optimal[0].rot;
+
+    // 12. Viz: trajectories in room frame (subsample for drawing)
     {
-        auto& tr = out.trajectories_room[i];
-        tr.reserve(results[i].positions.size() + 1);
-        tr.push_back(t);
-        for (const auto& p : results[i].positions)
-            tr.push_back(R * p + t);
-    }
-    out.best_trajectory_idx = best_idx;
+        const Eigen::Matrix2f R = robot_pose.linear();
+        const Eigen::Vector2f t_pos = robot_pose.translation();
 
-    // 8. Smooth + Gaussian brake
+        // Draw a subset of trajectories for visualization
+        const int n_draw = std::min(params.num_trajectories_to_draw, K);
+        out.trajectories_room.resize(n_draw);
+        // Pick evenly spaced + best
+        for (int i = 0; i < n_draw; ++i)
+        {
+            int k = (i == 0 && best_idx >= 0) ? best_idx
+                    : (i * K) / std::max(n_draw, 1);
+            k = std::clamp(k, 0, K - 1);
+            auto& tr = out.trajectories_room[i];
+            tr.reserve(results[k].positions.size() + 1);
+            tr.push_back(t_pos);
+            for (const auto& p : results[k].positions)
+                tr.push_back(R * p + t_pos);
+        }
+        out.best_trajectory_idx = 0;  // first drawn is always best
+    }
+
+    // 13. Smooth + Gaussian brake
     Eigen::Vector3f raw(cmd_adv, 0.f, cmd_rot);
     if (has_prev_vel_)
         smoothed_vel_ = params.velocity_smoothing * smoothed_vel_ + (1.f - params.velocity_smoothing) * raw;
     else { smoothed_vel_ = raw; has_prev_vel_ = true; }
-    prev_best_cmd_ = raw;
 
-    // Gaussian brake: modulate advance with rotation.
-    // adv_out = adv * exp(-k * (rot / max_rot)²)
     constexpr float gauss_k = 2.0f;
     const float rot_ratio = smoothed_vel_[2] / params.max_rot;
     const float brake = std::exp(-gauss_k * rot_ratio * rot_ratio);
@@ -172,18 +241,13 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     static int dbg = 0;
     if (++dbg % 20 == 0)
     {
-        const float relu_d = std::max(0.f, adaptive_.efe_smoothed - adaptive_.efe_threshold);
-        const float diff = std::tanh(adaptive_.efe_sensitivity * relu_d);
-        std::cout << "[TrajCtrl] MPPI"
-                  << " seeds=" << adaptive_.num_seeds
-                  << " steps=" << adaptive_.steps
-                  << " spread=" << static_cast<int>(adaptive_.spread * 180.f / M_PI) << "°"
-                  << " diff=" << static_cast<int>(diff * 100) << "%"
-                  << " collR=" << static_cast<int>(adaptive_.collision_ratio * 100) << "%"
-                  << " λ=" << std::fixed << std::setprecision(1) << params.mppi_lambda
+        std::cout << "[TrajCtrl] MPPI K=" << K
+                  << " T=" << T
+                  << " σ_adv=" << std::fixed << std::setprecision(3) << adaptive_sigma_adv_
+                  << " σ_rot=" << adaptive_sigma_rot_
                   << " cmd(adv=" << cmd_adv << " rot=" << cmd_rot << ")"
                   << " sent(adv=" << out.adv << " rot=" << out.rot << ")"
-                  << " bestG=" << best_G
+                  << " bestG=" << std::setprecision(1) << best_G
                   << " carrot=" << static_cast<int>(std::atan2(carrot_robot.x(), carrot_robot.y()) * 180.f / M_PI) << "°"
                   << " dist=" << out.dist_to_goal
                   << " esdf=" << out.min_esdf
@@ -194,227 +258,38 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
 }
 
 // ============================================================================
-// Adaptive feedback — EFE-based smooth adaptation
-//
-// Uses EMA of log(1+G_best) as a "difficulty" metric (0 = cruise, 1 = stuck).
-//
-// Two regimes with opposite behaviour:
-//
-//   CRUISE (difficulty ≈ 0, free path):
-//     - Long trajectories (max_steps) — eager to reach the goal
-//     - Narrow spread (min_spread)    — focused on the goal direction
-//     - Few seeds (min_seeds)         — not much to explore
-//     - Fast speed (max_adv)          — go go go
-//
-//   EXPLORE (difficulty ≈ 1, blocked):
-//     - Short trajectories (min_steps) — don't plan far into the unknown
-//     - Wide spread (max_spread)       — search for gaps
-//     - Many seeds (max_seeds)         — cover all directions
-//     - Slow speed                     — cautious
+// Nominal control: simple proportional control toward carrot
+// Used as the base for MPPI warm-start blending
 // ============================================================================
 
-void TrajectoryController::update_adaptive(const std::vector<SimResult>& results,
-                                            const std::vector<Seed>& seeds,
-                                            int best_idx,
-                                            const Eigen::Vector2f& carrot_robot)
+TrajectoryController::Seed TrajectoryController::compute_nominal(
+    const Eigen::Vector2f& carrot_robot, int steps) const
 {
-    const int N = static_cast<int>(results.size());
-    if (N == 0) return;
+    Seed seed;
+    seed.adv.resize(steps);
+    seed.rot.resize(steps);
 
-    const float carrot_dist = carrot_robot.norm();
-
-    // Count collisions and compute score stats
-    int num_collisions = 0;
-    float G_best = std::numeric_limits<float>::max();
-    for (const auto& r : results)
-    {
-        if (r.collides) num_collisions++;
-        G_best = std::min(G_best, r.G_total);
-    }
-
-    const float coll_ratio = static_cast<float>(num_collisions) / static_cast<float>(N);
-    adaptive_.collision_ratio = coll_ratio;
-    adaptive_.best_G = G_best;
-
-    // Best seed angle (direction it took)
-    if (best_idx >= 0 && !seeds[best_idx].rot.empty())
-    {
-        float angle = 0.f;
-        for (float r : seeds[best_idx].rot)
-            angle += r * params.trajectory_dt;
-        adaptive_.best_angle = angle;
-    }
-
-    // ---- EFE-based smooth difficulty metric ----
-    const float log_G = std::log(1.f + G_best);
-    adaptive_.efe_smoothed = adaptive_.efe_gamma * adaptive_.efe_smoothed
-                           + (1.f - adaptive_.efe_gamma) * log_G;
-
-    const float relu_diff = std::max(0.f, adaptive_.efe_smoothed - adaptive_.efe_threshold);
-    const float difficulty = std::tanh(adaptive_.efe_sensitivity * relu_diff);
-
-    // Collision boost: extra difficulty if many seeds collide
-    const float coll_boost = std::max(0.f, (coll_ratio - 0.3f) / 0.7f);
-    const float d = std::min(1.f, difficulty + 0.5f * coll_boost);  // 0..1
-    const float ease = 1.f - d;  // inverted: 1 = free, 0 = blocked
-
-    const float min_spread = params.min_spread_deg * static_cast<float>(M_PI) / 180.f;
-    const float max_spread = params.max_spread_deg * static_cast<float>(M_PI) / 180.f;
-
-    // Seeds and spread GROW with difficulty (explore more when blocked)
-    adaptive_.num_seeds = params.min_seeds +
-        static_cast<int>(d * static_cast<float>(params.max_seeds - params.min_seeds));
-    adaptive_.spread = min_spread + d * (max_spread - min_spread);
-
-    // Steps and speed GROW with ease (eager when free, cautious when blocked)
-    adaptive_.steps = params.min_steps +
-        static_cast<int>(ease * static_cast<float>(params.max_steps - params.min_steps));
-    adaptive_.drive_speed = params.max_adv * (0.4f + 0.6f * ease);  // 40%..100% of max
-    adaptive_.drive_speed = std::clamp(adaptive_.drive_speed,
-                                        0.1f,
-                                        std::min(params.max_adv, std::max(0.15f, carrot_dist * 0.5f)));
-}
-
-// ============================================================================
-// Seed generation — Pure geometric approach (Python reference style)
-//
-// Seeds are generated using only direction blending — NO ESDF queries.
-// The ESDF is used later in optimize_seed() to push seeds away from
-// obstacles, and in simulate_and_score() to evaluate them.
-//
-// Seed types:
-//   - Seed 0:   Warm start from previous best command
-//   - Seed 1:   Direct to carrot (turn then go straight)
-//   - Seed 2,3: Left and right curves (offset angle decaying to goal)
-//   - Seed 4:   Momentum (continue previous velocity, blend to goal)
-//   - Seeds 5..K-1: Spread seeds (angular fan around goal with sqrt blending)
-// ============================================================================
-
-std::vector<TrajectoryController::Seed> TrajectoryController::generate_seeds(
-    const Eigen::Vector2f& carrot_robot)
-{
-    const int K = adaptive_.num_seeds;
-    const int steps = adaptive_.steps;
-    // Y+ forward convention: atan2(x, y) gives angle from Y+ axis
+    const float dt = params.trajectory_dt;
+    // Y+ forward: atan2(x, y) gives angle from forward axis
     const float carrot_angle = std::atan2(carrot_robot.x(), carrot_robot.y());
-    const float drive_speed = adaptive_.drive_speed;
-    const float spread = adaptive_.spread;
-
-    std::vector<Seed> seeds;
-    seeds.reserve(K);
-
-    // ---- Seed 0: Warm start from previous best command ----
-    if (has_prev_vel_)
-    {
-        seeds.push_back(make_momentum_seed(steps, drive_speed, carrot_angle));
-    }
-
-    // ---- Seed 1: Direct to carrot (smooth turn + advance) ----
-    // Always advance at full speed; rotation computed to reach carrot angle.
-    // The Gaussian brake at output will modulate advance based on rotation.
-    seeds.push_back(make_spread_seed(carrot_angle, carrot_angle, steps, drive_speed));
-
-    // ---- Seeds 2,3: Left and right curves ----
-    // Offset ±45° decaying to goal direction over the trajectory
-    seeds.push_back(make_curve_seed(carrot_angle, +static_cast<float>(M_PI) / 4.f, steps, drive_speed));
-    seeds.push_back(make_curve_seed(carrot_angle, -static_cast<float>(M_PI) / 4.f, steps, drive_speed));
-
-    // ---- Remaining seeds: angular spread fan with blending toward goal ----
-    // Blend centre: 70% carrot direction + 30% adaptive best direction
-    const float centre_angle = 0.7f * carrot_angle + 0.3f * adaptive_.best_angle;
-
-    const int num_spread = K - static_cast<int>(seeds.size());
-    if (num_spread > 0)
-    {
-        // Effective spread: clamp so no seed starts more than ±90° from carrot
-        const float max_half_spread = static_cast<float>(M_PI) * 0.5f;
-        const float effective_spread = std::min(spread, max_half_spread);
-
-        for (int k = 0; k < num_spread; ++k)
-        {
-            float frac = (num_spread == 1) ? 0.5f
-                         : static_cast<float>(k) / static_cast<float>(num_spread - 1);
-            float target_angle = centre_angle + effective_spread * (2.f * frac - 1.f);
-            seeds.push_back(make_spread_seed(target_angle, carrot_angle, steps, drive_speed));
-        }
-    }
-
-    return seeds;
-}
-
-// ============================================================================
-// Curve seed: starts with offset_angle from carrot, decays linearly to carrot.
-// Simulates diff-drive kinematics step by step.
-// Python equivalent: offset_angles = side * pi/4 * (1 - phases)
-// ============================================================================
-
-TrajectoryController::Seed TrajectoryController::make_curve_seed(
-    float carrot_angle, float offset_angle, int steps, float speed)
-{
-    Seed seed;
-    seed.adv.resize(steps);
-    seed.rot.resize(steps);
-
-    const float dt = params.trajectory_dt;
+    const float carrot_dist = carrot_robot.norm();
     float theta = 0.f;
 
     for (int s = 0; s < steps; ++s)
     {
-        float phase = static_cast<float>(s) / static_cast<float>(std::max(steps - 1, 1));
-        // Desired direction: offset decays linearly to zero
-        float desired_angle = carrot_angle + offset_angle * (1.f - phase);
-
-        // Rotation to reach desired angle
-        float angle_err = desired_angle - theta;
+        // Remaining angle to carrot from current simulated heading
+        float angle_err = carrot_angle - theta;
         while (angle_err > static_cast<float>(M_PI)) angle_err -= 2.f * static_cast<float>(M_PI);
         while (angle_err < -static_cast<float>(M_PI)) angle_err += 2.f * static_cast<float>(M_PI);
 
         float rot_cmd = std::clamp(angle_err / dt, -params.max_rot, params.max_rot);
-        float adv_cmd = std::clamp(speed * 0.85f, 0.05f, params.max_adv);
 
-        seed.adv[s] = adv_cmd;
-        seed.rot[s] = rot_cmd;
-
-        // Simulate forward
-        theta += rot_cmd * dt;
-    }
-    return seed;
-}
-
-// ============================================================================
-// Momentum seed: continues previous velocity and blends toward goal.
-// Python equivalent: (1 - blend*0.5) * prev_dir + blend*0.5 * goal_dir
-// ============================================================================
-
-TrajectoryController::Seed TrajectoryController::make_momentum_seed(
-    int steps, float speed, float carrot_angle)
-{
-    Seed seed;
-    seed.adv.resize(steps);
-    seed.rot.resize(steps);
-
-    const float dt = params.trajectory_dt;
-    float prev_adv = prev_best_cmd_[0];
-    float prev_rot = prev_best_cmd_[2];
-
-    // Estimate previous heading from prev_rot
-    float prev_heading = prev_rot * dt * 3.f;  // rough estimate of where we were heading
-    float theta = 0.f;
-
-    for (int s = 0; s < steps; ++s)
-    {
-        float phase = static_cast<float>(s) / static_cast<float>(std::max(steps - 1, 1));
-        // Blend from previous heading to goal direction
-        float blend = phase * 0.5f;
-        float desired_angle = (1.f - blend) * prev_heading + blend * carrot_angle;
-
-        float angle_err = desired_angle - theta;
-        while (angle_err > static_cast<float>(M_PI)) angle_err -= 2.f * static_cast<float>(M_PI);
-        while (angle_err < -static_cast<float>(M_PI)) angle_err += 2.f * static_cast<float>(M_PI);
-
-        float rot_cmd = std::clamp(angle_err / dt, -params.max_rot, params.max_rot);
-        // Speed: blend from previous speed to target speed
-        float adv_cmd = std::max(0.05f, (1.f - phase) * prev_adv + phase * speed * 0.8f);
+        // Forward speed: proportional to alignment with carrot
+        float alignment = std::cos(angle_err);
+        float adv_cmd = params.max_adv * std::max(0.1f, alignment);
+        // Reduce speed near goal
+        float dist_factor = std::min(1.f, carrot_dist / 1.0f);
+        adv_cmd *= dist_factor;
         adv_cmd = std::clamp(adv_cmd, 0.05f, params.max_adv);
 
         seed.adv[s] = adv_cmd;
@@ -426,43 +301,112 @@ TrajectoryController::Seed TrajectoryController::make_momentum_seed(
 }
 
 // ============================================================================
-// Spread seed: starts heading in target_angle, blends toward carrot_angle
-// using sqrt(phase) blending (slower convergence, more exploration early).
-// Python equivalent: blends = (t_vals / T).pow(0.5)
-//   blended = (1-blends)*direction + blends*goal_dir
+// Sample K trajectories: MPPI perturbations + structured exploration injections
+//
+// Core: K-n_inject random samples as AR(1) perturbations of prev_optimal_
+// Injections: n_inject deterministic seeds at fixed angular offsets from carrot
+//   to guarantee lateral coverage (obstacle avoidance, door navigation)
+//
+// The injection count scales with proximity to obstacles:
+//   far from obstacles → 2 injections (just ±30°)
+//   near obstacles → 8 injections (±30°, ±60°, ±90°, ±120°)
 // ============================================================================
 
-TrajectoryController::Seed TrajectoryController::make_spread_seed(
-    float target_angle, float carrot_angle, int steps, float speed)
+std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectories(
+    const Eigen::Vector2f& carrot_robot)
 {
-    Seed seed;
-    seed.adv.resize(steps);
-    seed.rot.resize(steps);
-
+    const int K = params.num_samples;
+    const int T = params.trajectory_steps;
+    const float alpha = params.noise_alpha;
+    const float innovation = std::sqrt(std::max(0.f, 1.f - alpha * alpha));
     const float dt = params.trajectory_dt;
-    float theta = 0.f;
+    const float carrot_angle = std::atan2(carrot_robot.x(), carrot_robot.y());
 
-    for (int s = 0; s < steps; ++s)
+    std::vector<Seed> seeds;
+    seeds.reserve(K);
+
+    // --- Structured exploration injections ---
+    // Determine how many based on ESDF at robot position
+    const float esdf_here = query_esdf(0.f, 0.f);
+    const float esdf_ratio = std::clamp(esdf_here / params.d_safe, 0.f, 2.f);  // 0=collision, 2=very free
+
+    // Angular offsets for injected seeds (radians)
+    // Always inject ±30°; add wider angles when near obstacles
+    std::vector<float> inject_offsets = {0.5f, -0.5f};  // ±30° always
+    if (esdf_ratio < 1.5f)
     {
-        float phase = static_cast<float>(s) / static_cast<float>(std::max(steps - 1, 1));
-        // sqrt blending: slow convergence early, faster late
-        float blend = std::sqrt(phase);
-        float desired_angle = (1.f - blend) * target_angle + blend * carrot_angle;
-
-        float angle_err = desired_angle - theta;
-        while (angle_err > static_cast<float>(M_PI)) angle_err -= 2.f * static_cast<float>(M_PI);
-        while (angle_err < -static_cast<float>(M_PI)) angle_err += 2.f * static_cast<float>(M_PI);
-
-        float rot_cmd = std::clamp(angle_err / dt, -params.max_rot, params.max_rot);
-        float adv_cmd = std::clamp(speed * 0.85f, 0.05f, params.max_adv);
-
-        seed.adv[s] = adv_cmd;
-        seed.rot[s] = rot_cmd;
-
-        theta += rot_cmd * dt;
+        inject_offsets.push_back(1.05f);   // +60°
+        inject_offsets.push_back(-1.05f);  // -60°
+    }
+    if (esdf_ratio < 1.0f)
+    {
+        inject_offsets.push_back(1.57f);   // +90°
+        inject_offsets.push_back(-1.57f);  // -90°
+    }
+    if (esdf_ratio < 0.6f)
+    {
+        inject_offsets.push_back(2.09f);   // +120°
+        inject_offsets.push_back(-2.09f);  // -120°
     }
 
-    return seed;
+    // Generate injection seeds: constant rotation offset that decays toward carrot
+    for (float offset : inject_offsets)
+    {
+        Seed s;
+        s.adv.resize(T);
+        s.rot.resize(T);
+        float theta = 0.f;
+
+        for (int t = 0; t < T; ++t)
+        {
+            float phase = static_cast<float>(t) / static_cast<float>(std::max(T - 1, 1));
+            // Blend from offset direction to carrot over the trajectory (sqrt for slow convergence)
+            float desired = carrot_angle + offset * (1.f - std::sqrt(phase));
+
+            float angle_err = desired - theta;
+            while (angle_err > static_cast<float>(M_PI)) angle_err -= 2.f * static_cast<float>(M_PI);
+            while (angle_err < -static_cast<float>(M_PI)) angle_err += 2.f * static_cast<float>(M_PI);
+
+            float rot_cmd = std::clamp(angle_err / dt, -params.max_rot, params.max_rot);
+            float adv_cmd = std::clamp(params.max_adv * 0.7f, 0.05f, params.max_adv);
+
+            s.adv[t] = adv_cmd;
+            s.rot[t] = rot_cmd;
+            theta += rot_cmd * dt;
+        }
+        seeds.push_back(std::move(s));
+    }
+
+    // --- Random MPPI perturbations of warm-started sequence ---
+    const int n_random = K - static_cast<int>(seeds.size());
+    for (int k = 0; k < n_random; ++k)
+    {
+        Seed s;
+        s.adv.resize(T);
+        s.rot.resize(T);
+
+        // Initialize AR(1) state
+        float eps_adv = normal_(rng_) * adaptive_sigma_adv_;
+        float eps_rot = normal_(rng_) * adaptive_sigma_rot_;
+
+        for (int t = 0; t < T; ++t)
+        {
+            // Perturbed control = warm-started base + correlated noise
+            float adv = prev_optimal_[t].adv + eps_adv;
+            float rot = prev_optimal_[t].rot + eps_rot;
+
+            // Clamp to kinematic limits
+            s.adv[t] = std::clamp(adv, 0.05f, params.max_adv);
+            s.rot[t] = std::clamp(rot, -params.max_rot, params.max_rot);
+
+            // AR(1) update: noise evolves smoothly
+            eps_adv = alpha * eps_adv + innovation * adaptive_sigma_adv_ * normal_(rng_);
+            eps_rot = alpha * eps_rot + innovation * adaptive_sigma_rot_ * normal_(rng_);
+        }
+        seeds.push_back(std::move(s));
+    }
+
+    return seeds;
 }
 
 // ============================================================================
@@ -541,23 +485,24 @@ TrajectoryController::SimResult TrajectoryController::simulate_and_score(
         G_goal += 0.5f * params.lambda_goal * err;
     }
 
-    // G_smooth: continuity with previous command
-    float dv = seed.adv[0] - prev_best_cmd_[0];
-    float dr = seed.rot[0] - prev_best_cmd_[2];
+    // G_smooth: continuity with warm-started baseline
+    float dv = seed.adv[0] - (prev_optimal_.empty() ? 0.f : prev_optimal_[0].adv);
+    float dr = seed.rot[0] - (prev_optimal_.empty() ? 0.f : prev_optimal_[0].rot);
     float G_smooth = params.lambda_smooth * (dv * dv + dr * dr);
 
     // G_velocity: magnitude regularization + action change penalty
     // Only over actual simulated steps
+    // Rotation is weighted 4x more than advance to penalize unnecessary turning
     float G_vel_mag = 0.f;
     float G_vel_delta = 0.f;
     for (int s = 0; s < actual_steps; ++s)
     {
-        G_vel_mag += seed.adv[s] * seed.adv[s] + seed.rot[s] * seed.rot[s];
+        G_vel_mag += seed.adv[s] * seed.adv[s] + 4.f * seed.rot[s] * seed.rot[s];
         if (s > 0)
         {
             float da = seed.adv[s] - seed.adv[s - 1];
             float dro = seed.rot[s] - seed.rot[s - 1];
-            G_vel_delta += da * da + dro * dro;
+            G_vel_delta += da * da + 4.f * dro * dro;
         }
     }
     G_vel_mag *= params.lambda_velocity;
@@ -802,5 +747,4 @@ Eigen::Vector2f TrajectoryController::room_to_robot(const Eigen::Vector2f& p_roo
 }
 
 } // namespace rc
-
 
