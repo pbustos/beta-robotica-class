@@ -79,24 +79,14 @@ bool PolygonPathPlanner::segment_crosses_original_boundary(
     return false;
 }
 
-bool PolygonPathPlanner::segment_crosses_boundary(
+bool PolygonPathPlanner::segment_crosses_inner_boundary(
     const Eigen::Vector2f& a, const Eigen::Vector2f& b) const
 {
-    // Check against the INNER polygon boundary
     const int n = static_cast<int>(inner_polygon_.size());
     for (int i = 0; i < n; ++i)
         if (segments_intersect_proper(a, b, inner_polygon_[i], inner_polygon_[(i + 1) % n]))
             return true;
     return false;
-}
-
-// =====================================================================
-// Clearance check
-// =====================================================================
-bool PolygonPathPlanner::has_clearance(const Eigen::Vector2f& p) const
-{
-    if (!point_in_polygon(p, polygon_)) return false;
-    return dist_to_polygon_boundary(p, polygon_) >= params.robot_radius * 0.95f;
 }
 
 // =====================================================================
@@ -107,33 +97,21 @@ bool PolygonPathPlanner::is_visible(const Eigen::Vector2f& a, const Eigen::Vecto
     if (polygon_.empty() || inner_polygon_.empty()) return false;
     if (!point_in_polygon(a, polygon_) || !point_in_polygon(b, polygon_))
         return false;
-    // Must not cross any original wall
     if (segment_crosses_original_boundary(a, b))
         return false;
-    // Must not cross the inner boundary polygon
-    if (segment_crosses_boundary(a, b))
+    if (segment_crosses_inner_boundary(a, b))
         return false;
-    // Sample points: all must be inside the original polygon
-    const float seg_len = (b - a).norm();
-    const int num_samples = std::max(10, static_cast<int>(seg_len / 0.15f));
-    for (int k = 1; k < num_samples; ++k)
-    {
-        const float t = static_cast<float>(k) / static_cast<float>(num_samples);
-        const Eigen::Vector2f sample = a + t * (b - a);
-        if (!point_in_polygon(sample, polygon_))
-            return false;
-    }
     return true;
 }
 
 bool PolygonPathPlanner::is_inside(const Eigen::Vector2f& point) const
 {
-    return !polygon_.empty() && has_clearance(point);
+    return !polygon_.empty() && point_in_polygon(point, polygon_);
 }
 
 // =====================================================================
-// Subdivide polygon: insert extra points on edges longer than max_edge_len
-// so no edge exceeds that length. Original vertices are preserved.
+// Subdivide polygon: insert extra points on edges longer than max_edge_len.
+// Original vertices are preserved.
 // =====================================================================
 std::vector<Eigen::Vector2f> PolygonPathPlanner::subdivide_polygon(
     const std::vector<Eigen::Vector2f>& poly, float max_edge_len)
@@ -166,9 +144,7 @@ std::vector<Eigen::Vector2f> PolygonPathPlanner::subdivide_polygon(
 
 // =====================================================================
 // Generate inner polygon: one node per vertex, displaced inward by offset.
-// For each vertex: sweep 360° at a fixed radius of exactly offset,
-// pick the direction where the candidate is inside and has best clearance.
-// Falls back to shorter radii if offset doesn't fit.
+// Sweeps 360° at fixed radius; falls back to shorter radii at tight corners.
 // Returns exactly N nodes (1:1 with input polygon vertices).
 // =====================================================================
 std::vector<Eigen::Vector2f> PolygonPathPlanner::offset_polygon_inward(
@@ -183,9 +159,9 @@ std::vector<Eigen::Vector2f> PolygonPathPlanner::offset_polygon_inward(
     {
         Eigen::Vector2f best = poly[i];
         float best_clearance = 0.f;
-        constexpr int num_angles = 36;   // every 10°
+        constexpr int num_angles = 36;
 
-        // First pass: try at exactly offset distance
+        // Try at exactly offset distance
         for (int a = 0; a < num_angles; ++a)
         {
             float angle = 2.f * static_cast<float>(M_PI) * static_cast<float>(a) / static_cast<float>(num_angles);
@@ -199,14 +175,14 @@ std::vector<Eigen::Vector2f> PolygonPathPlanner::offset_polygon_inward(
             }
         }
 
-        // If no valid point at offset distance, try shorter radii
+        // Fallback: try shorter radii if offset doesn't fit
         if (best_clearance < 0.01f)
         {
             for (int a = 0; a < num_angles; ++a)
             {
                 float angle = 2.f * static_cast<float>(M_PI) * static_cast<float>(a) / static_cast<float>(num_angles);
                 Eigen::Vector2f dir(std::cos(angle), std::sin(angle));
-                for (int r = 9; r >= 1; --r)  // from 0.9*offset down to 0.1*offset
+                for (int r = 9; r >= 1; --r)
                 {
                     float radius = offset * static_cast<float>(r) / 10.f;
                     Eigen::Vector2f cand = poly[i] + dir * radius;
@@ -226,88 +202,26 @@ std::vector<Eigen::Vector2f> PolygonPathPlanner::offset_polygon_inward(
 }
 
 // =====================================================================
-// Set polygon and rebuild
+// Set polygon and rebuild all structures (called once per layout change)
 // =====================================================================
 void PolygonPathPlanner::set_polygon(const std::vector<Eigen::Vector2f>& vertices)
 {
     polygon_ = vertices;
 
-    // 0. Subdivide polygon so no edge is longer than ~1m
-    subdivided_polygon_ = subdivide_polygon(polygon_, 1.0f);
-    const int ns = static_cast<int>(subdivided_polygon_.size());
+    // 1. Subdivide long edges
+    subdivided_polygon_ = subdivide_polygon(polygon_, params.max_edge_len);
 
-    std::cout << "[PathPlanner] Original: " << polygon_.size()
-              << " vertices, subdivided: " << ns << " vertices" << std::endl;
-
-    // 1. Build inner polygon from SUBDIVIDED polygon (1:1 mapping)
+    // 2. Build inner polygon (1:1 with subdivided vertices)
     inner_polygon_ = offset_polygon_inward(subdivided_polygon_, params.robot_radius);
 
-    // 2. Build nav nodes: inner polygon vertices + edge midpoint nodes
+    // 3. Nav nodes = inner polygon vertices (they serve as both boundary and graph nodes)
     shrunk_polygon_ = inner_polygon_;
 
-    // Determine winding for edge normals (use original polygon)
-    float signed_area = 0.f;
-    for (int i = 0; i < static_cast<int>(polygon_.size()); ++i)
-    {
-        const auto& a = polygon_[i];
-        const auto& b = polygon_[(i + 1) % static_cast<int>(polygon_.size())];
-        signed_area += (b.x() - a.x()) * (b.y() + a.y());
-    }
-    const float winding = (signed_area < 0) ? -1.f : 1.f;
+    std::cout << "[PathPlanner] Original: " << polygon_.size()
+              << " vertices, subdivided: " << subdivided_polygon_.size()
+              << ", nav nodes: " << shrunk_polygon_.size() << std::endl;
 
-    // Add edge midpoint nodes (from subdivided polygon for better coverage)
-    for (int i = 0; i < ns; ++i)
-    {
-        const Eigen::Vector2f& a = subdivided_polygon_[i];
-        const Eigen::Vector2f& b = subdivided_polygon_[(i + 1) % ns];
-        Eigen::Vector2f edge = b - a;
-        float len = edge.norm();
-        if (len < 1e-6f) continue;
-        edge /= len;
-
-        Eigen::Vector2f normal = (winding > 0)
-            ? Eigen::Vector2f(-edge.y(), edge.x())
-            : Eigen::Vector2f(edge.y(), -edge.x());
-
-        Eigen::Vector2f mid = 0.5f * (a + b);
-        Eigen::Vector2f candidate = mid + normal * params.robot_radius;
-
-        if (point_in_polygon(candidate, polygon_) &&
-            dist_to_polygon_boundary(candidate, polygon_) >= params.robot_radius * 0.5f)
-        {
-            shrunk_polygon_.push_back(candidate);
-        }
-        else
-        {
-            Eigen::Vector2f best = mid;
-            float best_clearance = 0.f;
-            constexpr int num_steps = 20;
-            for (int s = 1; s <= num_steps; ++s)
-            {
-                float d = params.robot_radius * static_cast<float>(s) / static_cast<float>(num_steps);
-                Eigen::Vector2f cand = mid + normal * d;
-                if (point_in_polygon(cand, polygon_))
-                {
-                    float c = dist_to_polygon_boundary(cand, polygon_);
-                    if (c > best_clearance)
-                    { best = cand; best_clearance = c; }
-                }
-            }
-            if (best_clearance > 0.01f)
-                shrunk_polygon_.push_back(best);
-        }
-    }
-
-    int good = 0;
-    for (const auto& node : shrunk_polygon_)
-    {
-        float c = dist_to_polygon_boundary(node, polygon_);
-        if (c >= params.robot_radius * 0.7f) good++;
-    }
-    std::cout << "[PathPlanner] Inner polygon: " << inner_polygon_.size()
-              << ", total nav nodes: " << shrunk_polygon_.size()
-              << " (" << good << " with full clearance)" << std::endl;
-
+    // 4. Build visibility graph
     if (shrunk_polygon_.size() >= 3)
         build_visibility_graph();
     else
@@ -315,7 +229,7 @@ void PolygonPathPlanner::set_polygon(const std::vector<Eigen::Vector2f>& vertice
 }
 
 // =====================================================================
-// Build Visibility Graph
+// Build Visibility Graph (O(n²) pairwise visibility checks)
 // =====================================================================
 void PolygonPathPlanner::build_visibility_graph()
 {
@@ -341,7 +255,7 @@ void PolygonPathPlanner::build_visibility_graph()
 }
 
 // =====================================================================
-// Dijkstra
+// Dijkstra shortest path
 // =====================================================================
 std::vector<int> PolygonPathPlanner::dijkstra(
     const std::vector<std::vector<Edge>>& adj, int start, int goal)
@@ -373,17 +287,20 @@ std::vector<int> PolygonPathPlanner::dijkstra(
 }
 
 // =====================================================================
-// Plan path
+// Plan path (start and goal are temporarily added to the graph)
 // =====================================================================
 std::vector<Eigen::Vector2f> PolygonPathPlanner::plan(
     const Eigen::Vector2f& start, const Eigen::Vector2f& goal) const
 {
-    if (polygon_.size() < 3) return {};
+    if (polygon_.size() < 3 || inner_polygon_.empty()) return {};
     if (!point_in_polygon(start, polygon_) || !point_in_polygon(goal, polygon_))
         return {};
+
+    // Direct line of sight?
     if (is_visible(start, goal))
         return {start, goal};
 
+    // Extend graph with start (si) and goal (gi) as temporary nodes
     const int n = static_cast<int>(shrunk_polygon_.size());
     const int si = n, gi = n + 1;
     auto adj = adjacency_;
@@ -406,17 +323,10 @@ std::vector<Eigen::Vector2f> PolygonPathPlanner::plan(
     }
 
     auto parent = dijkstra(adj, si, gi);
-
-    std::cout << "[PathPlanner] start connects to " << adj[si].size()
-              << " nodes, goal connects to " << adj[gi].size()
-              << " nodes" << std::endl;
-
     if (parent[gi] == -1)
-    {
-        std::cout << "[PathPlanner] NO PATH: graph disconnected" << std::endl;
         return {};
-    }
 
+    // Reconstruct path
     std::vector<int> idx_path;
     for (int v = gi; v != -1; v = parent[v])
         idx_path.push_back(v);
