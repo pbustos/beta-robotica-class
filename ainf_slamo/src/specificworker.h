@@ -143,6 +143,7 @@ class SpecificWorker : public GenericWorker
 	// Flip state tracking
 	bool flip_x_applied_ = false;
 	bool flip_y_applied_ = false;
+	bool auto_center_ = false;  // Auto-center view on robot
 
 	// Velocity commands (boost circular buffer is thread safe)
 	boost::circular_buffer<rc::VelocityCommand> velocity_history_{20};
@@ -164,6 +165,8 @@ class SpecificWorker : public GenericWorker
 
 	// Trajectory controller (ESDF-based sampling local control)
 	rc::TrajectoryController trajectory_controller_;
+	float last_ess_ = 0.f;   // Latest ESS value for UI
+	int   last_ess_K_ = 1;   // Latest K for ESS ratio
 	std::chrono::steady_clock::time_point last_joystick_time_;
 	static constexpr float JOYSTICK_TIMEOUT_SEC = 0.5f;
 	void send_velocity_command(float adv, float side, float rot);

@@ -31,29 +31,37 @@ public:
         float carrot_lookahead = 1.5f;
         float goal_threshold   = 0.25f;
 
-        // MPPI sampling parameters
-        int   num_samples      = 100;       // K: number of sampled trajectories
-        int   trajectory_steps = 30;       // T: prediction horizon (time steps)
+        // MPPI sampling — initial / baseline values (adapted by ESS)
+        int   num_samples      = 50;       // K baseline
+        int   trajectory_steps = 30;       // T baseline
         float trajectory_dt    = 0.15f;    // dt per step
 
-        // MPPI temperature
-        float mppi_lambda       = 5.0f;    // lower = more selective
+        // ESS-based adaptive ranges
+        int   K_min = 20,  K_max = 120;    // adaptive K bounds
+        int   T_min = 15,  T_max = 80;     // adaptive T bounds
+        float lambda_min = 1.0f, lambda_max = 20.0f;  // adaptive λ bounds
+        float cpu_budget_ms = 5.0f;        // max MPPI time per cycle (10% of 50ms)
+        float ess_smoothing = 0.1f;        // EMA alpha for ESS (slow)
+        int   adapt_interval = 5;          // adapt K/T every N cycles
+
+        // MPPI temperature (initial, adapted by ESS)
+        float mppi_lambda       = 5.0f;
 
         // Noise standard deviations (for Gaussian perturbations)
-        float sigma_adv   = 0.12f;         // m/s noise on advance
-        float sigma_rot   = 0.35f;         // rad/s noise on rotation (wide enough for laterals)
+        float sigma_adv   = 0.12f;
+        float sigma_rot   = 0.25f;
 
         // AR(1) temporal noise correlation
-        float noise_alpha  = 0.75f;        // 0 = white noise, 1 = fully correlated
+        float noise_alpha  = 0.80f;
         // Adaptive sigma limits
         float sigma_min_adv   = 0.04f;
-        float sigma_min_rot   = 0.10f;
+        float sigma_min_rot   = 0.08f;
         float sigma_max_adv   = 0.25f;
-        float sigma_max_rot   = 0.60f;     // allow wide rotation exploration near obstacles
+        float sigma_max_rot   = 0.40f;
 
         // Nominal control blending (warm start weights)
-        float warm_start_adv_weight = 0.5f;  // blend prev vs nominal for adv
-        float warm_start_rot_weight = 0.5f;  // blend prev vs nominal for rot
+        float warm_start_adv_weight = 0.5f;
+        float warm_start_rot_weight = 0.5f;
 
         // Gradient optimization (post-processing refinement)
         int   optim_iterations = 2;
@@ -71,7 +79,7 @@ public:
         float grid_half_size   = 4.0f;
 
         // Output smoothing
-        float velocity_smoothing = 0.3f;
+        float velocity_smoothing = 0.45f;
 
         // Visualization
         int num_trajectories_to_draw = 10;
@@ -85,6 +93,10 @@ public:
         bool  goal_reached = false;
         float dist_to_goal = 0.f;
         float min_esdf = 0.f;
+
+        // ESS diagnostics for UI
+        float ess = 0.f;          // current ESS value
+        int   ess_K = 1;          // current K (to compute ratio)
 
         Eigen::Vector2f carrot_room = Eigen::Vector2f::Zero();
         int current_wp_index = 0;
@@ -130,6 +142,19 @@ private:
     // Adaptive noise sigmas
     float adaptive_sigma_adv_;
     float adaptive_sigma_rot_;
+
+    // ESS-based adaptive state
+    int   adaptive_K_;               // current number of samples
+    int   adaptive_T_;               // current horizon length
+    float adaptive_lambda_;          // current MPPI temperature
+    int   adaptive_n_inject_ = 2;    // current injection count
+    float ess_smooth_ = 0.f;        // EMA-smoothed ESS
+    float last_mppi_ms_ = 0.f;      // last MPPI wall-clock time
+    int   adapt_counter_ = 0;       // counter for K/T adaptation interval
+
+    // Compute ESS from weights and adapt K, T, λ, σ, injections
+    float compute_ess(const std::vector<float>& weights, int K) const;
+    void adapt_from_ess(float ess, int K, int num_collisions);
 
     // RNG
     std::mt19937 rng_{std::random_device{}()};

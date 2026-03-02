@@ -122,27 +122,43 @@
          </item>
         </layout>
        </item>
-       <item>
-        <layout class="QVBoxLayout" name="verticalLayout_cpu">
-         <item>
-          <widget class="QLabel" name="label_cpu">
-           <property name="text"><string>CPU %</string></property>
-           <property name="alignment"><set>Qt::AlignCenter</set></property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QLCDNumber" name="lcdNumber_cpu">
-           <property name="digitCount"><number>3</number></property>
-           <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-       <item>
-        <widget class="Line" name="line_separator">
-         <property name="orientation"><enum>Qt::Vertical</enum></property>
-        </widget>
-       </item>
+        <item>
+         <layout class="QVBoxLayout" name="verticalLayout_cpu">
+          <item>
+           <widget class="QLabel" name="label_cpu">
+            <property name="text"><string>CPU %</string></property>
+            <property name="alignment"><set>Qt::AlignCenter</set></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLCDNumber" name="lcdNumber_cpu">
+            <property name="digitCount"><number>3</number></property>
+            <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="verticalLayout_ess">
+          <item>
+           <widget class="QLabel" name="label_ess">
+            <property name="text"><string>ESS</string></property>
+            <property name="alignment"><set>Qt::AlignCenter</set></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLCDNumber" name="lcdNumber_ess">
+            <property name="digitCount"><number>5</number></property>
+            <property name="segmentStyle"><enum>QLCDNumber::Flat</enum></property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="Line" name="line_separator">
+          <property name="orientation"><enum>Qt::Vertical</enum></property>
+         </widget>
+        </item>
        <item>
         <layout class="QVBoxLayout" name="verticalLayout_robotX">
          <item>
@@ -261,12 +277,20 @@
          <property name="toolTip"><string>Mirror robot position on Y axis (fixes symmetry issues)</string></property>
         </widget>
        </item>
-       <item>
-        <widget class="QPushButton" name="pushButton_calibrateGT">
-         <property name="text"><string>Calibrate GT</string></property>
-         <property name="toolTip"><string>Compute offset between Webots and map frames (requires low SDF)</string></property>
-        </widget>
-       </item>
+        <item>
+         <widget class="QPushButton" name="pushButton_calibrateGT">
+          <property name="text"><string>Calibrate GT</string></property>
+          <property name="toolTip"><string>Compute offset between Webots and map frames (requires low SDF)</string></property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="pushButton_autoCenter">
+          <property name="text"><string>AutoCenter</string></property>
+          <property name="checkable"><bool>true</bool></property>
+          <property name="checked"><bool>false</bool></property>
+          <property name="toolTip"><string>Auto-center view on robot position</string></property>
+         </widget>
+        </item>
        <item>
         <spacer name="horizontalSpacer_buttons">
          <property name="orientation"><enum>Qt::Horizontal</enum></property>

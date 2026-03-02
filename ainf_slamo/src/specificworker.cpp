@@ -25,6 +25,7 @@
 #include <QRegularExpression>
 #include <QDateTime>
 #include <QDomDocument>
+#include <QSettings>
 #include <unistd.h>  // For sysconf
 #include <cmath>     // For std::fabs
 #include <limits>    // For std::numeric_limits
@@ -59,6 +60,10 @@ SpecificWorker::~SpecificWorker()
 {
 	std::cout << "Destroying SpecificWorker" << std::endl;
 
+	// Save window geometry for next launch
+	QSettings settings("robocomp", "ainf_slamo");
+	settings.setValue("window/geometry", this->saveGeometry());
+
 	// Stop trajectory controller
 	if (trajectory_controller_.is_active())
 	{
@@ -91,6 +96,11 @@ void SpecificWorker::initialize()
     viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0.0, 0.2, QColor("Blue"));
     viewer->show();
 
+    // Restore saved window geometry/size
+    QSettings settings("robocomp", "ainf_slamo");
+    if (settings.contains("window/geometry"))
+        this->restoreGeometry(settings.value("window/geometry").toByteArray());
+
     // Connect capture room button
     connect(pushButton_captureRoom, &QPushButton::toggled, this, &SpecificWorker::slot_capture_room_toggled);
 
@@ -108,6 +118,9 @@ void SpecificWorker::initialize()
     connect(pushButton_flipX, &QPushButton::clicked, this, &SpecificWorker::slot_flip_x);
     connect(pushButton_flipY, &QPushButton::clicked, this, &SpecificWorker::slot_flip_y);
     connect(pushButton_calibrateGT, &QPushButton::clicked, this, &SpecificWorker::slot_calibrate_gt);
+
+    // AutoCenter toggle
+    connect(pushButton_autoCenter, &QPushButton::toggled, this, [this](bool checked) { auto_center_ = checked; });
 
     // Connect Shift+Right click on the scene for navigation target
     connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::slot_new_target);
@@ -289,6 +302,10 @@ void SpecificWorker::compute()
                 auto t3 = std::chrono::steady_clock::now();
                 mppi_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
 
+                // Store ESS for UI
+                last_ess_ = ctrl.ess;
+                last_ess_K_ = ctrl.ess_K;
+
                 if (ctrl.goal_reached)
                 {
                     send_velocity_command(0.f, 0.f, 0.f);
@@ -305,17 +322,21 @@ void SpecificWorker::compute()
                 viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
             }
 
-            // Per-subsystem timing (every ~1 second at 20Hz)
+            // Per-subsystem timing (every ~2 seconds at 20Hz)
             static int timing_counter = 0;
-            if (++timing_counter % 20 == 0)
+            if (++timing_counter >= 40)
             {
+                timing_counter = 0;
                 auto t_cycle_end = std::chrono::steady_clock::now();
                 const float loc_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-                const float viz1_ms = std::chrono::duration<float, std::milli>(t_viz1 - t1).count();
+                const float viz_ms = std::chrono::duration<float, std::milli>(t_viz1 - t1).count() + viz2_ms;
                 const float cycle_ms = std::chrono::duration<float, std::milli>(t_cycle_end - t_cycle_start).count();
-                std::println("[TIMING] Loc: {:.1f} ms | Viz: {:.1f} ms | MPPI: {:.1f} ms | Cycle: {:.1f} ms (cpu {}%)",
-                             loc_ms, viz1_ms + viz2_ms, mppi_ms, cycle_ms,
-                             static_cast<int>(cycle_ms / 50.f * 100.f));
+                const float cpu_total = get_cpu_usage();
+                const float cycle_pct = cycle_ms / 50.f * 100.f;
+                std::println("[TIMING] Loc: {:.1f} ms | Viz: {:.1f} ms | MPPI: {:.1f} ms | Cycle: {:.1f} ms ({}%) | Lidar+other: ~{}%",
+                             loc_ms, viz_ms, mppi_ms, cycle_ms,
+                             static_cast<int>(cycle_pct),
+                             static_cast<int>(cpu_total - cycle_pct));
             }
         }
     }
@@ -367,6 +388,10 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
 	lcdNumber_velocity->display(std::abs(current_velocity.adv_y));
 	lcdNumber_innov->display(innovation_cm);
 
+	// ESS display: show ratio as percentage (ESS/K * 100)
+	const float ess_ratio_pct = (last_ess_K_ > 0) ? (last_ess_ / static_cast<float>(last_ess_K_)) * 100.f : 0.f;
+	lcdNumber_ess->display(static_cast<int>(ess_ratio_pct));
+
 	// Only update CPU and color stylesheets every 10 frames to save overhead
 	static int ui_slow_counter = 0;
 	if (++ui_slow_counter >= 10)
@@ -376,7 +401,7 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
 		lcdNumber_cpu->display(static_cast<int>(cpu_usage));
 
 		// Helper lambda: only call setStyleSheet when the color key changes
-		static QString last_sigma_color, last_innov_color, last_cpu_color;
+		static QString last_sigma_color, last_innov_color, last_cpu_color, last_ess_color;
 
 		auto set_style_if_changed = [](QLCDNumber *w, const QString &style, QString &last) {
 			if (style != last) { w->setStyleSheet(style); last = style; }
@@ -397,6 +422,14 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
 		else                              innov_color = "background-color: #FF6B6B;";
 		set_style_if_changed(lcdNumber_innov, innov_color, last_innov_color);
 
+		// Color ESS: green >50%, yellow 25-50%, orange 15-25%, red <15%
+		QString ess_color;
+		if (ess_ratio_pct > 50.f)       ess_color = "background-color: #90EE90;";  // healthy
+		else if (ess_ratio_pct > 25.f)  ess_color = "background-color: #FFFF00;";  // moderate
+		else if (ess_ratio_pct > 15.f)  ess_color = "background-color: #FFA500;";  // stressed
+		else                             ess_color = "background-color: #FF6B6B;";  // collapsed
+		set_style_if_changed(lcdNumber_ess, ess_color, last_ess_color);
+
 		// Color CPU
 		QString cpu_color;
 		if (cpu_usage < 30.0f)       cpu_color = "background-color: #90EE90;";
@@ -414,6 +447,10 @@ void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eige
 	const float display_angle = std::atan2(robot_pose.linear()(1,0), robot_pose.linear()(0,0));
 	viewer->robot_poly()->setPos(display_x, display_y);
 	viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
+
+	// Keep view centered on the robot (if enabled)
+	if (auto_center_)
+		viewer->centerOn(display_x, display_y);
 
 	// ============ Update robot coordinates in UI
 	lcdNumber_robotX->display(static_cast<double>(display_x));
@@ -603,10 +640,15 @@ void SpecificWorker::read_lidar()
                 buffer_sync.put<0>(std::move(eig_pose), timestamp);
             }
 
-            // Get LiDAR data
+            // Get LiDAR data HELIOS top
             const auto data = lidar3d_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_HIGH,
                                                                    params.MAX_LIDAR_HIGH_RANGE*1000.f,  // Convert to mm
                                                                    params.LIDAR_LOW_DECIMATION_FACTOR);
+
+            // Get LiDAR data BPEARL down
+            // const auto data = lidar3d1_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_HIGH,
+            //                                                        params.MAX_LIDAR_HIGH_RANGE*1000.f,  // Convert to mm
+            //                                                        params.LIDAR_LOW_DECIMATION_FACTOR);
 
             // Store local points in robot frame, filtering by height and body proximity
             std::vector<Eigen::Vector3f> points_local;

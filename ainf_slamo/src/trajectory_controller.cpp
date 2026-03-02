@@ -4,6 +4,7 @@
 #include <iostream>
 #include <iomanip>
 #include <limits>
+#include <chrono>
 
 namespace rc
 {
@@ -20,8 +21,16 @@ void TrajectoryController::set_path(const std::vector<Eigen::Vector2f>& path_roo
     has_prev_vel_ = false;
     smoothed_vel_ = Eigen::Vector3f::Zero();
 
-    // Initialize prev_optimal_ to zeros (no prior plan)
-    prev_optimal_.assign(params.trajectory_steps, {0.f, 0.f});
+    // Initialize MPPI state
+    adaptive_K_ = params.num_samples;
+    adaptive_T_ = params.trajectory_steps;
+    adaptive_lambda_ = params.mppi_lambda;
+    adaptive_n_inject_ = 2;
+    ess_smooth_ = static_cast<float>(adaptive_K_) * 0.5f;  // start at healthy ESS
+    last_mppi_ms_ = 0.f;
+    adapt_counter_ = 0;
+
+    prev_optimal_.assign(adaptive_T_, {0.f, 0.f});
     adaptive_sigma_adv_ = params.sigma_adv;
     adaptive_sigma_rot_ = params.sigma_rot;
 
@@ -57,8 +66,9 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     ControlOutput out;
     if (!active_ || path_room_.empty()) { active_ = false; out.goal_reached = true; return out; }
 
-    const int T = params.trajectory_steps;
-    const int K = params.num_samples;
+    const auto t_mppi_start = std::chrono::steady_clock::now();
+
+    const int T = adaptive_T_;
 
     // 1. ESDF
     build_esdf(lidar_points);
@@ -79,14 +89,18 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     out.current_wp_index = wp_index_;
     out.min_esdf = query_esdf(0.f, 0.f);
 
-    // 5. Warm-start: shift previous optimal sequence by one step
+    // 5. Warm-start: resize prev_optimal_ if T changed, then shift
     if (static_cast<int>(prev_optimal_.size()) != T)
-        prev_optimal_.assign(T, {0.f, 0.f});
+    {
+        std::vector<ControlStep> resized(T, {0.f, 0.f});
+        const int copy_n = std::min(T, static_cast<int>(prev_optimal_.size()));
+        for (int t = 0; t < copy_n; ++t) resized[t] = prev_optimal_[t];
+        prev_optimal_ = std::move(resized);
+    }
 
     // Shift left: discard step 0, duplicate last
     for (int t = 0; t < T - 1; ++t)
         prev_optimal_[t] = prev_optimal_[t + 1];
-    // Last step: keep same (will be overwritten by sampling)
 
     // 6. Compute nominal control and blend with warm-started sequence
     Seed nominal = compute_nominal(carrot_robot, T);
@@ -98,15 +112,16 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
         prev_optimal_[t].rot = wr * prev_optimal_[t].rot + (1.f - wr) * nominal.rot[t];
     }
 
-    // 7. Sample K trajectories as perturbations of prev_optimal_ with AR(1) noise
+    // 7. Sample K trajectories
     auto seeds = sample_trajectories(carrot_robot);
+    const int actual_K = static_cast<int>(seeds.size());
 
     // 8. Simulate, optimize, and score each sample
-    std::vector<SimResult> results(K);
+    std::vector<SimResult> results(actual_K);
     int best_idx = -1;
     float best_G = std::numeric_limits<float>::max();
 
-    for (int k = 0; k < K; ++k)
+    for (int k = 0; k < actual_K; ++k)
     {
         optimize_seed(seeds[k], carrot_robot);
         results[k] = simulate_and_score(seeds[k], carrot_robot);
@@ -117,23 +132,22 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
         }
     }
 
-    // 9. MPPI weighted average over the FULL T-step sequence
-    //    w_k = exp(-(G_k - G_min) / λ)
-    //    u*_t = Σ w_k · u_k_t   for each t in [0, T)
+    // 9. MPPI weighted average with adaptive λ
     std::vector<ControlStep> optimal(T, {0.f, 0.f});
+    float ess_current = 0.f;
     {
-        const float lambda = params.mppi_lambda;
+        const float lambda = adaptive_lambda_;
         const float G_min = best_G;
 
-        std::vector<float> weights(K);
+        std::vector<float> weights(actual_K);
         float w_sum = 0.f;
         int num_collisions = 0;
 
-        for (int k = 0; k < K; ++k)
+        for (int k = 0; k < actual_K; ++k)
         {
             if (results[k].collides)
             {
-                weights[k] = 0.f;  // colliding trajectories get zero weight
+                weights[k] = 0.f;
                 num_collisions++;
             }
             else
@@ -143,9 +157,12 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
             w_sum += weights[k];
         }
 
+        // Compute ESS
+        ess_current = compute_ess(weights, actual_K);
+
         if (w_sum > 1e-10f)
         {
-            for (int k = 0; k < K; ++k)
+            for (int k = 0; k < actual_K; ++k)
             {
                 const float w = weights[k] / w_sum;
                 if (w > 1e-10f)
@@ -161,7 +178,6 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
         }
         else if (best_idx >= 0)
         {
-            // Fallback: use best trajectory
             const int steps_b = static_cast<int>(seeds[best_idx].adv.size());
             for (int t = 0; t < std::min(T, steps_b); ++t)
             {
@@ -170,31 +186,20 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
             }
         }
 
-        // 10. Adaptive sigma based on collision ratio and ESDF
-        const float valid_ratio = 1.f - static_cast<float>(num_collisions) / static_cast<float>(K);
-        const float esdf_at_robot = query_esdf(0.f, 0.f);
-        const bool near_obstacle = (esdf_at_robot < params.d_safe * 1.5f);
-
-        if (valid_ratio < 0.5f)
-        {
-            // Many collisions: reduce advance (don't push into walls)
-            // but INCREASE rotation (explore lateral escape routes)
-            adaptive_sigma_adv_ *= 0.85f;
-            adaptive_sigma_rot_ *= 1.1f;
-        }
-        else if (valid_ratio > 0.9f && !near_obstacle)
-        {
-            // Free space: slightly reduce rotation sigma (reduce nodding)
-            // keep advance sigma moderate
-            adaptive_sigma_adv_ *= 1.01f;
-            adaptive_sigma_rot_ *= 0.95f;
-        }
-        adaptive_sigma_adv_ = std::clamp(adaptive_sigma_adv_, params.sigma_min_adv, params.sigma_max_adv);
-        adaptive_sigma_rot_ = std::clamp(adaptive_sigma_rot_, params.sigma_min_rot, params.sigma_max_rot);
+        // 10. ESS-based adaptation of all parameters
+        adapt_from_ess(ess_current, actual_K, num_collisions);
     }
+
+    // Export ESS diagnostics
+    out.ess = ess_smooth_;
+    out.ess_K = adaptive_K_;
 
     // Store optimal sequence for next cycle's warm-start
     prev_optimal_ = optimal;
+
+    // Wall-clock time for CPU budget tracking
+    last_mppi_ms_ = std::chrono::duration<float, std::milli>(
+        std::chrono::steady_clock::now() - t_mppi_start).count();
 
     // 11. Extract first-step command
     float cmd_adv = optimal[0].adv;
@@ -205,22 +210,20 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
         const Eigen::Matrix2f R = robot_pose.linear();
         const Eigen::Vector2f t_pos = robot_pose.translation();
 
-        // Draw a subset of trajectories for visualization
-        const int n_draw = std::min(params.num_trajectories_to_draw, K);
+        const int n_draw = std::min(params.num_trajectories_to_draw, actual_K);
         out.trajectories_room.resize(n_draw);
-        // Pick evenly spaced + best
         for (int i = 0; i < n_draw; ++i)
         {
             int k = (i == 0 && best_idx >= 0) ? best_idx
-                    : (i * K) / std::max(n_draw, 1);
-            k = std::clamp(k, 0, K - 1);
+                    : (i * actual_K) / std::max(n_draw, 1);
+            k = std::clamp(k, 0, actual_K - 1);
             auto& tr = out.trajectories_room[i];
             tr.reserve(results[k].positions.size() + 1);
             tr.push_back(t_pos);
             for (const auto& p : results[k].positions)
                 tr.push_back(R * p + t_pos);
         }
-        out.best_trajectory_idx = 0;  // first drawn is always best
+        out.best_trajectory_idx = 0;
     }
 
     // 13. Smooth + Gaussian brake
@@ -229,7 +232,7 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
         smoothed_vel_ = params.velocity_smoothing * smoothed_vel_ + (1.f - params.velocity_smoothing) * raw;
     else { smoothed_vel_ = raw; has_prev_vel_ = true; }
 
-    constexpr float gauss_k = 2.0f;
+    constexpr float gauss_k = 3.0f;
     const float rot_ratio = smoothed_vel_[2] / params.max_rot;
     const float brake = std::exp(-gauss_k * rot_ratio * rot_ratio);
 
@@ -237,21 +240,20 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     out.side = smoothed_vel_[1];
     out.rot  = smoothed_vel_[2];
 
-    // Debug
+    // Debug (every ~1 second)
     static int dbg = 0;
     if (++dbg % 20 == 0)
     {
-        std::cout << "[TrajCtrl] MPPI K=" << K
-                  << " T=" << T
-                  << " σ_adv=" << std::fixed << std::setprecision(3) << adaptive_sigma_adv_
-                  << " σ_rot=" << adaptive_sigma_rot_
-                  << " cmd(adv=" << cmd_adv << " rot=" << cmd_rot << ")"
-                  << " sent(adv=" << out.adv << " rot=" << out.rot << ")"
-                  << " bestG=" << std::setprecision(1) << best_G
-                  << " carrot=" << static_cast<int>(std::atan2(carrot_robot.x(), carrot_robot.y()) * 180.f / M_PI) << "°"
-                  << " dist=" << out.dist_to_goal
-                  << " esdf=" << out.min_esdf
-                  << " brake=" << static_cast<int>(brake * 100) << "%\n";
+        std::cout << "[MPPI] K=" << adaptive_K_ << " T=" << adaptive_T_
+                  << " λ=" << std::fixed << std::setprecision(1) << adaptive_lambda_
+                  << " ESS=" << std::setprecision(0) << ess_smooth_ << "/" << adaptive_K_
+                  << " inj=" << adaptive_n_inject_
+                  << " σr=" << std::setprecision(2) << adaptive_sigma_rot_
+                  << " G=" << std::setprecision(1) << best_G
+                  << " ms=" << std::setprecision(1) << last_mppi_ms_
+                  << " cmd(" << std::setprecision(2) << out.adv << "," << out.rot << ")"
+                  << " dist=" << std::setprecision(1) << out.dist_to_goal
+                  << " esdf=" << out.min_esdf << "\n";
     }
 
     return out;
@@ -303,20 +305,15 @@ TrajectoryController::Seed TrajectoryController::compute_nominal(
 // ============================================================================
 // Sample K trajectories: MPPI perturbations + structured exploration injections
 //
-// Core: K-n_inject random samples as AR(1) perturbations of prev_optimal_
-// Injections: n_inject deterministic seeds at fixed angular offsets from carrot
-//   to guarantee lateral coverage (obstacle avoidance, door navigation)
-//
-// The injection count scales with proximity to obstacles:
-//   far from obstacles → 2 injections (just ±30°)
-//   near obstacles → 8 injections (±30°, ±60°, ±90°, ±120°)
+// Injection count is ESS-driven via adaptive_n_inject_ (2-8 seeds).
+// K and T are ESS-driven via adaptive_K_ and adaptive_T_.
 // ============================================================================
 
 std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectories(
     const Eigen::Vector2f& carrot_robot)
 {
-    const int K = params.num_samples;
-    const int T = params.trajectory_steps;
+    const int K = adaptive_K_;
+    const int T = adaptive_T_;
     const float alpha = params.noise_alpha;
     const float innovation = std::sqrt(std::max(0.f, 1.f - alpha * alpha));
     const float dt = params.trajectory_dt;
@@ -325,31 +322,15 @@ std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectorie
     std::vector<Seed> seeds;
     seeds.reserve(K);
 
-    // --- Structured exploration injections ---
-    // Determine how many based on ESDF at robot position
-    const float esdf_here = query_esdf(0.f, 0.f);
-    const float esdf_ratio = std::clamp(esdf_here / params.d_safe, 0.f, 2.f);  // 0=collision, 2=very free
+    // --- Structured exploration injections (count set by ESS adaptation) ---
+    // Build offset list based on adaptive_n_inject_ (always in pairs ±)
+    std::vector<float> inject_offsets;
+    if (adaptive_n_inject_ >= 2) { inject_offsets.push_back(0.5f); inject_offsets.push_back(-0.5f); }   // ±30°
+    if (adaptive_n_inject_ >= 4) { inject_offsets.push_back(1.05f); inject_offsets.push_back(-1.05f); }  // ±60°
+    if (adaptive_n_inject_ >= 6) { inject_offsets.push_back(1.57f); inject_offsets.push_back(-1.57f); }  // ±90°
+    if (adaptive_n_inject_ >= 8) { inject_offsets.push_back(2.09f); inject_offsets.push_back(-2.09f); }  // ±120°
 
-    // Angular offsets for injected seeds (radians)
-    // Always inject ±30°; add wider angles when near obstacles
-    std::vector<float> inject_offsets = {0.5f, -0.5f};  // ±30° always
-    if (esdf_ratio < 1.5f)
-    {
-        inject_offsets.push_back(1.05f);   // +60°
-        inject_offsets.push_back(-1.05f);  // -60°
-    }
-    if (esdf_ratio < 1.0f)
-    {
-        inject_offsets.push_back(1.57f);   // +90°
-        inject_offsets.push_back(-1.57f);  // -90°
-    }
-    if (esdf_ratio < 0.6f)
-    {
-        inject_offsets.push_back(2.09f);   // +120°
-        inject_offsets.push_back(-2.09f);  // -120°
-    }
-
-    // Generate injection seeds: constant rotation offset that decays toward carrot
+    // Generate injection seeds
     for (float offset : inject_offsets)
     {
         Seed s;
@@ -360,7 +341,6 @@ std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectorie
         for (int t = 0; t < T; ++t)
         {
             float phase = static_cast<float>(t) / static_cast<float>(std::max(T - 1, 1));
-            // Blend from offset direction to carrot over the trajectory (sqrt for slow convergence)
             float desired = carrot_angle + offset * (1.f - std::sqrt(phase));
 
             float angle_err = desired - theta;
@@ -385,21 +365,22 @@ std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectorie
         s.adv.resize(T);
         s.rot.resize(T);
 
-        // Initialize AR(1) state
         float eps_adv = normal_(rng_) * adaptive_sigma_adv_;
         float eps_rot = normal_(rng_) * adaptive_sigma_rot_;
 
+        const int prev_T = static_cast<int>(prev_optimal_.size());
         for (int t = 0; t < T; ++t)
         {
-            // Perturbed control = warm-started base + correlated noise
-            float adv = prev_optimal_[t].adv + eps_adv;
-            float rot = prev_optimal_[t].rot + eps_rot;
+            // Use prev_optimal_ if available, else zero base
+            const float base_adv = (t < prev_T) ? prev_optimal_[t].adv : 0.f;
+            const float base_rot = (t < prev_T) ? prev_optimal_[t].rot : 0.f;
 
-            // Clamp to kinematic limits
+            float adv = base_adv + eps_adv;
+            float rot = base_rot + eps_rot;
+
             s.adv[t] = std::clamp(adv, 0.05f, params.max_adv);
             s.rot[t] = std::clamp(rot, -params.max_rot, params.max_rot);
 
-            // AR(1) update: noise evolves smoothly
             eps_adv = alpha * eps_adv + innovation * adaptive_sigma_adv_ * normal_(rng_);
             eps_rot = alpha * eps_rot + innovation * adaptive_sigma_rot_ * normal_(rng_);
         }
@@ -744,6 +725,122 @@ Eigen::Vector2f TrajectoryController::room_to_robot(const Eigen::Vector2f& p_roo
                                                      const Eigen::Affine2f& robot_pose)
 {
     return robot_pose.linear().transpose() * (p_room - robot_pose.translation());
+}
+
+// ============================================================================
+// ESS computation
+// ============================================================================
+
+float TrajectoryController::compute_ess(const std::vector<float>& weights, int K) const
+{
+    float w_sum = 0.f, w_sq_sum = 0.f;
+    for (int k = 0; k < K; ++k)
+    {
+        w_sum += weights[k];
+        w_sq_sum += weights[k] * weights[k];
+    }
+    if (w_sq_sum < 1e-20f) return 1.f;  // degenerate: all zero
+    return (w_sum * w_sum) / w_sq_sum;
+}
+
+// ============================================================================
+// ESS-based adaptation of K, T, λ, σ, and injection count
+//
+// Runs every cycle for λ/σ (fast), every adapt_interval cycles for K/T (slow).
+// CPU budget caps K*T to keep MPPI within cpu_budget_ms.
+// ============================================================================
+
+void TrajectoryController::adapt_from_ess(float ess, int K, int num_collisions)
+{
+    // 1. EMA-smoothed ESS
+    const float alpha = params.ess_smoothing;
+    ess_smooth_ = (1.f - alpha) * ess_smooth_ + alpha * ess;
+
+    const float ess_ratio = ess_smooth_ / static_cast<float>(std::max(K, 1));  // 0..1
+
+    // 2. λ adaptation (every cycle — fast response)
+    //    Low ESS → increase λ (soften weights, let more samples contribute)
+    //    High ESS → decrease λ (be more selective)
+    if (ess_ratio < 0.25f)
+        adaptive_lambda_ *= 1.08f;   // sampling collapsed → soften (gentle)
+    else if (ess_ratio > 0.5f)
+        adaptive_lambda_ *= 0.96f;   // healthy → sharpen
+    adaptive_lambda_ = std::clamp(adaptive_lambda_, params.lambda_min, params.lambda_max);
+
+    // 3. σ adaptation (every cycle)
+    //    Low ESS → slightly increase σ_rot (explore laterals), decrease σ_adv
+    //    High ESS → tighten σ_rot (reduce nodding), relax σ_adv slightly
+    if (ess_ratio < 0.25f)
+    {
+        adaptive_sigma_rot_ *= 1.03f;  // gentle growth to avoid jitter in narrow spaces
+        adaptive_sigma_adv_ *= 0.92f;
+    }
+    else if (ess_ratio > 0.5f)
+    {
+        adaptive_sigma_rot_ *= 0.97f;
+        adaptive_sigma_adv_ *= 1.01f;
+    }
+    adaptive_sigma_adv_ = std::clamp(adaptive_sigma_adv_, params.sigma_min_adv, params.sigma_max_adv);
+    adaptive_sigma_rot_ = std::clamp(adaptive_sigma_rot_, params.sigma_min_rot, params.sigma_max_rot);
+
+    // 4. Injection count (every cycle — cheap to change)
+    //    Low ESS → more injections (guaranteed lateral coverage)
+    //    High ESS → fewer injections (random samples suffice)
+    //    Cap at 6 (±90° max) to avoid wild ±120° seeds that cause oscillation
+    if (ess_ratio < 0.15f)       adaptive_n_inject_ = 6;   // ±30°, ±60°, ±90°
+    else if (ess_ratio < 0.30f)  adaptive_n_inject_ = 4;   // ±30°, ±60°
+    else                         adaptive_n_inject_ = 2;   // ±30° only
+
+    // 5. K and T adaptation (every adapt_interval cycles — slow, with CPU budget)
+    if (++adapt_counter_ >= params.adapt_interval)
+    {
+        adapt_counter_ = 0;
+
+        // --- K adaptation ---
+        // Low ESS → need more samples; High ESS → can reduce
+        int desired_K = adaptive_K_;
+        if (ess_ratio < 0.25f)
+            desired_K = static_cast<int>(adaptive_K_ * 1.2f);  // +20%
+        else if (ess_ratio > 0.6f)
+            desired_K = static_cast<int>(adaptive_K_ * 0.85f); // -15%
+
+        // --- T adaptation ---
+        // Low ESS + many collisions → horizon too short to bypass obstacle → increase T
+        // High ESS → horizon may be overkill → decrease T
+        int desired_T = adaptive_T_;
+        const float collision_ratio = static_cast<float>(num_collisions) / static_cast<float>(std::max(K, 1));
+
+        if (ess_ratio < 0.25f && collision_ratio > 0.5f)
+            desired_T = static_cast<int>(adaptive_T_ * 1.15f);  // +15%: need to see further
+        else if (ess_ratio > 0.6f && collision_ratio < 0.2f)
+            desired_T = static_cast<int>(adaptive_T_ * 0.90f);  // -10%: save compute
+
+        // Clamp to configured ranges
+        desired_K = std::clamp(desired_K, params.K_min, params.K_max);
+        desired_T = std::clamp(desired_T, params.T_min, params.T_max);
+
+        // --- CPU budget cap ---
+        // Estimate cost as proportional to K*T. Scale from last measurement.
+        if (last_mppi_ms_ > 0.1f)
+        {
+            const float current_KT = static_cast<float>(adaptive_K_ * adaptive_T_);
+            const float desired_KT = static_cast<float>(desired_K * desired_T);
+            const float estimated_ms = last_mppi_ms_ * (desired_KT / std::max(current_KT, 1.f));
+
+            if (estimated_ms > params.cpu_budget_ms)
+            {
+                // Over budget: scale down K*T proportionally, prefer reducing K
+                const float scale = params.cpu_budget_ms / estimated_ms;
+                desired_K = std::max(params.K_min,
+                    static_cast<int>(desired_K * std::sqrt(scale)));  // K gets sqrt reduction
+                desired_T = std::max(params.T_min,
+                    static_cast<int>(desired_T * std::sqrt(scale)));  // T gets sqrt reduction
+            }
+        }
+
+        adaptive_K_ = desired_K;
+        adaptive_T_ = desired_T;
+    }
 }
 
 } // namespace rc
