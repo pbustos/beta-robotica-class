@@ -32,7 +32,7 @@ public:
         float goal_threshold   = 0.25f;
 
         // MPPI sampling parameters
-        int   num_samples      = 50;       // K: number of sampled trajectories
+        int   num_samples      = 100;       // K: number of sampled trajectories
         int   trajectory_steps = 30;       // T: prediction horizon (time steps)
         float trajectory_dt    = 0.15f;    // dt per step
 

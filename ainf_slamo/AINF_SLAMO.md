@@ -162,9 +162,9 @@ $\mathbf{t} = (x, y)^{\top}$ is the robot translation.
 Explicitly:
 
 $$\begin{bmatrix} p^{\mathrm{room}}_x \\ p^{\mathrm{room}}_y \end{bmatrix}
-= \begin{bmatrix} \cos\phi & -\sin\phi \\ \sin\phi & \cos\phi \end{bmatrix}
-  \begin{bmatrix} p^r_x \\ p^r_y \end{bmatrix}
-+ \begin{bmatrix} x \\ y \end{bmatrix}$$
+  = \begin{bmatrix} \cos\phi & -\sin\phi \\ \sin\phi & \cos\phi \end{bmatrix}
+    \begin{bmatrix} p^r_x \\ p^r_y \end{bmatrix}
+  + \begin{bmatrix} x \\ y \end{bmatrix}$$
 
 ### 5.2 Polygon SDF
 

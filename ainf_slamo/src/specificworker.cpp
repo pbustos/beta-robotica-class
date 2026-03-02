@@ -28,6 +28,7 @@
 #include <unistd.h>  // For sysconf
 #include <cmath>     // For std::fabs
 #include <limits>    // For std::numeric_limits
+#include <print>     // C++23 std::println
 #include <random>    // For odometry noise
 
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
@@ -226,6 +227,8 @@ void SpecificWorker::initialize()
 
 void SpecificWorker::compute()
 {
+    auto t_cycle_start = std::chrono::steady_clock::now();
+
     const int fps_val = fps.print("Compute", 2000);
     const auto timestamp = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
@@ -239,25 +242,34 @@ void SpecificWorker::compute()
     if(room_ai.is_initialized())
     {
         // Pass velocity, odometry and lidar to update
+        auto t0 = std::chrono::steady_clock::now();
         if(const auto res = room_ai.update(lidar_local_.value(),
                                            velocity_history_,
                                            odometry_history_); res.ok)
         {
-            update_ui(res, velocity_history_.back(), fps_val);
-            display_robot(res.robot_pose, res.covariance);
-            draw_lidar_points(lidar_local, res.robot_pose);
+            auto t1 = std::chrono::steady_clock::now();
 
-            // GT debug/statistics: compute and display pose error vs ground truth if available
-            if (params.USE_WEBOTS)
+            // Visualization at 10 Hz (every other frame), compute stays at 20 Hz
+            static int viz_frame = 0;
+            const bool do_draw = (++viz_frame % 2 == 0);
+
+            if (do_draw)
             {
-                // Auto-calibrate GT offset on first low-SDF reading
-                if (!gt_calibrated_ && robot_pose_gt_.has_value() && res.sdf_mse < 0.10f)
-                    calibrate_gt_offset(res.robot_pose, robot_pose_gt_.value());
-                display_gt_error(res.robot_pose, robot_pose_gt_);
+                update_ui(res, velocity_history_.back(), fps_val);
+                display_robot(res.robot_pose, res.covariance);
+                draw_lidar_points(lidar_local, res.robot_pose);
+
+                if (params.USE_WEBOTS)
+                {
+                    if (!gt_calibrated_ && robot_pose_gt_.has_value() && res.sdf_mse < 0.10f)
+                        calibrate_gt_offset(res.robot_pose, robot_pose_gt_.value());
+                    display_gt_error(res.robot_pose, robot_pose_gt_);
+                }
+
+                draw_estimated_room(res.state);
             }
 
-            // Draw room rectangle (only if not using polygon)
-            draw_estimated_room(res.state);
+            auto t_viz1 = std::chrono::steady_clock::now();
 
             // Save pose periodically (every ~30 seconds at 20Hz = 600 frames)
             static int pose_save_counter = 0;
@@ -269,9 +281,14 @@ void SpecificWorker::compute()
 
             // ===== LOCAL TRAJECTORY CONTROLLER =====
             // Run if a path is active and joystick is not overriding
+            float mppi_ms = 0.f, viz2_ms = 0.f;
             if (trajectory_controller_.is_active())
             {
+                auto t2 = std::chrono::steady_clock::now();
                 const auto ctrl = trajectory_controller_.compute(lidar_local, res.robot_pose);
+                auto t3 = std::chrono::steady_clock::now();
+                mppi_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
+
                 if (ctrl.goal_reached)
                 {
                     send_velocity_command(0.f, 0.f, 0.f);
@@ -283,8 +300,22 @@ void SpecificWorker::compute()
                 {
                     send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
                     velocity_history_.push_back(rc::VelocityCommand(ctrl.side, ctrl.adv, ctrl.rot));
-                    draw_trajectory_debug(ctrl, res.robot_pose);
+                    if (do_draw) draw_trajectory_debug(ctrl, res.robot_pose);
                 }
+                viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
+            }
+
+            // Per-subsystem timing (every ~1 second at 20Hz)
+            static int timing_counter = 0;
+            if (++timing_counter % 20 == 0)
+            {
+                auto t_cycle_end = std::chrono::steady_clock::now();
+                const float loc_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+                const float viz1_ms = std::chrono::duration<float, std::milli>(t_viz1 - t1).count();
+                const float cycle_ms = std::chrono::duration<float, std::milli>(t_cycle_end - t_cycle_start).count();
+                std::println("[TIMING] Loc: {:.1f} ms | Viz: {:.1f} ms | MPPI: {:.1f} ms | Cycle: {:.1f} ms (cpu {}%)",
+                             loc_ms, viz1_ms + viz2_ms, mppi_ms, cycle_ms,
+                             static_cast<int>(cycle_ms / 50.f * 100.f));
             }
         }
     }
