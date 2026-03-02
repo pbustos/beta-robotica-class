@@ -217,8 +217,17 @@ void SpecificWorker::initialize()
         // Use pre-loaded polygon from file
         room_ai.set_polygon_room(room_polygon_);
         path_planner_.set_polygon(room_polygon_);
+        if (!furniture_polygons_.empty())
+        {
+            std::vector<std::vector<Eigen::Vector2f>> obs;
+            for (const auto& fp : furniture_polygons_) obs.push_back(fp.vertices);
+            path_planner_.set_obstacles(obs);
+            trajectory_controller_.set_static_obstacles(obs);
+        }
         draw_room_polygon();
-        qInfo() << "RoomConceptAI initialized with loaded polygon:" << room_polygon_.size() << "vertices";
+        draw_furniture();
+        qInfo() << "RoomConceptAI initialized with loaded polygon:" << room_polygon_.size() << "vertices"
+                << "furniture:" << furniture_polygons_.size();
 
         // Perform grid search or load saved pose to solve kidnapping problem
         perform_grid_search(pts);
@@ -1065,6 +1074,27 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
         navigable_poly_item_->setZValue(19);
     }
 
+    // Draw expanded obstacle boundaries as orange dashed polygons
+    for (auto* item : obstacle_expanded_items_)
+    {
+        viewer->scene.removeItem(item);
+        delete item;
+    }
+    obstacle_expanded_items_.clear();
+    const auto& exp_obstacles = path_planner_.get_expanded_obstacles();
+    for (const auto& obs : exp_obstacles)
+    {
+        if (obs.size() < 3) continue;
+        QPolygonF qpoly_obs;
+        for (const auto& v : obs)
+            qpoly_obs << QPointF(v.x(), v.y());
+        qpoly_obs << QPointF(obs.front().x(), obs.front().y());
+        QPen obs_pen(QColor(255, 140, 0, 200), 0.03, Qt::DashLine);  // orange dashed, same as inner
+        auto* obs_item = viewer->scene.addPolygon(qpoly_obs, obs_pen, Qt::NoBrush);
+        obs_item->setZValue(19);
+        obstacle_expanded_items_.push_back(obs_item);
+    }
+
     // Draw navigation nodes as yellow dots
     const auto& nav_poly = path_planner_.get_navigable_polygon();
     for (const auto& v : nav_poly)
@@ -1130,6 +1160,14 @@ void SpecificWorker::clear_path()
     }
     path_draw_items_.clear();
     current_path_.clear();
+
+    // Clear expanded obstacle boundaries
+    for (auto* item : obstacle_expanded_items_)
+    {
+        viewer->scene.removeItem(item);
+        delete item;
+    }
+    obstacle_expanded_items_.clear();
 
     if (target_marker_)
         target_marker_->setVisible(false);
@@ -1317,6 +1355,37 @@ void SpecificWorker::draw_room_polygon()
     QPen pen(capturing_room_polygon ? Qt::yellow : Qt::magenta, capturing_room_polygon ? 0.08 : 0.15);
     polygon_item = viewer->scene.addPolygon(poly, pen, QBrush(Qt::NoBrush));
     polygon_item->setZValue(8);
+}
+
+void SpecificWorker::draw_furniture()
+{
+    // Remove old furniture items
+    for (auto* item : furniture_draw_items_)
+    {
+        viewer->scene.removeItem(item);
+        delete item;
+    }
+    furniture_draw_items_.clear();
+
+    const QPen furniture_pen(QColor(50, 100, 255), 0.06);          // Blue outline
+    const QBrush furniture_brush(QColor(50, 100, 255, 40));        // Semi-transparent blue fill
+
+    for (const auto& fp : furniture_polygons_)
+    {
+        if (fp.vertices.size() < 3) continue;
+
+        QPolygonF qpoly;
+        for (const auto& v : fp.vertices)
+            qpoly << QPointF(v.x(), v.y());
+        qpoly << QPointF(fp.vertices.front().x(), fp.vertices.front().y());
+
+        auto* item = viewer->scene.addPolygon(qpoly, furniture_pen, furniture_brush);
+        item->setZValue(7);  // below room polygon (8)
+        furniture_draw_items_.push_back(item);
+    }
+
+    if (!furniture_polygons_.empty())
+        qInfo() << "[draw_furniture] Drew" << furniture_polygons_.size() << "furniture polygons";
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1615,8 +1684,17 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
     {
         room_ai.set_polygon_room(room_polygon_);
         path_planner_.set_polygon(room_polygon_);
+        if (!furniture_polygons_.empty())
+        {
+            std::vector<std::vector<Eigen::Vector2f>> obs;
+            for (const auto& fp : furniture_polygons_) obs.push_back(fp.vertices);
+            path_planner_.set_obstacles(obs);
+            trajectory_controller_.set_static_obstacles(obs);
+        }
         draw_room_polygon();
-        qInfo() << "Layout loaded and room_ai initialized with" << room_polygon_.size() << "vertices";
+        draw_furniture();
+        qInfo() << "Layout loaded and room_ai initialized with" << room_polygon_.size() << "vertices,"
+                << furniture_polygons_.size() << "furniture polygons";
     }
 }
 
@@ -1762,6 +1840,8 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
     struct ParsedPath {
         std::vector<Eigen::Vector2f> pts;
         QString id;
+        QString label;         // inkscape:label of the path itself
+        QString layer_label;   // inkscape:label of the parent <g> layer
     };
     std::vector<ParsedPath> allPaths;
 
@@ -1778,9 +1858,9 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
     }
     else
     {
-        // Recursive lambda to walk the DOM tree
-        std::function<void(const QDomElement&, std::array<float,6>)> walkElement;
-        walkElement = [&](const QDomElement& elem, std::array<float,6> parentMat)
+        // Recursive lambda to walk the DOM tree, propagating layer label
+        std::function<void(const QDomElement&, std::array<float,6>, QString)> walkElement;
+        walkElement = [&](const QDomElement& elem, std::array<float,6> parentMat, QString layerLabel)
         {
             QString tag = elem.tagName();
 
@@ -1804,6 +1884,13 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
                 }
             }
 
+            // Track Inkscape layer label: <g inkscape:groupmode="layer" inkscape:label="XXX">
+            QString currentLayerLabel = layerLabel;
+            if (tag == "g" && elem.attribute("inkscape:groupmode") == "layer")
+            {
+                currentLayerLabel = elem.attribute("inkscape:label");
+            }
+
             if (tag == "path")
             {
                 QString d = elem.attribute("d");
@@ -1820,9 +1907,13 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
                         ParsedPath pp;
                         pp.pts = std::move(pts);
                         pp.id  = elem.attribute("id");
+                        pp.label = elem.attribute("inkscape:label");
+                        pp.layer_label = currentLayerLabel;
                         allPaths.push_back(std::move(pp));
 
                         qInfo() << "[SVG] Found closed path id=" << allPaths.back().id
+                                << "label=" << allPaths.back().label
+                                << "layer=" << allPaths.back().layer_label
                                 << "vertices=" << allPaths.back().pts.size();
                     }
                 }
@@ -1833,14 +1924,14 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
                 while (!child.isNull())
                 {
                     if (child.isElement())
-                        walkElement(child.toElement(), currentMat);
+                        walkElement(child.toElement(), currentMat, currentLayerLabel);
                     child = child.nextSibling();
                 }
             }
         };
 
         std::array<float,6> identity = {1,0,0,1,0,0};
-        walkElement(doc.documentElement(), identity);
+        walkElement(doc.documentElement(), identity, QString());
     }
 
     if (allPaths.empty())
@@ -1851,10 +1942,51 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
 
     qInfo() << "[SVG] Total closed paths found:" << allPaths.size();
 
-    // Use the first closed path as the room polygon
-    room_polygon_ = allPaths[0].pts;
-    qInfo() << "[SVG] room_polygon_ set to path id='" << allPaths[0].id
-            << "' with" << room_polygon_.size() << "vertices";
+    // Classify paths by layer:
+    //   - Paths in a layer whose label contains "Furniture" (case-insensitive) → furniture obstacles
+    //   - First path NOT in a "Furniture" layer → room contour
+    //   - Remaining non-furniture paths are ignored (or could be alternate room contours)
+    furniture_polygons_.clear();
+    bool room_found = false;
+
+    for (const auto& pp : allPaths)
+    {
+        const bool is_furniture = pp.layer_label.contains("furniture", Qt::CaseInsensitive) ||
+                                  pp.layer_label.contains("obstacle", Qt::CaseInsensitive);
+        if (is_furniture)
+        {
+            FurniturePolygon fp;
+            fp.id = pp.id.toStdString();
+            fp.label = pp.label.isEmpty() ? pp.id.toStdString() : pp.label.toStdString();
+            fp.vertices = pp.pts;
+            furniture_polygons_.push_back(std::move(fp));
+            qInfo() << "[SVG] Furniture:" << QString::fromStdString(furniture_polygons_.back().label)
+                    << "vertices=" << furniture_polygons_.back().vertices.size();
+        }
+        else if (!room_found)
+        {
+            room_polygon_ = pp.pts;
+            room_found = true;
+            qInfo() << "[SVG] room_polygon_ set to path id='" << pp.id
+                    << "' (layer=" << pp.layer_label << ") with" << room_polygon_.size() << "vertices";
+        }
+        else
+        {
+            qInfo() << "[SVG] Skipping extra non-furniture path id='" << pp.id
+                    << "' (layer=" << pp.layer_label << ")";
+        }
+    }
+
+    if (!room_found && !allPaths.empty())
+    {
+        // Fallback: no layer classification, use first path as room contour
+        room_polygon_ = allPaths[0].pts;
+        qInfo() << "[SVG] No layer classification found. Using first path as room_polygon_: id='" << allPaths[0].id
+                << "' with" << room_polygon_.size() << "vertices";
+    }
+
+    qInfo() << "[SVG] Room polygon:" << room_polygon_.size() << "vertices,"
+            << furniture_polygons_.size() << "furniture polygons";
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////

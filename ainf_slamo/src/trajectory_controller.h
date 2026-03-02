@@ -34,15 +34,15 @@ public:
         // MPPI sampling — initial / baseline values (adapted by ESS)
         int   num_samples      = 50;       // K baseline
         int   trajectory_steps = 30;       // T baseline
-        float trajectory_dt    = 0.15f;    // dt per step
+        float trajectory_dt    = 0.1f;    // dt per step
 
         // ESS-based adaptive ranges
         int   K_min = 20,  K_max = 120;    // adaptive K bounds
         int   T_min = 15,  T_max = 80;     // adaptive T bounds
         float lambda_min = 1.0f, lambda_max = 20.0f;  // adaptive λ bounds
         float cpu_budget_ms = 5.0f;        // max MPPI time per cycle (10% of 50ms)
-        float ess_smoothing = 0.1f;        // EMA alpha for ESS (slow)
-        int   adapt_interval = 5;          // adapt K/T every N cycles
+        float ess_smoothing = 0.25f;       // EMA alpha for ESS (faster response to drops)
+        int   adapt_interval = 2;          // adapt K/T every N cycles (was 5)
 
         // MPPI temperature (initial, adapted by ESS)
         float mppi_lambda       = 5.0f;
@@ -68,7 +68,7 @@ public:
         float optim_lr         = 0.05f;
 
         // EFE weights (scoring)
-        float lambda_goal      = 4.0f;
+        float lambda_goal      = 6.0f;
         float lambda_obstacle  = 10.0f;
         float lambda_smooth    = 0.5f;
         float lambda_velocity  = 0.01f;
@@ -85,7 +85,7 @@ public:
         int num_trajectories_to_draw = 10;
 
         // Gaussian brake for high rotation (to prevent oscillation)
-        float gauss_k = 2.0f;  // Higher = stronger brake at high rotation
+        float gauss_k = 1.0f;  // Higher = stronger brake at high rotation
     };
 
     struct ControlOutput
@@ -116,6 +116,11 @@ public:
                           const Eigen::Affine2f& robot_pose);
     void stop();
 
+    /// Set static obstacle polygons (furniture). Their edges are sampled into points
+    /// and injected into every ESDF build, transformed to robot frame.
+    void set_static_obstacles(const std::vector<std::vector<Eigen::Vector2f>>& obstacles_room,
+                              float sample_spacing = 0.05f);
+
     bool is_active() const { return active_ && !path_room_.empty(); }
     int current_waypoint_index() const { return wp_index_; }
     const std::vector<Eigen::Vector2f>& get_path() const { return path_room_; }
@@ -128,9 +133,12 @@ private:
     std::vector<Eigen::Vector2f> path_room_;
     int wp_index_ = 0;
 
-    // ESDF
+    // ---- ESDF ----
     std::vector<float> esdf_data_;
     int esdf_N_ = 0;
+
+    // Static obstacles (furniture) — pre-sampled points in room frame
+    std::vector<Eigen::Vector2f> static_obstacle_points_room_;
 
     // Output smoothing
     Eigen::Vector3f smoothed_vel_ = Eigen::Vector3f::Zero();
@@ -180,7 +188,8 @@ private:
     };
 
     // ---- Methods ----
-    void build_esdf(const std::vector<Eigen::Vector3f>& lidar_points);
+    void build_esdf(const std::vector<Eigen::Vector3f>& lidar_points,
+                    const Eigen::Affine2f& robot_pose);
     float query_esdf(float rx, float ry) const;
     Eigen::Vector2f query_esdf_gradient(float rx, float ry) const;
 

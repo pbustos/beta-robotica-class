@@ -48,6 +48,31 @@ void TrajectoryController::stop()
     prev_optimal_.clear();
 }
 
+void TrajectoryController::set_static_obstacles(
+    const std::vector<std::vector<Eigen::Vector2f>>& obstacles_room, float sample_spacing)
+{
+    static_obstacle_points_room_.clear();
+    for (const auto& obs : obstacles_room)
+    {
+        if (obs.size() < 2) continue;
+        const int n = static_cast<int>(obs.size());
+        for (int i = 0; i < n; ++i)
+        {
+            const Eigen::Vector2f& a = obs[i];
+            const Eigen::Vector2f& b = obs[(i + 1) % n];
+            const float len = (b - a).norm();
+            const int num_samples = std::max(1, static_cast<int>(len / sample_spacing));
+            for (int s = 0; s <= num_samples; ++s)
+            {
+                const float t = static_cast<float>(s) / static_cast<float>(num_samples);
+                static_obstacle_points_room_.push_back(a + t * (b - a));
+            }
+        }
+    }
+    std::cout << "[TrajectoryCtrl] Set " << obstacles_room.size() << " static obstacles → "
+              << static_obstacle_points_room_.size() << " sampled points\n";
+}
+
 std::optional<Eigen::Vector2f> TrajectoryController::current_waypoint_room() const
 {
     if (!active_ || wp_index_ >= static_cast<int>(path_room_.size()))
@@ -71,7 +96,7 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     const int T = adaptive_T_;
 
     // 1. ESDF
-    build_esdf(lidar_points);
+    build_esdf(lidar_points, robot_pose);
 
     // 2. Advance waypoints
     advance_waypoints(robot_pose);
@@ -634,7 +659,8 @@ void TrajectoryController::advance_waypoints(const Eigen::Affine2f& robot_pose)
 // ESDF
 // ============================================================================
 
-void TrajectoryController::build_esdf(const std::vector<Eigen::Vector3f>& lidar_points)
+void TrajectoryController::build_esdf(const std::vector<Eigen::Vector3f>& lidar_points,
+                                      const Eigen::Affine2f& robot_pose)
 {
     const float res = params.grid_resolution;
     const float half = params.grid_half_size;
@@ -642,12 +668,28 @@ void TrajectoryController::build_esdf(const std::vector<Eigen::Vector3f>& lidar_
     esdf_N_ = N;
 
     std::vector<int> occ(N * N, 0);
+
+    // Mark lidar points (already in robot frame)
     for (const auto& p : lidar_points)
     {
         const int ci = static_cast<int>((p.x() + half) / res);
         const int cj = static_cast<int>((p.y() + half) / res);
         if (ci >= 0 && ci < N && cj >= 0 && cj < N)
             occ[cj * N + ci] = 1;
+    }
+
+    // Inject static obstacle points (furniture) — transform from room frame to robot frame
+    if (!static_obstacle_points_room_.empty())
+    {
+        const Eigen::Affine2f robot_inv = robot_pose.inverse();
+        for (const auto& p_room : static_obstacle_points_room_)
+        {
+            const Eigen::Vector2f p_robot = robot_inv * p_room;
+            const int ci = static_cast<int>((p_robot.x() + half) / res);
+            const int cj = static_cast<int>((p_robot.y() + half) / res);
+            if (ci >= 0 && ci < N && cj >= 0 && cj < N)
+                occ[cj * N + ci] = 1;
+        }
     }
 
     esdf_data_.assign(N * N, 9999.f);
@@ -760,19 +802,26 @@ void TrajectoryController::adapt_from_ess(float ess, int K, int num_collisions)
     // 2. λ adaptation (every cycle — fast response)
     //    Low ESS → increase λ (soften weights, let more samples contribute)
     //    High ESS → decrease λ (be more selective)
-    if (ess_ratio < 0.25f)
-        adaptive_lambda_ *= 1.08f;   // sampling collapsed → soften (gentle)
+    if (ess_ratio < 0.15f)
+        adaptive_lambda_ *= 1.15f;   // very low → aggressive soften
+    else if (ess_ratio < 0.30f)
+        adaptive_lambda_ *= 1.08f;   // low → moderate soften
     else if (ess_ratio > 0.5f)
         adaptive_lambda_ *= 0.96f;   // healthy → sharpen
     adaptive_lambda_ = std::clamp(adaptive_lambda_, params.lambda_min, params.lambda_max);
 
     // 3. σ adaptation (every cycle)
-    //    Low ESS → slightly increase σ_rot (explore laterals), decrease σ_adv
+    //    Low ESS → increase σ_rot (explore laterals), decrease σ_adv
     //    High ESS → tighten σ_rot (reduce nodding), relax σ_adv slightly
-    if (ess_ratio < 0.25f)
+    if (ess_ratio < 0.15f)
     {
-        adaptive_sigma_rot_ *= 1.03f;  // gentle growth to avoid jitter in narrow spaces
-        adaptive_sigma_adv_ *= 0.92f;
+        adaptive_sigma_rot_ *= 1.08f;  // very low → faster lateral exploration
+        adaptive_sigma_adv_ *= 0.90f;
+    }
+    else if (ess_ratio < 0.30f)
+    {
+        adaptive_sigma_rot_ *= 1.04f;  // low → moderate growth
+        adaptive_sigma_adv_ *= 0.95f;
     }
     else if (ess_ratio > 0.5f)
     {
@@ -787,7 +836,8 @@ void TrajectoryController::adapt_from_ess(float ess, int K, int num_collisions)
     //    High ESS → fewer injections (random samples suffice)
     //    Cap at 6 (±90° max) to avoid wild ±120° seeds that cause oscillation
     if (ess_ratio < 0.15f)       adaptive_n_inject_ = 6;   // ±30°, ±60°, ±90°
-    else if (ess_ratio < 0.30f)  adaptive_n_inject_ = 4;   // ±30°, ±60°
+    else if (ess_ratio < 0.25f)  adaptive_n_inject_ = 4;   // ±30°, ±60°
+    else if (ess_ratio < 0.40f)  adaptive_n_inject_ = 3;   // ±30°, ±45°
     else                         adaptive_n_inject_ = 2;   // ±30° only
 
     // 5. K and T adaptation (every adapt_interval cycles — slow, with CPU budget)
@@ -798,8 +848,10 @@ void TrajectoryController::adapt_from_ess(float ess, int K, int num_collisions)
         // --- K adaptation ---
         // Low ESS → need more samples; High ESS → can reduce
         int desired_K = adaptive_K_;
-        if (ess_ratio < 0.25f)
-            desired_K = static_cast<int>(adaptive_K_ * 1.2f);  // +20%
+        if (ess_ratio < 0.15f)
+            desired_K = static_cast<int>(adaptive_K_ * 1.35f);  // +35% (urgent)
+        else if (ess_ratio < 0.30f)
+            desired_K = static_cast<int>(adaptive_K_ * 1.20f);  // +20%
         else if (ess_ratio > 0.6f)
             desired_K = static_cast<int>(adaptive_K_ * 0.85f); // -15%
 

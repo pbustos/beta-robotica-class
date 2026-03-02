@@ -24,6 +24,7 @@ Version 2.0 — March 2026
 15. [Initialisation and Kidnapping Recovery](#15-initialisation-and-kidnapping-recovery)
 16. [Polygon Path Planner](#16-polygon-path-planner)
 17. [MPPI Trajectory Controller](#17-mppi-trajectory-controller)
+    - [17.10 ESS-Based Adaptive Parameter Tuning](#1710-ess-based-adaptive-parameter-tuning)
 18. [Complete Algorithm Loop](#18-complete-algorithm-loop)
 19. [Parameters Reference](#19-parameters-reference)
 20. [Key Implementation Notes](#20-key-implementation-notes)
@@ -624,8 +625,9 @@ The `TrajectoryController` class (`trajectory_controller.h/.cpp`) provides
 `PolygonPathPlanner` while avoiding obstacles detected by the LiDAR.
 
 It implements a proper **Model Predictive Path Integral (MPPI)** controller
-(Williams et al., 2017) with three key extensions: **warm-start sequence**,
-**AR(1) temporally correlated noise**, and **structured exploration injections**.
+(Williams et al., 2017) with four key extensions: **warm-start sequence**,
+**AR(1) temporally correlated noise**, **structured exploration injections**,
+and **ESS-based adaptive parameter tuning** (§17.10).
 
 ### 17.1 MPPI Overview
 
@@ -646,8 +648,9 @@ $$u^*_t = \frac{\sum_{k=1}^{K} w_k \cdot u^k_t}{\sum_{k=1}^{K} w_k}, \qquad
 w_k = \exp\!\left(-\frac{G_k - G_{\min}}{\lambda}\right)$$
 
 8. Stores the full optimal sequence for the next cycle's warm-start.
-9. Applies **EMA smoothing** and a **Gaussian brake** (advance modulated by
-   rotation) to the first-step command before sending it to the robot.
+9. **Adapts** K, T, λ, σ, and injection count based on the ESS (§17.10).
+10. Applies **EMA smoothing** and a **Gaussian brake** (advance modulated by
+    rotation) to the first-step command before sending it to the robot.
 
 ### 17.2 Warm-Start Mechanism
 
@@ -675,13 +678,15 @@ with $\alpha = 0.75$ (default). This produces trajectories that are **smooth
 curves** rather than zigzags — the noise changes slowly along the horizon,
 generating natural arcs that a differential-drive robot can physically execute.
 
-The noise sigmas ($\sigma_{\text{adv}}$, $\sigma_{\text{rot}}$) adapt online:
+The noise sigmas ($\sigma_{\text{adv}}$, $\sigma_{\text{rot}}$) adapt online
+based on the **ESS ratio** (see §17.10):
 
-| Situation | $\sigma_{\text{adv}}$ | $\sigma_{\text{rot}}$ |
+| ESS ratio | $\sigma_{\text{adv}}$ | $\sigma_{\text{rot}}$ |
 |-----------|:---:|:---:|
-| Many collisions (>50%) | ↓ 0.85× | ↑ 1.10× |
-| Free space, far from obstacles | ↑ 1.01× | ↓ 0.95× |
-| Clamped to | [0.04, 0.25] m/s | [0.10, 0.60] rad/s |
+| < 0.15 (collapsed) | ↓ 0.90× | ↑ 1.08× |
+| 0.15 – 0.30 (low) | ↓ 0.95× | ↑ 1.04× |
+| > 0.50 (healthy) | ↑ 1.01× | ↓ 0.97× |
+| Clamped to | [0.04, 0.25] m/s | [0.08, 0.40] rad/s |
 
 This ensures **wider lateral exploration near obstacles** (high $\sigma_{\text{rot}}$)
 and **tight, nodding-free control in open space** (low $\sigma_{\text{rot}}$).
@@ -698,14 +703,15 @@ at fixed angular offsets from the carrot direction. Each injection follows a
 
 $$\theta^{\text{desired}}_t = \theta_{\text{carrot}} + \Delta\theta \cdot \bigl(1 - \sqrt{t/T}\bigr)$$
 
-The number of injections scales with proximity to obstacles (ESDF at robot):
+The number of injections scales with the **ESS ratio** (see §17.10), which
+reflects how well the current sample population covers the solution space:
 
-| ESDF / d_safe | Injections | Offsets |
+| ESS ratio | Injections | Offsets |
 |:---:|:---:|---|
-| > 1.5 (free) | 2 | ±30° |
-| < 1.5 | 4 | ±30°, ±60° |
-| < 1.0 (close) | 6 | ±30°, ±60°, ±90° |
-| < 0.6 (danger) | 8 | ±30°, ±60°, ±90°, ±120° |
+| > 0.40 (healthy) | 2 | ±30° |
+| 0.25 – 0.40 | 3 | ±30°, ±45° |
+| 0.15 – 0.25 | 4 | ±30°, ±60° |
+| < 0.15 (collapsed) | 6 | ±30°, ±60°, ±90° |
 
 The remaining $K - n_{\text{inject}}$ samples are AR(1) random perturbations.
 This hybrid approach combines the **temporal coherence** of MPPI with the
@@ -765,13 +771,13 @@ a high-quality prediction prior for the next localisation update.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `num_samples` | 50 | K: total trajectory samples per cycle |
-| `trajectory_steps` | 30 | T: prediction horizon steps |
+| `num_samples` | 50 | K: initial trajectory samples (adapted by ESS, §17.10) |
+| `trajectory_steps` | 30 | T: initial horizon steps (adapted by ESS, §17.10) |
 | `trajectory_dt` | 0.15 s | Time step per horizon step |
-| `mppi_lambda` | 5.0 | MPPI temperature (lower = more selective) |
-| `sigma_adv` | 0.12 m/s | Initial advance noise std |
-| `sigma_rot` | 0.35 rad/s | Initial rotation noise std |
-| `noise_alpha` | 0.75 | AR(1) temporal correlation |
+| `mppi_lambda` | 5.0 | Initial temperature (adapted by ESS, §17.10) |
+| `sigma_adv` | 0.12 m/s | Initial advance noise std (adapted by ESS) |
+| `sigma_rot` | 0.25 rad/s | Initial rotation noise std (adapted by ESS) |
+| `noise_alpha` | 0.80 | AR(1) temporal correlation |
 | `warm_start_adv_weight` | 0.5 | Blend weight for previous adv sequence |
 | `warm_start_rot_weight` | 0.5 | Blend weight for previous rot sequence |
 | `d_safe` | 0.4 m | Safety distance for obstacle penalties |
@@ -779,8 +785,193 @@ a high-quality prediction prior for the next localisation update.
 | `carrot_lookahead` | 1.5 m | Lookahead distance on path |
 | `goal_threshold` | 0.25 m | Distance to consider goal reached |
 | `optim_iterations` | 2 | ESDF gradient refinement passes per seed |
-| `velocity_smoothing` | 0.3 | EMA alpha for output smoothing |
+| `velocity_smoothing` | 0.45 | EMA alpha for output smoothing |
+| `gauss_k` | 1.0 | Gaussian brake intensity |
 | `num_trajectories_to_draw` | 10 | Trajectories shown in viewer |
+
+> See **§17.10** for the full list of ESS adaptation parameters (K/T/λ/σ bounds,
+> `ess_smoothing`, `adapt_interval`, `cpu_budget_ms`).
+
+### 17.10 ESS-Based Adaptive Parameter Tuning
+
+The MPPI controller adaptively tunes **five groups of parameters** at runtime
+using the **Effective Sample Size (ESS)** of the MPPI importance weights.
+This mechanism replaces a fixed-parameter MPPI with a self-tuning controller
+that allocates compute where it matters and conserves resources when the
+situation is benign.
+
+#### 17.10.1 Effective Sample Size (ESS)
+
+After computing the MPPI weights $w_k = \exp\!\bigl(-(G_k - G_{\min})/\lambda\bigr)$,
+the ESS measures how many samples effectively contribute to the weighted average:
+
+$$\text{ESS} = \frac{\left(\sum_{k=1}^{K} w_k\right)^2}{\sum_{k=1}^{K} w_k^2}$$
+
+The **ESS ratio** $\hat{r} = \text{ESS}/K$ ranges from $1/K$ (one sample
+dominates — weight collapse) to $1.0$ (all samples contribute equally —
+redundant exploration). A low ESS ratio indicates that the sampling distribution
+is poorly matched to the cost landscape: the controller must react by widening
+exploration or increasing the sample count.
+
+The raw ESS is smoothed with an **EMA filter** ($\alpha = 0.25$) to avoid
+noisy single-cycle spikes from triggering unnecessary adaptation:
+
+$$\widetilde{\text{ESS}}_t = (1 - \alpha) \cdot \widetilde{\text{ESS}}_{t-1} + \alpha \cdot \text{ESS}_t$$
+
+#### 17.10.2 What is Adapted
+
+Five parameter groups are adapted, each at a different rate:
+
+| Parameter | Adaptation rate | Purpose |
+|-----------|:-:|---|
+| **λ** (temperature) | Every cycle | Control weight selectivity |
+| **σ_adv, σ_rot** (noise stds) | Every cycle | Widen/narrow sampling spread |
+| **n_inject** (injection count) | Every cycle | Guarantee lateral coverage |
+| **K** (sample count) | Every 2 cycles | Increase/decrease compute |
+| **T** (horizon length) | Every 2 cycles | Extend/shorten planning horizon |
+
+#### 17.10.3 λ Adaptation (Temperature) — Every Cycle
+
+The MPPI temperature λ controls how "selective" the weighted average is.
+Low λ concentrates weight on the best few trajectories; high λ spreads weight
+more evenly. The ESS directly diagnoses the need:
+
+| ESS ratio | Action | Multiplier |
+|:---:|---|:---:|
+| < 0.15 | **Urgent soften** — weights collapsed, one sample dominates | λ ×= 1.15 |
+| 0.15 – 0.30 | **Moderate soften** — too few effective samples | λ ×= 1.08 |
+| > 0.50 | **Sharpen** — many redundant samples, be more selective | λ ×= 0.96 |
+
+Clamped to $[\lambda_{\min}, \lambda_{\max}] = [1.0, 20.0]$.
+
+This creates a **negative feedback loop**: when weights collapse (low ESS),
+λ increases, which softens weights, which raises ESS. The system converges to
+an operating point where ESS is in the "healthy" range (0.30 – 0.50).
+
+#### 17.10.4 σ Adaptation (Noise Standard Deviations) — Every Cycle
+
+The noise sigmas control the spatial spread of the sampled trajectories.
+When ESS is low, the current samples are not diverse enough — the controller
+increases rotational exploration while reducing advance noise (which tends
+to produce forward-biased samples that all collide together):
+
+| ESS ratio | σ_rot | σ_adv |
+|:---:|:---:|:---:|
+| < 0.15 | ↑ ×1.08 | ↓ ×0.90 |
+| 0.15 – 0.30 | ↑ ×1.04 | ↓ ×0.95 |
+| > 0.50 | ↓ ×0.97 | ↑ ×1.01 |
+
+Clamped to $\sigma_{\text{adv}} \in [0.04, 0.25]$ m/s,
+$\sigma_{\text{rot}} \in [0.08, 0.40]$ rad/s.
+
+#### 17.10.5 Injection Count — Every Cycle
+
+Structured injection seeds (§17.4) provide **deterministic lateral coverage**.
+The ESS ratio determines how many are needed:
+
+| ESS ratio | n_inject | Angular offsets |
+|:---:|:---:|---|
+| < 0.15 | 6 | ±30°, ±60°, ±90° |
+| 0.15 – 0.25 | 4 | ±30°, ±60° |
+| 0.25 – 0.40 | 3 | ±30°, ±45° |
+| > 0.40 | 2 | ±30° |
+
+Injection count is capped at 6 (±90° max) to avoid wild seeds that cause
+oscillation in narrow corridors.
+
+#### 17.10.6 K and T Adaptation — Every 2 Cycles
+
+Sample count (K) and horizon length (T) are adapted less frequently
+(`adapt_interval = 2` cycles = 100 ms) because changing them is computationally
+meaningful and should be stable:
+
+**K (sample count):**
+
+| ESS ratio | Action | Multiplier |
+|:---:|---|:---:|
+| < 0.15 | Need many more samples urgently | K ×= 1.35 |
+| 0.15 – 0.30 | Need more samples | K ×= 1.20 |
+| > 0.60 | Can safely reduce | K ×= 0.85 |
+
+Clamped to $[K_{\min}, K_{\max}] = [20, 120]$.
+
+**T (horizon length):**
+
+T adaptation uses **both** ESS ratio and the **collision ratio** (fraction of
+samples that collided during forward simulation). This captures a specific
+failure mode: when the horizon is too short to "see around" an obstacle, many
+samples collide early, but the ESS among survivors may still look acceptable.
+
+| ESS ratio | Collision ratio | Action | Multiplier |
+|:---:|:---:|---|:---:|
+| < 0.25 | > 0.50 | Obstacle blocking — need to see further | T ×= 1.15 |
+| > 0.60 | < 0.20 | Open space — save compute | T ×= 0.90 |
+
+Clamped to $[T_{\min}, T_{\max}] = [15, 80]$.
+
+#### 17.10.7 CPU Budget Cap
+
+After computing desired K and T, the controller estimates the CPU cost of
+the next cycle based on the previous MPPI wall-clock time:
+
+$$\hat{t}_{\text{next}} = t_{\text{prev}} \times \frac{K_{\text{desired}} \cdot T_{\text{desired}}}{K_{\text{current}} \cdot T_{\text{current}}}$$
+
+If $\hat{t}_{\text{next}} > t_{\text{budget}}$ (default 5 ms, i.e. 10% of a
+50 ms cycle), both K and T are scaled down proportionally:
+
+$$K' = K_{\text{desired}} \cdot \sqrt{\frac{t_{\text{budget}}}{\hat{t}_{\text{next}}}}, \qquad
+T' = T_{\text{desired}} \cdot \sqrt{\frac{t_{\text{budget}}}{\hat{t}_{\text{next}}}}$$
+
+The square root distributes the reduction equally between K (sample diversity)
+and T (planning horizon), preferring neither.
+
+#### 17.10.8 Adaptation Flow Diagram
+
+```
+                     ┌──────────────────────────────────┐
+                     │ MPPI cycle produces weights w_k  │
+                     └──────────────┬───────────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────┐
+                         │  ESS = Σw² / (Σw)²│
+                         │  r = EMA(ESS / K)  │
+                         └──────────┬─────────┘
+                                    │
+              ┌─────────┬───────────┼───────────┬──────────┐
+              ▼         ▼           ▼           ▼          ▼
+          ┌───────┐ ┌───────┐ ┌─────────┐ ┌────────┐ ┌────────┐
+          │   λ   │ │ σ_adv │ │ n_inject│ │   K    │ │   T    │
+          │ (fast)│ │ σ_rot │ │ (fast)  │ │ (slow) │ │ (slow) │
+          │ every │ │(fast) │ │ every   │ │ every  │ │ every  │
+          │ cycle │ │ every │ │ cycle   │ │ 2 cyc  │ │ 2 cyc  │
+          └───┬───┘ │ cycle │ └────┬────┘ └───┬────┘ └───┬────┘
+              │     └───┬───┘      │          │          │
+              │         │          │          └─────┬────┘
+              │         │          │                │
+              │         │          │         ┌──────▼──────┐
+              │         │          │         │ CPU budget  │
+              │         │          │         │ cap (K×T)   │
+              │         │          │         └──────┬──────┘
+              └─────────┴──────────┴───────────────┘
+                                    │
+                                    ▼
+                          Next MPPI cycle uses
+                          adapted parameters
+```
+
+#### 17.10.9 Adaptation Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `ess_smoothing` | 0.25 | EMA alpha for ESS (higher = faster response) |
+| `adapt_interval` | 2 | K/T adaptation period (cycles) |
+| `K_min` / `K_max` | 20 / 120 | Adaptive sample count bounds |
+| `T_min` / `T_max` | 15 / 80 | Adaptive horizon bounds |
+| `lambda_min` / `lambda_max` | 1.0 / 20.0 | Adaptive temperature bounds |
+| `sigma_min_adv` / `sigma_max_adv` | 0.04 / 0.25 m/s | Adaptive σ_adv clamp |
+| `sigma_min_rot` / `sigma_max_rot` | 0.08 / 0.40 rad/s | Adaptive σ_rot clamp |
+| `cpu_budget_ms` | 5.0 ms | Max MPPI compute per cycle |
 
 ---
 
@@ -850,15 +1041,16 @@ LOOP every 50 ms:
      └── Display ‖ν_xy‖ in UI
 
  13. TRAJECTORY CONTROLLER (if path active)              [§17]
-     ├── Build local ESDF from lidar points
-     ├── Warm-start: shift prev_optimal_ + blend nominal
-     ├── Sample K trajectories (injections + AR(1) perturbations)
-     ├── Optimize each sample with ESDF gradient
-     ├── Score (EFE) and compute MPPI weighted average
-     ├── Store optimal sequence for next cycle
-     ├── Apply EMA smoothing + Gaussian brake
-     ├── Send (adv, rot) to robot
-     └── Feed commands into velocity_history for localisation
+      ├── Build local ESDF from lidar points (+static obstacles)
+      ├── Warm-start: shift prev_optimal_ + blend nominal
+      ├── Sample K trajectories (injections + AR(1) perturbations)
+      ├── Optimize each sample with ESDF gradient
+      ├── Score (EFE) and compute MPPI weighted average
+      ├── Compute ESS → adapt K, T, λ, σ, n_inject           [§17.10]
+      ├── Store optimal sequence for next cycle
+      ├── Apply EMA smoothing + Gaussian brake
+      ├── Send (adv, rot) to robot
+      └── Feed commands into velocity_history for localisation
 
  14. STORE for next cycle
      └── μ_{k} = smooth pose,  Σ_{k} = posterior cov
@@ -948,15 +1140,21 @@ LOOP every 50 ms:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `num_samples` | 50 | K: total trajectory samples per cycle |
-| `trajectory_steps` | 30 | T: prediction horizon steps |
+| `num_samples` | 50 | K: initial trajectory samples per cycle (adapted by ESS) |
+| `trajectory_steps` | 30 | T: initial horizon steps (adapted by ESS) |
 | `trajectory_dt` | 0.15 s | Time step per horizon step |
-| `mppi_lambda` | 5.0 | Temperature (lower = more selective) |
-| `sigma_adv` | 0.12 m/s | Initial advance noise std |
-| `sigma_rot` | 0.35 rad/s | Initial rotation noise std |
-| `noise_alpha` | 0.75 | AR(1) temporal correlation coefficient |
-| `sigma_min_adv` / `sigma_max_adv` | 0.04 / 0.25 m/s | Adaptive sigma clamp range |
-| `sigma_min_rot` / `sigma_max_rot` | 0.10 / 0.60 rad/s | Adaptive sigma clamp range |
+| `mppi_lambda` | 5.0 | Initial temperature (adapted by ESS, §17.10.3) |
+| `sigma_adv` | 0.12 m/s | Initial advance noise std (adapted by ESS, §17.10.4) |
+| `sigma_rot` | 0.25 rad/s | Initial rotation noise std (adapted by ESS, §17.10.4) |
+| `noise_alpha` | 0.80 | AR(1) temporal correlation coefficient |
+| `K_min` / `K_max` | 20 / 120 | Adaptive sample count bounds |
+| `T_min` / `T_max` | 15 / 80 | Adaptive horizon bounds |
+| `lambda_min` / `lambda_max` | 1.0 / 20.0 | Adaptive temperature bounds |
+| `sigma_min_adv` / `sigma_max_adv` | 0.04 / 0.25 m/s | Adaptive σ_adv clamp range |
+| `sigma_min_rot` / `sigma_max_rot` | 0.08 / 0.40 rad/s | Adaptive σ_rot clamp range |
+| `ess_smoothing` | 0.25 | EMA alpha for ESS ratio (higher = faster response) |
+| `adapt_interval` | 2 | K/T adaptation period (cycles) |
+| `cpu_budget_ms` | 5.0 ms | Max MPPI compute time per cycle |
 | `warm_start_adv_weight` | 0.5 | Blend weight: prev vs nominal (advance) |
 | `warm_start_rot_weight` | 0.5 | Blend weight: prev vs nominal (rotation) |
 | `max_adv` | 0.6 m/s | Maximum forward velocity |
@@ -967,9 +1165,12 @@ LOOP every 50 ms:
 | `goal_threshold` | 0.25 m | Distance to consider goal reached |
 | `optim_iterations` | 2 | ESDF gradient refinement passes |
 | `optim_lr` | 0.05 | Learning rate for seed optimization |
-| `velocity_smoothing` | 0.3 | EMA alpha for output smoothing |
+| `velocity_smoothing` | 0.45 | EMA alpha for output smoothing |
+| `gauss_k` | 1.0 | Gaussian brake intensity (rotation→advance) |
 | `grid_resolution` | 0.05 m | ESDF grid cell size |
 | `grid_half_size` | 4.0 m | ESDF grid extent from robot |
+| `num_trajectories_to_draw` | 10 | Trajectories shown in viewer |
+
 
 ---
 
@@ -1028,10 +1229,16 @@ lightweight enough to run 50 samples × 30 steps at 20 Hz on a single CPU core.
 
 ### Hybrid MPPI Design
 The trajectory controller combines two sampling strategies:
-- **Structured injection seeds** (2–8 deterministic lateral offsets) guarantee
+- **Structured injection seeds** (2–6 deterministic lateral offsets) guarantee
   spatial coverage for obstacle avoidance and doorway navigation.
-- **AR(1) Gaussian perturbations** (42–48 random samples around the warm-started
+- **AR(1) Gaussian perturbations** (44–118 random samples around the warm-started
   sequence) provide temporal coherence and smooth convergence.
+
+All five key parameters (K, T, λ, σ, n_inject) are **self-tuned** at runtime
+using the **Effective Sample Size** of the MPPI importance weights (§17.10).
+This ESS-based feedback loop allocates additional compute (more samples, longer
+horizons, wider exploration) precisely when the situation demands it (obstacle
+encounters, narrow passages) and relaxes in open space to save CPU.
 
 This hybrid avoids the failure modes of both pure geometric seeds (cancel-out
 near obstacles) and pure random sampling (insufficient lateral coverage with

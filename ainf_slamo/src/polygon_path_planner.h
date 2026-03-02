@@ -30,6 +30,9 @@ namespace rc
             /// Set or update the room polygon (room frame). Rebuilds all internal structures.
             void set_polygon(const std::vector<Eigen::Vector2f>& vertices);
 
+            /// Set obstacle polygons (furniture). Rebuilds visibility graph.
+            void set_obstacles(const std::vector<std::vector<Eigen::Vector2f>>& obstacles);
+
             /// Plan shortest path from start to goal (both in room frame).
             /// Returns ordered waypoints including start and goal. Empty if no path.
             std::vector<Eigen::Vector2f> plan(const Eigen::Vector2f& start,
@@ -47,6 +50,8 @@ namespace rc
             const std::vector<Eigen::Vector2f>& get_original_polygon() const { return subdivided_polygon_; }
             /// Get the inner boundary polygon (1:1 with subdivided vertices).
             const std::vector<Eigen::Vector2f>& get_inner_polygon() const { return inner_polygon_; }
+            /// Get expanded obstacle polygons (Minkowski-expanded by robot_radius).
+            const std::vector<std::vector<Eigen::Vector2f>>& get_expanded_obstacles() const { return expanded_obstacles_; }
 
             /// True after a successful set_polygon() call.
             bool is_ready() const { return !inner_polygon_.empty(); }
@@ -60,11 +65,16 @@ namespace rc
             std::vector<Eigen::Vector2f> inner_polygon_;       // inner boundary (1:1 with subdivided_polygon_)
             std::vector<Eigen::Vector2f> shrunk_polygon_;      // all nav nodes (= inner_polygon_)
 
+            // Obstacle polygons (furniture)
+            std::vector<std::vector<Eigen::Vector2f>> obstacles_;           // original
+            std::vector<std::vector<Eigen::Vector2f>> expanded_obstacles_;  // Minkowski-expanded by robot_radius
+
             // ---- visibility graph ----
             struct Edge { int to; float cost; };
             std::vector<std::vector<Edge>> adjacency_;
 
             void build_visibility_graph();
+            void add_obstacle_nav_nodes();
 
             // ---- static helpers ----
             static std::vector<Eigen::Vector2f> subdivide_polygon(
@@ -84,6 +94,16 @@ namespace rc
 
             /// Check if segment [a,b] crosses any edge of the inner polygon.
             bool segment_crosses_inner_boundary(const Eigen::Vector2f& a, const Eigen::Vector2f& b) const;
+
+            /// Check if segment [a,b] crosses any edge of any expanded obstacle.
+            bool segment_crosses_obstacles(const Eigen::Vector2f& a, const Eigen::Vector2f& b) const;
+
+            /// Check if a point is inside any expanded obstacle.
+            bool point_inside_obstacle(const Eigen::Vector2f& p) const;
+
+            /// Expand (outward Minkowski) an obstacle polygon by offset.
+            static std::vector<Eigen::Vector2f> offset_polygon_outward(
+                const std::vector<Eigen::Vector2f>& poly, float offset);
 
             static std::vector<int> dijkstra(const std::vector<std::vector<Edge>>& adj,
                                               int start, int goal);

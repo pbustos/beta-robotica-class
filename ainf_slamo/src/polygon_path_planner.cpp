@@ -90,16 +90,134 @@ bool PolygonPathPlanner::segment_crosses_inner_boundary(
 }
 
 // =====================================================================
-// Visibility: segment must not cross the original walls NOR the inner polygon
+// Obstacle boundary crossing checks
+// Check against BOTH original and expanded obstacle edges, plus sample
+// points along the segment to catch pass-through cases.
+// =====================================================================
+bool PolygonPathPlanner::segment_crosses_obstacles(
+    const Eigen::Vector2f& a, const Eigen::Vector2f& b) const
+{
+    // Check against expanded obstacle edges
+    for (const auto& obs : expanded_obstacles_)
+    {
+        const int n = static_cast<int>(obs.size());
+        for (int i = 0; i < n; ++i)
+            if (segments_intersect_proper(a, b, obs[i], obs[(i + 1) % n]))
+                return true;
+    }
+    // Check against original obstacle edges (more reliable geometry)
+    for (const auto& obs : obstacles_)
+    {
+        const int n = static_cast<int>(obs.size());
+        for (int i = 0; i < n; ++i)
+            if (segments_intersect_proper(a, b, obs[i], obs[(i + 1) % n]))
+                return true;
+    }
+    // Sample points along the segment and check if any lies inside an expanded obstacle
+    constexpr int num_samples = 5;
+    for (int s = 1; s < num_samples; ++s)
+    {
+        const float t = static_cast<float>(s) / static_cast<float>(num_samples);
+        const Eigen::Vector2f p = a + t * (b - a);
+        for (const auto& obs : expanded_obstacles_)
+            if (point_in_polygon(p, obs))
+                return true;
+    }
+    return false;
+}
+
+bool PolygonPathPlanner::point_inside_obstacle(const Eigen::Vector2f& p) const
+{
+    for (const auto& obs : expanded_obstacles_)
+        if (point_in_polygon(p, obs))
+            return true;
+    // Also check original obstacles (in case expanded polygon is malformed)
+    for (const auto& obs : obstacles_)
+        if (point_in_polygon(p, obs))
+            return true;
+    return false;
+}
+
+// =====================================================================
+// Expand polygon outward by offset (Minkowski sum with disk).
+// Uses a sampling approach (same as offset_polygon_inward but inverted):
+// for each vertex, sample at 'offset' distance in all directions and pick
+// the candidate that is OUTSIDE the polygon and maximally far from the
+// polygon boundary. This avoids all winding-direction ambiguity.
+// =====================================================================
+std::vector<Eigen::Vector2f> PolygonPathPlanner::offset_polygon_outward(
+    const std::vector<Eigen::Vector2f>& poly, float offset)
+{
+    const int n = static_cast<int>(poly.size());
+    if (n < 3) return poly;
+
+    std::vector<Eigen::Vector2f> result(n);
+    constexpr int num_angles = 36;
+
+    for (int i = 0; i < n; ++i)
+    {
+        Eigen::Vector2f best = poly[i];
+        float best_clearance = -1.f;
+
+        // Try at exactly offset distance — pick candidate OUTSIDE the polygon
+        for (int a = 0; a < num_angles; ++a)
+        {
+            float angle = 2.f * static_cast<float>(M_PI) * static_cast<float>(a) / static_cast<float>(num_angles);
+            Eigen::Vector2f dir(std::cos(angle), std::sin(angle));
+            Eigen::Vector2f cand = poly[i] + dir * offset;
+
+            // Must be OUTSIDE this polygon (the opposite of inward offset)
+            if (point_in_polygon(cand, poly)) continue;
+
+            float c = dist_to_polygon_boundary(cand, poly);
+            if (c > best_clearance)
+            { best = cand; best_clearance = c; }
+        }
+
+        // Fallback: try shorter radii if offset puts us somewhere weird
+        if (best_clearance < 0.01f)
+        {
+            for (int a = 0; a < num_angles; ++a)
+            {
+                float angle = 2.f * static_cast<float>(M_PI) * static_cast<float>(a) / static_cast<float>(num_angles);
+                Eigen::Vector2f dir(std::cos(angle), std::sin(angle));
+                for (int r = 9; r >= 1; --r)
+                {
+                    float radius = offset * static_cast<float>(r) / 10.f;
+                    Eigen::Vector2f cand = poly[i] + dir * radius;
+                    if (point_in_polygon(cand, poly)) continue;
+
+                    float c = dist_to_polygon_boundary(cand, poly);
+                    if (c > best_clearance)
+                    { best = cand; best_clearance = c; }
+                }
+            }
+        }
+
+        result[i] = best;
+    }
+    return result;
+}
+
+// =====================================================================
+// Visibility: segment must not cross walls, inner polygon, or obstacles
 // =====================================================================
 bool PolygonPathPlanner::is_visible(const Eigen::Vector2f& a, const Eigen::Vector2f& b) const
 {
     if (polygon_.empty() || inner_polygon_.empty()) return false;
     if (!point_in_polygon(a, polygon_) || !point_in_polygon(b, polygon_))
         return false;
+    if (point_inside_obstacle(a) || point_inside_obstacle(b))
+        return false;
+    // Check midpoint too (catches segments that enter and exit an obstacle)
+    const Eigen::Vector2f mid = 0.5f * (a + b);
+    if (point_inside_obstacle(mid))
+        return false;
     if (segment_crosses_original_boundary(a, b))
         return false;
     if (segment_crosses_inner_boundary(a, b))
+        return false;
+    if (segment_crosses_obstacles(a, b))
         return false;
     return true;
 }
@@ -214,18 +332,135 @@ void PolygonPathPlanner::set_polygon(const std::vector<Eigen::Vector2f>& vertice
     // 2. Build inner polygon (1:1 with subdivided vertices)
     inner_polygon_ = offset_polygon_inward(subdivided_polygon_, params.robot_radius);
 
-    // 3. Nav nodes = inner polygon vertices (they serve as both boundary and graph nodes)
+    // 3. Nav nodes = inner polygon vertices + obstacle corner nodes
     shrunk_polygon_ = inner_polygon_;
+    add_obstacle_nav_nodes();
 
     std::cout << "[PathPlanner] Original: " << polygon_.size()
               << " vertices, subdivided: " << subdivided_polygon_.size()
-              << ", nav nodes: " << shrunk_polygon_.size() << std::endl;
+              << ", nav nodes: " << shrunk_polygon_.size()
+              << " (obstacles: " << obstacles_.size() << ")" << std::endl;
 
     // 4. Build visibility graph
     if (shrunk_polygon_.size() >= 3)
         build_visibility_graph();
     else
         adjacency_.clear();
+}
+
+// =====================================================================
+// Set obstacle polygons and rebuild
+// =====================================================================
+void PolygonPathPlanner::set_obstacles(const std::vector<std::vector<Eigen::Vector2f>>& obstacles)
+{
+    obstacles_ = obstacles;
+
+    // Expand each obstacle outward by robot_radius (Minkowski)
+    expanded_obstacles_.clear();
+    expanded_obstacles_.reserve(obstacles.size());
+    for (const auto& obs : obstacles_)
+    {
+        if (obs.size() >= 3)
+            expanded_obstacles_.push_back(offset_polygon_outward(obs, params.robot_radius));
+    }
+
+    std::cout << "[PathPlanner] Set " << obstacles_.size() << " obstacles ("
+              << expanded_obstacles_.size() << " expanded)" << std::endl;
+
+    // If room polygon already set, rebuild nav nodes and visibility graph
+    if (!polygon_.empty())
+    {
+        shrunk_polygon_ = inner_polygon_;
+        add_obstacle_nav_nodes();
+
+        if (shrunk_polygon_.size() >= 3)
+            build_visibility_graph();
+        else
+            adjacency_.clear();
+    }
+}
+
+// =====================================================================
+// Add navigation nodes around obstacle vertices.
+// For each vertex of each ORIGINAL obstacle polygon, sample points at
+// robot_radius distance in all directions. Pick the best candidate that
+// is OUTSIDE the obstacle, INSIDE the room, and has maximum clearance
+// from the obstacle boundary.
+// =====================================================================
+void PolygonPathPlanner::add_obstacle_nav_nodes()
+{
+    int added = 0;
+    constexpr int num_angles = 36;
+
+    for (size_t oi = 0; oi < obstacles_.size(); ++oi)
+    {
+        const auto& obs = obstacles_[oi];
+        if (obs.size() < 3) continue;
+
+        for (const auto& vertex : obs)
+        {
+            Eigen::Vector2f best = vertex;
+            float best_clearance = -1.f;
+
+            // Try at exactly robot_radius distance
+            for (int a = 0; a < num_angles; ++a)
+            {
+                float angle = 2.f * static_cast<float>(M_PI) * static_cast<float>(a) / static_cast<float>(num_angles);
+                Eigen::Vector2f dir(std::cos(angle), std::sin(angle));
+                Eigen::Vector2f cand = vertex + dir * params.robot_radius;
+
+                // Must be inside the room
+                if (!point_in_polygon(cand, polygon_)) continue;
+
+                // Must be outside THIS obstacle
+                if (point_in_polygon(cand, obs)) continue;
+
+                // Must be outside all OTHER obstacles
+                bool inside_other = false;
+                for (size_t oj = 0; oj < obstacles_.size(); ++oj)
+                {
+                    if (oi == oj) continue;
+                    if (point_in_polygon(cand, obstacles_[oj]))
+                    { inside_other = true; break; }
+                }
+                if (inside_other) continue;
+
+                // Pick the one with maximum clearance from obstacle boundary
+                float c = dist_to_polygon_boundary(cand, obs);
+                if (c > best_clearance)
+                { best = cand; best_clearance = c; }
+            }
+
+            // Fallback: try shorter radii
+            if (best_clearance < 0.01f)
+            {
+                for (int a = 0; a < num_angles; ++a)
+                {
+                    float angle = 2.f * static_cast<float>(M_PI) * static_cast<float>(a) / static_cast<float>(num_angles);
+                    Eigen::Vector2f dir(std::cos(angle), std::sin(angle));
+                    for (int r = 12; r >= 2; --r)
+                    {
+                        float radius = params.robot_radius * static_cast<float>(r) / 10.f;
+                        Eigen::Vector2f cand = vertex + dir * radius;
+                        if (!point_in_polygon(cand, polygon_)) continue;
+                        if (point_in_polygon(cand, obs)) continue;
+
+                        float c = dist_to_polygon_boundary(cand, obs);
+                        if (c > best_clearance)
+                        { best = cand; best_clearance = c; }
+                    }
+                }
+            }
+
+            if (best_clearance > 0.f)
+            {
+                shrunk_polygon_.push_back(best);
+                ++added;
+            }
+        }
+    }
+    if (added > 0)
+        std::cout << "[PathPlanner] Added " << added << " obstacle nav nodes (outside obstacles)" << std::endl;
 }
 
 // =====================================================================
@@ -295,6 +530,12 @@ std::vector<Eigen::Vector2f> PolygonPathPlanner::plan(
     if (polygon_.size() < 3 || inner_polygon_.empty()) return {};
     if (!point_in_polygon(start, polygon_) || !point_in_polygon(goal, polygon_))
         return {};
+    // Reject if start or goal is inside an obstacle
+    if (point_inside_obstacle(start) || point_inside_obstacle(goal))
+    {
+        std::cout << "[PathPlanner] Start or goal inside obstacle, rejecting\n";
+        return {};
+    }
 
     // Direct line of sight?
     if (is_visible(start, goal))

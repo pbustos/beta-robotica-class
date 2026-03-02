@@ -150,6 +150,17 @@ class SpecificWorker : public GenericWorker
 	std::vector<QGraphicsEllipseItem*> polygon_vertex_items;
 	QGraphicsPolygonItem* polygon_item = nullptr;
 
+	// Furniture / obstacles (loaded from SVG "Furniture" layer)
+	struct FurniturePolygon
+	{
+		std::string id;                          // SVG id
+		std::string label;                       // inkscape:label
+		std::vector<Eigen::Vector2f> vertices;   // polygon vertices in room frame
+	};
+	std::vector<FurniturePolygon> furniture_polygons_;
+	std::vector<QGraphicsPolygonItem*> furniture_draw_items_;
+	void draw_furniture();
+
 	// Flip state tracking
 	bool flip_x_applied_ = false;
 	bool flip_y_applied_ = false;
@@ -172,6 +183,7 @@ class SpecificWorker : public GenericWorker
 	std::vector<QGraphicsItem*> path_draw_items_;
 	QGraphicsEllipseItem* target_marker_ = nullptr;
 	QGraphicsPolygonItem* navigable_poly_item_ = nullptr;  // debug: shrunken polygon
+	std::vector<QGraphicsPolygonItem*> obstacle_expanded_items_;  // debug: expanded obstacle boundaries
 	void draw_path(const std::vector<Eigen::Vector2f>& path);
 	void clear_path();
 
