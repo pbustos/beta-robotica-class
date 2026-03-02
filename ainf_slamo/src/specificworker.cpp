@@ -122,6 +122,10 @@ void SpecificWorker::initialize()
     // AutoCenter toggle
     connect(pushButton_autoCenter, &QPushButton::toggled, this, [this](bool checked) { auto_center_ = checked; });
 
+    // Lidar / Trajectory drawing toggles
+    connect(pushButton_showLidar, &QPushButton::toggled, this, [this](bool checked) { draw_lidar_ = checked; });
+    connect(pushButton_showTrajs, &QPushButton::toggled, this, [this](bool checked) { draw_trajectories_ = checked; });
+
     // Connect Shift+Right click on the scene for navigation target
     connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::slot_new_target);
 
@@ -165,7 +169,7 @@ void SpecificWorker::initialize()
     do
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        const auto &[r, ll] = buffer_sync.read(timestamp);
+        const auto &[r, ll, ll_low] = buffer_sync.read(timestamp);
         robot = r; lidar_local = ll;
     }while (++startup_check_counter < 20 && !lidar_local.has_value());
 
@@ -245,18 +249,18 @@ void SpecificWorker::compute()
     const int fps_val = fps.print("Compute", 2000);
     const auto timestamp = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    const auto &[robot_pose_gt_, lidar_local_] = buffer_sync.read(timestamp);
+    const auto &[robot_pose_gt_, lidar_high_, lidar_low_high_] = buffer_sync.read(timestamp);
 
-    // Only lidar is required; GT pose is optional (debug/stats only)
-    if (!lidar_local_.has_value())
+    // Check lidar availability
+    if (!lidar_high_.has_value() or !lidar_low_high_.has_value())
     { qWarning() << "No lidar data from buffer_sync"; return; };
-    const auto &lidar_local = lidar_local_.value().first;
+    const auto &lidar_local = lidar_high_.value().first;  // HELIOS: localization + MPPI
 
     if(room_ai.is_initialized())
     {
         // Pass velocity, odometry and lidar to update
         auto t0 = std::chrono::steady_clock::now();
-        if(const auto res = room_ai.update(lidar_local_.value(),
+        if(const auto res = room_ai.update(lidar_high_.value(),
                                            velocity_history_,
                                            odometry_history_); res.ok)
         {
@@ -270,7 +274,10 @@ void SpecificWorker::compute()
             {
                 update_ui(res, velocity_history_.back(), fps_val);
                 display_robot(res.robot_pose, res.covariance);
-                draw_lidar_points(lidar_local, res.robot_pose);
+                if (draw_lidar_)
+                    draw_lidar_points(lidar_high_->first, lidar_low_high_->first, res.robot_pose);
+                else
+                    draw_lidar_points({}, {}, res.robot_pose);  // clear drawn points
 
                 if (params.USE_WEBOTS)
                 {
@@ -298,7 +305,7 @@ void SpecificWorker::compute()
             if (trajectory_controller_.is_active())
             {
                 auto t2 = std::chrono::steady_clock::now();
-                const auto ctrl = trajectory_controller_.compute(lidar_local, res.robot_pose);
+                const auto ctrl = trajectory_controller_.compute(lidar_low_high_->first, res.robot_pose);
                 auto t3 = std::chrono::steady_clock::now();
                 mppi_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
 
@@ -317,7 +324,7 @@ void SpecificWorker::compute()
                 {
                     send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
                     velocity_history_.push_back(rc::VelocityCommand(ctrl.side, ctrl.adv, ctrl.rot));
-                    if (do_draw) draw_trajectory_debug(ctrl, res.robot_pose);
+                    if (do_draw && draw_trajectories_) draw_trajectory_debug(ctrl, res.robot_pose);
                 }
                 viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
             }
@@ -604,7 +611,7 @@ void SpecificWorker::slot_calibrate_gt()
     // Read current GT pose from buffer
     const auto timestamp = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    const auto &[robot_pose_gt_, lidar_local_] = buffer_sync.read(timestamp);
+    const auto &[robot_pose_gt_, lidar_local_, lidar_low_unused_] = buffer_sync.read(timestamp);
     if (!robot_pose_gt_.has_value())
     {
         qWarning() << "Cannot calibrate GT: no Webots pose available";
@@ -640,37 +647,57 @@ void SpecificWorker::read_lidar()
                 buffer_sync.put<0>(std::move(eig_pose), timestamp);
             }
 
-            // Get LiDAR data HELIOS top
-            const auto data = lidar3d_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_HIGH,
-                                                                   params.MAX_LIDAR_HIGH_RANGE*1000.f,  // Convert to mm
-                                                                   params.LIDAR_LOW_DECIMATION_FACTOR);
-
-            // Get LiDAR data BPEARL down
-            // const auto data = lidar3d1_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_HIGH,
-            //                                                        params.MAX_LIDAR_HIGH_RANGE*1000.f,  // Convert to mm
-            //                                                        params.LIDAR_LOW_DECIMATION_FACTOR);
-
-            // Store local points in robot frame, filtering by height and body proximity
-            std::vector<Eigen::Vector3f> points_local;
-            points_local.reserve(data.points.size());
             const float body_offset_sq = params.ROBOT_SEMI_WIDTH * params.ROBOT_SEMI_WIDTH;
-            for (const auto &p : data.points)
+
+            // ---- HELIOS (high lidar) → slot 1: localization + MPPI ----
+            const auto data_high = lidar3d_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_HIGH,
+                                                                       params.MAX_LIDAR_HIGH_RANGE*1000.f,
+                                                                       params.LIDAR_LOW_DECIMATION_FACTOR);
+            std::vector<Eigen::Vector3f> points_high, points_low_high;
+            points_low_high.reserve(data_high.points.size());
+            points_high.reserve(data_high.points.size());
+            for (const auto &p : data_high.points)
             {
                 const float pmx = p.x / 1000.f;
                 const float pmy = p.y / 1000.f;
                 const float pmz = p.z / 1000.f;
-                if (pmx*pmx + pmy*pmy > body_offset_sq &&
-                    pmz > params.LIDAR_HIGH_MIN_HEIGHT &&
-                    pmz < params.LIDAR_HIGH_MAX_HEIGHT)
-                    points_local.emplace_back(pmx, pmy, pmz);
+                if (pmx*pmx + pmy*pmy > body_offset_sq and  pmz < params.LIDAR_HIGH_MAX_HEIGHT)
+                {
+                    points_low_high.emplace_back(pmx, pmy, pmz);
+                    if (pmz > params.LIDAR_HIGH_MIN_HEIGHT)
+                        points_high.emplace_back(pmx, pmy, pmz);
+                }
+            }
+            buffer_sync.put<1>(std::make_pair(std::move(points_high), data_high.timestamp), timestamp);
+
+            // ---- BPEARL (low lidar) → slot 2: MPPI only (obstacles) ----
+            try
+            {
+                const auto data_low = lidar3d1_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_LOW,
+                                                                           params.MAX_LIDAR_LOW_RANGE*1000.f,
+
+                                                                           params.LIDAR_LOW_DECIMATION_FACTOR_LOW);
+                points_low_high.reserve(points_low_high.size() + data_low.points.size());
+                for (const auto &p : data_low.points)
+                {
+                    const float pmx = p.x / 1000.f;
+                    const float pmy = p.y / 1000.f;
+                    const float pmz = p.z / 1000.f;
+                    if (pmx*pmx + pmy*pmy > body_offset_sq)
+                        points_low_high.emplace_back(pmx, pmy, pmz);
+                }
+                buffer_sync.put<2>(std::make_pair(std::move(points_low_high), data_low.timestamp), timestamp);
+            }
+            catch (const Ice::Exception &e)
+            {
+                // BPEARL may not be available — that's OK, MPPI uses HELIOS only
+                static bool warned = false;
+                if (!warned) { std::cout << "[read_lidar] BPEARL not available: " << e.what() << " (warning once)\n"; warned = true; }
             }
 
-            // Put lidar data in sync buffer
-            buffer_sync.put<1>(std::move(std::make_pair(points_local, data.timestamp)), timestamp);
-
             // Adjust period with hysteresis
-            if (wait_period > std::chrono::milliseconds((long) data.period + 2)) --wait_period;
-            else if (wait_period < std::chrono::milliseconds((long) data.period - 2)) ++wait_period;
+            if (wait_period > std::chrono::milliseconds((long) data_high.period + 2)) --wait_period;
+            else if (wait_period < std::chrono::milliseconds((long) data_high.period - 2)) ++wait_period;
         }
         catch (const Ice::Exception &e)
         { std::cout << "Error reading from Lidar3D or robot pose: " << e.what() << std::endl; }
@@ -736,52 +763,60 @@ void SpecificWorker::draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state
     }
 }
 
-auto SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector3f> &points,
+auto SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector3f> &points_high,
+                                       const std::vector<Eigen::Vector3f> &points_low,
                                        const Eigen::Affine2f &robot_pose) -> void
 {
-    static std::vector<QGraphicsEllipseItem*> lidar_points;
-
-    static QPen pen(QColor("Green"));
-    pen.setWidthF(0.0);
-    pen.setCosmetic(true);
-    static const QBrush brush(QColor("Green"));
-
-    // Size in *item* coordinates. With ItemIgnoresTransformations the size is in pixels.
-    static constexpr qreal radius_px = 1.5;
-    const QRectF ellipse_rect(-radius_px, -radius_px, 2*radius_px, 2*radius_px);
-
-    const int stride = std::max(1, static_cast<int>(points.size() / params.MAX_LIDAR_DRAW_POINTS));
-    const size_t num_points_to_draw = (points.size() + stride - 1) / stride;
-
-    while (lidar_points.size() > num_points_to_draw)
+    // ---- Helper lambda to draw a point set with a given color pool ----
+    auto draw_layer = [&](const std::vector<Eigen::Vector3f> &points,
+                          std::vector<QGraphicsEllipseItem*> &pool,
+                          const QColor &color, int max_points)
     {
-        auto *p = lidar_points.back();
-        viewer->scene.removeItem(p);
-        delete p;
-        lidar_points.pop_back();
-    }
+        static const qreal radius_px = 1.5;
+        const QRectF ellipse_rect(-radius_px, -radius_px, 2*radius_px, 2*radius_px);
+        QPen pen(color); pen.setWidthF(0.0); pen.setCosmetic(true);
+        QBrush brush(color);
 
-    size_t idx = 0;
-    for (size_t i = 0; i < points.size() && idx < num_points_to_draw; i += stride, ++idx)
-    {
-        // Draw in room frame. Points come in robot frame.
-        // Use only XY for 2D viewer: p_room_xy = R(phi)*p_robot_xy + t
-        const Eigen::Vector2f pr = points[i].head<2>();
-        const Eigen::Vector2f pw = robot_pose.linear() * pr + robot_pose.translation();
+        const int stride = std::max(1, static_cast<int>(points.size() / max_points));
+        const size_t num_draw = (points.size() + stride - 1) / stride;
 
-        if (idx < lidar_points.size())
+        // Shrink pool if needed
+        while (pool.size() > num_draw)
         {
-            lidar_points[idx]->setPos(pw.x(), pw.y());
+            auto *p = pool.back();
+            viewer->scene.removeItem(p);
+            delete p;
+            pool.pop_back();
         }
-        else
+
+        size_t idx = 0;
+        for (size_t i = 0; i < points.size() && idx < num_draw; i += stride, ++idx)
         {
-            auto *item = viewer->scene.addEllipse(ellipse_rect, pen, brush);
-            item->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
-            item->setPos(pw.x(), pw.y());
-            item->setZValue(5);
-            lidar_points.push_back(item);
+            const Eigen::Vector2f pr = points[i].head<2>();
+            const Eigen::Vector2f pw = robot_pose.linear() * pr + robot_pose.translation();
+
+            if (idx < pool.size())
+            {
+                pool[idx]->setPos(pw.x(), pw.y());
+            }
+            else
+            {
+                auto *item = viewer->scene.addEllipse(ellipse_rect, pen, brush);
+                item->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+                item->setPos(pw.x(), pw.y());
+                item->setZValue(5);
+                pool.push_back(item);
+            }
         }
-    }
+    };
+
+    // HELIOS (high) in green
+    static std::vector<QGraphicsEllipseItem*> pool_high;
+    draw_layer(points_high, pool_high, QColor("Green"), params.MAX_LIDAR_DRAW_POINTS);
+
+    // BPEARL (low) in cyan — fewer points to keep it lightweight
+    static std::vector<QGraphicsEllipseItem*> pool_low;
+    draw_layer(points_low, pool_low, QColor("Cyan"), params.MAX_LIDAR_DRAW_POINTS / 2);
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // Utility: Convert quaternion to yaw angle

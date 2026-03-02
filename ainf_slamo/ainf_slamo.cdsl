@@ -8,7 +8,7 @@ Component ainf_slamo
 {
     Communications
     {
-        requires Lidar3D, Webots2Robocomp, OmniRobot;
+        requires Lidar3D, Lidar3D, Webots2Robocomp, OmniRobot;
         subscribesTo JoystickAdapter, FullPoseEstimationPub;
     };
     language Cpp11;

@@ -20,8 +20,8 @@ public:
     struct Params
     {
         // Kinematic limits (differential drive: adv + rot only)
-        float max_adv   = 0.6f;   // m/s forward
-        float max_rot   = 0.8f;   // rad/s
+        float max_adv   = 0.7f;   // m/s forward
+        float max_rot   = 0.7f;   // rad/s
 
         // Safety
         float d_safe       = 0.4f;
@@ -83,6 +83,9 @@ public:
 
         // Visualization
         int num_trajectories_to_draw = 10;
+
+        // Gaussian brake for high rotation (to prevent oscillation)
+        float gauss_k = 2.0f;  // Higher = stronger brake at high rotation
     };
 
     struct ControlOutput

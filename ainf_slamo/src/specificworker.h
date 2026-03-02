@@ -107,11 +107,18 @@ class SpecificWorker : public GenericWorker
 		float ROBOT_LENGTH = 0.480;  // m
 		float ROBOT_SEMI_WIDTH = ROBOT_WIDTH / 2.f;     // m
 		float ROBOT_SEMI_LENGTH = ROBOT_LENGTH / 2.f;    // m
+		// High LiDAR (HELIOS) — localization + MPPI
 		std::string LIDAR_NAME_HIGH = "helios";
 		float MAX_LIDAR_HIGH_RANGE = 100;  // m
 		int LIDAR_LOW_DECIMATION_FACTOR = 1;
-		float LIDAR_HIGH_MIN_HEIGHT = 1.2; // m, points below this height in the high lidar will be ignored (e.g. to filter tables)
-		float LIDAR_HIGH_MAX_HEIGHT = 2.2f; // m, points above this height in the high lidar will be ignored (e.g. to filter ceiling)
+		float LIDAR_HIGH_MIN_HEIGHT = 1.2; // m, points below this height in the high lidar will be ignored
+		float LIDAR_HIGH_MAX_HEIGHT = 2.2f; // m, points above this height in the high lidar will be ignored
+		// Low LiDAR (BPEARL) — MPPI only (obstacles: chairs, tables, people)
+		std::string LIDAR_NAME_LOW = "bpearl";
+		float MAX_LIDAR_LOW_RANGE = 100;    // m (short range sensor)
+		float LIDAR_LOW_MIN_HEIGHT = 0.1f; // m, filter ground
+		int LIDAR_LOW_DECIMATION_FACTOR_LOW = 1;
+		// General
 		QRectF GRID_MAX_DIM{-8, -5, 16, 10};
 		int MAX_LIDAR_DRAW_POINTS = 500;
 		float ODOMETRY_NOISE_FACTOR = 0.1f;  // Gaussian noise std added to odometry (fraction of reading)
@@ -122,10 +129,13 @@ class SpecificWorker : public GenericWorker
 	rc::Timer<> clock;
 	FPSCounter fps;
 
-	// Sync Buffer: robot pose (GT, for debug/stats), lidar local points
+	// Type alias for lidar data in buffer
+	using LidarData = std::pair<std::vector<Eigen::Vector3f>, std::int64_t>;
+
+	// Sync Buffer: slot 0 = GT pose, slot 1 = HELIOS high lidar, slot 2 = BPEARL low lidar
 	BufferSync<InOut<Eigen::Affine2f, Eigen::Affine2f>,
-			   InOut<std::pair<std::vector<Eigen::Vector3f>, std::int64_t>,
-					 std::pair<std::vector<Eigen::Vector3f>, std::int64_t>>> buffer_sync;
+			   InOut<LidarData, LidarData>,
+			   InOut<LidarData, LidarData>> buffer_sync;
 
 	// Lidar Thread
 	std::thread read_lidar_th;
@@ -144,6 +154,8 @@ class SpecificWorker : public GenericWorker
 	bool flip_x_applied_ = false;
 	bool flip_y_applied_ = false;
 	bool auto_center_ = false;  // Auto-center view on robot
+	bool draw_lidar_ = true;    // Toggle lidar point drawing
+	bool draw_trajectories_ = true;  // Toggle MPPI trajectory drawing
 
 	// Velocity commands (boost circular buffer is thread safe)
 	boost::circular_buffer<rc::VelocityCommand> velocity_history_{20};
@@ -187,7 +199,9 @@ class SpecificWorker : public GenericWorker
 	QGraphicsEllipseItem* cov_ellipse_item_ = nullptr;
 
 	// Draw
-	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points, const Eigen::Affine2f &robot_pose);
+	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points_high,
+	                       const std::vector<Eigen::Vector3f> &points_low,
+	                       const Eigen::Affine2f &robot_pose);
 	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);
 	void display_robot(const Eigen::Affine2f &robot_pose, const Eigen::Matrix3f &covariance);
 	void display_gt_error(const Eigen::Affine2f &estimated_pose, const std::optional<Eigen::Affine2f> &gt_pose_opt);

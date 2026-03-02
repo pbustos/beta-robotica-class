@@ -283,14 +283,30 @@
           <property name="toolTip"><string>Compute offset between Webots and map frames (requires low SDF)</string></property>
          </widget>
         </item>
-        <item>
-         <widget class="QPushButton" name="pushButton_autoCenter">
-          <property name="text"><string>AutoCenter</string></property>
-          <property name="checkable"><bool>true</bool></property>
-          <property name="checked"><bool>false</bool></property>
-          <property name="toolTip"><string>Auto-center view on robot position</string></property>
-         </widget>
-        </item>
+         <item>
+          <widget class="QPushButton" name="pushButton_autoCenter">
+           <property name="text"><string>AutoCenter</string></property>
+           <property name="checkable"><bool>true</bool></property>
+           <property name="checked"><bool>false</bool></property>
+           <property name="toolTip"><string>Auto-center view on robot position</string></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="pushButton_showLidar">
+           <property name="text"><string>Lidar</string></property>
+           <property name="checkable"><bool>true</bool></property>
+           <property name="checked"><bool>true</bool></property>
+           <property name="toolTip"><string>Toggle LiDAR point cloud drawing</string></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="pushButton_showTrajs">
+           <property name="text"><string>Trajs</string></property>
+           <property name="checkable"><bool>true</bool></property>
+           <property name="checked"><bool>true</bool></property>
+           <property name="toolTip"><string>Toggle MPPI trajectory drawing</string></property>
+          </widget>
+         </item>
        <item>
         <spacer name="horizontalSpacer_buttons">
          <property name="orientation"><enum>Qt::Horizontal</enum></property>

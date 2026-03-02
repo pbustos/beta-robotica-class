@@ -42,8 +42,8 @@ SET (SOURCES
 
 #ROBOCOMP
 ROBOCOMP_INITIALIZE( $ENV{ROBOCOMP}/ )
-ROBOCOMP_IDSL_TO_ICE(Gridder Lidar3D FullPoseEstimation JoystickAdapter GenericBase OmniRobot FullPoseEstimationPub Webots2Robocomp)
-ROBOCOMP_ICE_TO_SRC(Gridder Lidar3D FullPoseEstimation JoystickAdapter GenericBase OmniRobot FullPoseEstimationPub Webots2Robocomp)
+ROBOCOMP_IDSL_TO_ICE(Gridder JoystickAdapter OmniRobot Lidar3D Webots2Robocomp GenericBase FullPoseEstimation FullPoseEstimationPub)
+ROBOCOMP_ICE_TO_SRC(Gridder JoystickAdapter OmniRobot Lidar3D Webots2Robocomp GenericBase FullPoseEstimation FullPoseEstimationPub)
 SET (EXECUTABLE_OUTPUT_PATH ${RC_COMPONENT_DEVEL_PATH}/bin)
 set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 

@@ -232,9 +232,8 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
         smoothed_vel_ = params.velocity_smoothing * smoothed_vel_ + (1.f - params.velocity_smoothing) * raw;
     else { smoothed_vel_ = raw; has_prev_vel_ = true; }
 
-    constexpr float gauss_k = 3.0f;
     const float rot_ratio = smoothed_vel_[2] / params.max_rot;
-    const float brake = std::exp(-gauss_k * rot_ratio * rot_ratio);
+    const float brake = std::exp(-params.gauss_k * rot_ratio * rot_ratio);
 
     out.adv  = smoothed_vel_[0] * brake;
     out.side = smoothed_vel_[1];

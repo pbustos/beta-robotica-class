@@ -1,5 +1,6 @@
 # Proxies for required interfaces
 Proxies.Lidar3D = "lidar3d:tcp -h localhost -p 11990" #HELIOS
+Proxies.Lidar3D1 = "lidar3d:tcp -h localhost -p 11989" #BPEARL
 Proxies.Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 10006"
 Proxies.OmniRobot = "omnirobot:tcp -h localhost -p 10004"
 
