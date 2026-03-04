@@ -3,7 +3,6 @@
 #include <chrono>
 #include <vector>
 #include <Eigen/Dense>
-#include <boost/circular_buffer.hpp>
 
 // Minimal shared types required by room_model/room_concept code.
 // Keep this header lightweight and dependency-free.

@@ -166,8 +166,8 @@ public:
     }
 
     UpdateResult update(const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar,
-                        const boost::circular_buffer<rc::VelocityCommand> &velocity_history,
-                        const boost::circular_buffer<rc::OdometryReading> &odometry_history);
+                        const std::vector<rc::VelocityCommand> &velocity_history,
+                        const std::vector<rc::OdometryReading> &odometry_history);
 
     Params params;
 
@@ -211,20 +211,20 @@ private:
     Eigen::Matrix3f compute_motion_covariance(const OdometryPrior &odometry_prior,
                                               bool is_measured_odometry = false);
     RoomConceptAI::OdometryPrior compute_odometry_prior(
-                    const boost::circular_buffer<VelocityCommand>& velocity_history,
+                    const std::vector<VelocityCommand>& velocity_history,
                     const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar);
     Eigen::Vector3f integrate_velocity_over_window(const Eigen::Affine2f &robot_pose,
-                                                   const boost::circular_buffer<VelocityCommand> &velocity_history,
+                                                   const std::vector<VelocityCommand> &velocity_history,
                                                    const int64_t &t_start_ms, const int64_t &t_end_ms);
 
     /// Integrate measured odometry (adv, side, rot) over the same time window
     Eigen::Vector3f integrate_odometry_over_window(const Eigen::Affine2f &robot_pose,
-                                                   const boost::circular_buffer<OdometryReading> &odometry_history,
+                                                   const std::vector<OdometryReading> &odometry_history,
                                                    const int64_t &t_start_ms, const int64_t &t_end_ms);
 
     /// Compute odometry prior from measured velocities (encoder/IMU feedback)
     OdometryPrior compute_measured_odometry_prior(
-                    const boost::circular_buffer<OdometryReading>& odometry_history,
+                    const std::vector<OdometryReading>& odometry_history,
                     const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar);
 
     /// Fuse command prior and measured odometry prior into a single Gaussian

@@ -20,15 +20,15 @@ public:
     struct Params
     {
         // Kinematic limits (differential drive: adv + rot only)
-        float max_adv   = 0.7f;   // m/s forward
+        float max_adv   = 0.8f;   // m/s forward
         float max_rot   = 0.7f;   // rad/s
 
         // Safety
-        float d_safe       = 0.4f;
+        float d_safe       = 0.5f; // minimum ESDF distance to consider a trajectory safe
         float robot_radius = 0.3f;
 
         // Carrot / path following
-        float carrot_lookahead = 1.5f;
+        float carrot_lookahead = 2.0f;
         float goal_threshold   = 0.25f;
 
         // MPPI sampling — initial / baseline values (adapted by ESS)
@@ -38,7 +38,7 @@ public:
 
         // ESS-based adaptive ranges
         int   K_min = 20,  K_max = 120;    // adaptive K bounds
-        int   T_min = 15,  T_max = 80;     // adaptive T bounds
+        int   T_min = 15,  T_max = 120;     // adaptive T bounds
         float lambda_min = 1.0f, lambda_max = 20.0f;  // adaptive λ bounds
         float cpu_budget_ms = 5.0f;        // max MPPI time per cycle (10% of 50ms)
         float ess_smoothing = 0.25f;       // EMA alpha for ESS (faster response to drops)
@@ -64,12 +64,12 @@ public:
         float warm_start_rot_weight = 0.5f;
 
         // Gradient optimization (post-processing refinement)
-        int   optim_iterations = 2;
+        int   optim_iterations = 3;
         float optim_lr         = 0.05f;
 
         // EFE weights (scoring)
-        float lambda_goal      = 6.0f;
-        float lambda_obstacle  = 10.0f;
+        float lambda_goal      = 5.0f;
+        float lambda_obstacle  = 18.0f;
         float lambda_smooth    = 0.5f;
         float lambda_velocity  = 0.01f;
         float lambda_delta_vel = 0.05f;

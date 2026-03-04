@@ -40,7 +40,7 @@
 #include "pointcloud_center_estimator.h"
 #include "polygon_path_planner.h"
 #include "trajectory_controller.h"
-#include <boost/circular_buffer.hpp>
+#include <variant>
 #include "common_types.h"
 
 /**
@@ -168,13 +168,43 @@ class SpecificWorker : public GenericWorker
 	bool draw_lidar_ = true;    // Toggle lidar point drawing
 	bool draw_trajectories_ = true;  // Toggle MPPI trajectory drawing
 
-	// Velocity commands (boost circular buffer is thread safe)
-	boost::circular_buffer<rc::VelocityCommand> velocity_history_{20};
+	// Velocity commands (thread-safe via BufferSync)
+	BufferSync<InOut<rc::VelocityCommand, rc::VelocityCommand>> velocity_buffer_{20};
 
-	// Measured odometry readings from FullPoseEstimationPub (encoders/IMU)
-	boost::circular_buffer<rc::OdometryReading> odometry_history_{20};
+	// Measured odometry readings from FullPoseEstimationPub (thread-safe via BufferSync)
+	BufferSync<InOut<rc::OdometryReading, rc::OdometryReading>> odometry_buffer_{20};
 
-	// Active inference room concept
+	// ===== Localization Thread =====
+	// room_ai runs in its own thread, publishing UpdateResult to loc_result_
+	std::thread localization_th_;
+	std::atomic<bool> stop_localization_thread_{false};
+	void run_localization();
+
+	// Localization output: latest UpdateResult (mutex-guarded, SPSC)
+	mutable std::mutex loc_result_mutex_;
+	std::optional<rc::RoomConceptAI::UpdateResult> loc_result_;
+	std::atomic<bool> loc_initialized_{false};  // true once room_ai has produced its first result
+
+	// Command queue: UI slots push commands, localization thread drains them
+	struct LocCmdSetPolygon { std::vector<Eigen::Vector2f> vertices; };
+	struct LocCmdSetPose    { float x; float y; float theta; };
+	struct LocCmdGridSearch { std::vector<Eigen::Vector3f> lidar_points; float grid_res; float angle_res; };
+	using LocCommand = std::variant<LocCmdSetPolygon, LocCmdSetPose, LocCmdGridSearch>;
+	std::mutex loc_cmd_mutex_;
+	std::vector<LocCommand> loc_pending_commands_;
+	void push_loc_command(LocCommand cmd);
+
+	/// Thread-safe read of latest localization state [half_w, half_h, x, y, theta]
+	/// Returns zeros if not yet initialized
+	Eigen::Matrix<float,5,1> get_loc_state() const
+	{
+		std::lock_guard lock(loc_result_mutex_);
+		if (loc_result_.has_value() && loc_result_->ok)
+			return loc_result_->state;
+		return Eigen::Matrix<float,5,1>::Zero();
+	}
+
+	// Active inference room concept (owned by localization thread after init)
 	rc::RoomConceptAI room_ai;
 
 	// Path planner

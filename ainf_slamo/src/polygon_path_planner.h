@@ -22,7 +22,7 @@ namespace rc
             {
                 float robot_radius = 0.4f;          // inward offset from walls (m)
                 float max_edge_len = 1.0f;           // max edge length before subdivision (m)
-                float max_path_length = 50.0f;       // reject paths longer than this (m)
+                float max_path_length = 70.0f;       // reject paths longer than this (m)
             };
 
             PolygonPathPlanner() = default;

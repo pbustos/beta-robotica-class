@@ -74,6 +74,11 @@ SpecificWorker::~SpecificWorker()
 	// Save the last known pose for fast restart
 	save_last_pose();
 
+	// Stop localization thread
+	stop_localization_thread_ = true;
+	if (localization_th_.joinable())
+	    localization_th_.join();
+
 	// Stop lidar thread
 	stop_lidar_thread = true;
 	if (read_lidar_th.joinable())
@@ -248,6 +253,10 @@ void SpecificWorker::initialize()
     viewer->fitToScene(QRectF(robot_cx - view_side_m/2.f, robot_cy - view_side_m/2.f, view_side_m, view_side_m));
     viewer->centerOn(robot_cx, robot_cy);
 
+    // Start localization thread (room_ai runs independently from compute loop)
+    localization_th_ = std::thread(&SpecificWorker::run_localization, this);
+    std::cout << __FUNCTION__ << " Started localization thread" << std::endl;
+
 	setPeriod("Compute", 50);
 }
 
@@ -263,100 +272,109 @@ void SpecificWorker::compute()
     // Check lidar availability
     if (!lidar_high_.has_value() or !lidar_low_high_.has_value())
     { qWarning() << "No lidar data from buffer_sync"; return; };
-    const auto &lidar_local = lidar_high_.value().first;  // HELIOS: localization + MPPI
 
-    if(room_ai.is_initialized())
+    // ===== READ LATEST LOCALIZATION RESULT FROM THREAD =====
+    std::optional<rc::RoomConceptAI::UpdateResult> res_opt;
     {
-        // Pass velocity, odometry and lidar to update
-        auto t0 = std::chrono::steady_clock::now();
-        if(const auto res = room_ai.update(lidar_high_.value(),
-                                           velocity_history_,
-                                           odometry_history_); res.ok)
-        {
-            auto t1 = std::chrono::steady_clock::now();
-
-            // Visualization at 10 Hz (every other frame), compute stays at 20 Hz
-            static int viz_frame = 0;
-            const bool do_draw = (++viz_frame % 2 == 0);
-
-            if (do_draw)
-            {
-                update_ui(res, velocity_history_.back(), fps_val);
-                display_robot(res.robot_pose, res.covariance);
-                if (draw_lidar_)
-                    draw_lidar_points(lidar_high_->first, lidar_low_high_->first, res.robot_pose);
-                else
-                    draw_lidar_points({}, {}, res.robot_pose);  // clear drawn points
-
-                if (params.USE_WEBOTS)
-                {
-                    if (!gt_calibrated_ && robot_pose_gt_.has_value() && res.sdf_mse < 0.10f)
-                        calibrate_gt_offset(res.robot_pose, robot_pose_gt_.value());
-                    display_gt_error(res.robot_pose, robot_pose_gt_);
-                }
-
-                draw_estimated_room(res.state);
-            }
-
-            auto t_viz1 = std::chrono::steady_clock::now();
-
-            // Save pose periodically (every ~30 seconds at 20Hz = 600 frames)
-            static int pose_save_counter = 0;
-            if (++pose_save_counter >= 600)
-            {
-                save_last_pose();
-                pose_save_counter = 0;
-            }
-
-            // ===== LOCAL TRAJECTORY CONTROLLER =====
-            // Run if a path is active and joystick is not overriding
-            float mppi_ms = 0.f, viz2_ms = 0.f;
-            if (trajectory_controller_.is_active())
-            {
-                auto t2 = std::chrono::steady_clock::now();
-                const auto ctrl = trajectory_controller_.compute(lidar_low_high_->first, res.robot_pose);
-                auto t3 = std::chrono::steady_clock::now();
-                mppi_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
-
-                // Store ESS for UI
-                last_ess_ = ctrl.ess;
-                last_ess_K_ = ctrl.ess_K;
-
-                if (ctrl.goal_reached)
-                {
-                    send_velocity_command(0.f, 0.f, 0.f);
-                    velocity_history_.push_back(rc::VelocityCommand(0.f, 0.f, 0.f));
-                    clear_path();
-                    qInfo() << "[TrajectoryCtrl] Navigation complete.";
-                }
-                else
-                {
-                    send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
-                    velocity_history_.push_back(rc::VelocityCommand(ctrl.side, ctrl.adv, ctrl.rot));
-                    if (do_draw && draw_trajectories_) draw_trajectory_debug(ctrl, res.robot_pose);
-                }
-                viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
-            }
-
-            // Per-subsystem timing (every ~2 seconds at 20Hz)
-            static int timing_counter = 0;
-            if (++timing_counter >= 40)
-            {
-                timing_counter = 0;
-                auto t_cycle_end = std::chrono::steady_clock::now();
-                const float loc_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-                const float viz_ms = std::chrono::duration<float, std::milli>(t_viz1 - t1).count() + viz2_ms;
-                const float cycle_ms = std::chrono::duration<float, std::milli>(t_cycle_end - t_cycle_start).count();
-                const float cpu_total = get_cpu_usage();
-                const float cycle_pct = cycle_ms / 50.f * 100.f;
-                std::println("[TIMING] Loc: {:.1f} ms | Viz: {:.1f} ms | MPPI: {:.1f} ms | Cycle: {:.1f} ms ({}%) | Lidar+other: ~{}%",
-                             loc_ms, viz_ms, mppi_ms, cycle_ms,
-                             static_cast<int>(cycle_pct),
-                             static_cast<int>(cpu_total - cycle_pct));
-            }
-        }
+        std::lock_guard lock(loc_result_mutex_);
+        res_opt = loc_result_;
     }
-    else qWarning() << "room not initialized";
+
+    if (!res_opt.has_value() || !res_opt->ok)
+    {
+        if (!loc_initialized_.load())
+            qWarning() << "Waiting for localization thread...";
+        return;
+    }
+    const auto &res = res_opt.value();
+
+    auto t0 = std::chrono::steady_clock::now();
+
+    // Visualization at 10 Hz (every other frame), compute stays at 20 Hz
+    static int viz_frame = 0;
+    const bool do_draw = (++viz_frame % 2 == 0);
+
+    if (do_draw)
+    {
+        // Get latest velocity for UI display
+        const auto vel_tuple = velocity_buffer_.read_last<0>();
+        const auto &vel_opt = std::get<0>(vel_tuple);
+        const rc::VelocityCommand current_vel = vel_opt.has_value() ? vel_opt.value() : rc::VelocityCommand();
+
+        update_ui(res, current_vel, fps_val);
+        display_robot(res.robot_pose, res.covariance);
+        if (draw_lidar_)
+            draw_lidar_points(lidar_high_->first, lidar_low_high_->first, res.robot_pose);
+        else
+            draw_lidar_points({}, {}, res.robot_pose);  // clear drawn points
+
+        if (params.USE_WEBOTS)
+        {
+            if (!gt_calibrated_ && robot_pose_gt_.has_value() && res.sdf_mse < 0.10f)
+                calibrate_gt_offset(res.robot_pose, robot_pose_gt_.value());
+            display_gt_error(res.robot_pose, robot_pose_gt_);
+        }
+
+        draw_estimated_room(res.state);
+    }
+
+    auto t_viz1 = std::chrono::steady_clock::now();
+
+    // Save pose periodically (every ~30 seconds at 20Hz = 600 frames)
+    static int pose_save_counter = 0;
+    if (++pose_save_counter >= 600)
+    {
+        save_last_pose();
+        pose_save_counter = 0;
+    }
+
+    // ===== LOCAL TRAJECTORY CONTROLLER =====
+    // Run if a path is active and joystick is not overriding
+    float mppi_ms = 0.f, viz2_ms = 0.f;
+    if (trajectory_controller_.is_active())
+    {
+        auto t2 = std::chrono::steady_clock::now();
+        const auto ctrl = trajectory_controller_.compute(lidar_low_high_->first, res.robot_pose);
+        auto t3 = std::chrono::steady_clock::now();
+        mppi_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
+
+        // Store ESS for UI
+        last_ess_ = ctrl.ess;
+        last_ess_K_ = ctrl.ess_K;
+
+        if (ctrl.goal_reached)
+        {
+            send_velocity_command(0.f, 0.f, 0.f);
+            auto cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
+            velocity_buffer_.put<0>(std::move(cmd), timestamp);
+            clear_path();
+            qInfo() << "[TrajectoryCtrl] Navigation complete.";
+        }
+        else
+        {
+            send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
+            auto cmd = rc::VelocityCommand(ctrl.side, ctrl.adv, ctrl.rot);
+            velocity_buffer_.put<0>(std::move(cmd), timestamp);
+            if (do_draw && draw_trajectories_) draw_trajectory_debug(ctrl, res.robot_pose);
+        }
+        viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
+    }
+
+    // Per-subsystem timing (every ~2 seconds at 20Hz)
+    static int timing_counter = 0;
+    if (++timing_counter >= 40)
+    {
+        timing_counter = 0;
+        auto t_cycle_end = std::chrono::steady_clock::now();
+        const float viz_ms = std::chrono::duration<float, std::milli>(t_viz1 - t0).count() + viz2_ms;
+        const float cycle_ms = std::chrono::duration<float, std::milli>(t_cycle_end - t_cycle_start).count();
+        const float cpu_total = get_cpu_usage();
+        const float cycle_pct = cycle_ms / 50.f * 100.f;
+        std::println("[TIMING] Viz: {:.1f} ms | MPPI: {:.1f} ms | Cycle: {:.1f} ms ({}%) | Lidar+Loc+other: ~{}%",
+                     viz_ms, mppi_ms, cycle_ms,
+                     static_cast<int>(cycle_pct),
+                     static_cast<int>(cpu_total - cycle_pct));
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -611,7 +629,7 @@ void SpecificWorker::calibrate_gt_offset(const Eigen::Affine2f &estimated_pose, 
 
 void SpecificWorker::slot_calibrate_gt()
 {
-    if (!room_ai.is_initialized())
+    if (!loc_initialized_.load())
     {
         qWarning() << "Cannot calibrate GT: room_ai not initialized";
         return;
@@ -627,8 +645,8 @@ void SpecificWorker::slot_calibrate_gt()
         return;
     }
 
-    // Get the current estimated pose from room_ai
-    const auto state = room_ai.get_current_state();
+    // Get the current estimated pose (thread-safe)
+    const auto state = get_loc_state();
     Eigen::Affine2f estimated;
     estimated.setIdentity();
     estimated.translation() = Eigen::Vector2f(state[2], state[3]);
@@ -658,10 +676,32 @@ void SpecificWorker::read_lidar()
 
             const float body_offset_sq = params.ROBOT_SEMI_WIDTH * params.ROBOT_SEMI_WIDTH;
 
-            // ---- HELIOS (high lidar) → slot 1: localization + MPPI ----
-            const auto data_high = lidar3d_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_HIGH,
-                                                                       params.MAX_LIDAR_HIGH_RANGE*1000.f,
-                                                                       params.LIDAR_LOW_DECIMATION_FACTOR);
+            // ---- Lanzar ambas peticiones lidar en paralelo (async Ice) HELIOS ----
+            std::future<RoboCompLidar3D::TData> future_high;
+            try
+            {
+                future_high = lidar3d_proxy->getLidarDataWithThreshold2dAsync(
+                        params.LIDAR_NAME_HIGH,
+                        params.MAX_LIDAR_HIGH_RANGE * 1000.f,
+                        params.LIDAR_LOW_DECIMATION_FACTOR);
+            }
+            catch (const Ice::Exception &e)
+            { std::cout << "[read_lidar] BPEARL async launch failed: " << e.what() << std::endl; }
+
+            // BPEARL
+            std::future<RoboCompLidar3D::TData> future_low;
+            try
+            {
+                future_low = lidar3d1_proxy->getLidarDataWithThreshold2dAsync(
+                    params.LIDAR_NAME_LOW,
+                    params.MAX_LIDAR_LOW_RANGE * 1000.f,
+                    params.LIDAR_LOW_DECIMATION_FACTOR_LOW);
+            }
+            catch (const Ice::Exception &e)
+            { std::cout << "[read_lidar] BPEARL async launch failed: " << e.what() << std::endl; }
+
+            // ---- Esperar y procesar HELIOS ----
+            const auto data_high = future_high.get();
             std::vector<Eigen::Vector3f> points_high, points_low_high;
             points_low_high.reserve(data_high.points.size());
             points_high.reserve(data_high.points.size());
@@ -670,7 +710,7 @@ void SpecificWorker::read_lidar()
                 const float pmx = p.x / 1000.f;
                 const float pmy = p.y / 1000.f;
                 const float pmz = p.z / 1000.f;
-                if (pmx*pmx + pmy*pmy > body_offset_sq and  pmz < params.LIDAR_HIGH_MAX_HEIGHT)
+                if (pmx*pmx + pmy*pmy > body_offset_sq && pmz < params.LIDAR_HIGH_MAX_HEIGHT)
                 {
                     points_low_high.emplace_back(pmx, pmy, pmz);
                     if (pmz > params.LIDAR_HIGH_MIN_HEIGHT)
@@ -679,38 +719,26 @@ void SpecificWorker::read_lidar()
             }
             buffer_sync.put<1>(std::make_pair(std::move(points_high), data_high.timestamp), timestamp);
 
-            // ---- BPEARL (low lidar) → slot 2: MPPI only (obstacles) ----
-            try
+            // ---- Esperar y procesar BPEARL ----
+            const auto data_low = future_low.get();
+            points_low_high.reserve(points_low_high.size() + data_low.points.size());
+            for (const auto &p : data_low.points)
             {
-                const auto data_low = lidar3d1_proxy->getLidarDataWithThreshold2d(params.LIDAR_NAME_LOW,
-                                                                           params.MAX_LIDAR_LOW_RANGE*1000.f,
-
-                                                                           params.LIDAR_LOW_DECIMATION_FACTOR_LOW);
-                points_low_high.reserve(points_low_high.size() + data_low.points.size());
-                for (const auto &p : data_low.points)
-                {
-                    const float pmx = p.x / 1000.f;
-                    const float pmy = p.y / 1000.f;
-                    const float pmz = p.z / 1000.f;
-                    if (pmx*pmx + pmy*pmy > body_offset_sq)
-                        points_low_high.emplace_back(pmx, pmy, pmz);
-                }
-                buffer_sync.put<2>(std::make_pair(std::move(points_low_high), data_low.timestamp), timestamp);
+                const float pmx = p.x / 1000.f;
+                const float pmy = p.y / 1000.f;
+                const float pmz = p.z / 1000.f;
+                if (pmx*pmx + pmy*pmy > body_offset_sq)
+                    points_low_high.emplace_back(pmx, pmy, pmz);
             }
-            catch (const Ice::Exception &e)
-            {
-                // BPEARL may not be available — that's OK, MPPI uses HELIOS only
-                static bool warned = false;
-                if (!warned) { std::cout << "[read_lidar] BPEARL not available: " << e.what() << " (warning once)\n"; warned = true; }
-            }
+            buffer_sync.put<2>(std::make_pair(std::move(points_low_high), data_low.timestamp), timestamp);
 
             // Adjust period with hysteresis
             if (wait_period > std::chrono::milliseconds((long) data_high.period + 2)) --wait_period;
             else if (wait_period < std::chrono::milliseconds((long) data_high.period - 2)) ++wait_period;
+            std::this_thread::sleep_for(wait_period);
         }
         catch (const Ice::Exception &e)
         { std::cout << "Error reading from Lidar3D or robot pose: " << e.what() << std::endl; }
-        std::this_thread::sleep_for(wait_period);
     }
 } // Thread to read the lidar
 
@@ -857,7 +885,9 @@ void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData dat
 			cmd.adv_x = 0.0f; // not lateral motion allowed
 	}
     cmd.timestamp = std::chrono::high_resolution_clock::now();
-	velocity_history_.push_back(cmd);
+    const auto ts = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+	velocity_buffer_.put<0>(std::move(cmd), ts);
 
 	// Track joystick activity to override trajectory controller
 	if (std::abs(cmd.adv_y) > 0.01f || std::abs(cmd.rot) > 0.01f)
@@ -892,7 +922,9 @@ void SpecificWorker::FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimatio
     odom.side = add_noise(pose.side);   // lateral velocity, m/s
     odom.rot  = add_noise(pose.rot);    // angular velocity, rad/s
     odom.timestamp = std::chrono::high_resolution_clock::now();
-    odometry_history_.push_back(odom);
+    const auto ts = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    odometry_buffer_.put<0>(std::move(odom), ts);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -900,7 +932,7 @@ void SpecificWorker::FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimatio
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::slot_new_target(QPointF pos)
 {
-    if (!room_ai.is_initialized() || !path_planner_.is_ready())
+    if (!loc_initialized_.load() || !path_planner_.is_ready())
     {
         qWarning() << "Cannot set target: room not initialized or planner not ready";
         return;
@@ -908,8 +940,8 @@ void SpecificWorker::slot_new_target(QPointF pos)
 
     const Eigen::Vector2f target(pos.x(), pos.y());
 
-    // Get current robot pose
-    const auto state = room_ai.get_current_state();
+    // Get current robot pose (thread-safe)
+    const auto state = get_loc_state();
     const Eigen::Vector2f robot_pos(state[2], state[3]);
 
     qInfo() << "[PathPlanner] Robot at (" << robot_pos.x() << "," << robot_pos.y()
@@ -1250,8 +1282,8 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
             polygon_vertex_items.clear();
 
             // Vertices are already in room frame (where user clicked)
-            // Pass them directly to room_ai
-            room_ai.set_polygon_room(room_polygon_);
+            // Pass them to room_ai via thread-safe command queue
+            push_loc_command(LocCmdSetPolygon{room_polygon_});
         path_planner_.set_polygon(room_polygon_);
 
             // Draw final polygon (fixed in room frame)
@@ -1457,12 +1489,9 @@ void SpecificWorker::slot_flip_x()
     // Toggle flip state
     flip_x_applied_ = !flip_x_applied_;
 
-    // Update the room model with flipped polygon
-    if (room_ai.is_initialized())
-    {
-        room_ai.set_polygon_room(room_polygon_);
-        path_planner_.set_polygon(room_polygon_);
-    }
+    // Update the room model with flipped polygon (thread-safe)
+    push_loc_command(LocCmdSetPolygon{room_polygon_});
+    path_planner_.set_polygon(room_polygon_);
 
     // Redraw the polygon
     draw_room_polygon();
@@ -1487,12 +1516,9 @@ void SpecificWorker::slot_flip_y()
     // Toggle flip state
     flip_y_applied_ = !flip_y_applied_;
 
-    // Update the room model with flipped polygon
-    if (room_ai.is_initialized())
-    {
-        room_ai.set_polygon_room(room_polygon_);
-        path_planner_.set_polygon(room_polygon_);
-    }
+    // Update the room model with flipped polygon (thread-safe)
+    push_loc_command(LocCmdSetPolygon{room_polygon_});
+    path_planner_.set_polygon(room_polygon_);
 
     // Redraw the polygon
     draw_room_polygon();
@@ -1506,15 +1532,15 @@ void SpecificWorker::slot_robot_dragging(QPointF pos)
     if (capturing_room_polygon)
         return;
 
-    if (!room_ai.is_initialized())
+    if (!loc_initialized_.load())
         return;
 
     // Get current robot orientation to preserve it during drag
-    const auto current_state = room_ai.get_current_state();
+    const auto current_state = get_loc_state();
     const float current_theta = current_state[4];  // [half_w, half_h, x, y, theta]
 
     // Move robot to new position, keeping orientation
-    room_ai.set_robot_pose(pos.x(), pos.y(), current_theta);
+    push_loc_command(LocCmdSetPose{static_cast<float>(pos.x()), static_cast<float>(pos.y()), current_theta});
 }
 
 void SpecificWorker::slot_robot_drag_end(QPointF pos)
@@ -1523,14 +1549,14 @@ void SpecificWorker::slot_robot_drag_end(QPointF pos)
     if (capturing_room_polygon)
         return;
 
-    if (!room_ai.is_initialized())
+    if (!loc_initialized_.load())
         return;
 
     // Final position after drag
-    const auto current_state = room_ai.get_current_state();
+    const auto current_state = get_loc_state();
     const float current_theta = current_state[4];
 
-    room_ai.set_robot_pose(pos.x(), pos.y(), current_theta);
+    push_loc_command(LocCmdSetPose{static_cast<float>(pos.x()), static_cast<float>(pos.y()), current_theta});
     qInfo() << "Robot dragged to (" << pos.x() << "," << pos.y() << ")";
 }
 
@@ -1540,11 +1566,11 @@ void SpecificWorker::slot_robot_rotate(QPointF pos)
     if (capturing_room_polygon)
         return;
 
-    if (!room_ai.is_initialized())
+    if (!loc_initialized_.load())
         return;
 
     // Get current robot position
-    const auto current_state = room_ai.get_current_state();
+    const auto current_state = get_loc_state();
     const float robot_x = current_state[2];
     const float robot_y = current_state[3];
 
@@ -1554,7 +1580,7 @@ void SpecificWorker::slot_robot_rotate(QPointF pos)
     const float new_theta = std::atan2(dy, dx);
 
     // Update robot orientation only, keep position
-    room_ai.set_robot_pose(robot_x, robot_y, new_theta);
+    push_loc_command(LocCmdSetPose{robot_x, robot_y, new_theta});
 }
 
 void SpecificWorker::save_layout_to_svg(const std::string& filename)
@@ -1682,7 +1708,7 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
     // If polygon was loaded, initialize room_ai
     if (room_polygon_.size() >= 3)
     {
-        room_ai.set_polygon_room(room_polygon_);
+        push_loc_command(LocCmdSetPolygon{room_polygon_});
         path_planner_.set_polygon(room_polygon_);
         if (!furniture_polygons_.empty())
         {
@@ -1994,10 +2020,10 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::save_last_pose()
 {
-    if (!room_ai.is_initialized())
+    if (!loc_initialized_.load())
         return;
 
-    const auto state = room_ai.get_current_state();
+    const auto state = get_loc_state();
     const float x = state[2];
     const float y = state[3];
     const float theta = state[4];
@@ -2054,14 +2080,14 @@ bool SpecificWorker::load_last_pose()
 
     // Apply saved flip state - flip the polygon if needed
     // The polygon is loaded fresh from file, so we need to apply flips if they were saved
+    // NOTE: This is called from initialize() BEFORE localization thread starts, so direct access is safe.
     if (saved_flip_x)
     {
         for (auto& vertex : room_polygon_)
             vertex.x() = -vertex.x();
         flip_x_applied_ = true;
 
-        if (room_ai.is_initialized())
-            room_ai.set_polygon_room(room_polygon_);
+        room_ai.set_polygon_room(room_polygon_);
         path_planner_.set_polygon(room_polygon_);
         draw_room_polygon();
         qInfo() << "Applied saved flip_x";
@@ -2072,14 +2098,13 @@ bool SpecificWorker::load_last_pose()
             vertex.y() = -vertex.y();
         flip_y_applied_ = true;
 
-        if (room_ai.is_initialized())
-            room_ai.set_polygon_room(room_polygon_);
+        room_ai.set_polygon_room(room_polygon_);
         path_planner_.set_polygon(room_polygon_);
         draw_room_polygon();
         qInfo() << "Applied saved flip_y";
     }
 
-    // Set the pose in room_ai
+    // Set the pose in room_ai (direct access, before thread starts)
     room_ai.set_robot_pose(x, y, theta);
 
     return true;
@@ -2114,5 +2139,85 @@ void SpecificWorker::perform_grid_search(const std::vector<Eigen::Vector3f>& lid
     {
         qWarning() << "Grid search did not find a good pose. Manual adjustment may be needed.";
     }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+/// Localization Thread
+////////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::push_loc_command(LocCommand cmd)
+{
+    std::lock_guard lock(loc_cmd_mutex_);
+    loc_pending_commands_.push_back(std::move(cmd));
+}
+
+void SpecificWorker::run_localization()
+{
+    qInfo() << "[LocThread] Localization thread started";
+
+    while (!stop_localization_thread_.load())
+    {
+        // ===== 1. DRAIN PENDING UI COMMANDS =====
+        {
+            std::vector<LocCommand> cmds;
+            {
+                std::lock_guard lock(loc_cmd_mutex_);
+                cmds.swap(loc_pending_commands_);
+            }
+            for (auto& cmd : cmds)
+            {
+                std::visit([this](auto&& arg)
+                {
+                    using T = std::decay_t<decltype(arg)>;
+                    if constexpr (std::is_same_v<T, LocCmdSetPolygon>)
+                        room_ai.set_polygon_room(arg.vertices);
+                    else if constexpr (std::is_same_v<T, LocCmdSetPose>)
+                        room_ai.set_robot_pose(arg.x, arg.y, arg.theta);
+                    else if constexpr (std::is_same_v<T, LocCmdGridSearch>)
+                        room_ai.grid_search_initial_pose(arg.lidar_points, arg.grid_res, arg.angle_res);
+                }, cmd);
+            }
+        }
+
+        // ===== 2. CHECK INITIALIZATION =====
+        if (!room_ai.is_initialized())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        // ===== 3. READ LIDAR DATA =====
+        const auto timestamp = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        const auto &[gt_, lidar_high_, lidar_low_] = buffer_sync.read_last();
+
+        if (!lidar_high_.has_value())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+
+        // ===== 4. SNAPSHOT VELOCITY & ODOMETRY HISTORY =====
+        auto vel_snap = velocity_buffer_.get_snapshot<0>();
+        auto odom_snap = odometry_buffer_.get_snapshot<0>();
+
+        // ===== 5. RUN LOCALIZATION UPDATE =====
+        const auto res = room_ai.update(lidar_high_.value(), vel_snap, odom_snap);
+
+        // ===== 6. PUBLISH RESULT =====
+        {
+            std::lock_guard lock(loc_result_mutex_);
+            loc_result_ = res;
+        }
+        if (res.ok && !loc_initialized_.load())
+            loc_initialized_ = true;
+
+        // Pace: don't spin faster than lidar (~20-50 Hz)
+        // A short sleep avoids busy-waiting if lidar hasn't updated
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    qInfo() << "[LocThread] Localization thread stopped";
 }
 

@@ -374,8 +374,8 @@ namespace rc
 
     RoomConceptAI::UpdateResult RoomConceptAI::update(
                 const std::pair<std::vector<Eigen::Vector3f>, int64_t> &lidar,
-                const boost::circular_buffer<VelocityCommand> &velocity_history,
-                const boost::circular_buffer<OdometryReading> &odometry_history)
+                const std::vector<VelocityCommand> &velocity_history,
+                const std::vector<OdometryReading> &odometry_history)
     {
         UpdateResult res;
         if(lidar.first.empty())
@@ -855,7 +855,7 @@ namespace rc
     }
 
     RoomConceptAI::OdometryPrior RoomConceptAI::compute_odometry_prior(
-             const boost::circular_buffer<VelocityCommand>& velocity_history,
+             const std::vector<VelocityCommand>& velocity_history,
              const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar)
     {
          OdometryPrior prior;
@@ -940,7 +940,7 @@ namespace rc
 
      Eigen::Vector3f RoomConceptAI::integrate_velocity_over_window(
                 const Eigen::Affine2f& robot_pose,
-                const boost::circular_buffer<VelocityCommand> &velocity_history,
+                const std::vector<VelocityCommand> &velocity_history,
                 const std::int64_t &t_start_ms,
                 const std::int64_t &t_end_ms)
     {
@@ -1106,7 +1106,7 @@ namespace rc
 
     Eigen::Vector3f RoomConceptAI::integrate_odometry_over_window(
                 const Eigen::Affine2f& robot_pose,
-                const boost::circular_buffer<OdometryReading> &odometry_history,
+                const std::vector<OdometryReading> &odometry_history,
                 const int64_t &t_start_ms,
                 const int64_t &t_end_ms)
     {
@@ -1155,7 +1155,7 @@ namespace rc
     }
 
     RoomConceptAI::OdometryPrior RoomConceptAI::compute_measured_odometry_prior(
-             const boost::circular_buffer<OdometryReading>& odometry_history,
+             const std::vector<OdometryReading>& odometry_history,
              const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar)
     {
         OdometryPrior prior;
