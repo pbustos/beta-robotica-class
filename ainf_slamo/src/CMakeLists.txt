@@ -1,4 +1,5 @@
-find_package(Qt6 COMPONENTS 3DCore 3DRender 3DExtras Xml REQUIRED)
+find_package(Qt6 COMPONENTS Xml PrintSupport REQUIRED)
+find_package(Qt6 COMPONENTS 3DCore 3DRender 3DExtras QUIET)
 
 # Find PyTorch
 # Set LibTorch path
@@ -11,11 +12,11 @@ set(CMAKE_PREFIX_PATH "/home/robocomp/software/libtorch")
 # We default to CPU-only.
 set(USE_CUDA OFF CACHE BOOL "Disable CUDA for this component" FORCE)
 set(CAFFE2_USE_CUDA OFF CACHE BOOL "Disable Caffe2 CUDA" FORCE)
+set(CMAKE_DISABLE_FIND_PACKAGE_CUDA OFF CACHE BOOL "Allow CUDA detection for CUDA-enabled libtorch" FORCE)
+set(CUDAToolkit_ROOT "/usr/local/cuda" CACHE PATH "CUDA toolkit root" FORCE)
+set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "CUDA compiler" FORCE)
+set(CMAKE_CUDA_ARCHITECTURES "75" CACHE STRING "CUDA arch for torch cmake checks" FORCE)
 set(TORCH_CUDA_ARCH_LIST "" CACHE STRING "" FORCE)
-if(DEFINED CMAKE_CUDA_ARCHITECTURES AND "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-  # Provide a safe default if someone exported it as empty.
-  unset(CMAKE_CUDA_ARCHITECTURES CACHE)
-endif()
 
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
@@ -44,8 +45,12 @@ LIST(APPEND HEADERS
 )
 
 
-LIST(APPEND LIBS ${LIBS} "${TORCH_LIBRARIES}" tbb Qt63DCore Qt63DRender Qt63DExtras Qt6PrintSupport Qt6Xml
+LIST(APPEND LIBS ${LIBS} "${TORCH_LIBRARIES}" tbb Qt6PrintSupport Qt6Xml
             Eigen3::Eigen Boost::system Boost::filesystem )
+
+if(TARGET Qt6::3DCore AND TARGET Qt6::3DRender AND TARGET Qt6::3DExtras)
+  LIST(APPEND LIBS Qt63DCore Qt63DRender Qt63DExtras)
+endif()
 
 # no-char8_t to avoid a problem with ICE Connection lib.
 add_definitions(-O3 -fmax-errors=1 -fno-char8_t)
