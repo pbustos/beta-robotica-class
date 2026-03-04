@@ -3,12 +3,14 @@ import "Webots2Robocomp.idsl";
 import "OmniRobot.idsl";
 import "JoystickAdapter.idsl";
 import "FullPoseEstimationPub.idsl";
+import "Navigator.idsl";
 
 Component ainf_slamo
 {
     Communications
     {
         requires Lidar3D, Lidar3D, Webots2Robocomp, OmniRobot;
+        implements Navigator;
         subscribesTo JoystickAdapter, FullPoseEstimationPub;
     };
     language Cpp11;

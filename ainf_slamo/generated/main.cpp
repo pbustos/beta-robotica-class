@@ -77,6 +77,7 @@
 #include "genericworker.h"
 #include "../src/specificworker.h"
 
+#include <navigatorI.h>
 #include <fullposeestimationpubI.h>
 #include <joystickadapterI.h>
 
@@ -86,6 +87,7 @@
 #include <Gridder.h>
 #include <JoystickAdapter.h>
 #include <Lidar3D.h>
+#include <Navigator.h>
 #include <OmniRobot.h>
 #include <Webots2Robocomp.h>
 
@@ -94,6 +96,27 @@
 #define PROGRAM_NAME    "ainf_slamo"
 #define SERVER_FULL_NAME   "RoboComp ainf_slamo::ainf_slamo"
 
+
+template <typename InterfaceType>
+void implement( const Ice::CommunicatorPtr& communicator,
+                const std::string& endpointConfig,
+                const std::string& adapterName,
+                SpecificWorker* worker,
+                int index)
+{
+    try
+    {
+        Ice::ObjectAdapterPtr adapter = communicator->createObjectAdapterWithEndpoints(adapterName, endpointConfig);
+        auto servant = std::make_shared<InterfaceType>(worker, index);
+        adapter->add(servant, Ice::stringToIdentity(adapterName));
+        adapter->activate();
+        std::cout << "[" << PROGRAM_NAME << "]: " << adapterName << " adapter created in port " << endpointConfig << std::endl;
+    }
+    catch (const IceStorm::TopicExists&)
+    {
+        std::cout << "[" << PROGRAM_NAME << "]: ERROR creating or activating adapter for " << adapterName << std::endl;
+    }
+}
 
 template <typename ProxyType, typename ProxyPointer>
 void require(const Ice::CommunicatorPtr& communicator,
@@ -283,6 +306,11 @@ int ainf_slamo::run(int argc, char* argv[])
 
 	try
 	{
+
+		//Implement code
+		implement<NavigatorI>(communicator(),
+		                    configLoader.get<std::string>("Endpoints.Navigator"), 
+		                    "navigator", worker,  0);
 
 		//Subscribe code
 		subscribe<FullPoseEstimationPubI>(communicator(),

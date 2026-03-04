@@ -869,63 +869,6 @@ float SpecificWorker::yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternio
 	return static_cast<float>(std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)));
 }
 
-///////////////////////////////////////////////////////////////////////////////
-/////SUBSCRIPTION to sendData method from JoystickAdapter interface
-//////////////////////////////////////////////////////////////////////////////////
-void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data)
-{
-	rc::VelocityCommand cmd;
-	for (const auto &axis: data.axes)
-	{
-		if (axis.name == "rotate")
-			cmd.rot = axis.value;
-		else if (axis.name == "advance") // forward is positive Z. Right-hand rule
-			cmd.adv_y = axis.value/1000.0f; // from mm/s to m/s
-		else if (axis.name == "side")
-			cmd.adv_x = 0.0f; // not lateral motion allowed
-	}
-    cmd.timestamp = std::chrono::high_resolution_clock::now();
-    const auto ts = static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-	velocity_buffer_.put<0>(std::move(cmd), ts);
-
-	// Track joystick activity to override trajectory controller
-	if (std::abs(cmd.adv_y) > 0.01f || std::abs(cmd.rot) > 0.01f)
-	{
-		last_joystick_time_ = std::chrono::steady_clock::now();
-		if (trajectory_controller_.is_active())
-		{
-			trajectory_controller_.stop();
-			clear_path();
-			try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
-			qInfo() << "Trajectory controller stopped: joystick override";
-		}
-	}
-}
-
-//SUBSCRIPTION to newFullPose method from FullPoseEstimationPub interface
-void SpecificWorker::FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimation::FullPoseEuler pose)
-{
-    // Add configurable Gaussian noise to simulate realistic odometry uncertainty
-    static std::mt19937 gen{std::random_device{}()};
-    const float nf = params.ODOMETRY_NOISE_FACTOR;
-
-    auto add_noise = [&](float value) -> float
-    {
-        if (nf <= 0.f || value == 0.f) return value;
-        std::normal_distribution<float> dist(0.f, std::abs(value) * nf);
-        return value + dist(gen);
-    };
-
-    rc::OdometryReading odom;
-    odom.adv  = add_noise(pose.adv);    // forward velocity, m/s
-    odom.side = add_noise(pose.side);   // lateral velocity, m/s
-    odom.rot  = add_noise(pose.rot);    // angular velocity, rad/s
-    odom.timestamp = std::chrono::high_resolution_clock::now();
-    const auto ts = static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    odometry_buffer_.put<0>(std::move(odom), ts);
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 /// Navigation target (Shift+Right click)
@@ -1212,26 +1155,6 @@ void SpecificWorker::clear_path()
     if (traj_robot_to_carrot_) traj_robot_to_carrot_->setVisible(false);
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////
-/// Subscription to emergencyState signal from Hibernation interface
-////////////////////////////////////////////////////////////////////////////////////////////////
-void SpecificWorker::emergency()
-{
-    std::cout << "Emergency worker" << std::endl;
-}
-
-void SpecificWorker::restore()
-{
-    std::cout << "Restore worker" << std::endl;
-
-}
-
-int SpecificWorker::startup_check()
-{
-	std::cout << "Startup check" << std::endl;
-	QTimer::singleShot(200, QCoreApplication::instance(), SLOT(quit()));
-	return 0;
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 /// Room Polygon Capture
@@ -2187,9 +2110,9 @@ void SpecificWorker::run_localization()
         }
 
         // ===== 3. READ LIDAR DATA =====
-        const auto timestamp = static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
+        // const auto timestamp = static_cast<std::uint64_t>(
+        //     std::chrono::duration_cast<std::chrono::milliseconds>(
+        //         std::chrono::system_clock::now().time_since_epoch()).count());
         const auto &[gt_, lidar_high_, lidar_low_] = buffer_sync.read_last();
 
         if (!lidar_high_.has_value())
@@ -2221,3 +2144,333 @@ void SpecificWorker::run_localization()
     qInfo() << "[LocThread] Localization thread stopped";
 }
 
+///////////////////////////////////////////////////////////////////////////////
+/////SUBSCRIPTION to sendData method from JoystickAdapter interface
+//////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data)
+{
+	rc::VelocityCommand cmd;
+	for (const auto &axis: data.axes)
+	{
+		if (axis.name == "rotate")
+			cmd.rot = axis.value;
+		else if (axis.name == "advance") // forward is positive Z. Right-hand rule
+			cmd.adv_y = axis.value/1000.0f; // from mm/s to m/s
+		else if (axis.name == "side")
+			cmd.adv_x = 0.0f; // not lateral motion allowed
+	}
+    cmd.timestamp = std::chrono::high_resolution_clock::now();
+    const auto ts = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+	velocity_buffer_.put<0>(std::move(cmd), ts);
+
+	// Track joystick activity to override trajectory controller
+	if (std::abs(cmd.adv_y) > 0.01f || std::abs(cmd.rot) > 0.01f)
+	{
+		last_joystick_time_ = std::chrono::steady_clock::now();
+		if (trajectory_controller_.is_active())
+		{
+			trajectory_controller_.stop();
+			clear_path();
+			try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+			qInfo() << "Trajectory controller stopped: joystick override";
+		}
+	}
+}
+
+//SUBSCRIPTION to newFullPose method from FullPoseEstimationPub interface
+void SpecificWorker::FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimation::FullPoseEuler pose)
+{
+    // Add configurable Gaussian noise to simulate realistic odometry uncertainty
+    static std::mt19937 gen{std::random_device{}()};
+    const float nf = params.ODOMETRY_NOISE_FACTOR;
+
+    auto add_noise = [&](float value) -> float
+    {
+        if (nf <= 0.f || value == 0.f) return value;
+        std::normal_distribution<float> dist(0.f, std::abs(value) * nf);
+        return value + dist(gen);
+    };
+
+    rc::OdometryReading odom;
+    odom.adv  = add_noise(pose.adv);    // forward velocity, m/s
+    odom.side = add_noise(pose.side);   // lateral velocity, m/s
+    odom.rot  = add_noise(pose.rot);    // angular velocity, rad/s
+    odom.timestamp = std::chrono::high_resolution_clock::now();
+    const auto ts = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    odometry_buffer_.put<0>(std::move(odom), ts);
+}
+
+////////////////////////////////////////////////////////////////////////////////////
+// IMPLEMENTATION of Navigator interface methods (called by external clients, e.g. GUI)
+///////////////////////////////////////////////////////////////////////////////////
+RoboCompNavigator::LayoutData SpecificWorker::Navigator_getLayout()
+{
+    RoboCompNavigator::LayoutData ret;
+    ret.layout.reserve(room_polygon_.size());
+
+    for (const auto &p : room_polygon_)
+    {
+        RoboCompNavigator::TPoint pt;
+        pt.x = p.x();
+        pt.y = p.y();
+        ret.layout.push_back(pt);
+    }
+
+    ret.objects.reserve(furniture_polygons_.size());
+    for (const auto &fp : furniture_polygons_)
+    {
+        RoboCompNavigator::TObject obj;
+        obj.name = fp.label.empty() ? fp.id : fp.label;
+        obj.layout.reserve(fp.vertices.size());
+        for (const auto &v : fp.vertices)
+        {
+            RoboCompNavigator::TPoint pt;
+            pt.x = v.x();
+            pt.y = v.y();
+            obj.layout.push_back(pt);
+        }
+        ret.objects.push_back(std::move(obj));
+    }
+
+    return ret;
+}
+
+RoboCompNavigator::Result SpecificWorker::Navigator_getPath(RoboCompNavigator::TPoint source, RoboCompNavigator::TPoint target, float safety)
+{
+    RoboCompNavigator::Result ret;
+    ret.timestamp = static_cast<long>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    ret.valid = false;
+
+    if (!path_planner_.is_ready())
+    {
+        ret.errorMsg = "Planner not ready (layout not initialized)";
+        return ret;
+    }
+
+    // IDSL points are in meters; internal planner works in meters
+    const Eigen::Vector2f start_m(source.x, source.y);
+    const Eigen::Vector2f goal_m(target.x, target.y);
+
+    if (!path_planner_.is_inside(start_m) || !path_planner_.is_inside(goal_m))
+    {
+        ret.errorMsg = "Source or target is outside navigable area";
+        return ret;
+    }
+
+    // Optional safety override (meters). Rebuild visibility graph if changed.
+    if (safety > 0.f && std::fabs(path_planner_.params.robot_radius - safety) > 1e-4f)
+    {
+        path_planner_.params.robot_radius = safety;
+        if (!room_polygon_.empty())
+            path_planner_.set_polygon(room_polygon_);
+        if (!furniture_polygons_.empty())
+        {
+            std::vector<std::vector<Eigen::Vector2f>> obstacles;
+            obstacles.reserve(furniture_polygons_.size());
+            for (const auto &fp : furniture_polygons_)
+                obstacles.push_back(fp.vertices);
+            path_planner_.set_obstacles(obstacles);
+        }
+    }
+
+    const auto path = path_planner_.plan(start_m, goal_m);
+    if (path.empty())
+    {
+        ret.errorMsg = "No path found";
+        return ret;
+    }
+
+    ret.path.reserve(path.size());
+    for (const auto &p : path)
+    {
+        RoboCompNavigator::TPoint pt;
+        pt.x = p.x();
+        pt.y = p.y();
+        ret.path.push_back(pt);
+    }
+
+    ret.valid = true;
+    ret.errorMsg = "ok";
+    return ret;
+}
+
+RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoObject(std::string object)
+{
+    if (object.empty() || furniture_polygons_.empty())
+        return {};
+
+    const QString query = QString::fromStdString(object).trimmed();
+    if (query.isEmpty())
+        return {};
+
+    const FurniturePolygon *selected = nullptr;
+
+    // 1) exact match against label or id
+    for (const auto &fp : furniture_polygons_)
+    {
+        const QString label = QString::fromStdString(fp.label);
+        const QString id = QString::fromStdString(fp.id);
+        if (label.compare(query, Qt::CaseInsensitive) == 0 || id.compare(query, Qt::CaseInsensitive) == 0)
+        {
+            selected = &fp;
+            break;
+        }
+    }
+
+    // 2) substring match if exact not found
+    if (selected == nullptr)
+    {
+        for (const auto &fp : furniture_polygons_)
+        {
+            const QString label = QString::fromStdString(fp.label);
+            const QString id = QString::fromStdString(fp.id);
+            if (label.contains(query, Qt::CaseInsensitive) || id.contains(query, Qt::CaseInsensitive))
+            {
+                selected = &fp;
+                break;
+            }
+        }
+    }
+
+    if (selected == nullptr || selected->vertices.empty())
+        return {};
+
+    const auto state = get_loc_state();
+    const Eigen::Vector2f robot_pos_m(state[2], state[3]);
+
+    // Compute closest point on selected object's boundary to current robot position.
+    Eigen::Vector2f closest = selected->vertices.front();
+    float best_d2 = std::numeric_limits<float>::max();
+    const size_t n = selected->vertices.size();
+    for (size_t i = 0; i < n; ++i)
+    {
+        const Eigen::Vector2f a = selected->vertices[i];
+        const Eigen::Vector2f b = selected->vertices[(i + 1) % n];
+        const Eigen::Vector2f ab = b - a;
+        const float denom = ab.squaredNorm();
+
+        float t = 0.f;
+        if (denom > 1e-8f)
+            t = (robot_pos_m - a).dot(ab) / denom;
+        if (t < 0.f) t = 0.f;
+        if (t > 1.f) t = 1.f;
+
+        const Eigen::Vector2f proj = a + t * ab;
+        const float d2 = (robot_pos_m - proj).squaredNorm();
+        if (d2 < best_d2)
+        {
+            best_d2 = d2;
+            closest = proj;
+        }
+    }
+
+    // Outward direction: from object boundary toward robot. If degenerate, use centroid heuristic.
+    Eigen::Vector2f outward = robot_pos_m - closest;
+    if (outward.squaredNorm() < 1e-8f)
+    {
+        Eigen::Vector2f centroid = Eigen::Vector2f::Zero();
+        for (const auto &v : selected->vertices)
+            centroid += v;
+        centroid /= static_cast<float>(selected->vertices.size());
+        outward = closest - centroid;
+    }
+    if (outward.squaredNorm() < 1e-8f)
+        outward = Eigen::Vector2f(1.f, 0.f);
+    outward.normalize();
+
+    const float base_offset = std::max(0.25f, path_planner_.params.robot_radius + 0.15f);
+
+    RoboCompNavigator::TPoint source;
+    source.x = state[2];
+    source.y = state[3];
+
+    // Try several stand-off distances from object boundary until path becomes feasible.
+    for (const float scale : {1.f, 1.5f, 2.f, 2.5f})
+    {
+        const Eigen::Vector2f target_m = closest + outward * (base_offset * scale);
+        if (!path_planner_.is_inside(target_m))
+            continue;
+
+        RoboCompNavigator::TPoint target;
+        target.x = target_m.x();
+        target.y = target_m.y();
+
+        const auto res = Navigator_getPath(source, target, path_planner_.params.robot_radius);
+        if (res.valid && res.path.size() >= 2)
+        {
+            Navigator_gotoPoint(target);
+            return target;
+        }
+    }
+
+    qWarning() << "Navigator_gotoObject: no reachable stand-off point for object"
+               << QString::fromStdString(selected->label);
+    return {};
+}
+
+void SpecificWorker::Navigator_resume()
+{
+    if (!current_path_.empty())
+        trajectory_controller_.set_path(current_path_);
+
+}
+
+RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoPoint(RoboCompNavigator::TPoint target)
+{
+    auto state = get_loc_state();
+    RoboCompNavigator::TPoint source;
+    source.x = state[2];
+    source.y = state[3];
+
+    const auto res = Navigator_getPath(source, target, path_planner_.params.robot_radius);
+    if (!res.valid || res.path.size() < 2)
+    {
+        qWarning() << "Navigator_setTarget failed:" << QString::fromStdString(res.errorMsg);
+        return {};
+    }
+
+    std::vector<Eigen::Vector2f> path_m;
+    path_m.reserve(res.path.size());
+    for (const auto &p : res.path)
+        path_m.emplace_back(p.x, p.y);
+
+    current_path_ = path_m;
+    trajectory_controller_.set_path(current_path_);
+
+    qInfo() << "Navigator_setTarget: path with" << current_path_.size() << "waypoints activated";
+    return target;
+
+}
+
+void SpecificWorker::Navigator_stop()
+{
+    trajectory_controller_.stop();
+    current_path_.clear();
+    try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+/// Subscription to emergencyState signal from Hibernation interface
+////////////////////////////////////////////////////////////////////////////////////////////////
+void SpecificWorker::emergency()
+{
+    std::cout << "Emergency worker" << std::endl;
+}
+
+void SpecificWorker::restore()
+{
+    std::cout << "Restore worker" << std::endl;
+
+}
+
+int SpecificWorker::startup_check()
+{
+	std::cout << "Startup check" << std::endl;
+	QTimer::singleShot(200, QCoreApplication::instance(), SLOT(quit()));
+	return 0;
+}

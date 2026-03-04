@@ -63,9 +63,14 @@ class SpecificWorker : public GenericWorker
 	     */
 		~SpecificWorker();
 
-	void FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimation::FullPoseEuler pose);
-
-	void JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data);
+		void FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimation::FullPoseEuler pose);
+		void JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data);
+		RoboCompNavigator::LayoutData Navigator_getLayout();
+		RoboCompNavigator::Result Navigator_getPath(RoboCompNavigator::TPoint source, RoboCompNavigator::TPoint target, float safety);
+		RoboCompNavigator::TPoint Navigator_gotoObject(std::string object);
+		RoboCompNavigator::TPoint Navigator_gotoPoint(RoboCompNavigator::TPoint target);
+		void Navigator_resume();
+		void Navigator_stop();
 
 		/**
 		 * \brief Initializes the worker one time.

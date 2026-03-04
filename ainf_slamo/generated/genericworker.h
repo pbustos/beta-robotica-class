@@ -47,6 +47,7 @@
 #include <Gridder.h>
 #include <JoystickAdapter.h>
 #include <Lidar3D.h>
+#include <Navigator.h>
 #include <OmniRobot.h>
 #include <Webots2Robocomp.h>
 
@@ -75,6 +76,13 @@ public:
 	RoboCompLidar3D::Lidar3DPrxPtr lidar3d1_proxy;
 	RoboCompOmniRobot::OmniRobotPrxPtr omnirobot_proxy;
 	RoboCompWebots2Robocomp::Webots2RobocompPrxPtr webots2robocomp_proxy;
+
+	virtual RoboCompNavigator::LayoutData Navigator_getLayout() = 0;
+	virtual RoboCompNavigator::Result Navigator_getPath(RoboCompNavigator::TPoint source, RoboCompNavigator::TPoint target, float safety) = 0;
+	virtual RoboCompNavigator::TPoint Navigator_gotoObject(std::string object) = 0;
+	virtual RoboCompNavigator::TPoint Navigator_gotoPoint(RoboCompNavigator::TPoint target) = 0;
+	virtual void Navigator_resume() = 0;
+	virtual void Navigator_stop() = 0;
 
 	virtual void FullPoseEstimationPub_newFullPose (RoboCompFullPoseEstimation::FullPoseEuler pose) = 0;
 
