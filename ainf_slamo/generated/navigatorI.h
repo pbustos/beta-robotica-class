@@ -34,6 +34,8 @@ public:
 
 	RoboCompNavigator::LayoutData getLayout(const Ice::Current&);
 	RoboCompNavigator::Result getPath(RoboCompNavigator::TPoint source, RoboCompNavigator::TPoint target, float safety, const Ice::Current&);
+	RoboCompNavigator::TPose getRobotPose(const Ice::Current&);
+	RoboCompNavigator::NavigationStatus getStatus(const Ice::Current&);
 	RoboCompNavigator::TPoint gotoObject(std::string object, const Ice::Current&);
 	RoboCompNavigator::TPoint gotoPoint(RoboCompNavigator::TPoint target, const Ice::Current&);
 	void resume(const Ice::Current&);
@@ -47,6 +49,8 @@ private:
 	// Array handlers for each method
 	std::array<std::function<RoboCompNavigator::LayoutData(void)>, 1> getLayoutHandlers;
 	std::array<std::function<RoboCompNavigator::Result(RoboCompNavigator::TPoint, RoboCompNavigator::TPoint, float)>, 1> getPathHandlers;
+	std::array<std::function<RoboCompNavigator::TPose(void)>, 1> getRobotPoseHandlers;
+	std::array<std::function<RoboCompNavigator::NavigationStatus(void)>, 1> getStatusHandlers;
 	std::array<std::function<RoboCompNavigator::TPoint(std::string)>, 1> gotoObjectHandlers;
 	std::array<std::function<RoboCompNavigator::TPoint(RoboCompNavigator::TPoint)>, 1> gotoPointHandlers;
 	std::array<std::function<void(void)>, 1> resumeHandlers;

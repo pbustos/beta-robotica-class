@@ -67,6 +67,8 @@ class SpecificWorker : public GenericWorker
 		void JoystickAdapter_sendData(RoboCompJoystickAdapter::TData data);
 		RoboCompNavigator::LayoutData Navigator_getLayout();
 		RoboCompNavigator::Result Navigator_getPath(RoboCompNavigator::TPoint source, RoboCompNavigator::TPoint target, float safety);
+		RoboCompNavigator::TPose Navigator_getRobotPose();
+		RoboCompNavigator::NavigationStatus Navigator_getStatus();
 		RoboCompNavigator::TPoint Navigator_gotoObject(std::string object);
 		RoboCompNavigator::TPoint Navigator_gotoPoint(RoboCompNavigator::TPoint target);
 		void Navigator_resume();
@@ -219,11 +221,16 @@ class SpecificWorker : public GenericWorker
 	QGraphicsEllipseItem* target_marker_ = nullptr;
 	QGraphicsPolygonItem* navigable_poly_item_ = nullptr;  // debug: shrunken polygon
 	std::vector<QGraphicsPolygonItem*> obstacle_expanded_items_;  // debug: expanded obstacle boundaries
+	void draw_path_threadsafe(const std::vector<Eigen::Vector2f>& path);
 	void draw_path(const std::vector<Eigen::Vector2f>& path);
-	void clear_path();
+	void clear_path(bool stop_controller = true, bool clear_stored_path = true);
 
 	// Trajectory controller (ESDF-based sampling local control)
 	rc::TrajectoryController trajectory_controller_;
+	bool low_speed_block_timer_active_ = false;
+	std::chrono::steady_clock::time_point low_speed_block_start_;
+	static constexpr float BLOCKED_SPEED_THRESHOLD = 0.03f;     // m/s
+	static constexpr float BLOCKED_TIME_THRESHOLD_SEC = 2.5f;   // s
 	float last_ess_ = 0.f;   // Latest ESS value for UI
 	int   last_ess_K_ = 1;   // Latest K for ESS ratio
 	std::chrono::steady_clock::time_point last_joystick_time_;

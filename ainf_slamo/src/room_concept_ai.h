@@ -99,6 +99,7 @@ public:
         float cmd_noise_trans = 0.20f;   // Fractional position noise per meter of motion
         float cmd_noise_rot   = 0.10f;   // Fractional rotation noise per radian of rotation
         float cmd_noise_base  = 0.05f;   // Base position noise even when stationary (m)
+        float stationary_noise_damping = 0.7f;  // Multiplier applied to base noise when near-stationary
 
         // Process noise for measured odometry prior (encoder/IMU, more reliable)
         float odom_noise_trans = 0.08f;  // Fractional position noise per meter of motion

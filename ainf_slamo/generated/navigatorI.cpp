@@ -28,6 +28,14 @@ NavigatorI::NavigatorI(GenericWorker *_worker, const size_t id): worker(_worker)
 		[this](auto a, auto b, auto c) { return worker->Navigator_getPath(a, b, c); }
 	};
 
+	getRobotPoseHandlers = {
+		[this]() { return worker->Navigator_getRobotPose(); }
+	};
+
+	getStatusHandlers = {
+		[this]() { return worker->Navigator_getStatus(); }
+	};
+
 	gotoObjectHandlers = {
 		[this](auto a) { return worker->Navigator_gotoObject(a); }
 	};
@@ -77,6 +85,34 @@ RoboCompNavigator::Result NavigatorI::getPath(RoboCompNavigator::TPoint source, 
 		return  getPathHandlers[id](source, target, safety);
 	else
 		throw std::out_of_range("Invalid getPath id: " + std::to_string(id));
+
+}
+
+RoboCompNavigator::TPose NavigatorI::getRobotPose(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < getRobotPoseHandlers.size())
+		return  getRobotPoseHandlers[id]();
+	else
+		throw std::out_of_range("Invalid getRobotPose id: " + std::to_string(id));
+
+}
+
+RoboCompNavigator::NavigationStatus NavigatorI::getStatus(const Ice::Current&)
+{
+
+    #ifdef HIBERNATION_ENABLED
+		worker->hibernationTick();
+	#endif
+    
+	if (id < getStatusHandlers.size())
+		return  getStatusHandlers[id]();
+	else
+		throw std::out_of_range("Invalid getStatus id: " + std::to_string(id));
 
 }
 

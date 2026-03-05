@@ -347,6 +347,12 @@ $$\pmb{\sigma}_{\mathrm{fwd}} = \sigma_{\mathrm{base}} + k_{\mathrm{trans}}\,|\D
 $$\pmb{\sigma}_{\mathrm{lat}} = \sigma_{\mathrm{base}} + 0.3\,k_{\mathrm{trans}}\,|\Delta x^l|$$
 $$\pmb{\sigma}_{\theta} = \sigma_{\theta,\mathrm{base}} + k_{\mathrm{rot}}\,|\Delta\phi|$$
 
+with a **time-scaled** base term in prediction:
+
+$$\sigma_{\mathrm{base}} = \texttt{cmd\_noise\_base}\cdot\sqrt{\min(1,\,4\,\Delta t)}$$
+
+where $\Delta t$ is the lidar interval in seconds.
+
 Transformed to the global frame:
 
 $$\mathbf{Q} = \begin{bmatrix}
@@ -357,9 +363,13 @@ $$\mathbf{Q} = \begin{bmatrix}
 0 & 0 & \sigma_\theta^2
 \end{bmatrix}$$
 
-When **stationary** ($|\Delta\mathbf{s}| < 0.01\,\mathrm{m}$), a very tight base
-noise ($\sigma_{\mathrm{base}} = 0.001\,\mathrm{m}$) prevents spurious covariance
-growth.
+When the robot is **near-stationary** (low linear and angular speed), the base
+noise is additionally scaled by a damping factor:
+
+$$\sigma_{\mathrm{base}} \leftarrow \sigma_{\mathrm{base}}\cdot \texttt{stationary\_noise\_damping}$$
+
+This keeps covariance growth slow at rest while still allowing gradual
+uncertainty increase to trigger periodic correction.
 
 Default parameters (command prior, used for EKF propagation):
 
@@ -368,6 +378,7 @@ Default parameters (command prior, used for EKF propagation):
 | $\sigma_{\mathrm{base}}$ | $0.05\,\mathrm{m}$ | `cmd_noise_base` |
 | $k_{\mathrm{trans}}$ | $0.20$ | `cmd_noise_trans` |
 | $k_{\mathrm{rot}}$ | $0.10$ | `cmd_noise_rot` |
+| stationary damping | $0.70$ | `stationary_noise_damping` |
 
 ---
 
@@ -1086,6 +1097,7 @@ LOOP every 50 ms:
 | `cmd_noise_trans` | 0.20 | Position noise per metre of motion |
 | `cmd_noise_rot` | 0.10 | Rotation noise per radian |
 | `cmd_noise_base` | 0.05 m | Base process noise (stationary) |
+| `stationary_noise_damping` | 0.70 | Extra damping multiplier when near-stationary |
 
 **Measured odometry prior** (closed-loop, from encoders/IMU):
 

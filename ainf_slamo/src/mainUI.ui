@@ -42,6 +42,29 @@
          </property>
         </widget>
        </item>
+        <item>
+         <widget class="QLabel" name="label_navStatus">
+          <property name="text">
+           <string>NAV: IDLE</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>130</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="font">
+           <font>
+            <pointsize>8</pointsize>
+            <weight>75</weight>
+            <bold>true</bold>
+           </font>
+          </property>
+         </widget>
+        </item>
        <item>
         <layout class="QVBoxLayout" name="verticalLayout_fps">
          <item>

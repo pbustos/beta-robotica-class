@@ -1053,9 +1053,21 @@ namespace rc
 
         float forward_motion = std::abs(dy_local);   // Forward (Y in robot frame)
         float lateral_motion = std::abs(dx_local);   // Lateral (X in robot frame)
+        const float angular_motion = std::abs(dtheta);
 
-        // Base noise ensures covariance grows even when stationary
-        float base_trans_noise = params.cmd_noise_base;  // Base uncertainty (2cm default)
+        // odometry_prior.dt is stored in milliseconds in this pipeline.
+        // Convert to seconds so process-noise floor is time-consistent.
+        const float dt_s = std::max(0.001f, odometry_prior.dt * 0.001f);
+        const float linear_speed = (forward_motion + lateral_motion) / dt_s;
+        const float angular_speed = angular_motion / dt_s;
+        const bool near_stationary = linear_speed < 0.03f && angular_speed < 0.03f;
+
+        // Base noise grows with elapsed time (random-walk style) and is heavily reduced at rest.
+        // This keeps slow covariance inflation when stopped, avoiding constant re-minimization.
+        const float time_scale = std::sqrt(std::min(1.0f, 4.0f * dt_s));
+        float base_trans_noise = params.cmd_noise_base * time_scale;
+        if (near_stationary)
+            base_trans_noise *= params.stationary_noise_damping;
 
         // Forward uncertainty: grows with forward motion
         float forward_noise = base_trans_noise + params.cmd_noise_trans * forward_motion;
@@ -1064,7 +1076,7 @@ namespace rc
         float lateral_noise = base_trans_noise + 0.3f * params.cmd_noise_trans * lateral_motion;
 
         // Rotation noise: base + motion-dependent
-        float base_rot_noise = params.cmd_noise_base * 0.5f;  // Half of trans noise for rotation
+        float base_rot_noise = 0.5f * base_trans_noise;
         float rot_noise = base_rot_noise + params.cmd_noise_rot * std::abs(dtheta);
 
         torch::Tensor Q = torch::zeros({dim, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(device));

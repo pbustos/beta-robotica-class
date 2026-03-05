@@ -34,31 +34,47 @@
 
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
 {
-	this->startup_check_flag = startup_check;
-	if(this->startup_check_flag)
-	{
-		this->startup_check();
-	}
-	else
-	{
-		#ifdef HIBERNATION_ENABLED
-			hibernationChecker.start(500);
-		#endif
-
-		statemachine.setChildMode(QState::ExclusiveStates);
-		statemachine.start();
-
-		auto error = statemachine.errorString();
-		if (error.length() > 0){
-			qWarning() << error;
-			throw error;
-		}
-	}
+        this->startup_check_flag = startup_check;
+        if (this->startup_check_flag)
+        {
+            this->startup_check();
+        }
+        else
+        {
+    #ifdef HIBERNATION_ENABLED
+            hibernationChecker.start(500);
+    #endif
+    
+            statemachine.setChildMode(QState::ExclusiveStates);
+            statemachine.start();
+    
+            auto error = statemachine.errorString();
+            if (error.length() > 0)
+            {
+                qWarning() << error;
+                throw error;
+            }
+        }
 }
 
 SpecificWorker::~SpecificWorker()
 {
 	std::cout << "Destroying SpecificWorker" << std::endl;
+
+    // Stop state machine timers to prevent compute/emergency callbacks during teardown
+    statemachine.stop();
+
+    // Stop background threads first
+    stop_localization_thread_ = true;
+    stop_lidar_thread = true;
+    if (localization_th_.joinable())
+    {
+        localization_th_.join();
+    }
+    if (read_lidar_th.joinable())
+    {
+        read_lidar_th.join();
+    }
 
 	// Save window geometry for next launch
 	QSettings settings("robocomp", "ainf_slamo");
@@ -73,16 +89,6 @@ SpecificWorker::~SpecificWorker()
 
 	// Save the last known pose for fast restart
 	save_last_pose();
-
-	// Stop localization thread
-	stop_localization_thread_ = true;
-	if (localization_th_.joinable())
-	    localization_th_.join();
-
-	// Stop lidar thread
-	stop_lidar_thread = true;
-	if (read_lidar_th.joinable())
-	    read_lidar_th.join();
 }
 
 void SpecificWorker::initialize()
@@ -411,6 +417,59 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
 							   const rc::VelocityCommand &current_velocity,
 							   int fps_val)
 {
+    const auto nav_status = Navigator_getStatus();
+    QString nav_text = "NAV: UNKNOWN";
+    QString nav_style = "background-color: #B0B0B0; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;";
+    switch (nav_status.state)
+    {
+        case RoboCompNavigator::NavigationState::IDLE:
+            nav_text = "NAV: IDLE";
+            nav_style = "background-color: #B0B0B0; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;";
+            break;
+        case RoboCompNavigator::NavigationState::NAVIGATING:
+            nav_text = "NAV: NAVIGATING";
+            nav_style = "background-color: #90EE90; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;";
+            break;
+        case RoboCompNavigator::NavigationState::PAUSED:
+            nav_text = "NAV: PAUSED";
+            nav_style = "background-color: #FFF59D; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;";
+            break;
+        case RoboCompNavigator::NavigationState::REACHED:
+            nav_text = "NAV: REACHED";
+            nav_style = "background-color: #80CBC4; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;";
+            break;
+        case RoboCompNavigator::NavigationState::BLOCKED:
+            nav_text = "NAV: BLOCKED";
+            nav_style = "background-color: #FFB74D; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;";
+            break;
+        case RoboCompNavigator::NavigationState::ERROR:
+            nav_text = "NAV: ERROR";
+            nav_style = "background-color: #EF9A9A; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;";
+            break;
+    }
+    static QString last_nav_text, last_nav_style;
+    if (QLabel *nav_label = this->findChild<QLabel*>("label_navStatus"); nav_label != nullptr)
+    {
+        if (nav_text != last_nav_text)
+        {
+            nav_label->setText(nav_text);
+            last_nav_text = nav_text;
+        }
+        if (nav_style != last_nav_style)
+        {
+            nav_label->setStyleSheet(nav_style);
+            last_nav_style = nav_style;
+        }
+    }
+    else
+    {
+        const bool webots_mode = params.USE_WEBOTS;
+        const QString mode_prefix = webots_mode ? "WEBOTS" : "ROBOT";
+        const QString fallback_text = mode_prefix + " | " + nav_text;
+        if (label_mode->text() != fallback_text)
+            label_mode->setText(fallback_text);
+    }
+
 	// Update QLCDNumber displays
 	const float sigma_xy_cm = std::sqrt(res.covariance(0,0) + res.covariance(1,1)) * 100.0f; // m to cm
 	const float sdf_median_cm = res.sdf_mse * 100.0f;  // Median SDF error in cm (already in meters)
@@ -1014,7 +1073,7 @@ void SpecificWorker::draw_trajectory_debug(const rc::TrajectoryController::Contr
 void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
 {
     // Remove previous path drawing
-    clear_path();
+    clear_path(false, false);
 
     if (path.size() < 2) return;
 
@@ -1119,10 +1178,22 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
     target_marker_->setVisible(true);
 }
 
-void SpecificWorker::clear_path()
+void SpecificWorker::draw_path_threadsafe(const std::vector<Eigen::Vector2f>& path)
+{
+    if (QThread::currentThread() == this->thread())
+    {
+        draw_path(path);
+    }
+    else
+    {
+        QMetaObject::invokeMethod(this, [this, path]() { draw_path(path); }, Qt::QueuedConnection);
+    }
+}
+
+void SpecificWorker::clear_path(bool stop_controller, bool clear_stored_path)
 {
     // Stop the trajectory controller if active
-    if (trajectory_controller_.is_active())
+    if (stop_controller && trajectory_controller_.is_active())
     {
         trajectory_controller_.stop();
         try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
@@ -1134,7 +1205,8 @@ void SpecificWorker::clear_path()
         delete item;
     }
     path_draw_items_.clear();
-    current_path_.clear();
+    if (clear_stored_path)
+        current_path_.clear();
 
     // Clear expanded obstacle boundaries
     for (auto* item : obstacle_expanded_items_)
@@ -2078,6 +2150,11 @@ void SpecificWorker::run_localization()
 {
     qInfo() << "[LocThread] Localization thread started";
 
+    auto wait_period = std::chrono::milliseconds(40);
+    std::int64_t last_lidar_timestamp = -1;
+    constexpr auto kMinWait = std::chrono::milliseconds(2);
+    constexpr auto kMaxWait = std::chrono::milliseconds(100);
+
     while (!stop_localization_thread_.load())
     {
         // ===== 1. DRAIN PENDING UI COMMANDS =====
@@ -2136,9 +2213,17 @@ void SpecificWorker::run_localization()
         if (res.ok && !loc_initialized_.load())
             loc_initialized_ = true;
 
-        // Pace: don't spin faster than lidar (~20-50 Hz)
-        // A short sleep avoids busy-waiting if lidar hasn't updated
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        // Pace with timestamp feedback from buffer_sync (similar to read_lidar hysteresis):
+        // if lidar timestamp is repeated, slow down; if it advances, speed up.
+        const auto current_lidar_timestamp = lidar_high_->second;
+        const bool repeated_timestamp = (current_lidar_timestamp == last_lidar_timestamp);
+        if (repeated_timestamp)
+            wait_period = std::min(wait_period + std::chrono::milliseconds(1), kMaxWait);
+        else
+            wait_period = std::max(wait_period - std::chrono::milliseconds(1), kMinWait);
+
+        last_lidar_timestamp = current_lidar_timestamp;
+        std::this_thread::sleep_for(wait_period);
     }
 
     qInfo() << "[LocThread] Localization thread stopped";
@@ -2293,9 +2378,112 @@ RoboCompNavigator::Result SpecificWorker::Navigator_getPath(RoboCompNavigator::T
         ret.path.push_back(pt);
     }
 
+    // Draw requested path in local UI (without changing active controller state)
+    draw_path_threadsafe(path);
+
     ret.valid = true;
     ret.errorMsg = "ok";
     return ret;
+}
+
+RoboCompNavigator::TPose SpecificWorker::Navigator_getRobotPose()
+{
+    const auto state = get_loc_state();
+
+    RoboCompNavigator::TPose pose;
+    pose.x = state[2];
+    pose.y = state[3];
+    pose.r = state[4];
+    return pose;
+}
+
+RoboCompNavigator::NavigationStatus SpecificWorker::Navigator_getStatus()
+{
+    RoboCompNavigator::NavigationStatus status;
+    const auto now = std::chrono::steady_clock::now();
+
+    const auto state = get_loc_state();
+    status.currentPosition.x = state[2];
+    status.currentPosition.y = state[3];
+    status.currentOrientation = state[4];
+
+    status.currentTarget.x = 0.f;
+    status.currentTarget.y = 0.f;
+    status.distanceToTarget = 0.f;
+    status.estimatedTime = 0.f;
+    status.pathWaypointsRemaining = 0;
+
+    const auto vel_tuple = velocity_buffer_.read_last<0>();
+    const auto &vel_opt = std::get<0>(vel_tuple);
+    float speed = 0.f;
+    if (vel_opt.has_value())
+        speed = std::hypot(vel_opt->adv_x, vel_opt->adv_y);
+    status.currentSpeed = speed;
+
+    if (!loc_initialized_.load())
+    {
+        low_speed_block_timer_active_ = false;
+        status.state = RoboCompNavigator::NavigationState::ERROR;
+        status.statusMessage = "Localization not initialized";
+        return status;
+    }
+
+    if (!current_path_.empty())
+    {
+        const auto &goal = current_path_.back();
+        status.currentTarget.x = goal.x();
+        status.currentTarget.y = goal.y();
+        status.distanceToTarget = (goal - Eigen::Vector2f(status.currentPosition.x, status.currentPosition.y)).norm();
+        status.pathWaypointsRemaining = static_cast<int>(current_path_.size());
+        if (speed > 1e-3f)
+            status.estimatedTime = status.distanceToTarget / speed;
+        else
+            status.estimatedTime = -1.f;
+    }
+
+    if (trajectory_controller_.is_active())
+    {
+        const bool far_from_goal = status.distanceToTarget > trajectory_controller_.params.goal_threshold;
+        const bool low_speed = speed < BLOCKED_SPEED_THRESHOLD;
+
+        if (far_from_goal && low_speed)
+        {
+            if (!low_speed_block_timer_active_)
+            {
+                low_speed_block_timer_active_ = true;
+                low_speed_block_start_ = now;
+            }
+
+            const float blocked_elapsed_s = std::chrono::duration<float>(now - low_speed_block_start_).count();
+            if (blocked_elapsed_s >= BLOCKED_TIME_THRESHOLD_SEC)
+            {
+                status.state = RoboCompNavigator::NavigationState::BLOCKED;
+                status.statusMessage = "Blocked: low speed while far from target";
+                return status;
+            }
+        }
+        else
+        {
+            low_speed_block_timer_active_ = false;
+        }
+
+        status.state = RoboCompNavigator::NavigationState::NAVIGATING;
+        status.statusMessage = "Navigating";
+    }
+    else if (!current_path_.empty())
+    {
+        low_speed_block_timer_active_ = false;
+        status.state = RoboCompNavigator::NavigationState::PAUSED;
+        status.statusMessage = "Path available but controller paused";
+    }
+    else
+    {
+        low_speed_block_timer_active_ = false;
+        status.state = RoboCompNavigator::NavigationState::IDLE;
+        status.statusMessage = "Idle";
+    }
+
+    return status;
 }
 
 RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoObject(std::string object)

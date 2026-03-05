@@ -79,6 +79,8 @@ public:
 
 	virtual RoboCompNavigator::LayoutData Navigator_getLayout() = 0;
 	virtual RoboCompNavigator::Result Navigator_getPath(RoboCompNavigator::TPoint source, RoboCompNavigator::TPoint target, float safety) = 0;
+	virtual RoboCompNavigator::TPose Navigator_getRobotPose() = 0;
+	virtual RoboCompNavigator::NavigationStatus Navigator_getStatus() = 0;
 	virtual RoboCompNavigator::TPoint Navigator_gotoObject(std::string object) = 0;
 	virtual RoboCompNavigator::TPoint Navigator_gotoPoint(RoboCompNavigator::TPoint target) = 0;
 	virtual void Navigator_resume() = 0;
