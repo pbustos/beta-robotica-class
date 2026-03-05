@@ -19,6 +19,7 @@ set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "CUDA compiler
 # Keep a single source of truth to avoid CMake warning noise from Caffe2.
 set(TORCH_CUDA_ARCH_LIST "12.0" CACHE STRING "CUDA arch list for LibTorch" FORCE)
 
+
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
