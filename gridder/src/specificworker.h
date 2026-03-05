@@ -315,6 +315,21 @@ class SpecificWorker : public GenericWorker
 	    // Load MPPI parameters from ConfigLoader
 	    MPPIController::Params loadMPPIParams();
 
+	    // Robot state persistence
+	    struct RobotState {
+	        float x = 0.f;
+	        float y = 0.f;
+	        float theta = 0.f;
+	        float sigma_xy = 500.f;
+	        float sigma_theta = 0.5f;
+	        std::string timestamp;
+	        std::string map_file;
+	        bool valid = false;
+	    };
+	    bool loadRobotState(RobotState& state);
+	    bool saveRobotState();
+	    std::string getStateFilePath() const;
+
 	    // Timer
 	    rc::Timer<> clock;
 
@@ -343,6 +358,17 @@ class SpecificWorker : public GenericWorker
 	    Localizer localizer;
 	    std::atomic<bool> localizer_initialized{false};
 	    std::atomic<bool> map_ready_for_localization{false};  // Set after map is fully loaded
+
+	    // Initial pose for localizer (loaded from saved state or config)
+	    struct InitialPose {
+	        float x = 0.f;
+	        float y = 0.f;
+	        float theta = 0.f;
+	        float sigma_xy = 500.f;
+	        float sigma_theta = 0.5f;
+	        bool from_saved_state = false;
+	    };
+	    InitialPose initial_localizer_pose;
 
 	    // Odometry from velocity commands (used by localizer)
 	    struct VelocityCommand {

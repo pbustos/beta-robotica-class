@@ -24,6 +24,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <cmath>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 
 class TPointVector;
 
@@ -309,6 +312,13 @@ MPPIController::Params SpecificWorker::loadMPPIParams()
 SpecificWorker::~SpecificWorker()
 {
 	std::cout << "Destroying SpecificWorker" << std::endl;
+
+	// Save robot state before shutdown
+	if (saveRobotState())
+		std::cout << "Robot state saved successfully" << std::endl;
+	else
+		std::cerr << "Failed to save robot state" << std::endl;
+
 	// Signal the lidar thread to stop and wait for it
 	stop_lidar_thread = true;
 	if(read_lidar_th.joinable())
@@ -346,18 +356,53 @@ void SpecificWorker::initialize()
         viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM, false);
         viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0, 0.2, QColor("Blue"));
 
-        // Initialize robot pose to configured initial position
+        // Try to load saved robot state, fall back to config values
+        RobotState saved_state;
+        float initial_x = params.ROBOT_INITIAL_X;
+        float initial_y = params.ROBOT_INITIAL_Y;
+        float initial_theta = 0.f;
+        float initial_sigma_xy = 500.f;
+        float initial_sigma_theta = 0.5f;
+        bool from_saved = false;
+
+        if (loadRobotState(saved_state) && saved_state.valid)
+        {
+            initial_x = saved_state.x;
+            initial_y = saved_state.y;
+            initial_theta = saved_state.theta;
+            initial_sigma_xy = saved_state.sigma_xy;
+            initial_sigma_theta = saved_state.sigma_theta;
+            from_saved = true;
+            qInfo() << "[Init] Loaded saved robot state from" << saved_state.timestamp.c_str();
+            qInfo() << "[Init] Position:" << initial_x << initial_y << "theta:" << qRadiansToDegrees(initial_theta) << "deg";
+        }
+        else
+        {
+            qInfo() << "[Init] No valid saved state, using config defaults";
+        }
+
+        // Store initial pose for localizer thread
+        initial_localizer_pose.x = initial_x;
+        initial_localizer_pose.y = initial_y;
+        initial_localizer_pose.theta = initial_theta;
+        initial_localizer_pose.sigma_xy = initial_sigma_xy;
+        initial_localizer_pose.sigma_theta = initial_sigma_theta;
+        initial_localizer_pose.from_saved_state = from_saved;
+
+        // Initialize robot pose
         estimated_robot_pose = Eigen::Affine2f::Identity();
-        estimated_robot_pose.translation() = Eigen::Vector2f{params.ROBOT_INITIAL_X, params.ROBOT_INITIAL_Y};
-        viewer->robot_poly()->setPos(params.ROBOT_INITIAL_X, params.ROBOT_INITIAL_Y);
-        qInfo() << "[Init] Robot initial position:" << params.ROBOT_INITIAL_X << params.ROBOT_INITIAL_Y;
+        estimated_robot_pose.translation() = Eigen::Vector2f{initial_x, initial_y};
+        estimated_robot_pose.linear() = Eigen::Rotation2Df(initial_theta).toRotationMatrix();
+        viewer->robot_poly()->setPos(initial_x, initial_y);
+        viewer->robot_poly()->setRotation(qRadiansToDegrees(initial_theta));
+        qInfo() << "[Init] Robot initial position:" << initial_x << initial_y;
 
         // Don't limit sceneRect - allow unlimited panning
         // viewer->setSceneRect(params.GRID_MAX_DIM);
         viewer->show();
 
         // Fit the view to show the initial grid area centered on robot
-        QRectF initial_view(params.ROBOT_INITIAL_X - 3000, params.ROBOT_INITIAL_Y - 3000, 6000, 6000);
+        QRectF initial_view(initial_x - 3000, initial_y - 3000, 6000, 6000);
         viewer->fitToScene(initial_view);
 
         // Initialize Sparse ESDF grid (VoxBlox-style)
@@ -2474,99 +2519,200 @@ void SpecificWorker::Gridder_stopNavigation()
     qInfo() << "[API] Navigation stopped (target preserved)";
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////
+/**************************************/
+// Robot State Persistence
+/**************************************/
+
+std::string SpecificWorker::getStateFilePath() const
+{
+    // State file is stored in etc/ directory alongside config.toml
+    return "etc/gridder_state.json";
+}
+
+bool SpecificWorker::loadRobotState(RobotState& state)
+{
+    const std::string filepath = getStateFilePath();
+    std::ifstream file(filepath);
+
+    if (!file.is_open())
+    {
+        qDebug() << "[State] No state file found at" << filepath.c_str();
+        return false;
+    }
+
+    try
+    {
+        // Simple JSON parsing (avoiding external dependencies)
+        std::string content((std::istreambuf_iterator<char>(file)),
+                            std::istreambuf_iterator<char>());
+        file.close();
+
+        // Parse "valid" field
+        auto valid_pos = content.find("\"valid\"");
+        if (valid_pos != std::string::npos)
+        {
+            auto colon_pos = content.find(':', valid_pos);
+            auto value_start = content.find_first_not_of(" \t\n", colon_pos + 1);
+            state.valid = (content.substr(value_start, 4) == "true");
+        }
+
+        if (!state.valid)
+        {
+            qDebug() << "[State] State file exists but marked as invalid";
+            return false;
+        }
+
+        // Parse "x" field
+        auto x_pos = content.find("\"x\"");
+        if (x_pos != std::string::npos)
+        {
+            auto colon_pos = content.find(':', x_pos);
+            state.x = std::stof(content.substr(colon_pos + 1));
+        }
+
+        // Parse "y" field
+        auto y_pos = content.find("\"y\"");
+        if (y_pos != std::string::npos)
+        {
+            auto colon_pos = content.find(':', y_pos);
+            state.y = std::stof(content.substr(colon_pos + 1));
+        }
+
+        // Parse "theta" field
+        auto theta_pos = content.find("\"theta\"");
+        if (theta_pos != std::string::npos)
+        {
+            auto colon_pos = content.find(':', theta_pos);
+            state.theta = std::stof(content.substr(colon_pos + 1));
+        }
+
+        // Parse "sigma_xy" field
+        auto sigma_xy_pos = content.find("\"sigma_xy\"");
+        if (sigma_xy_pos != std::string::npos)
+        {
+            auto colon_pos = content.find(':', sigma_xy_pos);
+            state.sigma_xy = std::stof(content.substr(colon_pos + 1));
+        }
+
+        // Parse "sigma_theta" field
+        auto sigma_theta_pos = content.find("\"sigma_theta\"");
+        if (sigma_theta_pos != std::string::npos)
+        {
+            auto colon_pos = content.find(':', sigma_theta_pos);
+            state.sigma_theta = std::stof(content.substr(colon_pos + 1));
+        }
+
+        // Parse "timestamp" field
+        auto ts_pos = content.find("\"timestamp\"");
+        if (ts_pos != std::string::npos)
+        {
+            auto quote1 = content.find('"', ts_pos + 11);
+            auto quote2 = content.find('"', quote1 + 1);
+            if (quote1 != std::string::npos && quote2 != std::string::npos)
+                state.timestamp = content.substr(quote1 + 1, quote2 - quote1 - 1);
+        }
+
+        // Parse "map_file" field
+        auto map_pos = content.find("\"map_file\"");
+        if (map_pos != std::string::npos)
+        {
+            auto quote1 = content.find('"', map_pos + 10);
+            auto quote2 = content.find('"', quote1 + 1);
+            if (quote1 != std::string::npos && quote2 != std::string::npos)
+                state.map_file = content.substr(quote1 + 1, quote2 - quote1 - 1);
+        }
+
+        qInfo() << "[State] Loaded state: x=" << state.x << "y=" << state.y
+                << "theta=" << qRadiansToDegrees(state.theta) << "deg";
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        qWarning() << "[State] Failed to parse state file:" << e.what();
+        return false;
+    }
+}
+
+bool SpecificWorker::saveRobotState()
+{
+    const std::string filepath = getStateFilePath();
+
+    // Get current pose from estimated_robot_pose
+    const float x = estimated_robot_pose.translation().x();
+    const float y = estimated_robot_pose.translation().y();
+    const float theta = std::atan2(estimated_robot_pose.linear()(1, 0),
+                                   estimated_robot_pose.linear()(0, 0));
+
+    // Get covariance from localizer if available
+    float sigma_xy = 500.f;
+    float sigma_theta = 0.5f;
+
+    if (localizer_initialized.load())
+    {
+        auto cov = localizer.getCovarianceVector();
+        if (cov.size() >= 6)
+        {
+            // Extract sigma from covariance: σ = sqrt(variance)
+            sigma_xy = std::sqrt(std::max(cov[0], cov[3]));  // max of σx², σy²
+            sigma_theta = std::sqrt(cov[5]);  // σθ²
+        }
+    }
+
+    // Get current timestamp
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&time_t), "%Y-%m-%dT%H:%M:%S");
+    std::string timestamp = ss.str();
+
+    // Write JSON
+    std::ofstream file(filepath);
+    if (!file.is_open())
+    {
+        qWarning() << "[State] Failed to open state file for writing:" << filepath.c_str();
+        return false;
+    }
+
+    file << "{\n";
+    file << "  \"last_pose\": {\n";
+    file << "    \"x\": " << std::fixed << std::setprecision(1) << x << ",\n";
+    file << "    \"y\": " << y << ",\n";
+    file << "    \"theta\": " << std::setprecision(4) << theta << ",\n";
+    file << "    \"sigma_xy\": " << std::setprecision(1) << sigma_xy << ",\n";
+    file << "    \"sigma_theta\": " << std::setprecision(4) << sigma_theta << "\n";
+    file << "  },\n";
+    file << "  \"timestamp\": \"" << timestamp << "\",\n";
+    file << "  \"map_file\": \"mapa_webots.gridmap\",\n";
+    file << "  \"valid\": true\n";
+    file << "}\n";
+
+    file.close();
+
+    qInfo() << "[State] Saved state: x=" << x << "y=" << y
+            << "theta=" << qRadiansToDegrees(theta) << "deg"
+            << "σxy=" << sigma_xy << "mm";
+
+    return true;
+}
+
+/**************************************/
+// Required GenericWorker virtual functions
+/**************************************/
+
 int SpecificWorker::startup_check()
 {
     std::cout << "Startup check" << std::endl;
     QTimer::singleShot(200, qApp, SLOT(quit()));
     return 0;
 }
+
 void SpecificWorker::emergency()
 {
-    std::cout << "Emergency worker" << std::endl;
-    //emergencyCODE
-    //
-    //if (SUCCESSFUL) //The componet is safe for continue
-    //  emmit goToRestore()
+    std::cout << "Emergency mode activated" << std::endl;
 }
 
-//Execute one when exiting to emergencyState
 void SpecificWorker::restore()
 {
-    std::cout << "Restore worker" << std::endl;
-    //restoreCODE
-    //Restore emergency component
-
+    std::cout << "Restore mode activated" << std::endl;
 }
 
-/**************************************/
-// From the RoboCompLidar3D you can call this methods:
-// RoboCompLidar3D::TColorCloudData this->lidar3d_proxy->getColorCloudData()
-// RoboCompLidar3D::TData this->lidar3d_proxy->getLidarData(string name, float start, float len, int decimationDegreeFactor)
-// RoboCompLidar3D::TDataImage this->lidar3d_proxy->getLidarDataArrayProyectedInImage(string name)
-// RoboCompLidar3D::TDataCategory this->lidar3d_proxy->getLidarDataByCategory(TCategories categories, long timestamp)
-// RoboCompLidar3D::TData this->lidar3d_proxy->getLidarDataProyectedInImage(string name)
-// RoboCompLidar3D::TData this->lidar3d_proxy->getLidarDataWithThreshold2d(string name, float distance, int decimationDegreeFactor)
-
-/**************************************/
-// From the RoboCompLidar3D you can use this types:
-// RoboCompLidar3D::TPoint
-// RoboCompLidar3D::TDataImage
-// RoboCompLidar3D::TData
-// RoboCompLidar3D::TDataCategory
-// RoboCompLidar3D::TColorCloudData
-
-/**************************************/
-// From the RoboCompLidar3D you can call this methods:
-// RoboCompLidar3D::TColorCloudData this->lidar3d1_proxy->getColorCloudData()
-// RoboCompLidar3D::TData this->lidar3d1_proxy->getLidarData(string name, float start, float len, int decimationDegreeFactor)
-// RoboCompLidar3D::TDataImage this->lidar3d1_proxy->getLidarDataArrayProyectedInImage(string name)
-// RoboCompLidar3D::TDataCategory this->lidar3d1_proxy->getLidarDataByCategory(TCategories categories, long timestamp)
-// RoboCompLidar3D::TData this->lidar3d1_proxy->getLidarDataProyectedInImage(string name)
-// RoboCompLidar3D::TData this->lidar3d1_proxy->getLidarDataWithThreshold2d(string name, float distance, int decimationDegreeFactor)
-
-/**************************************/
-// From the RoboCompLidar3D you can use this types:
-// RoboCompLidar3D::TPoint
-// RoboCompLidar3D::TDataImage
-// RoboCompLidar3D::TData
-// RoboCompLidar3D::TDataCategory
-// RoboCompLidar3D::TColorCloudData
-
-/**************************************/
-// From the RoboCompOmniRobot you can call this methods:
-// RoboCompOmniRobot::void this->omnirobot_proxy->correctOdometer(int x, int z, float alpha)
-// RoboCompOmniRobot::void this->omnirobot_proxy->getBasePose(int x, int z, float alpha)
-// RoboCompOmniRobot::void this->omnirobot_proxy->getBaseState(RoboCompGenericBase::TBaseState state)
-// RoboCompOmniRobot::void this->omnirobot_proxy->resetOdometer()
-// RoboCompOmniRobot::void this->omnirobot_proxy->setOdometer(RoboCompGenericBase::TBaseState state)
-// RoboCompOmniRobot::void this->omnirobot_proxy->setOdometerPose(int x, int z, float alpha)
-// RoboCompOmniRobot::void this->omnirobot_proxy->setSpeedBase(float advx, float advz, float rot)
-// RoboCompOmniRobot::void this->omnirobot_proxy->stopBase()
-
-/**************************************/
-// From the RoboCompOmniRobot you can use this types:
-// RoboCompOmniRobot::TMechParams
-
-/**************************************/
-// From the RoboCompWebots2Robocomp you can call this methods:
-// RoboCompWebots2Robocomp::ObjectPose this->webots2robocomp_proxy->getObjectPose(string DEF)
-// RoboCompWebots2Robocomp::void this->webots2robocomp_proxy->resetWebots()
-// RoboCompWebots2Robocomp::void this->webots2robocomp_proxy->setDoorAngle(float angle)
-// RoboCompWebots2Robocomp::void this->webots2robocomp_proxy->setPathToHuman(int humanId, RoboCompGridder::TPath path)
-
-/**************************************/
-// From the RoboCompWebots2Robocomp you can use this types:
-// RoboCompWebots2Robocomp::Vector3
-// RoboCompWebots2Robocomp::Quaternion
-// RoboCompWebots2Robocomp::ObjectPose
-/**************************************/
-// From the RoboCompGridder you can use this types:
-// RoboCompGridder::TPoint
-// RoboCompGridder::TDimensions
-// RoboCompGridder::Result
-// RoboCompGridder::TCell
-// RoboCompGridder::Map
-// RoboCompGridder::Pose
-// RoboCompGridder::NavigationOptions
-// RoboCompGridder::NavigationStatus

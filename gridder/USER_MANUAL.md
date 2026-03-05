@@ -1,8 +1,8 @@
 # Gridder User Manual
 
 **Component:** Gridder - 2D Mapping, Localization and Navigation  
-**Version:** 2.0  
-**Date:** 2026-02-14
+**Version:** 2.5  
+**Date:** 2026-02-20
 
 ---
 
@@ -429,6 +429,90 @@ All component parameters are now configured via the TOML configuration file: `et
 - ✅ Easy to version control configuration separately
 - ✅ Self-documented with comments
 - ✅ Supports different configurations per deployment
+
+### State Persistence
+
+The Gridder component automatically **saves and restores the robot's last known position** across restarts. This is especially useful for:
+- Resuming navigation after a crash or restart
+- Avoiding re-localization when the robot hasn't moved
+- Faster startup in production environments
+
+#### State File Location
+
+**File:** `etc/gridder_state.json`
+
+```json
+{
+  "last_pose": {
+    "x": 10234.5,
+    "y": -1523.2,
+    "theta": 1.5708,
+    "sigma_xy": 45.2,
+    "sigma_theta": 0.02
+  },
+  "timestamp": "2026-02-20T15:30:00",
+  "map_file": "mapa_webots.gridmap",
+  "valid": true
+}
+```
+
+#### How It Works
+
+1. **On Shutdown**: The component saves the current estimated pose and covariance to `gridder_state.json`
+2. **On Startup**: If a valid state file exists, the robot initializes at the saved position instead of the config default
+3. **Priority**: Saved state > GT warmup > Manual initialization
+
+#### State File Fields
+
+| Field | Description |
+|-------|-------------|
+| `x`, `y` | Position in mm |
+| `theta` | Orientation in radians |
+| `sigma_xy` | Position uncertainty (mm) |
+| `sigma_theta` | Angular uncertainty (rad) |
+| `timestamp` | When the state was saved |
+| `map_file` | Associated map (for validation) |
+| `valid` | Set to `false` to force re-initialization |
+
+#### Invalidating Saved State
+
+To force the robot to re-initialize (ignore saved state):
+
+**Option 1:** Delete the file
+```bash
+rm etc/gridder_state.json
+```
+
+**Option 2:** Mark as invalid
+```json
+{
+  "valid": false
+}
+```
+
+**Option 3:** The state is automatically not used if:
+- The file doesn't exist
+- JSON parsing fails
+- `valid` is `false`
+
+#### Console Output
+
+**Loading saved state:**
+```
+[Init] Loaded saved robot state from 2026-02-20T15:30:00
+[Init] Position: 10234.5 -1523.2 theta: 90.0 deg
+```
+
+**No saved state:**
+```
+[Init] No valid saved state, using config defaults
+```
+
+**Saving on shutdown:**
+```
+[State] Saved state: x= 10234.5 y= -1523.2 theta= 90.0 deg σxy= 45.2 mm
+Robot state saved successfully
+```
 
 ### Configuration File Structure
 

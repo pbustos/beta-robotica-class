@@ -17,6 +17,10 @@
    - [5.20 Configuration Parameters](#520-mppi-configuration-parameters)
 6. [Implementation Details](#6-implementation-details)
 7. [Configuration Reference](#7-configuration-reference)
+8. [Optimizations](#8-optimizations)
+9. [Configuration Reference](#9-configuration-reference)
+10. [State Persistence](#10-state-persistence)
+11. [References](#11-references)
 
 ---
 
@@ -1844,7 +1848,57 @@ All parameters are configured in `etc/config.toml` organized in sections.
 
 ---
 
-## 10. References
+## 10. State Persistence
+
+The component automatically persists the robot's last known pose to enable quick restarts.
+
+### 10.1 State File Format
+
+**File:** `etc/gridder_state.json`
+
+```json
+{
+  "last_pose": {
+    "x": 10234.5,
+    "y": -1523.2,
+    "theta": 1.5708,
+    "sigma_xy": 45.2,
+    "sigma_theta": 0.02
+  },
+  "timestamp": "2026-02-20T15:30:00",
+  "map_file": "mapa_webots.gridmap",
+  "valid": true
+}
+```
+
+### 10.2 Initialization Priority
+
+When the component starts, pose initialization follows this priority:
+
+1. **Saved state** (if `valid: true` in state file)
+2. **GT warmup** (if `USE_GT_WARMUP = true` and in simulation)
+3. **Manual initialization** (Shift+Click on map)
+4. **Config defaults** (`robot_initial_x`, `robot_initial_y`)
+
+### 10.3 Covariance Preservation
+
+The saved state includes position and angular covariance:
+- `sigma_xy`: Position uncertainty (mm)
+- `sigma_theta`: Angular uncertainty (rad)
+
+On restart, the localizer is initialized with these uncertainties, allowing:
+- Faster convergence if uncertainties were low
+- Appropriate exploration if uncertainties were high
+
+### 10.4 Save Triggers
+
+State is saved automatically when:
+- Component shuts down normally (destructor)
+- Could be extended to save periodically or on goal reached
+
+---
+
+## 11. References
 
 1. Thrun, S., Burgard, W., & Fox, D. (2005). *Probabilistic Robotics*. MIT Press.
 
