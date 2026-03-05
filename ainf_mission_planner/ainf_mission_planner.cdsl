@@ -1,0 +1,13 @@
+import "Navigator.idsl";
+
+Component ainf_mission_planner
+{
+    Communications
+    {
+        requires Navigator;
+    };
+    language Cpp11;
+    gui Qt(QWidget);
+
+};
+
