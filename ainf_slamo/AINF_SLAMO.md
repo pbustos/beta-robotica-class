@@ -25,6 +25,7 @@ Version 2.0 — March 2026
 16. [Polygon Path Planner](#16-polygon-path-planner)
 17. [MPPI Trajectory Controller](#17-mppi-trajectory-controller)
     - [17.10 ESS-Based Adaptive Parameter Tuning](#1710-ess-based-adaptive-parameter-tuning)
+  - [17.11 Mood Superparameter (Calm–Excited)](#1711-mood-superparameter-calmexcited)
 18. [Complete Algorithm Loop](#18-complete-algorithm-loop)
 19. [Parameters Reference](#19-parameters-reference)
 20. [Key Implementation Notes](#20-key-implementation-notes)
@@ -799,6 +800,12 @@ a high-quality prediction prior for the next localisation update.
 | `velocity_smoothing` | 0.45 | EMA alpha for output smoothing |
 | `gauss_k` | 1.0 | Gaussian brake intensity |
 | `num_trajectories_to_draw` | 10 | Trajectories shown in viewer |
+| `mood` | 0.5 | High-level behavior knob in [0, 1]: 0 = calm, 1 = excited |
+| `enable_mood` | true | Enables runtime remapping of MPPI parameters from mood |
+| `mood_speed_gain` | 0.35 | Mood influence on speed/path aggressiveness (`max_adv`, `max_rot`, lookahead) |
+| `mood_exploration_gain` | 0.40 | Mood influence on exploration/optimization effort (K/T, noise, optimizer) |
+| `mood_reactivity_gain` | 0.35 | Mood influence on reactivity (warm-start inertia, smoothing, brake) |
+| `mood_caution_gain` | 0.30 | Mood influence on caution (safety distance and obstacle conservatism) |
 
 > See **§17.10** for the full list of ESS adaptation parameters (K/T/λ/σ bounds,
 > `ess_smoothing`, `adapt_interval`, `cpu_budget_ms`).
@@ -984,6 +991,39 @@ and T (planning horizon), preferring neither.
 | `sigma_min_rot` / `sigma_max_rot` | 0.08 / 0.40 rad/s | Adaptive σ_rot clamp |
 | `cpu_budget_ms` | 5.0 ms | Max MPPI compute per cycle |
 
+### 17.11 Mood Superparameter (Calm–Excited)
+
+The trajectory controller exposes a single high-level superparameter:
+
+$$m \in [0,1]$$
+
+where:
+
+- $m = 0$: calm behavior (more conservative, smoother, less exploratory)
+- $m = 0.5$: neutral/baseline behavior
+- $m = 1$: excited behavior (faster, more reactive, more exploratory)
+
+The controller first copies user parameters, then computes a mood-shaped scalar
+using smoothstep:
+
+$$s(m) = 3m^2 - 2m^3, \qquad n = 2s - 1 \in [-1, 1]$$
+
+Each parameter family is rescaled with its corresponding mood gain and then
+clamped to safety/consistency bounds.
+
+Main effects by family:
+
+- Speed family (`mood_speed_gain`): scales max advance/rotation and lookahead.
+- Exploration family (`mood_exploration_gain`): scales sample/horizon baseline,
+  noise amplitudes, and optimizer effort.
+- Reactivity family (`mood_reactivity_gain`): reduces output smoothing and
+  warm-start inertia as mood increases; also relaxes Gaussian braking.
+- Caution family (`mood_caution_gain`): reduces safety margin and obstacle weight
+  as mood increases (still clamped by hard safety constraints).
+
+This allows continuous behavioral tuning from the UI with one slider while
+preserving low-level parameter safety constraints.
+
 ---
 
 ## 18. Complete Algorithm Loop
@@ -1155,6 +1195,12 @@ LOOP every 50 ms:
 | `num_samples` | 50 | K: initial trajectory samples per cycle (adapted by ESS) |
 | `trajectory_steps` | 30 | T: initial horizon steps (adapted by ESS) |
 | `trajectory_dt` | 0.15 s | Time step per horizon step |
+| `mood` | 0.5 | High-level calm-excited superparameter in [0, 1] |
+| `enable_mood` | true | Enables mood-based runtime remapping |
+| `mood_speed_gain` | 0.35 | Mood influence on speed and lookahead |
+| `mood_exploration_gain` | 0.40 | Mood influence on exploration and optimizer effort |
+| `mood_reactivity_gain` | 0.35 | Mood influence on smoothing and response speed |
+| `mood_caution_gain` | 0.30 | Mood influence on safety-vs-aggressiveness balance |
 | `mppi_lambda` | 5.0 | Initial temperature (adapted by ESS, §17.10.3) |
 | `sigma_adv` | 0.12 m/s | Initial advance noise std (adapted by ESS, §17.10.4) |
 | `sigma_rot` | 0.25 rad/s | Initial rotation noise std (adapted by ESS, §17.10.4) |

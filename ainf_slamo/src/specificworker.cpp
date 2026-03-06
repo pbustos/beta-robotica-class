@@ -137,6 +137,25 @@ void SpecificWorker::initialize()
     connect(pushButton_showLidar, &QPushButton::toggled, this, [this](bool checked) { draw_lidar_ = checked; });
     connect(pushButton_showTrajs, &QPushButton::toggled, this, [this](bool checked) { draw_trajectories_ = checked; });
 
+    // Mood slider (0..100 mapped to 0.0..1.0) for trajectory controller behavior
+    if (horizontalSlider_mood != nullptr)
+    {
+        horizontalSlider_mood->setRange(0, 100);
+        horizontalSlider_mood->setSingleStep(1);
+        horizontalSlider_mood->setPageStep(5);
+
+        connect(horizontalSlider_mood, &QSlider::valueChanged, this, [this](int value)
+        {
+            const float mood = static_cast<float>(value) / 100.f;
+            trajectory_controller_.params.mood = mood;
+            if (label_moodValue != nullptr)
+                label_moodValue->setText(QString::number(mood, 'f', 2));
+        });
+
+        horizontalSlider_mood->setValue(50);  // init value = 0.50
+    }
+    trajectory_controller_.params.mood = 0.5f;
+
     // Connect Shift+Right click on the scene for navigation target
     connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::slot_new_target);
 

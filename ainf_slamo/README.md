@@ -19,13 +19,14 @@ Estado (robot-room): [width, length, x, y, phi]
 
 The following dependencies are required to build and run **ainf_slamo**.  
 Ensure they are installed and properly configured before proceeding.
+- Update the repos: classes and interfaces in RoboComp
 
 ### 1. System packages
 
 ```bash
 sudo apt install build-essential cmake git unzip wget \
     qt6-base-dev qt6-declarative-dev qt6-scxml-dev \
-    libqt6statemachineqml6 libqt6statemachine6
+    libqt6statemachineqml6 libqt6statemachine6 libboost-all-dev nvidia-cuda-toolkit
 ```
 
 ### 2. LibTorch (C++ PyTorch)
