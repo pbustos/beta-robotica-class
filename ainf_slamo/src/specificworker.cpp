@@ -549,6 +549,7 @@ void SpecificWorker::start_episode(const std::string &mission_type,
     add_param("trajectory_steps", static_cast<float>(p.trajectory_steps));
     add_param("trajectory_dt", p.trajectory_dt);
     add_param("mppi_lambda", p.mppi_lambda);
+    add_param("sampling_mode", static_cast<float>(static_cast<int>(p.sampling_mode)));
     add_param("sigma_adv", p.sigma_adv);
     add_param("sigma_rot", p.sigma_rot);
     add_param("noise_alpha", p.noise_alpha);

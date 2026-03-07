@@ -18,6 +18,7 @@ class TrajectoryController
 {
 public:
     enum class ControlMode { MPPI, PD };
+    enum class SamplingMode { FULL_SEQUENCE = 0, CONSTANT_COMMAND = 1 };
 
     struct Params
     {
@@ -46,7 +47,7 @@ public:
         float goal_threshold   = 0.25f;
 
         // MPPI sampling — initial / baseline values (adapted by ESS)
-        int   num_samples      = 100;       // K baseline
+        int   num_samples      = 500;       // K baseline
         int   trajectory_steps = 50;       // T baseline
         float trajectory_dt    = 0.1f;     // dt per step
 
@@ -62,7 +63,7 @@ public:
         int debug_print_period = 20;          // print MPPI diagnostics every N compute cycles
 
         // ESS-based adaptive ranges
-        int   K_min = 20,  K_max = 120;    // adaptive K bounds
+        int   K_min = 20,  K_max = 500;    // adaptive K bounds
         int   T_min = 15,  T_max = 120;     // adaptive T bounds
         float lambda_min = 1.0f, lambda_max = 500.0f;  // adaptive λ bounds
         float cpu_budget_ms = 5.0f;        // max MPPI time per cycle (10% of 50ms)
@@ -72,6 +73,11 @@ public:
 
         // MPPI temperature (initial, adapted by ESS)
         float mppi_lambda       = 8.0f;
+
+        // MPPI seed parameterization for A/B testing
+        SamplingMode sampling_mode = SamplingMode::FULL_SEQUENCE;
+        //SamplingMode sampling_mode = SamplingMode::CONSTANT_COMMAND;
+        
 
         // Noise standard deviations (for Gaussian perturbations)
         float sigma_adv   = 0.12f;

@@ -927,6 +927,60 @@ std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectorie
     std::vector<Seed> seeds;
     seeds.reserve(K);
 
+    if (active_params_.sampling_mode == SamplingMode::CONSTANT_COMMAND)
+    {
+        auto make_constant_seed = [T](float adv_cmd, float rot_cmd, bool use_info)
+        {
+            Seed s;
+            s.adv.assign(T, adv_cmd);
+            s.rot.assign(T, rot_cmd);
+            s.use_info_correction = use_info;
+            return s;
+        };
+
+        const float nom_adv0 = nominal.adv.empty() ? active_params_.min_adv_cmd : nominal.adv.front();
+        const float nom_rot0 = nominal.rot.empty() ? 0.f : nominal.rot.front();
+        seeds.push_back(make_constant_seed(nom_adv0, nom_rot0, false));
+
+        const std::array<float, 6> offsets = {
+            active_params_.inject_offset_30, -active_params_.inject_offset_30,
+            active_params_.inject_offset_60, -active_params_.inject_offset_60,
+            active_params_.inject_offset_90, -active_params_.inject_offset_90
+        };
+        const float Kp_nom = 2.5f;
+        for (float offset : offsets)
+        {
+            const float angle_err = std::clamp(carrot_angle + offset,
+                                               -static_cast<float>(M_PI), static_cast<float>(M_PI));
+            const float rot_cmd = std::clamp(Kp_nom * angle_err,
+                                             -active_params_.max_rot, active_params_.max_rot);
+            const float alignment = std::cos(angle_err);
+            float adv_cmd = active_params_.max_adv * active_params_.injection_adv_scale
+                          * std::max(active_params_.nominal_alignment_floor, alignment);
+            const float dist_factor = std::min(1.f, carrot_dist / std::max(active_params_.nominal_goal_dist_scale, 1e-6f));
+            adv_cmd *= dist_factor;
+            adv_cmd = std::clamp(adv_cmd, active_params_.min_adv_cmd, active_params_.max_adv);
+            seeds.push_back(make_constant_seed(adv_cmd, rot_cmd, false));
+        }
+
+        const int n_random = std::max(0, K - static_cast<int>(seeds.size()));
+        for (int k = 0; k < n_random; ++k)
+        {
+            const float eps_adv = normal_(rng_) * adaptive_sigma_adv_;
+            const float eps_rot = normal_(rng_) * adaptive_sigma_rot_;
+            const float adv_cmd = std::clamp(nom_adv0 + eps_adv,
+                                             active_params_.min_adv_cmd, active_params_.max_adv);
+            const float rot_cmd = std::clamp(nom_rot0 + eps_rot,
+                                             -active_params_.max_rot, active_params_.max_rot);
+
+            // In constant-command mode we disable IT correction because
+            // sampling no longer follows the full per-step Gaussian model.
+            seeds.push_back(make_constant_seed(adv_cmd, rot_cmd, false));
+        }
+
+        return seeds;
+    }
+
     // --- Seed 0: the nominal itself (zero perturbation) --------------------
     Seed nominal_copy = nominal;
     nominal_copy.use_info_correction = false;
