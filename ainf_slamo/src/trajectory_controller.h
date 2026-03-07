@@ -44,10 +44,15 @@ public:
 
         // Carrot / path following
         float carrot_lookahead = 2.0f;
+        bool  carrot_curve_adaptation_enabled = false; // temporary inhibit switch for curve-based carrot adaptation
+        float carrot_curve_lookahead_min = 0.9f;   // minimum lookahead used only in tight curves
+        float carrot_curve_radius_ref = 1.6f;      // radius where lookahead reduction reaches ~50%
+        float carrot_curve_min_heading_change = 0.08f; // rad; below this, path is considered straight
+        float carrot_curve_release_heading_change = 0.04f; // hysteresis release threshold (straight again)
         float goal_threshold   = 0.25f;
 
         // MPPI sampling — initial / baseline values (adapted by ESS)
-        int   num_samples      = 500;       // K baseline
+        int   num_samples      = 100;       // K baseline
         int   trajectory_steps = 50;       // T baseline
         float trajectory_dt    = 0.1f;     // dt per step
 
@@ -63,7 +68,7 @@ public:
         int debug_print_period = 20;          // print MPPI diagnostics every N compute cycles
 
         // ESS-based adaptive ranges
-        int   K_min = 20,  K_max = 500;    // adaptive K bounds
+        int   K_min = 20,  K_max = 300;    // adaptive K bounds
         int   T_min = 15,  T_max = 120;     // adaptive T bounds
         float lambda_min = 1.0f, lambda_max = 500.0f;  // adaptive λ bounds
         float cpu_budget_ms = 5.0f;        // max MPPI time per cycle (10% of 50ms)
@@ -108,7 +113,7 @@ public:
         float lambda_obstacle  = 8.0f;   // global obstacle weight (single multiplier)
         float lambda_smooth    = 0.05f;
         float lambda_velocity  = 0.01f;
-        float lambda_delta_vel = 0.05f;
+        float lambda_delta_vel = 0.18f;
         float lambda_heading   = 0.6f;   // heading term multiplier relative to lambda_goal
         float lambda_progress  = 1.0f;   // moving-away penalty multiplier relative to lambda_goal
 
@@ -117,9 +122,28 @@ public:
         float close_obstacle_gain   = 3.0f;   // hard-zone multiplier (inside close_obstacle_margin)
         float obstacle_cost_cap     = 8.0f;   // per-step obstacle cost cap (prevents ESS collapse in narrow passages)
 
+        // Lateral clearance shaping (pre-SG): penalize trajectories that run
+        // too close to side obstacles, helping recentring in narrow passages.
+        float lambda_lateral_clearance = 3.8f;
+        float lateral_probe_offset = 0.22f;         // side probe offset from trajectory centerline
+        float lateral_clearance_margin = 0.2;     // desired extra side clearance over robot radius
+        float lateral_closing_gain = 1.5f;          // extra penalty when side clearance is decreasing
+
+        // Continuous clearance relaxation near final goal (no hard switch):
+        // far from goal -> use d_safe, close to goal -> relax toward robot_radius + goal_obstacle_margin
+        float goal_clearance_relax_dist = 1.2f;
+        float goal_obstacle_margin = 0.02f;
+
         // Collision and velocity-shape penalties in rollout score
         float collision_penalty = 400.0f;
-        float rot_cost_factor = 4.0f;         // relative cost multiplier for rotational effort
+        float hard_collision_horizon_s = 1.2f;  // only collisions within this lookahead are treated as hard-infeasible
+        float far_collision_penalty_scale = 0.5f; // extra soft penalty for collisions beyond hard horizon
+        float rot_cost_factor = 5.0f;         // relative cost multiplier for rotational effort
+
+        // Exploration gating by Safety-Guard proximity (sigmoid on frontal distance)
+        float sg_explore_pre_distance = 0.40f; // start increasing exploration this much before SG activation distance
+        float sg_explore_sigmoid_width = 0.12f; // transition softness (meters)
+
 
         // Nominal and injected seed shaping
         float nominal_alignment_floor = 0.1f; // minimum forward alignment when turning toward carrot
@@ -187,7 +211,7 @@ public:
         float heading_norm_epsilon = 0.01f;
 
         // Output smoothing
-        float velocity_smoothing = 0.55f;
+        float velocity_smoothing = 0.60f;
 
         // PD carrot-follower gains
         float pd_Kp_rot = 2.0f;         // proportional gain for angular error
@@ -198,7 +222,9 @@ public:
         int num_trajectories_to_draw = 10;
 
         // Gaussian brake for high rotation (to prevent oscillation)
-        float gauss_k = 1.5f;  // Gentle brake at high rotation (was 3.0 for anti-oscillation)
+        // Reduced from 1.5: lambda_delta_vel now handles oscillation in scoring,
+        // and nominal cos(angle_err) already reduces speed when turning.
+        float gauss_k = 0.6f;
     };
 
     struct ControlOutput
@@ -284,22 +310,28 @@ private:
     float adaptive_sigma_adv_;
     float adaptive_sigma_rot_;
 
-    // ESS-based adaptive state
+    // Adaptive MPPI state
     int   adaptive_K_;               // current number of samples
     int   adaptive_T_;               // current horizon length
     float adaptive_lambda_;          // current MPPI temperature
     float ess_smooth_ = 0.f;        // EMA-smoothed ESS
-    float explore_ = 0.f;           // continuous exploration signal [0,1] derived from ESS
+    float dominance_smooth_ = 0.5f; // EMA-smoothed dominance in [0,1]
+    float explore_ = 0.f;           // continuous exploration signal [0,1] = 1 - dominance
+    float sg_explore_gate_smooth_ = 0.f; // EMA-smoothed Safety-Guard gating factor in [0,1]
     float last_mppi_ms_ = 0.f;      // last MPPI wall-clock time
     int   safety_guard_mood_cooldown_ = 0; // cycles until next mood bump allowed
+    bool  carrot_curve_active_ = false; // hold reduced carrot lookahead while inside a curve
 
-    // Compute ESS from weights and adapt λ
+    // Compute ESS for diagnostics and adapt from dominance
     float compute_ess(const std::vector<float>& weights, int K) const;
-    void adapt_from_ess(float ess, int K, int num_collisions);
+    void adapt_from_dominance(float dominance, int K, float sg_gate);
     void refresh_active_params();
 
     // Elastic-band path relaxation: push waypoints toward center of free space
     void relax_path(int iterations = 20);
+
+    // Catmull-Rom spline smoothing: replace polyline with smooth curve
+    void smooth_path_spline();
 
     // RNG
     std::mt19937 rng_{std::random_device{}()};
@@ -328,21 +360,26 @@ private:
     float query_esdf(float rx, float ry) const;
     Eigen::Vector2f query_esdf_gradient(float rx, float ry) const;
 
-    Eigen::Vector2f compute_carrot(const Eigen::Affine2f& robot_pose) const;
+    Eigen::Vector2f compute_carrot(const Eigen::Affine2f& robot_pose);
     void advance_waypoints(const Eigen::Affine2f& robot_pose);
 
     // Nominal control toward carrot (initial guess for warm-start)
     Seed compute_nominal(const Eigen::Vector2f& carrot_robot, int steps) const;
 
     // MPPI sampling: generate K perturbations around the nominal
-    std::vector<Seed> sample_trajectories(const Eigen::Vector2f& carrot_robot, const Seed& nominal);
+    std::vector<Seed> sample_trajectories(const Eigen::Vector2f& carrot_robot,
+                                          const Seed& nominal);
 
-    SimResult simulate_and_score(const Seed& seed, const Eigen::Vector2f& carrot_robot, const Seed& nominal);
+    SimResult simulate_and_score(const Seed& seed,
+                                 const Eigen::Vector2f& carrot_robot,
+                                 const Eigen::Vector2f& goal_robot,
+                                 const Seed& nominal);
     void optimize_seed(Seed& seed, const Eigen::Vector2f& carrot_robot);
 
     // Obstacle scoring helpers (single-weight 2-stage quadratic model)
-    float obstacle_step_cost(float esdf_val) const;
-    float obstacle_repulsion_strength(float esdf_val) const;
+    float effective_d_safe_for_goal_dist(float goal_dist) const;
+    float obstacle_step_cost(float esdf_val, float d_safe_eff) const;
+    float obstacle_repulsion_strength(float esdf_val, float d_safe_eff) const;
 
     // PD carrot-follower (alternative to MPPI)
     ControlOutput compute_pd(ControlOutput& out,

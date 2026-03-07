@@ -101,10 +101,22 @@ void TrajectoryController::refresh_active_params()
     active_params_.mppi_lambda = std::clamp(active_params_.mppi_lambda, active_params_.lambda_min, active_params_.lambda_max);
 }
 
-float TrajectoryController::obstacle_step_cost(float esdf_val) const
+float TrajectoryController::effective_d_safe_for_goal_dist(float goal_dist) const
 {
-    const float d_safe = std::max(active_params_.d_safe, active_params_.robot_radius + 1e-3f);
+    const float near_safe = std::max(active_params_.robot_radius + active_params_.goal_obstacle_margin,
+                                     active_params_.robot_radius + 0.005f);
+    const float far_safe = std::max(active_params_.d_safe, near_safe);
+    const float tau = std::max(active_params_.goal_clearance_relax_dist, 1e-3f);
+    const float alpha = std::exp(-std::max(goal_dist, 0.f) / tau); // 1 near goal, 0 far
+    return std::clamp((1.f - alpha) * far_safe + alpha * near_safe, near_safe, far_safe);
+}
+
+float TrajectoryController::obstacle_step_cost(float esdf_val, float d_safe_eff) const
+{
+    const float d_safe = std::max(d_safe_eff, active_params_.robot_radius + 1e-3f);
     const float soft_span = std::max(d_safe - active_params_.robot_radius, 1e-3f);
+    const float hard_margin = std::max(active_params_.close_obstacle_margin, 1e-3f);
+    const float hard_threshold = active_params_.robot_radius + hard_margin;
 
     float soft_penalty = 0.f;
     if (esdf_val < d_safe)
@@ -113,8 +125,6 @@ float TrajectoryController::obstacle_step_cost(float esdf_val) const
         soft_penalty = normalized * normalized;
     }
 
-    const float hard_margin = std::max(active_params_.close_obstacle_margin, 1e-3f);
-    const float hard_threshold = active_params_.robot_radius + hard_margin;
     float hard_penalty = 0.f;
     if (esdf_val < hard_threshold)
     {
@@ -126,10 +136,12 @@ float TrajectoryController::obstacle_step_cost(float esdf_val) const
     return std::min(g_obs, active_params_.obstacle_cost_cap);
 }
 
-float TrajectoryController::obstacle_repulsion_strength(float esdf_val) const
+float TrajectoryController::obstacle_repulsion_strength(float esdf_val, float d_safe_eff) const
 {
-    const float d_safe = std::max(active_params_.d_safe, active_params_.robot_radius + 1e-3f);
+    const float d_safe = std::max(d_safe_eff, active_params_.robot_radius + 1e-3f);
     const float soft_span = std::max(d_safe - active_params_.robot_radius, 1e-3f);
+    const float hard_margin = std::max(active_params_.close_obstacle_margin, 1e-3f);
+    const float hard_threshold = active_params_.robot_radius + hard_margin;
 
     float strength = 0.f;
     if (esdf_val < d_safe)
@@ -138,8 +150,6 @@ float TrajectoryController::obstacle_repulsion_strength(float esdf_val) const
         strength += active_params_.lambda_obstacle * normalized;
     }
 
-    const float hard_margin = std::max(active_params_.close_obstacle_margin, 1e-3f);
-    const float hard_threshold = active_params_.robot_radius + hard_margin;
     if (esdf_val < hard_threshold)
     {
         const float normalized = (hard_threshold - esdf_val) / hard_margin;
@@ -164,6 +174,9 @@ void TrajectoryController::set_path(const std::vector<Eigen::Vector2f>& path_roo
     // Push waypoints away from walls/furniture toward center of free space
     relax_path(40);
 
+    // Smooth path with Catmull-Rom spline interpolation for continuous curvature
+    smooth_path_spline();
+
     has_prev_vel_ = false;
     smoothed_vel_ = Eigen::Vector3f::Zero();
 
@@ -172,9 +185,11 @@ void TrajectoryController::set_path(const std::vector<Eigen::Vector2f>& path_roo
     adaptive_T_ = active_params_.trajectory_steps;
     adaptive_lambda_ = active_params_.mppi_lambda;
     ess_smooth_ = static_cast<float>(adaptive_K_) * active_params_.ess_initial_ratio;
+    dominance_smooth_ = 0.5f;
     explore_ = 0.f;
     last_mppi_ms_ = 0.f;
     safety_guard_mood_cooldown_ = 0;
+    carrot_curve_active_ = false;
 
     prev_optimal_.assign(adaptive_T_, {0.f, 0.f});
     adaptive_sigma_adv_ = active_params_.sigma_adv;
@@ -193,6 +208,7 @@ void TrajectoryController::stop()
     smoothed_vel_ = Eigen::Vector3f::Zero();
     prev_optimal_.clear();
     safety_guard_mood_cooldown_ = 0;
+    carrot_curve_active_ = false;
 }
 
 void TrajectoryController::set_static_obstacles(
@@ -345,6 +361,107 @@ std::optional<Eigen::Vector2f> TrajectoryController::current_waypoint_room() con
 }
 
 // ============================================================================
+// Catmull-Rom spline path smoothing
+// Replaces the piecewise-linear (relaxed) path with a smooth curve that
+// preserves start/end points and passes through all original waypoints.
+// The output spacing is uniform (~spline_spacing meters between points).
+// ============================================================================
+
+void TrajectoryController::smooth_path_spline()
+{
+    const int n = static_cast<int>(path_room_.size());
+    if (n < 3) return;  // need at least 3 points for meaningful spline
+
+    constexpr float spline_spacing = 0.15f;  // output resolution in meters
+    constexpr float alpha = 0.5f;             // centripetal Catmull-Rom (0.5)
+
+    // Evaluate one Catmull-Rom segment between P1 and P2
+    // (P0, P1, P2, P3 are the four control points)
+    auto catmull_rom = [alpha](const Eigen::Vector2f& P0, const Eigen::Vector2f& P1,
+                               const Eigen::Vector2f& P2, const Eigen::Vector2f& P3,
+                               float t) -> Eigen::Vector2f
+    {
+        // Knot parameterization
+        auto knot = [alpha](float ti, const Eigen::Vector2f& a, const Eigen::Vector2f& b)
+        {
+            float d = (b - a).squaredNorm();
+            return ti + std::pow(std::max(d, 1e-8f), alpha * 0.5f);
+        };
+        float t0 = 0.f;
+        float t1 = knot(t0, P0, P1);
+        float t2 = knot(t1, P1, P2);
+        float t3 = knot(t2, P2, P3);
+
+        // Map t in [0,1] to [t1, t2]
+        float u = t1 + t * (t2 - t1);
+
+        auto lerp = [](const Eigen::Vector2f& a, const Eigen::Vector2f& b, float ta, float tb, float tu)
+        {
+            float f = (tu - ta) / std::max(tb - ta, 1e-8f);
+            return (1.f - f) * a + f * b;
+        };
+
+        Eigen::Vector2f A1 = lerp(P0, P1, t0, t1, u);
+        Eigen::Vector2f A2 = lerp(P1, P2, t1, t2, u);
+        Eigen::Vector2f A3 = lerp(P2, P3, t2, t3, u);
+        Eigen::Vector2f B1 = lerp(A1, A2, t0, t2, u);
+        Eigen::Vector2f B2 = lerp(A2, A3, t1, t3, u);
+        return lerp(B1, B2, t1, t2, u);
+    };
+
+    std::vector<Eigen::Vector2f> smooth;
+    smooth.push_back(path_room_.front());
+
+    for (int i = 0; i < n - 1; ++i)
+    {
+        // Clamp control points at boundaries
+        const Eigen::Vector2f& P0 = path_room_[std::max(0, i - 1)];
+        const Eigen::Vector2f& P1 = path_room_[i];
+        const Eigen::Vector2f& P2 = path_room_[std::min(n - 1, i + 1)];
+        const Eigen::Vector2f& P3 = path_room_[std::min(n - 1, i + 2)];
+
+        float seg_len = (P2 - P1).norm();
+        int n_sub = std::max(1, static_cast<int>(std::ceil(seg_len / spline_spacing)));
+
+        for (int s = 1; s <= n_sub; ++s)
+        {
+            float t = static_cast<float>(s) / static_cast<float>(n_sub);
+            smooth.push_back(catmull_rom(P0, P1, P2, P3, t));
+        }
+    }
+
+    // Safety: verify spline points stay inside free space (min clearance from obstacles)
+    if (!room_boundary_points_room_.empty() || !static_obstacle_points_room_.empty())
+    {
+        const float min_clearance = active_params_.robot_radius + 0.03f;
+        std::vector<Eigen::Vector2f> all_obs;
+        all_obs.insert(all_obs.end(), room_boundary_points_room_.begin(), room_boundary_points_room_.end());
+        all_obs.insert(all_obs.end(), static_obstacle_points_room_.begin(), static_obstacle_points_room_.end());
+
+        for (auto& pt : smooth)
+        {
+            float min_dist_sq = std::numeric_limits<float>::max();
+            Eigen::Vector2f nearest = pt;
+            for (const auto& obs_pt : all_obs)
+            {
+                float dsq = (pt - obs_pt).squaredNorm();
+                if (dsq < min_dist_sq) { min_dist_sq = dsq; nearest = obs_pt; }
+            }
+            float dist = std::sqrt(min_dist_sq);
+            if (dist < min_clearance && dist > 1e-4f)
+            {
+                // Push point away from obstacle to maintain clearance
+                Eigen::Vector2f away = (pt - nearest) / dist;
+                pt = nearest + away * min_clearance;
+            }
+        }
+    }
+
+    path_room_ = std::move(smooth);
+    std::cout << "[TrajectoryCtrl] Path spline-smoothed: " << path_room_.size() << " points\n";
+}
+
+// ============================================================================
 // Main compute — Proper MPPI with warm-start + Gaussian perturbations
 // ============================================================================
 
@@ -373,25 +490,89 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     if (out.dist_to_goal < active_params_.goal_threshold)
     { active_ = false; out.goal_reached = true; std::cout << "[TrajectoryCtrl] Goal reached!\n"; return out; }
 
-    // 4. Carrot
+    out.min_esdf = query_esdf(0.f, 0.f);
+
+    // Safety-Guard proximity proxy from frontal LiDAR distance (continuous in [0,1]).
+    // Exploration should ramp up only near SG activation distance.
+    float sg_gate = 0.f;
+    float frontal_min_dist = std::numeric_limits<float>::infinity();
+    {
+        constexpr float sg_front_cone_rad = 0.45f;
+        const float sg_on_dist = active_params_.d_safe + 0.08f;
+        const float sg_center = sg_on_dist + active_params_.sg_explore_pre_distance;
+        const float sg_width = std::max(1e-3f, active_params_.sg_explore_sigmoid_width);
+
+        for (const auto &p : lidar_points)
+        {
+            const float px = p.x();
+            const float py = p.y();
+            if (py <= 0.f) continue;
+
+            const float d = std::hypot(px, py);
+            if (d < active_params_.robot_radius + 0.05f) continue;
+
+            const float ang = std::abs(std::atan2(px, py));
+            if (ang <= sg_front_cone_rad)
+                frontal_min_dist = std::min(frontal_min_dist, d);
+        }
+
+        if (std::isfinite(frontal_min_dist))
+        {
+            const float x = (frontal_min_dist - sg_center) / sg_width;
+            const float raw = 1.f / (1.f + std::exp(x));
+            sg_explore_gate_smooth_ = 0.8f * sg_explore_gate_smooth_ + 0.2f * std::clamp(raw, 0.f, 1.f);
+            sg_gate = std::clamp(sg_explore_gate_smooth_, 0.f, 1.f);
+        }
+        else
+        {
+            sg_explore_gate_smooth_ *= 0.8f;
+            sg_gate = std::clamp(sg_explore_gate_smooth_, 0.f, 1.f);
+        }
+    }
+
+    // 4. Carrot (fixed lookahead, no displacement/bias)
     const Eigen::Vector2f carrot_room = compute_carrot(robot_pose);
     const Eigen::Vector2f carrot_robot = room_to_robot(carrot_room, robot_pose);
     out.carrot_room = carrot_room;
     out.current_wp_index = wp_index_;
-    out.min_esdf = query_esdf(0.f, 0.f);
 
     // ---- PD carrot-follower mode: simple proportional-derivative controller ----
     if (control_mode_ == ControlMode::PD)
         return compute_pd(out, carrot_robot, lidar_points, robot_pose);
 
-    // 5-6. Tracking MPPI: compute the nominal (straight-to-carrot) each cycle
-    //       and use it as the sampling center.  This guarantees the exploration
-    //       region always covers the carrot direction, unlike warm-start which
-    //       can drift to zero and never recover.
+    // 5-6. Tracking MPPI: compute nominal toward carrot and blend it with
+    //       the shifted previous optimum to create the actual sampling center.
+    //       This preserves carrot coverage while adding stronger temporal momentum.
     Seed nominal_seed = compute_nominal(carrot_robot, T);
+    Seed sampling_center = nominal_seed;
+    float ws_adv_eff = 0.f;
+    float ws_rot_eff = 0.f;
+    {
+        const float ws_boost = 1.f + 0.75f * sg_gate + 0.50f * explore_;
+        ws_adv_eff = std::clamp(active_params_.warm_start_adv_weight * ws_boost, 0.f, 0.97f);
+        ws_rot_eff = std::clamp(active_params_.warm_start_rot_weight * ws_boost, 0.f, 0.97f);
 
-    // 7. Sample K trajectories around the nominal
-    auto seeds = sample_trajectories(carrot_robot, nominal_seed);
+        if (!prev_optimal_.empty())
+        {
+            const int prev_T = static_cast<int>(prev_optimal_.size());
+            for (int t = 0; t < T; ++t)
+            {
+                const int p = std::min(t + 1, prev_T - 1);  // shifted warm start
+                const float prev_adv = prev_optimal_[p].adv;
+                const float prev_rot = prev_optimal_[p].rot;
+
+                sampling_center.adv[t] = std::clamp(
+                    (1.f - ws_adv_eff) * nominal_seed.adv[t] + ws_adv_eff * prev_adv,
+                    active_params_.min_adv_cmd, active_params_.max_adv);
+                sampling_center.rot[t] = std::clamp(
+                    (1.f - ws_rot_eff) * nominal_seed.rot[t] + ws_rot_eff * prev_rot,
+                    -active_params_.max_rot, active_params_.max_rot);
+            }
+        }
+    }
+
+    // 7. Sample K trajectories around the blended center
+    auto seeds = sample_trajectories(carrot_robot, sampling_center);
     const int actual_K = static_cast<int>(seeds.size());
 
     // 8. Simulate, optimize, and score each sample
@@ -402,7 +583,7 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     for (int k = 0; k < actual_K; ++k)
     {
         optimize_seed(seeds[k], carrot_robot);
-        results[k] = simulate_and_score(seeds[k], carrot_robot, nominal_seed);
+        results[k] = simulate_and_score(seeds[k], carrot_robot, goal_robot, sampling_center);
         if (results[k].G_total < best_G)
         {
             best_G = results[k].G_total;
@@ -415,6 +596,10 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     std::vector<ControlStep> weighted_optimal(T, {0.f, 0.f});
     float ess_current = 0.f;
     float lambda_used = adaptive_lambda_;
+    float dominance_current = 0.f;
+    float p_free_current = 0.f;
+    float steering_concentration_current = 0.f;
+    float clearance_quality_current = 0.f;
     int num_collisions = 0;
     {
         const float G_min = best_G;
@@ -450,9 +635,66 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
             w_sum += weights[k];
         }
 
-        // Compute ESS
+        // Compute ESS (diagnostics)
         ess_current = compute_ess(weights, actual_K);
         ess_smooth_ = 0.75f * ess_smooth_ + 0.25f * ess_current;
+
+        // Dominance D = free-survival mass * steering concentration
+        // D≈0 -> no viable dominant bypass (explore more)
+        // D≈1 -> clear viable direction dominates (exploit more)
+        const int num_survivors = actual_K - num_collisions;
+        const float p_free = static_cast<float>(std::max(0, num_survivors))
+                           / static_cast<float>(std::max(actual_K, 1));
+        float steering_concentration = 0.f;
+        float clearance_quality = 0.f;
+        if (num_survivors > 0)
+        {
+            float cos_acc = 0.f;
+            float sin_acc = 0.f;
+            float clear_acc = 0.f;
+            float w_acc = 0.f;
+            const bool use_soft_weights = (w_sum > active_params_.weights_epsilon);
+            const float clear_denom = std::max(active_params_.d_safe - active_params_.robot_radius, 1e-3f);
+            for (int k = 0; k < actual_K; ++k)
+            {
+                if (results[k].collides)
+                    continue;
+
+                const float wk = use_soft_weights
+                    ? (weights[k] / w_sum)
+                    : (1.f / static_cast<float>(num_survivors));
+
+                const int steps_k = static_cast<int>(seeds[k].rot.size());
+                const int heading_window = std::min(8, steps_k);
+                float steering_angle = 0.f;
+                for (int s = 0; s < heading_window; ++s)
+                    steering_angle += seeds[k].rot[s] * active_params_.trajectory_dt;
+
+                const float clearance_norm = std::clamp(
+                    (results[k].min_esdf - active_params_.robot_radius) / clear_denom,
+                    0.f, 1.f);
+
+                cos_acc += wk * std::cos(steering_angle);
+                sin_acc += wk * std::sin(steering_angle);
+                clear_acc += wk * clearance_norm;
+                w_acc += wk;
+            }
+            if (w_acc > active_params_.weights_epsilon)
+            {
+                steering_concentration = std::sqrt(cos_acc * cos_acc + sin_acc * sin_acc) / w_acc;
+                clearance_quality = clear_acc / w_acc;
+            }
+        }
+        p_free_current = p_free;
+        steering_concentration_current = steering_concentration;
+        clearance_quality_current = clearance_quality;
+
+        // Root-cause fix:
+        // In narrow doors/corridors, absolute clearance quality can be low even when
+        // many rollouts are feasible and directionally consistent.
+        // Multiplying by C collapsed dominance and forced excessive exploration,
+        // which produced dithering/stops at doorways. Use feasibility+direction only.
+        dominance_current = std::clamp(p_free * steering_concentration, 0.f, 1.f);
 
         // Textbook MPPI weighted average: U_new = Σ w_k * V_k
         // Since all V_k = U + ε_k and Σ w_k = 1, this is equivalent to
@@ -474,28 +716,6 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
             }
 
             optimal = weighted_optimal;
-
-            // Low-ESS blending with best seed:
-            // when ESS/K is very low, weighted averaging tends to produce
-            // indecisive slow commands in narrow passages.
-            if (best_idx >= 0)
-            {
-                const float ess_ratio = std::clamp(ess_current / static_cast<float>(std::max(actual_K, 1)), 0.f, 1.f);
-                const float blend_start = std::clamp(active_params_.ess_blend_best_start, 0.f, 1.f);
-                const float blend_max = std::clamp(active_params_.ess_blend_best_max, 0.f, 1.f);
-                if (blend_start > 1e-6f && ess_ratio < blend_start)
-                {
-                    const float low_ess_strength = (blend_start - ess_ratio) / blend_start; // 0..1
-                    const float blend = std::clamp(blend_max * low_ess_strength, 0.f, 1.f);
-                    const int steps_b = static_cast<int>(seeds[best_idx].adv.size());
-                    const int blend_steps = std::min(T, steps_b);
-                    for (int t = 0; t < blend_steps; ++t)
-                    {
-                        optimal[t].adv = (1.f - blend) * weighted_optimal[t].adv + blend * seeds[best_idx].adv[t];
-                        optimal[t].rot = (1.f - blend) * weighted_optimal[t].rot + blend * seeds[best_idx].rot[t];
-                    }
-                }
-            }
         }
         else if (best_idx >= 0)
         {
@@ -509,8 +729,64 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
         }
     }
 
-    // 10. Minimal ESS-based λ adaptation
-    adapt_from_ess(ess_current, actual_K, num_collisions);
+    // 10. Single-metric adaptation from rollout dominance gated by SG proximity
+    adapt_from_dominance(dominance_current, actual_K, sg_gate);
+
+    // Top-K decisive blending: when exploration is high, blend weighted mean
+    // toward the weighted average of the top-3 feasible seeds rather than the
+    // single best.  This eliminates frame-to-frame sign flips when two
+    // competing seeds alternate as "best" near doorways.
+    {
+        constexpr int top_k_count = 3;
+        const float decisive = std::clamp(explore_ * explore_, 0.f, 0.85f);
+        if (decisive > 1e-4f && actual_K > 0)
+        {
+            // Collect indices of non-colliding seeds sorted by cost
+            std::vector<int> free_indices;
+            free_indices.reserve(actual_K);
+            for (int k = 0; k < actual_K; ++k)
+                if (!results[k].collides) free_indices.push_back(k);
+            // Fall back to all seeds if none are free
+            if (free_indices.empty())
+                for (int k = 0; k < actual_K; ++k) free_indices.push_back(k);
+
+            std::sort(free_indices.begin(), free_indices.end(),
+                      [&](int a, int b) { return results[a].G_total < results[b].G_total; });
+            const int n_top = std::min(top_k_count, static_cast<int>(free_indices.size()));
+
+            // Softmax weights over top-K costs (temperature = lambda_used)
+            float top_w_sum = 0.f;
+            std::vector<float> top_w(n_top);
+            const float G_top_min = results[free_indices[0]].G_total;
+            for (int i = 0; i < n_top; ++i)
+            {
+                const float exp_arg = std::max(-30.f, -(results[free_indices[i]].G_total - G_top_min)
+                                                       / std::max(lambda_used, 1e-6f));
+                top_w[i] = std::exp(exp_arg);
+                top_w_sum += top_w[i];
+            }
+            if (top_w_sum > 1e-10f)
+            {
+                for (int t = 0; t < T; ++t)
+                {
+                    float blend_adv = 0.f, blend_rot = 0.f;
+                    for (int i = 0; i < n_top; ++i)
+                    {
+                        const int ki = free_indices[i];
+                        const float w = top_w[i] / top_w_sum;
+                        const int steps_k = static_cast<int>(seeds[ki].adv.size());
+                        if (t < steps_k)
+                        {
+                            blend_adv += w * seeds[ki].adv[t];
+                            blend_rot += w * seeds[ki].rot[t];
+                        }
+                    }
+                    optimal[t].adv = (1.f - decisive) * optimal[t].adv + decisive * blend_adv;
+                    optimal[t].rot = (1.f - decisive) * optimal[t].rot + decisive * blend_rot;
+                }
+            }
+        }
+    }
 
     // Export ESS diagnostics
     out.ess = ess_smooth_;
@@ -525,9 +801,22 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     last_mppi_ms_ = std::chrono::duration<float, std::milli>(
         std::chrono::steady_clock::now() - t_mppi_start).count();
 
-    // 11. Extract first-step command
-    float cmd_adv = optimal[0].adv;
-    float cmd_rot = optimal[0].rot;
+    float cmd_adv = 0.f, cmd_rot = 0.f;
+    // 11. Extract command: average first 3 steps of the optimal sequence.
+    // Step 0 has the highest perturbation variance; averaging [0..2] is a
+    // standard MPPI technique that smooths the output without adding lag.
+    {
+        constexpr int cmd_window = 3;
+        const int n_avg = std::min(cmd_window, T);
+        float sum_adv = 0.f, sum_rot = 0.f;
+        for (int t = 0; t < n_avg; ++t)
+        {
+            sum_adv += optimal[t].adv;
+            sum_rot += optimal[t].rot;
+        }
+        cmd_adv = sum_adv / static_cast<float>(n_avg);
+        cmd_rot = sum_rot / static_cast<float>(n_avg);
+    }
 
     // 12. Viz: trajectories in room frame (subsample for drawing)
     {
@@ -708,7 +997,7 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
                 out.rot = preferred_sign * std::max(0.15f, 0.7f * active_params_.max_rot);
 
                 if (query_esdf(0.f, 0.f) < active_params_.robot_radius + 0.01f)
-                    out.rot = 0.f;
+                    out.adv = -std::min(active_params_.max_back_adv, 0.05f);
             }
         }
     }
@@ -721,7 +1010,14 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
                   << " λ=" << std::fixed << std::setprecision(1) << adaptive_lambda_
                   << " λw=" << std::setprecision(1) << lambda_used
                   << " ESS=" << std::setprecision(0) << ess_smooth_ << "/" << adaptive_K_
+                  << " Draw=" << std::setprecision(2) << dominance_current
+                  << " Ds=" << std::setprecision(2) << dominance_smooth_
+                  << " Pf=" << std::setprecision(2) << p_free_current
+                  << " Rθ=" << std::setprecision(2) << steering_concentration_current
+                  << " C=" << std::setprecision(2) << clearance_quality_current
                   << " E=" << std::setprecision(2) << explore_
+                  << " SG=" << std::setprecision(2) << sg_gate
+                  << " Ws(" << std::setprecision(2) << ws_adv_eff << "," << ws_rot_eff << ")"
                   << " ncol=" << num_collisions << "/" << actual_K
                   << " σr=" << std::setprecision(2) << adaptive_sigma_rot_
                   << " G=" << std::setprecision(1) << best_G
@@ -870,11 +1166,10 @@ TrajectoryController::Seed TrajectoryController::compute_nominal(
         while (angle_err < -static_cast<float>(M_PI)) angle_err += 2.f * static_cast<float>(M_PI);
 
         // PD-like proportional gain instead of bang-bang (angle_err/dt).
-        // angle_err/dt amplifies a 6° offset to 0.7 rad/s (clamped max_rot),
-        // producing 5-10x more rotation than the PD controller (Kp=2.0).
-        // This was the root cause of mean_rot ≈ 0.3 in all MPPI variants:
-        // ALL seeds are centered around an overly-aggressive nominal.
-        const float Kp_nom = 2.5f;  // slightly above PD's Kp=2.0 for MPPI margin
+        // Kp=1.8 saturates at ~22° heading error (vs 16° at 2.5), reducing
+        // unnecessary max-rot commands during small course corrections while
+        // still reaching max_rot at doors/corners (>22° error).
+        const float Kp_nom = 1.8f;
         float rot_cmd = std::clamp(Kp_nom * angle_err,
                                    -active_params_.max_rot, active_params_.max_rot);
 
@@ -915,7 +1210,8 @@ TrajectoryController::Seed TrajectoryController::compute_nominal(
 // ============================================================================
 
 std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectories(
-    const Eigen::Vector2f& carrot_robot, const Seed& nominal)
+    const Eigen::Vector2f& carrot_robot,
+    const Seed& nominal)
 {
     const int K = adaptive_K_;
     const int T = adaptive_T_;
@@ -947,7 +1243,7 @@ std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectorie
             active_params_.inject_offset_60, -active_params_.inject_offset_60,
             active_params_.inject_offset_90, -active_params_.inject_offset_90
         };
-        const float Kp_nom = 2.5f;
+        const float Kp_nom = 1.8f;
         for (float offset : offsets)
         {
             const float angle_err = std::clamp(carrot_angle + offset,
@@ -997,7 +1293,7 @@ std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectorie
         active_params_.inject_offset_90, -active_params_.inject_offset_90
     };
 
-    const float Kp_nom = 2.5f;  // same PD-like gain as compute_nominal
+    const float Kp_nom = 1.8f;  // same PD-like gain as compute_nominal
 
     for (float offset : offsets)
     {
@@ -1068,7 +1364,10 @@ std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectorie
 // ============================================================================
 
 TrajectoryController::SimResult TrajectoryController::simulate_and_score(
-    const Seed& seed, const Eigen::Vector2f& carrot_robot, const Seed& nominal)
+    const Seed& seed,
+    const Eigen::Vector2f& carrot_robot,
+    const Eigen::Vector2f& goal_robot,
+    const Seed& nominal)
 {
     SimResult res;
     const int steps = static_cast<int>(seed.adv.size());
@@ -1077,10 +1376,12 @@ TrajectoryController::SimResult TrajectoryController::simulate_and_score(
 
     float x = 0.f, y = 0.f, theta = 0.f;
     float G_obs_total = 0.f;
+    float G_lat_total = 0.f;
     float G_progress = 0.f;
     const float discount = active_params_.cost_discount;
     float discount_acc = 1.f;
     float prev_dist_to_carrot = carrot_robot.norm();
+    float prev_side_min = std::numeric_limits<float>::infinity();
     int actual_steps = 0;
 
     // Fix 1: Compute the scoring horizon — stop accumulating goal/progress cost
@@ -1119,16 +1420,69 @@ TrajectoryController::SimResult TrajectoryController::simulate_and_score(
         float esdf_val = query_esdf(x, y);
         res.min_esdf = std::min(res.min_esdf, esdf_val);
 
-        const float G_obs = obstacle_step_cost(esdf_val);
+        const float dist_goal_step = (Eigen::Vector2f(x, y) - goal_robot).norm();
+        const float d_safe_eff = effective_d_safe_for_goal_dist(dist_goal_step);
+        const float G_obs = obstacle_step_cost(esdf_val, d_safe_eff);
+
+        // Lateral-clearance shaping (continuous, pre-SG):
+        // sample ESDF on both sides of the predicted body center and penalize
+        // low side clearance and worsening side clearance trend.
+        {
+            const float probe_offset = std::max(0.f, active_params_.lateral_probe_offset);
+            const float ct = std::cos(theta);
+            const float st = std::sin(theta);
+
+            const float x_right = x + probe_offset * ct;
+            const float y_right = y - probe_offset * st;
+            const float x_left  = x - probe_offset * ct;
+            const float y_left  = y + probe_offset * st;
+
+            const float d_right = query_esdf(x_right, y_right);
+            const float d_left  = query_esdf(x_left, y_left);
+            const float side_min = std::min(d_left, d_right);
+
+            const float side_target = active_params_.robot_radius
+                                    + std::max(0.f, active_params_.lateral_clearance_margin);
+            const float side_span = std::max(active_params_.lateral_clearance_margin, 1e-3f);
+
+            float G_lat_step = 0.f;
+            if (side_min < side_target)
+            {
+                const float deficit = (side_target - side_min) / side_span;
+                G_lat_step += active_params_.lambda_lateral_clearance * deficit * deficit;
+            }
+
+            if (std::isfinite(prev_side_min) && side_min < prev_side_min)
+            {
+                const float closing = (prev_side_min - side_min) / side_span;
+                G_lat_step += active_params_.lambda_lateral_clearance
+                            * active_params_.lateral_closing_gain
+                            * std::max(0.f, closing);
+            }
+
+            G_lat_total += discount_acc * G_lat_step;
+            prev_side_min = side_min;
+        }
 
         G_obs_total += discount_acc * G_obs;
         discount_acc *= discount;
 
-        // Cut trajectory at collision
-        if (esdf_val < active_params_.robot_radius)
+        // Collision semantics with finite hard horizon:
+        // - near-term collision => hard infeasible (weight zero)
+        // - far collision      => soft penalty only (keeps rollout useful)
+        if (esdf_val < active_params_.robot_radius + active_params_.close_obstacle_margin)
         {
-            res.collides = true;
-            break;
+            const float ttc_s = static_cast<float>(s + 1) * dt;
+            if (ttc_s <= active_params_.hard_collision_horizon_s)
+            {
+                res.collides = true;
+                break;
+            }
+            else
+            {
+                G_obs_total += discount_acc * active_params_.far_collision_penalty_scale * active_params_.collision_penalty;
+                break;
+            }
         }
     }
 
@@ -1206,7 +1560,7 @@ TrajectoryController::SimResult TrajectoryController::simulate_and_score(
         G_info *= adaptive_lambda_;  // λ temperature
     }
 
-    res.G_total = G_goal + G_obs_total + G_smooth + G_vel_mag + G_vel_delta + G_info
+    res.G_total = G_goal + G_obs_total + G_lat_total + G_smooth + G_vel_mag + G_vel_delta + G_info
                 + active_params_.lambda_goal * G_progress
                 + (res.collides ? active_params_.collision_penalty : 0.f);
     return res;
@@ -1250,10 +1604,11 @@ void TrajectoryController::optimize_seed(Seed& seed, const Eigen::Vector2f& carr
             // Cap the obstacle correction magnitude so it cannot overpower the goal pull.
             // This prevents trajectories from being pushed backward at narrow passages.
             float esdf_val = query_esdf(px[s], py[s]);
-            if (esdf_val < active_params_.d_safe)
+            const float d_safe_eff = effective_d_safe_for_goal_dist(dist_c);
+            if (esdf_val < d_safe_eff)
             {
                 Eigen::Vector2f grad = query_esdf_gradient(px[s], py[s]);
-                Eigen::Vector2f obs_correction = obstacle_repulsion_strength(esdf_val) * grad;
+                Eigen::Vector2f obs_correction = obstacle_repulsion_strength(esdf_val, d_safe_eff) * grad;
                 // Cap obstacle correction to at most 2x the goal correction magnitude
                 float goal_mag = correction.norm();
                 float obs_mag = obs_correction.norm();
@@ -1287,7 +1642,7 @@ void TrajectoryController::optimize_seed(Seed& seed, const Eigen::Vector2f& carr
 // Carrot computation
 // ============================================================================
 
-Eigen::Vector2f TrajectoryController::compute_carrot(const Eigen::Affine2f& robot_pose) const
+Eigen::Vector2f TrajectoryController::compute_carrot(const Eigen::Affine2f& robot_pose)
 {
     const Eigen::Vector2f robot_pos = robot_pose.translation();
     float min_dist_sq = std::numeric_limits<float>::max();
@@ -1307,7 +1662,57 @@ Eigen::Vector2f TrajectoryController::compute_carrot(const Eigen::Affine2f& robo
         if (d_sq < min_dist_sq) { min_dist_sq = d_sq; closest_seg = i; closest_t = t; }
     }
 
-    float remaining = active_params_.carrot_lookahead;
+    float lookahead_eff = active_params_.carrot_lookahead;
+    if (active_params_.carrot_curve_adaptation_enabled)
+    {
+        const int n = static_cast<int>(path_room_.size());
+        if (n >= 3)
+        {
+            const int v = std::clamp(closest_seg + 1, 1, n - 2);
+            const Eigen::Vector2f seg_prev = path_room_[v] - path_room_[v - 1];
+            const Eigen::Vector2f seg_next = path_room_[v + 1] - path_room_[v];
+            const float len_prev = seg_prev.norm();
+            const float len_next = seg_next.norm();
+
+            if (len_prev > active_params_.segment_length_epsilon && len_next > active_params_.segment_length_epsilon)
+            {
+                const Eigen::Vector2f t_prev = seg_prev / len_prev;
+                const Eigen::Vector2f t_next = seg_next / len_next;
+                float dpsi = std::acos(std::clamp(t_prev.dot(t_next), -1.f, 1.f));
+
+                const float enter_th = std::max(active_params_.carrot_curve_min_heading_change, 1e-3f);
+                const float release_th = std::clamp(active_params_.carrot_curve_release_heading_change,
+                                                    0.f,
+                                                    enter_th);
+
+                if (!carrot_curve_active_)
+                {
+                    if (dpsi >= enter_th)
+                        carrot_curve_active_ = true;
+                }
+                else
+                {
+                    if (dpsi <= release_th)
+                        carrot_curve_active_ = false;
+                }
+
+                if (carrot_curve_active_)
+                    lookahead_eff = std::clamp(active_params_.carrot_curve_lookahead_min,
+                                               0.05f,
+                                               active_params_.carrot_lookahead);
+            }
+        }
+        else
+        {
+            carrot_curve_active_ = false;
+        }
+    }
+    else
+    {
+        carrot_curve_active_ = false;
+    }
+
+    float remaining = lookahead_eff;
     {
         const Eigen::Vector2f ab = path_room_[closest_seg + 1] - path_room_[closest_seg];
         const float seg_remaining = (1.f - closest_t) * ab.norm();
@@ -1481,48 +1886,51 @@ float TrajectoryController::compute_ess(const std::vector<float>& weights, int K
 }
 
 // ============================================================================
-// ESS-based adaptation of K, T, λ, σ, and injection count
+// Dominance-based adaptation (single metric)
 //
-// Runs every cycle for λ/σ (fast), every adapt_interval cycles for K/T (slow).
-// CPU budget caps K*T to keep MPPI within cpu_budget_ms.
+// Dominance D in [0,1] captures both:
+//  - free-survival mass of rollouts
+//  - directional concentration of surviving steering
+// Explore signal is E = 1 - D.
 // ============================================================================
 
-void TrajectoryController::adapt_from_ess(float ess, int K, int /*num_collisions*/)
+void TrajectoryController::adapt_from_dominance(float dominance, int /*K*/, float sg_gate)
 {
-    // 1. EMA-smoothed ESS
     const float alpha = active_params_.ess_smoothing;
-    ess_smooth_ = (1.f - alpha) * ess_smooth_ + alpha * ess;
+    const float D = std::clamp(dominance, 0.f, 1.f);
+    dominance_smooth_ = (1.f - alpha) * dominance_smooth_ + alpha * D;
 
-    const float ess_ratio = std::clamp(ess_smooth_ / static_cast<float>(std::max(K, 1)), 0.f, 1.f);
+    // Control adaptation should react quickly to feasibility collapse,
+    // so it is driven mostly by instantaneous dominance, with a small
+    // contribution of the smoothed state to avoid jitter.
+    const float dominance_for_control = std::clamp(0.8f * D + 0.2f * dominance_smooth_, 0.f, 1.f);
+    const float base_explore = std::clamp(1.f - dominance_for_control, 0.f, 1.f);
+    const float sg = std::clamp(sg_gate, 0.f, 1.f);
+    explore_ = std::clamp(base_explore * sg, 0.f, 1.f);
 
-    // 2. Continuous exploration signal: explore ∈ [0, 1]
-    //    Maps ess_ratio linearly: ratio >= ess_high → explore=0, ratio <= ess_low_very → explore=1
-    //    Smoothed to avoid jitter.
-    const float raw_explore = std::clamp(
-        (active_params_.ess_high - ess_ratio) / std::max(active_params_.ess_high - active_params_.ess_low_very, 0.01f),
-        0.f, 1.f);
-    explore_ = 0.8f * explore_ + 0.2f * raw_explore;
-
-    // 3. λ adaptation (unchanged): low ESS → soften weights; high ESS → sharpen
-    if (ess_ratio < active_params_.ess_low_very)
-        adaptive_lambda_ *= active_params_.lambda_gain_low_very;
-    else if (ess_ratio < active_params_.ess_low)
-        adaptive_lambda_ *= active_params_.lambda_gain_low;
-    else if (ess_ratio > active_params_.ess_high)
-        adaptive_lambda_ *= active_params_.lambda_gain_high;
+    // Single-law modulation: low dominance -> soften weighting (higher λ)
+    const float lambda_target = active_params_.mppi_lambda * (1.f + 2.f * explore_);
+    adaptive_lambda_ = 0.8f * adaptive_lambda_ + 0.2f * lambda_target;
     adaptive_lambda_ = std::clamp(adaptive_lambda_, active_params_.lambda_min, active_params_.lambda_max);
 
-    // 4. σ_rot driven by explore: wider angular search when ESS drops
+    // Wider angular search and slightly reduced speed perturbation when exploring
     const float sigma_rot_target = active_params_.sigma_rot
         + explore_ * (active_params_.sigma_max_rot - active_params_.sigma_rot);
     adaptive_sigma_rot_ = 0.8f * adaptive_sigma_rot_ + 0.2f * sigma_rot_target;
     adaptive_sigma_rot_ = std::clamp(adaptive_sigma_rot_, active_params_.sigma_min_rot, active_params_.sigma_max_rot);
 
-    // σ_adv slightly reduced when exploring (focus on turning, not speeding)
-    const float sigma_adv_target = active_params_.sigma_adv
-        * (1.f - 0.3f * explore_);
+    const float sigma_adv_target = active_params_.sigma_adv * (1.f - 0.3f * explore_);
     adaptive_sigma_adv_ = 0.8f * adaptive_sigma_adv_ + 0.2f * sigma_adv_target;
     adaptive_sigma_adv_ = std::clamp(adaptive_sigma_adv_, active_params_.sigma_min_adv, active_params_.sigma_max_adv);
+
+    // Expand horizon under low dominance to search around unexpected obstacles
+    const float target_T = static_cast<float>(active_params_.trajectory_steps)
+                         + explore_ * static_cast<float>(active_params_.T_max - active_params_.trajectory_steps);
+    adaptive_T_ = std::clamp(static_cast<int>(std::lround(0.8f * static_cast<float>(adaptive_T_) + 0.2f * target_T)),
+                             active_params_.T_min, active_params_.T_max);
+
+    // Keep sample count at configured value (clamped), avoiding extra heuristics
+    adaptive_K_ = std::clamp(active_params_.num_samples, active_params_.K_min, active_params_.K_max);
 }
 
 } // namespace rc
