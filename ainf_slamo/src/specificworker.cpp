@@ -595,7 +595,6 @@ void SpecificWorker::start_episode(const std::string &mission_type,
     add_param("trajectory_steps", static_cast<float>(p.trajectory_steps));
     add_param("trajectory_dt", p.trajectory_dt);
     add_param("mppi_lambda", p.mppi_lambda);
-    add_param("sampling_mode", static_cast<float>(static_cast<int>(p.sampling_mode)));
     add_param("sigma_adv", p.sigma_adv);
     add_param("sigma_rot", p.sigma_rot);
     add_param("noise_alpha", p.noise_alpha);
@@ -614,7 +613,6 @@ void SpecificWorker::start_episode(const std::string &mission_type,
     episode.mood_snapshot["mood"] = p.mood;
     episode.mood_snapshot["enable_mood"] = p.enable_mood ? 1.f : 0.f;
     episode.mood_snapshot["mood_speed_gain"] = p.mood_speed_gain;
-    episode.mood_snapshot["mood_exploration_gain"] = p.mood_exploration_gain;
     episode.mood_snapshot["mood_reactivity_gain"] = p.mood_reactivity_gain;
     episode.mood_snapshot["mood_caution_gain"] = p.mood_caution_gain;
 

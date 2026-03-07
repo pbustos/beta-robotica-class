@@ -818,7 +818,6 @@ a high-quality prediction prior for the next localisation update.
 | `mood` | 0.5 | High-level behavior knob in [0, 1]: 0 = calm, 1 = excited |
 | `enable_mood` | true | Enables runtime remapping of MPPI parameters from mood |
 | `mood_speed_gain` | 0.35 | Mood influence on speed/path aggressiveness (`max_adv`, `max_rot`, lookahead) |
-| `mood_exploration_gain` | 0.40 | Mood influence on exploration/optimization effort (K/T, noise, optimizer) |
 | `mood_reactivity_gain` | 0.35 | Mood influence on reactivity (warm-start inertia, smoothing, brake) |
 | `mood_caution_gain` | 0.30 | Mood influence on caution (safety distance and obstacle conservatism) |
 
@@ -1028,16 +1027,18 @@ clamped to safety/consistency bounds.
 
 Main effects by family:
 
-- Speed family (`mood_speed_gain`): scales max advance/rotation and lookahead.
-- Exploration family (`mood_exploration_gain`): scales sample/horizon baseline,
-  noise amplitudes, and optimizer effort.
-- Reactivity family (`mood_reactivity_gain`): reduces output smoothing and
-  warm-start inertia as mood increases; also relaxes Gaussian braking.
-- Caution family (`mood_caution_gain`): reduces safety margin and obstacle weight
-  as mood increases (still clamped by hard safety constraints).
+- **Speed** (`mood_speed_gain`): scales `max_adv`, `max_rot`, `carrot_lookahead`, and
+  `goal_threshold`.
+- **Reactivity** (`mood_reactivity_gain`): reduces `velocity_smoothing` and
+  warm-start inertia as mood increases; also relaxes Gaussian braking (`gauss_k`).
+- **Caution** (`mood_caution_gain`): on the calm side ($m < 0.5$), increases
+  `d_safe` and `collision_penalty` for more conservative clearance.
 
-This allows continuous behavioral tuning from the UI with one slider while
-preserving low-level parameter safety constraints.
+Exploration parameters (K, T, σ, optimizer) are **not** affected by mood — they
+are fully governed by the ESS-based adaptive loop (§17.10), which responds to
+the actual situation rather than a user-set knob.  Likewise, scoring weights
+(`lambda_goal`, `lambda_delta_vel`, etc.) are kept at their hand-tuned values to
+avoid undoing careful per-parameter calibration.
 
 ### 17.12 Multi-Step Command Extraction
 
@@ -1305,7 +1306,6 @@ LOOP every 50 ms:
 | `mood` | 0.5 | High-level calm-excited superparameter in [0, 1] |
 | `enable_mood` | true | Enables mood-based runtime remapping |
 | `mood_speed_gain` | 0.35 | Mood influence on speed and lookahead |
-| `mood_exploration_gain` | 0.40 | Mood influence on exploration and optimizer effort |
 | `mood_reactivity_gain` | 0.35 | Mood influence on smoothing and response speed |
 | `mood_caution_gain` | 0.30 | Mood influence on safety-vs-aggressiveness balance |
 | `mppi_lambda` | 8.0 | Initial temperature (adapted by ESS, §17.10.3) |

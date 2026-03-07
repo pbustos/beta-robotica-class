@@ -18,7 +18,6 @@ class TrajectoryController
 {
 public:
     enum class ControlMode { MPPI, PD };
-    enum class SamplingMode { FULL_SEQUENCE = 0, CONSTANT_COMMAND = 1 };
 
     struct Params
     {
@@ -28,7 +27,6 @@ public:
 
         // Mood gains (higher values increase the effect of mood on each family)
         float mood_speed_gain = 0.35f;        // max_adv, max_rot, carrot lookahead
-        float mood_exploration_gain = 0.40f;  // K, T, sigmas, optimizer effort
         float mood_reactivity_gain = 0.35f;   // warm-start inertia, output smoothing, brake
         float mood_caution_gain = 0.30f;      // calm-side boost for d_safe and obstacle conservatism
 
@@ -78,11 +76,6 @@ public:
 
         // MPPI temperature (initial, adapted by ESS)
         float mppi_lambda       = 8.0f;
-
-        // MPPI seed parameterization for A/B testing
-        SamplingMode sampling_mode = SamplingMode::FULL_SEQUENCE;
-        //SamplingMode sampling_mode = SamplingMode::CONSTANT_COMMAND;
-        
 
         // Noise standard deviations (for Gaussian perturbations)
         float sigma_adv   = 0.12f;

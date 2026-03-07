@@ -50,26 +50,16 @@ void TrajectoryController::refresh_active_params()
         };
 
         const float speed_gain = std::max(0.f, params.mood_speed_gain);
-        const float exploration_gain = std::max(0.f, params.mood_exploration_gain);
         const float reactivity_gain = std::max(0.f, params.mood_reactivity_gain);
         const float caution_gain = std::max(0.f, params.mood_caution_gain);
 
+        // Speed family: kinematic limits and lookahead
         active_params_.max_adv = scale_with_gain(params.max_adv, speed_gain, 0.01f);
         active_params_.max_rot = scale_with_gain(params.max_rot, speed_gain, 0.01f);
         active_params_.carrot_lookahead = scale_with_gain(params.carrot_lookahead, speed_gain, 0.05f);
         active_params_.goal_threshold = scale_with_gain(params.goal_threshold, speed_gain * 0.5f, 0.01f);
 
-        active_params_.num_samples = std::max(1, static_cast<int>(std::round(scale_with_gain(
-            static_cast<float>(params.num_samples), exploration_gain, 1.f))));
-        active_params_.trajectory_steps = std::max(1, static_cast<int>(std::round(scale_with_gain(
-            static_cast<float>(params.trajectory_steps), exploration_gain, 1.f))));
-
-        active_params_.sigma_adv = scale_with_gain(params.sigma_adv, exploration_gain, 1e-4f);
-        active_params_.sigma_rot = scale_with_gain(params.sigma_rot, exploration_gain, 1e-4f);
-        active_params_.optim_lr = scale_with_gain(params.optim_lr, exploration_gain, 1e-5f);
-        active_params_.optim_iterations = std::max(1, static_cast<int>(std::round(scale_with_gain(
-            static_cast<float>(params.optim_iterations), exploration_gain * 0.5f, 1.f))));
-
+        // Reactivity family: output smoothing, warm-start inertia, brake
         active_params_.velocity_smoothing = std::clamp(
             params.velocity_smoothing * (1.f - reactivity_gain * n), 0.f, 0.98f);
         active_params_.warm_start_adv_weight = std::clamp(
@@ -78,17 +68,12 @@ void TrajectoryController::refresh_active_params()
             params.warm_start_rot_weight * (1.f - reactivity_gain * n), 0.f, 0.98f);
         active_params_.gauss_k = scale_with_gain(params.gauss_k, -reactivity_gain, 1e-5f);
 
+        // Caution family: safety margins (calm side only)
         const float calm_factor = std::max(0.f, -n);  // 0 at neutral/excited, 1 at calm
         active_params_.d_safe = std::max(base_d_safe_priority,
                                          base_d_safe_priority * (1.f + caution_gain * calm_factor));
-        active_params_.lambda_obstacle = base_lambda_obstacle;
-        active_params_.close_obstacle_gain = base_close_obstacle_gain;
         active_params_.collision_penalty = std::max(base_collision_penalty_priority,
                                                     base_collision_penalty_priority * (1.f + 0.5f * caution_gain * calm_factor));
-        active_params_.lambda_smooth = scale_with_gain(params.lambda_smooth, -reactivity_gain, 1e-6f);
-        active_params_.lambda_velocity = scale_with_gain(params.lambda_velocity, -reactivity_gain, 1e-8f);
-        active_params_.lambda_delta_vel = scale_with_gain(params.lambda_delta_vel, -reactivity_gain, 1e-8f);
-        active_params_.lambda_goal = scale_with_gain(params.lambda_goal, speed_gain * 0.5f, 1e-5f);
     }
 
     active_params_.K_min = std::max(1, std::min(active_params_.K_min, active_params_.K_max));
@@ -1302,60 +1287,6 @@ std::vector<TrajectoryController::Seed> TrajectoryController::sample_trajectorie
 
     std::vector<Seed> seeds;
     seeds.reserve(K);
-
-    if (active_params_.sampling_mode == SamplingMode::CONSTANT_COMMAND)
-    {
-        auto make_constant_seed = [T](float adv_cmd, float rot_cmd, bool use_info)
-        {
-            Seed s;
-            s.adv.assign(T, adv_cmd);
-            s.rot.assign(T, rot_cmd);
-            s.use_info_correction = use_info;
-            return s;
-        };
-
-        const float nom_adv0 = nominal.adv.empty() ? active_params_.min_adv_cmd : nominal.adv.front();
-        const float nom_rot0 = nominal.rot.empty() ? 0.f : nominal.rot.front();
-        seeds.push_back(make_constant_seed(nom_adv0, nom_rot0, false));
-
-        const std::array<float, 6> offsets = {
-            active_params_.inject_offset_30, -active_params_.inject_offset_30,
-            active_params_.inject_offset_60, -active_params_.inject_offset_60,
-            active_params_.inject_offset_90, -active_params_.inject_offset_90
-        };
-        const float Kp_nom = 1.8f;
-        for (float offset : offsets)
-        {
-            const float angle_err = std::clamp(carrot_angle + offset,
-                                               -static_cast<float>(M_PI), static_cast<float>(M_PI));
-            const float rot_cmd = std::clamp(Kp_nom * angle_err,
-                                             -active_params_.max_rot, active_params_.max_rot);
-            const float alignment = std::cos(angle_err);
-            float adv_cmd = active_params_.max_adv * active_params_.injection_adv_scale
-                          * std::max(active_params_.nominal_alignment_floor, alignment);
-            const float dist_factor = std::min(1.f, carrot_dist / std::max(active_params_.nominal_goal_dist_scale, 1e-6f));
-            adv_cmd *= dist_factor;
-            adv_cmd = std::clamp(adv_cmd, active_params_.min_adv_cmd, active_params_.max_adv);
-            seeds.push_back(make_constant_seed(adv_cmd, rot_cmd, false));
-        }
-
-        const int n_random = std::max(0, K - static_cast<int>(seeds.size()));
-        for (int k = 0; k < n_random; ++k)
-        {
-            const float eps_adv = normal_(rng_) * adaptive_sigma_adv_;
-            const float eps_rot = normal_(rng_) * adaptive_sigma_rot_;
-            const float adv_cmd = std::clamp(nom_adv0 + eps_adv,
-                                             active_params_.min_adv_cmd, active_params_.max_adv);
-            const float rot_cmd = std::clamp(nom_rot0 + eps_rot,
-                                             -active_params_.max_rot, active_params_.max_rot);
-
-            // In constant-command mode we disable IT correction because
-            // sampling no longer follows the full per-step Gaussian model.
-            seeds.push_back(make_constant_seed(adv_cmd, rot_cmd, false));
-        }
-
-        return seeds;
-    }
 
     // --- Seed 0: the nominal itself (zero perturbation) --------------------
     Seed nominal_copy = nominal;
