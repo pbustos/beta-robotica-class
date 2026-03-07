@@ -126,7 +126,7 @@ public:
         // too close to side obstacles, helping recentring in narrow passages.
         float lambda_lateral_clearance = 3.8f;
         float lateral_probe_offset = 0.22f;         // side probe offset from trajectory centerline
-        float lateral_clearance_margin = 0.2;     // desired extra side clearance over robot radius
+        float lateral_clearance_margin = 0.25;     // desired extra side clearance over robot radius
         float lateral_closing_gain = 1.5f;          // extra penalty when side clearance is decreasing
 
         // Continuous clearance relaxation near final goal (no hard switch):
@@ -225,6 +225,13 @@ public:
         // Reduced from 1.5: lambda_delta_vel now handles oscillation in scoring,
         // and nominal cos(angle_err) already reduces speed when turning.
         float gauss_k = 0.6f;
+
+        // Path blockage detection
+        float blockage_esdf_threshold = 0.25f;   // ESDF below this on path = blocked (well under d_safe)
+        int   blockage_min_waypoints = 4;        // need N consecutive blocked waypoints
+        float blockage_lookahead_m = 1.5f;       // only check waypoints within this distance ahead
+        int   blockage_confirm_cycles = 15;      // consecutive cycles before declaring blockage (~0.75s at 20Hz)
+        int   blockage_cooldown_cycles = 100;    // minimum cycles between replan triggers
     };
 
     struct ControlOutput
@@ -248,6 +255,11 @@ public:
         // All candidate trajectories in room frame (fresh every tick)
         std::vector<std::vector<Eigen::Vector2f>> trajectories_room;
         int best_trajectory_idx = -1;
+
+        // Path blockage detection output
+        bool  path_blocked = false;              // true when persistent blockage detected
+        Eigen::Vector2f blockage_center_room = Eigen::Vector2f::Zero(); // center of blocked region in room frame
+        float blockage_radius = 0.f;             // approximate radius of blocked region
     };
 
     TrajectoryController() = default;
@@ -321,6 +333,10 @@ private:
     float last_mppi_ms_ = 0.f;      // last MPPI wall-clock time
     int   safety_guard_mood_cooldown_ = 0; // cycles until next mood bump allowed
     bool  carrot_curve_active_ = false; // hold reduced carrot lookahead while inside a curve
+
+    // Path blockage detection state
+    int   blockage_streak_ = 0;          // consecutive cycles with blockage detected
+    int   blockage_cooldown_ = 0;        // cycles remaining before next replan allowed
 
     // Compute ESS for diagnostics and adapt from dominance
     float compute_ess(const std::vector<float>& weights, int K) const;

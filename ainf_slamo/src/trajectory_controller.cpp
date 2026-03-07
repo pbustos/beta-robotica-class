@@ -195,6 +195,10 @@ void TrajectoryController::set_path(const std::vector<Eigen::Vector2f>& path_roo
     adaptive_sigma_adv_ = active_params_.sigma_adv;
     adaptive_sigma_rot_ = active_params_.sigma_rot;
 
+    // Reset blockage detection
+    blockage_streak_ = 0;
+    blockage_cooldown_ = 0;
+
     if (active_)
         std::cout << "[TrajectoryCtrl] Path set: " << path_room_.size() << " waypoints\n";
 }
@@ -209,6 +213,8 @@ void TrajectoryController::stop()
     prev_optimal_.clear();
     safety_guard_mood_cooldown_ = 0;
     carrot_curve_active_ = false;
+    blockage_streak_ = 0;
+    blockage_cooldown_ = 0;
 }
 
 void TrajectoryController::set_static_obstacles(
@@ -689,11 +695,8 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
         steering_concentration_current = steering_concentration;
         clearance_quality_current = clearance_quality;
 
-        // Root-cause fix:
-        // In narrow doors/corridors, absolute clearance quality can be low even when
-        // many rollouts are feasible and directionally consistent.
-        // Multiplying by C collapsed dominance and forced excessive exploration,
-        // which produced dithering/stops at doorways. Use feasibility+direction only.
+        // Dominance: feasibility × directional concentration (clearance excluded
+        // to avoid over-exploration in narrow passages).
         dominance_current = std::clamp(p_free * steering_concentration, 0.f, 1.f);
 
         // Textbook MPPI weighted average: U_new = Σ w_k * V_k
@@ -858,9 +861,9 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
     // 14. Safety gate on top of MPPI output (short forward prediction on inflated ESDF)
     {
         constexpr float gate_horizon_s = 0.30f;     // shorter look-ahead to reduce false positives
-        constexpr float gate_inflate_m = 0.03f;       // tighter soft margin (was 0.06)
+        constexpr float gate_inflate_m = 0.03f;       // soft margin around d_safe
         constexpr float gate_hard_margin_m = 0.01f;
-        constexpr int gate_soft_consecutive_needed = 5; // need 5 consecutive close steps (was 3)
+        constexpr int gate_soft_consecutive_needed = 5; // consecutive close steps to trigger
         const float gate_dt = std::max(0.03f, active_params_.trajectory_dt);
 
         if (safety_guard_mood_cooldown_ > 0)
@@ -917,10 +920,10 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
 
         // Simpler arming from direct LiDAR measurements (robot frame):
         // trigger only when an obstacle is close in a frontal cone.
-        constexpr float lidar_front_cone_rad = 0.40f; // ~23 deg (was 31.5°) — narrower frontal cone
-        const float lidar_trigger_dist = active_params_.d_safe + 0.08f;  // tighter arming (was +0.20)
+        constexpr float lidar_front_cone_rad = 0.40f; // ~23 deg frontal cone
+        const float lidar_trigger_dist = active_params_.d_safe + 0.08f;
         const float lidar_min_valid_dist = active_params_.robot_radius + 0.08f;
-        constexpr int lidar_min_points_to_arm = 5;  // need 5 points (was 3)
+        constexpr int lidar_min_points_to_arm = 5;
         bool gate_armed = false;
         int frontal_close_count = 0;
         for (const auto &p : lidar_points)
@@ -999,6 +1002,83 @@ TrajectoryController::ControlOutput TrajectoryController::compute(
                 if (query_esdf(0.f, 0.f) < active_params_.robot_radius + 0.01f)
                     out.adv = -std::min(active_params_.max_back_adv, 0.05f);
             }
+        }
+    }
+
+    // ── 15. Path blockage detection ──────────────────────────────────
+    // Look ahead along the planned path in room frame and query ESDF at each
+    // waypoint.  If several consecutive waypoints are blocked (ESDF < threshold)
+    // for many consecutive compute cycles, signal the caller to replan.
+    out.path_blocked = false;
+    if (blockage_cooldown_ > 0)
+    {
+        --blockage_cooldown_;
+    }
+    else
+    {
+        const float look_m = active_params_.blockage_lookahead_m;
+        const float thr = active_params_.blockage_esdf_threshold;
+        const int   min_wp = active_params_.blockage_min_waypoints;
+
+        int   consec_blocked = 0;
+        Eigen::Vector2f block_sum = Eigen::Vector2f::Zero();
+        int   block_count = 0;
+
+        float accum_dist = 0.f;
+        for (int i = wp_index_; i < static_cast<int>(path_room_.size()); ++i)
+        {
+            if (i > wp_index_)
+                accum_dist += (path_room_[i] - path_room_[i - 1]).norm();
+            if (accum_dist > look_m) break;
+
+            const Eigen::Vector2f p_rob = room_to_robot(path_room_[i], robot_pose);
+            const float esdf_val = query_esdf(p_rob.x(), p_rob.y());
+
+            if (esdf_val < thr)
+            {
+                ++consec_blocked;
+                block_sum += path_room_[i];
+                ++block_count;
+            }
+            else
+            {
+                // reset streak only if we had fewer than required
+                if (consec_blocked < min_wp)
+                {
+                    consec_blocked = 0;
+                    block_sum = Eigen::Vector2f::Zero();
+                    block_count = 0;
+                }
+            }
+        }
+
+        if (consec_blocked >= min_wp)
+        {
+            ++blockage_streak_;
+            if (blockage_streak_ >= active_params_.blockage_confirm_cycles)
+            {
+                out.path_blocked = true;
+                out.blockage_center_room = block_sum / static_cast<float>(block_count);
+                // radius = max distance from center to any blocked waypoint + robot radius
+                // Recompute max dist from final center
+                float max_r = 0.f;
+                for (int i = wp_index_; i < static_cast<int>(path_room_.size()); ++i)
+                {
+                    const Eigen::Vector2f p_rob = room_to_robot(path_room_[i], robot_pose);
+                    if (query_esdf(p_rob.x(), p_rob.y()) < thr)
+                        max_r = std::max(max_r, (path_room_[i] - out.blockage_center_room).norm());
+                }
+                out.blockage_radius = max_r + active_params_.robot_radius;
+                blockage_streak_ = 0;
+                blockage_cooldown_ = active_params_.blockage_cooldown_cycles;
+                std::cout << "[TrajectoryCtrl] PATH BLOCKED at ("
+                          << out.blockage_center_room.x() << ", " << out.blockage_center_room.y()
+                          << ") r=" << out.blockage_radius << "\n";
+            }
+        }
+        else
+        {
+            blockage_streak_ = std::max(0, blockage_streak_ - 1); // decay slowly
         }
     }
 
@@ -1493,10 +1573,7 @@ TrajectoryController::SimResult TrajectoryController::simulate_and_score(
     float G_goal = active_params_.lambda_goal
                  * (best_dist_to_carrot + active_params_.lambda_progress * std::max(0.f, -progress));
 
-    // Fix 2: Heading cost — penalize initial angular divergence from carrot direction.
-    // The old heading-at-endpoint was broken: trajectories that overshoot the carrot
-    // face backward (heading error ≈ π), making the term non-discriminating.
-    // Instead, measure how well each seed initially steers toward the carrot.
+    // Heading cost: penalize initial angular divergence from carrot direction.
     const float carrot_angle = std::atan2(carrot_robot.x(), carrot_robot.y()); // Y+ forward
     {
         // Weighted average of angular error over the first few steps (not just step 0)

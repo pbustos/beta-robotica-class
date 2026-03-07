@@ -203,7 +203,25 @@ void SpecificWorker::initialize()
     // Connect Shift+Right click on the scene for navigation target
     connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::slot_new_target);
 
-    // Ctrl+Shift+Right: cancel current navigation mission without saving episode
+    // Ctrl+Right click on scene: cancel current navigation mission
+    connect(viewer, &AbstractGraphicViewer::right_click, this, [this](QPointF)
+    {
+        if (!trajectory_controller_.is_active() && current_path_.empty()) return;
+        qInfo() << "Navigation cancelled by Ctrl+Right click";
+        active_episode_.reset();
+        episode_accum_ = EpisodeAccum{};
+        if (label_episodeStatus != nullptr)
+        {
+            label_episodeStatus->setText("EP: CANCELLED");
+            label_episodeStatus->setStyleSheet("background-color: #FFE0B2; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+        }
+        trajectory_controller_.stop();
+        current_path_.clear();
+        clear_path();
+        try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+    });
+
+    // Ctrl+Shift+Right keyboard: cancel current navigation mission without saving episode
     auto *cancel_shortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Right), this);
     connect(cancel_shortcut, &QShortcut::activated, this, [this]()
     {
@@ -418,6 +436,15 @@ void SpecificWorker::compute()
         pose_save_counter = 0;
     }
 
+    // Clean up expired temporary obstacles (every ~5 seconds at 20Hz = 100 frames)
+    static int temp_obs_cleanup_counter = 0;
+    if (++temp_obs_cleanup_counter >= 100)
+    {
+        temp_obs_cleanup_counter = 0;
+        if (!temp_obstacles_.empty())
+            cleanup_temp_obstacles();
+    }
+
     // ===== LOCAL TRAJECTORY CONTROLLER =====
     // Run if a path is active and joystick is not overriding
     float mppi_ms = 0.f, viz2_ms = 0.f;
@@ -457,6 +484,25 @@ void SpecificWorker::compute()
             update_episode_metrics(res, &ctrl, speed, rot, cpu_usage, mppi_ms, blocked_like);
 
             if (do_draw && draw_trajectories_) draw_trajectory_debug(ctrl, res.robot_pose);
+
+            // ── Obstacle avoidance: detect blockage → cluster → replan ──
+            if (ctrl.path_blocked && lidar_low_high_.has_value())
+            {
+                const auto polygon = cluster_lidar_to_polygon(
+                    lidar_low_high_->first,
+                    ctrl.blockage_center_room,
+                    std::min(ctrl.blockage_radius + 0.1f, 1.0f),  // tight search, capped at 1m
+                    res.robot_pose);
+
+                if (!polygon.empty())
+                {
+                    replan_around_obstacle(polygon, ctrl.blockage_center_room, res.robot_pose);
+                }
+                else
+                {
+                    qWarning() << "[ObstacleAvoid] Blockage detected but LiDAR cluster too sparse to model";
+                }
+            }
         }
         viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
     }
@@ -1285,6 +1331,219 @@ void SpecificWorker::send_velocity_command(float adv, float side, float rot)
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Temporary obstacle avoidance: cluster → polygon → replan
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::vector<Eigen::Vector2f> SpecificWorker::cluster_lidar_to_polygon(
+    const std::vector<Eigen::Vector3f>& lidar_points,
+    const Eigen::Vector2f& blockage_center_room,
+    float search_radius,
+    const Eigen::Affine2f& robot_pose) const
+{
+    // Transform blockage center to robot frame
+    const Eigen::Rotation2Df rot(robot_pose.rotation());
+    const Eigen::Vector2f t = robot_pose.translation();
+    const Eigen::Vector2f center_robot = rot.inverse() * (blockage_center_room - t);
+
+    // Collect 2D lidar points within search_radius of blockage center (robot frame)
+    const float r2 = search_radius * search_radius;
+    std::vector<Eigen::Vector2f> cluster;
+    for (const auto& p : lidar_points)
+    {
+        const Eigen::Vector2f p2d(p.x(), p.y());
+        if ((p2d - center_robot).squaredNorm() < r2)
+            cluster.push_back(p2d);
+    }
+
+    if (cluster.size() < 3)
+        return {};  // too few points to form a polygon
+
+    // Compute centroid
+    Eigen::Vector2f centroid = Eigen::Vector2f::Zero();
+    for (const auto& p : cluster) centroid += p;
+    centroid /= static_cast<float>(cluster.size());
+
+    // PCA to find principal axes
+    Eigen::Matrix2f cov = Eigen::Matrix2f::Zero();
+    for (const auto& p : cluster)
+    {
+        const Eigen::Vector2f d = p - centroid;
+        cov += d * d.transpose();
+    }
+    cov /= static_cast<float>(cluster.size());
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig(cov);
+    // Eigenvectors sorted ascending — col(1) is major axis
+    const Eigen::Vector2f axis_major = eig.eigenvectors().col(1);
+    const Eigen::Vector2f axis_minor = eig.eigenvectors().col(0);
+
+    // Project points onto axes, find extents
+    float min_major = std::numeric_limits<float>::max(), max_major = -std::numeric_limits<float>::max();
+    float min_minor = std::numeric_limits<float>::max(), max_minor = -std::numeric_limits<float>::max();
+    for (const auto& p : cluster)
+    {
+        const Eigen::Vector2f d = p - centroid;
+        const float proj_maj = d.dot(axis_major);
+        const float proj_min = d.dot(axis_minor);
+        min_major = std::min(min_major, proj_maj);
+        max_major = std::max(max_major, proj_maj);
+        min_minor = std::min(min_minor, proj_min);
+        max_minor = std::max(max_minor, proj_min);
+    }
+
+    // Add small margin (planner already does Minkowski expansion by robot_radius)
+    const float margin = TEMP_OBSTACLE_MARGIN;
+    min_major -= margin;
+    max_major += margin;
+    min_minor -= margin;
+    max_minor += margin;
+
+    // Build OBB corners in robot frame
+    std::vector<Eigen::Vector2f> corners_robot = {
+        centroid + min_major * axis_major + min_minor * axis_minor,
+        centroid + max_major * axis_major + min_minor * axis_minor,
+        centroid + max_major * axis_major + max_minor * axis_minor,
+        centroid + min_major * axis_major + max_minor * axis_minor
+    };
+
+    // Transform to room frame
+    std::vector<Eigen::Vector2f> corners_room;
+    corners_room.reserve(4);
+    for (const auto& c : corners_robot)
+        corners_room.push_back(rot * c + t);
+
+    return corners_room;
+}
+
+bool SpecificWorker::replan_around_obstacle(const std::vector<Eigen::Vector2f>& obstacle_polygon,
+                                             const Eigen::Vector2f& center,
+                                             const Eigen::Affine2f& robot_pose)
+{
+    if (obstacle_polygon.size() < 3 || current_path_.empty())
+        return false;
+
+    // Check if this obstacle is near an existing temp obstacle — merge if so
+    bool merged = false;
+    for (auto& existing : temp_obstacles_)
+    {
+        if ((existing.center - center).norm() < TEMP_OBSTACLE_MERGE_DIST)
+        {
+            // Replace with new, larger polygon
+            existing.vertices = obstacle_polygon;
+            existing.center = center;
+            existing.created = std::chrono::steady_clock::now();
+            existing.replan_count++;
+            merged = true;
+            break;
+        }
+    }
+
+    if (!merged)
+    {
+        TempObstacle obs;
+        obs.vertices = obstacle_polygon;
+        obs.center = center;
+        obs.created = std::chrono::steady_clock::now();
+        obs.replan_count = 1;
+        temp_obstacles_.push_back(std::move(obs));
+    }
+
+    // Rebuild obstacle list: static furniture + all temp obstacles
+    std::vector<std::vector<Eigen::Vector2f>> all_obstacles;
+    for (const auto& fp : furniture_polygons_)
+        all_obstacles.push_back(fp.vertices);
+    for (const auto& to : temp_obstacles_)
+        all_obstacles.push_back(to.vertices);
+
+    path_planner_.set_obstacles(all_obstacles);
+    trajectory_controller_.set_static_obstacles(all_obstacles);
+
+    // Replan from current robot position to original target
+    const Eigen::Vector2f robot_pos = robot_pose.translation();
+    const Eigen::Vector2f target = current_path_.back();
+
+    const auto new_path = path_planner_.plan(robot_pos, target);
+    if (new_path.empty())
+    {
+        qWarning() << "[ObstacleAvoid] Replan failed — no path found around obstacle";
+        return false;
+    }
+
+    current_path_ = new_path;
+    trajectory_controller_.set_path(new_path);
+
+    // Redraw with relaxed path
+    draw_path(trajectory_controller_.get_path());
+    draw_temp_obstacles();
+
+    qInfo() << "[ObstacleAvoid] Replanned:" << new_path.size() << "waypoints around obstacle at ("
+            << center.x() << "," << center.y() << ") temp_obstacles:" << temp_obstacles_.size();
+    return true;
+}
+
+void SpecificWorker::cleanup_temp_obstacles()
+{
+    const auto now = std::chrono::steady_clock::now();
+    bool removed = false;
+
+    temp_obstacles_.erase(
+        std::remove_if(temp_obstacles_.begin(), temp_obstacles_.end(),
+            [&](const TempObstacle& o)
+            {
+                const float age = std::chrono::duration<float>(now - o.created).count();
+                if (age > TEMP_OBSTACLE_TIMEOUT_SEC)
+                {
+                    removed = true;
+                    qInfo() << "[ObstacleAvoid] Removing expired temp obstacle at ("
+                            << o.center.x() << "," << o.center.y() << ") age:" << age << "s";
+                    return true;
+                }
+                return false;
+            }),
+        temp_obstacles_.end());
+
+    if (removed)
+    {
+        // Rebuild obstacle list with only furniture + remaining temp obstacles
+        std::vector<std::vector<Eigen::Vector2f>> all_obstacles;
+        for (const auto& fp : furniture_polygons_)
+            all_obstacles.push_back(fp.vertices);
+        for (const auto& to : temp_obstacles_)
+            all_obstacles.push_back(to.vertices);
+
+        path_planner_.set_obstacles(all_obstacles);
+        trajectory_controller_.set_static_obstacles(all_obstacles);
+        draw_temp_obstacles();
+    }
+}
+
+void SpecificWorker::draw_temp_obstacles()
+{
+    // Remove old items
+    for (auto* item : temp_obstacle_draw_items_)
+    {
+        viewer->scene.removeItem(item);
+        delete item;
+    }
+    temp_obstacle_draw_items_.clear();
+
+    // Draw current temp obstacles
+    for (const auto& obs : temp_obstacles_)
+    {
+        QPolygonF poly;
+        for (const auto& v : obs.vertices)
+            poly << QPointF(v.x(), v.y());
+        poly << QPointF(obs.vertices.front().x(), obs.vertices.front().y());
+
+        auto* item = viewer->scene.addPolygon(poly,
+            QPen(QColor(255, 100, 0), 0.06),          // orange outline (scene units = meters)
+            QBrush(QColor(255, 100, 0, 60)));          // semi-transparent fill
+        item->setZValue(5);
+        temp_obstacle_draw_items_.push_back(item);
+    }
+}
+
 void SpecificWorker::draw_trajectory_debug(const rc::TrajectoryController::ControlOutput &ctrl,
                                             const Eigen::Affine2f &robot_pose)
 {
@@ -1436,8 +1695,8 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
         path_draw_items_.push_back(dot);
     }
 
-    // Draw path segments as cyan lines
-    const QPen path_pen(QColor(0, 220, 220), 0.04);  // Cyan, thick
+    // Draw path segments as light green lines
+    const QPen path_pen(QColor(100, 255, 100), 0.04);  // Light green
     for (size_t i = 0; i + 1 < path.size(); ++i)
     {
         auto* line = viewer->scene.addLine(

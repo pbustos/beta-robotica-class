@@ -172,6 +172,40 @@ class SpecificWorker : public GenericWorker
 	std::vector<QGraphicsPolygonItem*> furniture_draw_items_;
 	void draw_furniture();
 
+	// ===== Temporary obstacle management (unforeseen obstacle avoidance) =====
+	struct TempObstacle
+	{
+		std::vector<Eigen::Vector2f> vertices;      // polygon in room frame
+		Eigen::Vector2f center;                      // center of obstacle
+		std::chrono::steady_clock::time_point created;
+		int replan_count = 0;                        // how many times this obstacle triggered replan
+	};
+	std::vector<TempObstacle> temp_obstacles_;
+	std::vector<QGraphicsPolygonItem*> temp_obstacle_draw_items_;
+	static constexpr float TEMP_OBSTACLE_TIMEOUT_SEC = 30.f;    // remove after this many seconds
+	static constexpr float TEMP_OBSTACLE_MERGE_DIST = 0.8f;     // merge if centers closer than this
+	static constexpr float TEMP_OBSTACLE_MARGIN = 0.05f;        // extra margin around OBB (planner adds robot_radius)
+
+	/// Cluster LiDAR points near a blockage center and compute an OBB polygon.
+	/// Returns empty vector if too few points found.
+	std::vector<Eigen::Vector2f> cluster_lidar_to_polygon(
+		const std::vector<Eigen::Vector3f>& lidar_points,
+		const Eigen::Vector2f& blockage_center_room,
+		float search_radius,
+		const Eigen::Affine2f& robot_pose) const;
+
+	/// Add a temporary obstacle and replan the current path.
+	/// Returns true if replan succeeded.
+	bool replan_around_obstacle(const std::vector<Eigen::Vector2f>& obstacle_polygon,
+	                            const Eigen::Vector2f& center,
+	                            const Eigen::Affine2f& robot_pose);
+
+	/// Remove expired temporary obstacles and rebuild planner if any removed.
+	void cleanup_temp_obstacles();
+
+	/// Draw temporary obstacles in the viewer
+	void draw_temp_obstacles();
+
 	// Flip state tracking
 	bool flip_x_applied_ = false;
 	bool flip_y_applied_ = false;
