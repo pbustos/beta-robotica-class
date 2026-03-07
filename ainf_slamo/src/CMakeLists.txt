@@ -32,6 +32,7 @@ LIST(APPEND SOURCES
   ../src/specificworker.cpp
   ../src/room_concept_ai.cpp
   ../src/room_model.cpp
+  ../src/episodic_memory.cpp
   ../src/pointcloud_center_estimator.cpp
   ../src/polygon_path_planner.cpp
   ../src/trajectory_controller.cpp
@@ -42,6 +43,7 @@ LIST(APPEND HEADERS
   ../src/specificworker.h
   ../src/room_concept_ai.h
   ../src/room_model.h
+  ../src/episodic_memory.h
   ../src/polygon_path_planner.h
   ../src/trajectory_controller.h
 )

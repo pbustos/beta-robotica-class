@@ -26,11 +26,27 @@
 #include <QDateTime>
 #include <QDomDocument>
 #include <QSettings>
+#include <QShortcut>
 #include <unistd.h>  // For sysconf
 #include <cmath>     // For std::fabs
 #include <limits>    // For std::numeric_limits
 #include <print>     // C++23 std::println
 #include <random>    // For odometry noise
+#include <numeric>
+#include <algorithm>
+
+namespace
+{
+float percentile_copy(std::vector<float> values, float q)
+{
+    if (values.empty())
+        return 0.f;
+    q = std::clamp(q, 0.f, 1.f);
+    const std::size_t idx = static_cast<std::size_t>(q * static_cast<float>(values.size() - 1));
+    std::nth_element(values.begin(), values.begin() + static_cast<long>(idx), values.end());
+    return values[idx];
+}
+}
 
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
 {
@@ -137,6 +153,23 @@ void SpecificWorker::initialize()
     connect(pushButton_showLidar, &QPushButton::toggled, this, [this](bool checked) { draw_lidar_ = checked; });
     connect(pushButton_showTrajs, &QPushButton::toggled, this, [this](bool checked) { draw_trajectories_ = checked; });
 
+    // PD / MPPI mode toggle
+    connect(pushButton_pdMode, &QPushButton::toggled, this, [this](bool checked)
+    {
+        if (checked)
+        {
+            trajectory_controller_.set_control_mode(rc::TrajectoryController::ControlMode::PD);
+            pushButton_pdMode->setStyleSheet("background-color: #FFF176; font-weight: bold;");
+            qInfo() << "Controller mode: PD carrot-follower";
+        }
+        else
+        {
+            trajectory_controller_.set_control_mode(rc::TrajectoryController::ControlMode::MPPI);
+            pushButton_pdMode->setStyleSheet("");
+            qInfo() << "Controller mode: MPPI";
+        }
+    });
+
     // Mood slider (0..100 mapped to 0.0..1.0) for trajectory controller behavior
     if (horizontalSlider_mood != nullptr)
     {
@@ -156,8 +189,39 @@ void SpecificWorker::initialize()
     }
     trajectory_controller_.params.mood = 0.5f;
 
+    if (label_episodeStatus != nullptr)
+    {
+        label_episodeStatus->setText("EP: IDLE");
+        label_episodeStatus->setStyleSheet("background-color: #CFD8DC; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+    }
+    if (label_safetyGuard != nullptr)
+    {
+        label_safetyGuard->setText("SG: OFF");
+        label_safetyGuard->setStyleSheet("background-color: #CFD8DC; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+    }
+
     // Connect Shift+Right click on the scene for navigation target
     connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::slot_new_target);
+
+    // Ctrl+Shift+Right: cancel current navigation mission without saving episode
+    auto *cancel_shortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Right), this);
+    connect(cancel_shortcut, &QShortcut::activated, this, [this]()
+    {
+        if (!trajectory_controller_.is_active() && current_path_.empty()) return;
+        qInfo() << "Navigation cancelled by Ctrl+Shift+Right";
+        // Discard episode without saving
+        active_episode_.reset();
+        episode_accum_ = EpisodeAccum{};
+        if (label_episodeStatus != nullptr)
+        {
+            label_episodeStatus->setText("EP: CANCELLED");
+            label_episodeStatus->setStyleSheet("background-color: #FFE0B2; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+        }
+        // Stop controller and clear path
+        trajectory_controller_.stop();
+        current_path_.clear();
+        try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+    });
 
     // Try to load default layout on startup (only loads vertices, doesn't init room_ai yet)
     // Config keys: layout_file (SVG path)
@@ -247,6 +311,7 @@ void SpecificWorker::initialize()
         // Use pre-loaded polygon from file
         room_ai.set_polygon_room(room_polygon_);
         path_planner_.set_polygon(room_polygon_);
+        trajectory_controller_.set_room_boundary(room_polygon_);
         if (!furniture_polygons_.empty())
         {
             std::vector<std::vector<Eigen::Vector2f>> obs;
@@ -366,9 +431,12 @@ void SpecificWorker::compute()
         // Store ESS for UI
         last_ess_ = ctrl.ess;
         last_ess_K_ = ctrl.ess_K;
+        if (ctrl.safety_guard_triggered)
+            last_safety_guard_trigger_time_ = std::chrono::steady_clock::now();
 
         if (ctrl.goal_reached)
         {
+            finish_episode("success");
             send_velocity_command(0.f, 0.f, 0.f);
             auto cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
             velocity_buffer_.put<0>(std::move(cmd), timestamp);
@@ -380,6 +448,14 @@ void SpecificWorker::compute()
             send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
             auto cmd = rc::VelocityCommand(ctrl.side, ctrl.adv, ctrl.rot);
             velocity_buffer_.put<0>(std::move(cmd), timestamp);
+
+            const float speed = std::hypot(ctrl.adv, ctrl.side);
+            const float rot = std::fabs(ctrl.rot);
+            const float cpu_usage = get_cpu_usage();
+            const bool blocked_like = (ctrl.dist_to_goal > trajectory_controller_.params.goal_threshold)
+                                   && (speed < BLOCKED_SPEED_THRESHOLD);
+            update_episode_metrics(res, &ctrl, speed, rot, cpu_usage, mppi_ms, blocked_like);
+
             if (do_draw && draw_trajectories_) draw_trajectory_debug(ctrl, res.robot_pose);
         }
         viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
@@ -430,6 +506,220 @@ float SpecificWorker::get_cpu_usage()
 
     float cpu_percent = 100.0f * (user_diff + sys_diff) / static_cast<float>(elapsed_us);
     return cpu_percent;
+}
+
+void SpecificWorker::start_episode(const std::string &mission_type,
+                                   const std::optional<Eigen::Vector2f> &target_point,
+                                   const std::string &target_object)
+{
+    if (active_episode_.has_value())
+        finish_episode("aborted");
+
+    rc::EpisodicMemory::EpisodeRecord episode;
+    episode.episode_id = rc::EpisodicMemory::make_episode_id();
+    episode.start_ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    episode.status = "running";
+
+    episode.mission.mission_type = mission_type;
+    episode.mission.controller_version = "ainf_slamo_v2";
+    episode.target.target_mode = target_point.has_value() ? "point" : (target_object.empty() ? "none" : "object");
+    if (target_point.has_value())
+    {
+        episode.target.target_x = target_point->x();
+        episode.target.target_y = target_point->y();
+    }
+    episode.target.target_object_id = target_object;
+
+    const auto &p = trajectory_controller_.params;
+    auto add_param = [&episode](const std::string &key, float value)
+    {
+        episode.params_snapshot[key] = value;
+    };
+
+    add_param("mood", p.mood);
+    add_param("max_adv", p.max_adv);
+    add_param("max_back_adv", p.max_back_adv);
+    add_param("max_rot", p.max_rot);
+    add_param("d_safe", p.d_safe);
+    add_param("safety_priority_scale", p.safety_priority_scale);
+    add_param("carrot_lookahead", p.carrot_lookahead);
+    add_param("goal_threshold", p.goal_threshold);
+    add_param("num_samples", static_cast<float>(p.num_samples));
+    add_param("trajectory_steps", static_cast<float>(p.trajectory_steps));
+    add_param("trajectory_dt", p.trajectory_dt);
+    add_param("mppi_lambda", p.mppi_lambda);
+    add_param("sigma_adv", p.sigma_adv);
+    add_param("sigma_rot", p.sigma_rot);
+    add_param("noise_alpha", p.noise_alpha);
+    add_param("warm_start_adv_weight", p.warm_start_adv_weight);
+    add_param("warm_start_rot_weight", p.warm_start_rot_weight);
+    add_param("optim_iterations", static_cast<float>(p.optim_iterations));
+    add_param("optim_lr", p.optim_lr);
+    add_param("lambda_goal", p.lambda_goal);
+    add_param("lambda_obstacle", p.lambda_obstacle);
+    add_param("lambda_smooth", p.lambda_smooth);
+    add_param("lambda_velocity", p.lambda_velocity);
+    add_param("lambda_delta_vel", p.lambda_delta_vel);
+    add_param("velocity_smoothing", p.velocity_smoothing);
+    add_param("gauss_k", p.gauss_k);
+
+    episode.mood_snapshot["mood"] = p.mood;
+    episode.mood_snapshot["enable_mood"] = p.enable_mood ? 1.f : 0.f;
+    episode.mood_snapshot["mood_speed_gain"] = p.mood_speed_gain;
+    episode.mood_snapshot["mood_exploration_gain"] = p.mood_exploration_gain;
+    episode.mood_snapshot["mood_reactivity_gain"] = p.mood_reactivity_gain;
+    episode.mood_snapshot["mood_caution_gain"] = p.mood_caution_gain;
+
+    active_episode_ = std::move(episode);
+    episode_accum_ = EpisodeAccum{};
+    episode_accum_.last_block_sample = std::chrono::steady_clock::now();
+    episode_accum_.last_metric_sample = episode_accum_.last_block_sample;
+    episode_accum_.has_last_metric_sample = true;
+    if (target_point.has_value())
+    {
+        const auto state = get_loc_state();
+        episode_accum_.start_to_goal_dist_m = std::hypot(target_point->x() - static_cast<float>(state[2]),
+                                                         target_point->y() - static_cast<float>(state[3]));
+    }
+
+    if (label_episodeStatus != nullptr)
+    {
+        const QString id = QString::fromStdString(active_episode_->episode_id);
+        label_episodeStatus->setText("EP: REC " + id.right(6));
+        label_episodeStatus->setStyleSheet("background-color: #B3E5FC; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+    }
+}
+
+void SpecificWorker::update_episode_metrics(const rc::RoomConceptAI::UpdateResult &res,
+                                            const rc::TrajectoryController::ControlOutput *ctrl,
+                                            float current_speed,
+                                            float current_rot,
+                                            float cpu_usage,
+                                            float mppi_ms,
+                                            bool blocked_state)
+{
+    if (!active_episode_.has_value())
+        return;
+
+    episode_accum_.n_cycles++;
+
+    const auto now = std::chrono::steady_clock::now();
+    float dt_s = 0.05f;
+    if (episode_accum_.has_last_metric_sample)
+        dt_s = std::max(1e-3f, std::chrono::duration<float>(now - episode_accum_.last_metric_sample).count());
+    episode_accum_.last_metric_sample = now;
+    episode_accum_.has_last_metric_sample = true;
+
+    const Eigen::Vector2f pos(res.state[2], res.state[3]);
+    if (episode_accum_.has_prev_pose)
+    {
+        const float raw_delta = (pos - episode_accum_.prev_pos).norm();
+        const float max_cmd_delta = std::max(trajectory_controller_.params.max_adv, 0.01f) * dt_s;
+        const float max_allowed_delta = 1.35f * max_cmd_delta + 0.01f;
+        const float jitter_deadband = 0.002f;
+        const float bounded_delta = std::clamp(raw_delta - jitter_deadband, 0.f, max_allowed_delta);
+        episode_accum_.distance_traveled_m += bounded_delta;
+    }
+    episode_accum_.prev_pos = pos;
+    episode_accum_.has_prev_pose = true;
+
+    if (ctrl != nullptr)
+    {
+        episode_accum_.min_esdf_m = std::min(episode_accum_.min_esdf_m, ctrl->min_esdf);
+        episode_accum_.ess_ratio_samples.push_back((ctrl->ess_K > 0) ? ctrl->ess / static_cast<float>(ctrl->ess_K) : 0.f);
+    }
+
+    episode_accum_.speed_samples.push_back(current_speed);
+    episode_accum_.rot_samples.push_back(current_rot);
+    episode_accum_.cpu_samples.push_back(cpu_usage);
+    episode_accum_.mppi_ms_samples.push_back(mppi_ms);
+
+    if (blocked_state)
+    {
+        if (!episode_accum_.was_blocked)
+            episode_accum_.n_blocked_events++;
+        const float dt = std::chrono::duration<float>(now - episode_accum_.last_block_sample).count();
+        episode_accum_.blocked_time_s += std::max(0.f, dt);
+        episode_accum_.was_blocked = true;
+    }
+    else
+    {
+        episode_accum_.was_blocked = false;
+    }
+    episode_accum_.last_block_sample = now;
+}
+
+void SpecificWorker::finish_episode(const std::string &status)
+{
+    if (!active_episode_.has_value())
+        return;
+
+    const std::string finished_episode_id = active_episode_->episode_id;
+
+    auto &episode = active_episode_.value();
+    episode.end_ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    episode.duration_s = std::max(0.f, static_cast<float>(episode.end_ts_ms - episode.start_ts_ms) / 1000.f);
+    episode.status = status;
+
+    episode.trajectory.n_cycles = episode_accum_.n_cycles;
+    episode.trajectory.distance_traveled_m = episode_accum_.distance_traveled_m;
+
+    const float target_dist = episode_accum_.start_to_goal_dist_m;
+    episode.trajectory.path_efficiency = (episode_accum_.distance_traveled_m > 1e-6f)
+        ? (target_dist / episode_accum_.distance_traveled_m)
+        : 0.f;
+
+    episode.trajectory.mean_speed = episode_accum_.speed_samples.empty() ? 0.f
+        : std::accumulate(episode_accum_.speed_samples.begin(), episode_accum_.speed_samples.end(), 0.f)
+          / static_cast<float>(episode_accum_.speed_samples.size());
+    episode.trajectory.p95_speed = percentile_copy(episode_accum_.speed_samples, 0.95f);
+    episode.trajectory.mean_rot = episode_accum_.rot_samples.empty() ? 0.f
+        : std::accumulate(episode_accum_.rot_samples.begin(), episode_accum_.rot_samples.end(), 0.f)
+          / static_cast<float>(episode_accum_.rot_samples.size());
+    episode.trajectory.p95_rot = percentile_copy(episode_accum_.rot_samples, 0.95f);
+    episode.trajectory.mean_ess_ratio = episode_accum_.ess_ratio_samples.empty() ? 0.f
+        : std::accumulate(episode_accum_.ess_ratio_samples.begin(), episode_accum_.ess_ratio_samples.end(), 0.f)
+          / static_cast<float>(episode_accum_.ess_ratio_samples.size());
+    episode.trajectory.p05_ess_ratio = percentile_copy(episode_accum_.ess_ratio_samples, 0.05f);
+    episode.trajectory.mean_cpu_pct = episode_accum_.cpu_samples.empty() ? 0.f
+        : std::accumulate(episode_accum_.cpu_samples.begin(), episode_accum_.cpu_samples.end(), 0.f)
+          / static_cast<float>(episode_accum_.cpu_samples.size());
+    episode.trajectory.p95_mppi_ms = percentile_copy(episode_accum_.mppi_ms_samples, 0.95f);
+
+    episode.safety.min_esdf_m = std::isfinite(episode_accum_.min_esdf_m) ? episode_accum_.min_esdf_m : 0.f;
+    episode.safety.n_near_collision = 0;
+    episode.safety.n_collision = (episode.safety.min_esdf_m < trajectory_controller_.params.robot_radius) ? 1 : 0;
+    episode.safety.n_blocked_events = episode_accum_.n_blocked_events;
+    episode.safety.blocked_time_s = episode_accum_.blocked_time_s;
+    episode.safety.n_replans = 0;
+
+    episode.outcome.time_to_goal_s = episode.duration_s;
+    episode.outcome.success_binary = (status == "success") ? 1 : 0;
+    episode.outcome.comfort_jerk_score = episode.trajectory.p95_rot;
+    episode.outcome.safety_score = std::max(0.f, episode.safety.min_esdf_m);
+    episode.outcome.efficiency_score = std::max(0.f, episode.trajectory.path_efficiency);
+    episode.outcome.composite_score = 100.f * static_cast<float>(episode.outcome.success_binary)
+                                    - episode.outcome.time_to_goal_s
+                                    - 50.f * static_cast<float>(episode.safety.n_collision)
+                                    - 2.f * episode.safety.blocked_time_s;
+
+    if (!episodic_memory_.save_episode(episode))
+        qWarning() << "Failed to save episode" << QString::fromStdString(episode.episode_id);
+
+    if (label_episodeStatus != nullptr)
+    {
+        const QString qstatus = QString::fromStdString(status).toUpper();
+        label_episodeStatus->setText("EP: " + qstatus + " " + QString::fromStdString(finished_episode_id).right(6));
+        const bool ok = (status == "success");
+        label_episodeStatus->setStyleSheet(ok
+            ? "background-color: #C8E6C9; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;"
+            : "background-color: #FFE0B2; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+    }
+
+    active_episode_.reset();
+    episode_accum_ = EpisodeAccum{};
 }
 
 void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
@@ -487,6 +777,17 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
         const QString fallback_text = mode_prefix + " | " + nav_text;
         if (label_mode->text() != fallback_text)
             label_mode->setText(fallback_text);
+    }
+
+    if (label_safetyGuard != nullptr)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const bool guard_recent = (last_safety_guard_trigger_time_.time_since_epoch().count() > 0)
+                               && (std::chrono::duration<float>(now - last_safety_guard_trigger_time_).count() <= SAFETY_GUARD_UI_HOLD_SEC);
+        label_safetyGuard->setText(guard_recent ? "SG: ON" : "SG: OFF");
+        label_safetyGuard->setStyleSheet(guard_recent
+            ? "background-color: #FF8A80; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;"
+            : "background-color: #CFD8DC; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
     }
 
 	// Update QLCDNumber displays
@@ -610,18 +911,13 @@ void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eige
 void SpecificWorker::display_gt_error(const Eigen::Affine2f &estimated_pose,
                                       const std::optional<Eigen::Affine2f> &gt_pose_opt)
 {
-    static QGraphicsEllipseItem *gt_marker = nullptr;
-    static QGraphicsLineItem   *gt_heading = nullptr;
-
-    // If GT pose is not available (webots not connected), blank the displays and hide marker
+    // If GT pose is not available (webots not connected), blank the displays
     if (!gt_pose_opt.has_value())
     {
         lcdNumber_gt_xy_err->display(0.0);
         lcdNumber_gt_ang_err->display(0.0);
         lcdNumber_gt_xy_err->setStyleSheet("background-color: #888888;");  // Grey = no data
         lcdNumber_gt_ang_err->setStyleSheet("background-color: #888888;");
-        if (gt_marker) gt_marker->setVisible(false);
-        if (gt_heading) gt_heading->setVisible(false);
         return;
     }
 
@@ -664,32 +960,6 @@ void SpecificWorker::display_gt_error(const Eigen::Affine2f &estimated_pose,
     else if (ang_err_deg < 10.f) ang_color = "background-color: #FFFF00;";
     else                          ang_color = "background-color: #FF6B6B;";
     set_if_changed(lcdNumber_gt_ang_err, ang_color, last_ang_color);
-
-    // Draw GT robot ghost on the viewer for visual comparison
-    constexpr float R = 0.25f;  // visual radius in meters (scene units)
-    if (!gt_marker)
-    {
-        gt_marker = viewer->scene.addEllipse(-R, -R, 2*R, 2*R,
-                                             QPen(QColor("magenta"), 0.02, Qt::DashLine));
-        gt_marker->setZValue(50);
-    }
-    if (!gt_heading)
-    {
-        // Heading line along local X axis (same convention as robot_polygon via add_robot)
-        gt_heading = viewer->scene.addLine(0, 0, 0, R,
-                                           QPen(QColor("magenta"), 0.02));
-        gt_heading->setZValue(50);
-    }
-    gt_marker->setVisible(true);
-    gt_heading->setVisible(true);
-
-    const float gx  = gt.translation().x();
-    const float gy  = gt.translation().y();
-    // Use the same angle convention as display_robot: qRadiansToDegrees(atan2(sin,cos))
-    const float gan = qRadiansToDegrees(std::atan2(gt.linear()(1,0), gt.linear()(0,0)));
-    gt_marker->setPos(gx, gy);
-    gt_heading->setPos(gx, gy);
-    gt_heading->setRotation(gan);
 }
 
 void SpecificWorker::calibrate_gt_offset(const Eigen::Affine2f &estimated_pose, const Eigen::Affine2f &webots_pose)
@@ -988,8 +1258,13 @@ void SpecificWorker::slot_new_target(QPointF pos)
     for (size_t i = 1; i < path.size(); ++i)
         total += (path[i] - path[i - 1]).norm();
 
-    // Activate the trajectory controller to follow the path
+    // Activate the trajectory controller to follow the path (applies elastic relaxation)
     trajectory_controller_.set_path(path);
+
+    // Redraw with the relaxed path so the viewer shows what the controller actually follows
+    draw_path(trajectory_controller_.get_path());
+
+    start_episode("goto_point", Eigen::Vector2f(pos.x(), pos.y()));
 
     qInfo() << "Path planned:" << path.size() << "waypoints," << total << "m to ("
             << pos.x() << "," << pos.y() << ")";
@@ -1211,6 +1486,9 @@ void SpecificWorker::draw_path_threadsafe(const std::vector<Eigen::Vector2f>& pa
 
 void SpecificWorker::clear_path(bool stop_controller, bool clear_stored_path)
 {
+    if (stop_controller && active_episode_.has_value())
+        finish_episode("aborted");
+
     // Stop the trajectory controller if active
     if (stop_controller && trajectory_controller_.is_active())
     {
@@ -1724,6 +2002,7 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
     {
         push_loc_command(LocCmdSetPolygon{room_polygon_});
         path_planner_.set_polygon(room_polygon_);
+        trajectory_controller_.set_room_boundary(room_polygon_);
         if (!furniture_polygons_.empty())
         {
             std::vector<std::vector<Eigen::Vector2f>> obs;
@@ -2648,6 +2927,11 @@ RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoPoint(RoboCompNavigator:
     current_path_ = path_m;
     trajectory_controller_.set_path(current_path_);
 
+    // Redraw with the relaxed path so the viewer shows what the controller actually follows
+    draw_path_threadsafe(trajectory_controller_.get_path());
+
+    start_episode("goto_point", Eigen::Vector2f(target.x, target.y));
+
     qInfo() << "Navigator_setTarget: path with" << current_path_.size() << "waypoints activated";
     return target;
 
@@ -2655,6 +2939,7 @@ RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoPoint(RoboCompNavigator:
 
 void SpecificWorker::Navigator_stop()
 {
+    finish_episode("stopped");
     trajectory_controller_.stop();
     current_path_.clear();
     try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}

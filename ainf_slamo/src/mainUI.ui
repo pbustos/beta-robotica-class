@@ -66,6 +66,52 @@
          </widget>
         </item>
        <item>
+        <widget class="QLabel" name="label_episodeStatus">
+         <property name="text">
+          <string>EP: IDLE</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>130</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <pointsize>8</pointsize>
+           <weight>75</weight>
+           <bold>true</bold>
+          </font>
+         </property>
+        </widget>
+       </item>
+        <item>
+         <widget class="QLabel" name="label_safetyGuard">
+          <property name="text">
+           <string>SG: OFF</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>90</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="font">
+           <font>
+            <pointsize>8</pointsize>
+            <weight>75</weight>
+            <bold>true</bold>
+           </font>
+          </property>
+         </widget>
+        </item>
+       <item>
         <layout class="QVBoxLayout" name="verticalLayout_fps">
          <item>
           <widget class="QLabel" name="label_fps">
@@ -328,6 +374,14 @@
            <property name="checkable"><bool>true</bool></property>
            <property name="checked"><bool>true</bool></property>
            <property name="toolTip"><string>Toggle MPPI trajectory drawing</string></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="pushButton_pdMode">
+           <property name="text"><string>PD Mode</string></property>
+           <property name="checkable"><bool>true</bool></property>
+           <property name="checked"><bool>false</bool></property>
+           <property name="toolTip"><string>Toggle PD carrot-follower (diagnostic: bypasses MPPI)</string></property>
           </widget>
          </item>
            <item>

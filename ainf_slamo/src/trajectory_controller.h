@@ -17,6 +17,8 @@ namespace rc
 class TrajectoryController
 {
 public:
+    enum class ControlMode { MPPI, PD };
+
     struct Params
     {
         // Superparameter in [0,1]: 0 = calm, 0.5 = neutral, 1 = excited
@@ -31,19 +33,21 @@ public:
 
         // Kinematic limits (differential drive: adv + rot only)
         float max_adv   = 0.8f;   // m/s forward
+        float max_back_adv = 0.20f; // m/s backward (for evasion maneuvers)
         float max_rot   = 0.7f;   // rad/s
 
         // Safety
-        float d_safe       = 0.5f; // minimum ESDF distance to consider a trajectory safe
+        float d_safe       = 0.35f; // minimum ESDF distance to consider a trajectory safe
         float robot_radius = 0.3f;
+        float safety_priority_scale = 1.0f; // always-on safety boost applied before mood (>=1 recommended)
 
         // Carrot / path following
         float carrot_lookahead = 2.0f;
         float goal_threshold   = 0.25f;
 
         // MPPI sampling — initial / baseline values (adapted by ESS)
-        int   num_samples      = 50;       // K baseline
-        int   trajectory_steps = 30;       // T baseline
+        int   num_samples      = 100;       // K baseline
+        int   trajectory_steps = 50;       // T baseline
         float trajectory_dt    = 0.1f;     // dt per step
 
         // Command floors to avoid degenerate zero-motion plans
@@ -60,18 +64,18 @@ public:
         // ESS-based adaptive ranges
         int   K_min = 20,  K_max = 120;    // adaptive K bounds
         int   T_min = 15,  T_max = 120;     // adaptive T bounds
-        float lambda_min = 1.0f, lambda_max = 20.0f;  // adaptive λ bounds
+        float lambda_min = 1.0f, lambda_max = 500.0f;  // adaptive λ bounds
         float cpu_budget_ms = 5.0f;        // max MPPI time per cycle (10% of 50ms)
         float ess_smoothing = 0.25f;       // EMA alpha for ESS (faster response to drops)
         float ess_initial_ratio = 0.5f;    // initial ESS / K used when a new path starts
         int   adapt_interval = 2;          // adapt K/T every N cycles (was 5)
 
         // MPPI temperature (initial, adapted by ESS)
-        float mppi_lambda       = 5.0f;
+        float mppi_lambda       = 8.0f;
 
         // Noise standard deviations (for Gaussian perturbations)
         float sigma_adv   = 0.12f;
-        float sigma_rot   = 0.25f;
+        float sigma_rot   = 0.15f;
 
         // AR(1) temporal noise correlation
         float noise_alpha  = 0.80f;
@@ -79,14 +83,14 @@ public:
         float sigma_min_adv   = 0.04f;
         float sigma_min_rot   = 0.08f;
         float sigma_max_adv   = 0.25f;
-        float sigma_max_rot   = 0.40f;
+        float sigma_max_rot   = 0.25f;
 
         // Nominal control blending (warm start weights)
         float warm_start_adv_weight = 0.5f;
-        float warm_start_rot_weight = 0.5f;
+        float warm_start_rot_weight = 0.3f;
 
         // Gradient optimization (post-processing refinement)
-        int   optim_iterations = 3;
+        int   optim_iterations = 0;
         float optim_lr         = 0.05f;
         float optimize_goal_pull_dist_cap = 1.0f;     // cap for goal-pull distance in seed refinement
         float optimize_obstacle_cap_ratio = 2.0f;     // max obstacle correction / goal correction ratio
@@ -95,19 +99,20 @@ public:
 
         // EFE weights (scoring)
         float lambda_goal      = 5.0f;
-        float lambda_obstacle  = 18.0f;
-        float lambda_smooth    = 0.5f;
+        float lambda_obstacle  = 8.0f;   // global obstacle weight (single multiplier)
+        float lambda_smooth    = 0.05f;
         float lambda_velocity  = 0.01f;
         float lambda_delta_vel = 0.05f;
-        float lambda_heading   = 0.5f;   // heading term multiplier relative to lambda_goal
+        float lambda_heading   = 0.6f;   // heading term multiplier relative to lambda_goal
         float lambda_progress  = 1.0f;   // moving-away penalty multiplier relative to lambda_goal
 
-        // Obstacle barrier details
-        float close_obstacle_margin = 0.1f;   // extra margin over robot radius for exponential barrier
-        float close_obstacle_gain   = 10.0f;  // gain of exponential close-obstacle penalty
+        // Obstacle model (simple 2-stage quadratic)
+        float close_obstacle_margin = 0.02f;  // hard zone width over robot radius
+        float close_obstacle_gain   = 3.0f;   // hard-zone multiplier (inside close_obstacle_margin)
+        float obstacle_cost_cap     = 8.0f;   // per-step obstacle cost cap (prevents ESS collapse in narrow passages)
 
         // Collision and velocity-shape penalties in rollout score
-        float collision_penalty = 1000.0f;
+        float collision_penalty = 400.0f;
         float rot_cost_factor = 4.0f;         // relative cost multiplier for rotational effort
 
         // Nominal and injected seed shaping
@@ -137,6 +142,11 @@ public:
         float lambda_gain_low_very = 1.15f;
         float lambda_gain_low = 1.08f;
         float lambda_gain_high = 0.96f;
+
+        // Low-ESS decisiveness: blend weighted MPPI command with best seed
+        // when ESS ratio collapses, preventing over-conservative averaging.
+        float ess_blend_best_start = 0.20f;  // start blending below this ESS/K ratio
+        float ess_blend_best_max = 0.55f;    // max blend factor toward best seed at ESS→0
 
         float sigma_rot_gain_low_very = 1.08f;
         float sigma_adv_gain_low_very = 0.90f;
@@ -171,13 +181,18 @@ public:
         float heading_norm_epsilon = 0.01f;
 
         // Output smoothing
-        float velocity_smoothing = 0.45f;
+        float velocity_smoothing = 0.55f;
+
+        // PD carrot-follower gains
+        float pd_Kp_rot = 2.0f;         // proportional gain for angular error
+        float pd_Kd_rot = 0.3f;         // derivative gain for angular error
+        float pd_speed_cos_power = 1.0f; // adv = max_adv * cos^power(angle_err)
 
         // Visualization
         int num_trajectories_to_draw = 10;
 
         // Gaussian brake for high rotation (to prevent oscillation)
-        float gauss_k = 1.0f;  // Higher = stronger brake at high rotation
+        float gauss_k = 1.5f;  // Gentle brake at high rotation (was 3.0 for anti-oscillation)
     };
 
     struct ControlOutput
@@ -185,6 +200,7 @@ public:
         float adv  = 0.f;
         float side = 0.f;
         float rot  = 0.f;
+        bool  safety_guard_triggered = false;
         bool  goal_reached = false;
         float dist_to_goal = 0.f;
         float min_esdf = 0.f;
@@ -192,6 +208,7 @@ public:
         // ESS diagnostics for UI
         float ess = 0.f;          // current ESS value
         int   ess_K = 1;          // current K (to compute ratio)
+        float explore = 0.f;      // exploration signal [0,1]
 
         Eigen::Vector2f carrot_room = Eigen::Vector2f::Zero();
         int current_wp_index = 0;
@@ -208,10 +225,18 @@ public:
                           const Eigen::Affine2f& robot_pose);
     void stop();
 
+    void set_control_mode(ControlMode mode) { control_mode_ = mode; }
+    ControlMode control_mode() const { return control_mode_; }
+
     /// Set static obstacle polygons (furniture). Their edges are sampled into points
     /// and injected into every ESDF build, transformed to robot frame.
     void set_static_obstacles(const std::vector<std::vector<Eigen::Vector2f>>& obstacles_room,
                               float sample_spacing = 0.05f);
+
+    /// Set room boundary polygon. Edges are sampled into points used by relax_path
+    /// to push waypoints away from walls toward the center of free space.
+    void set_room_boundary(const std::vector<Eigen::Vector2f>& polygon,
+                           float sample_spacing = 0.05f);
 
     bool is_active() const { return active_ && !path_room_.empty(); }
     int current_waypoint_index() const { return wp_index_; }
@@ -224,6 +249,7 @@ private:
     Params active_params_;
 
     bool active_ = false;
+    ControlMode control_mode_ = ControlMode::MPPI;
     std::vector<Eigen::Vector2f> path_room_;
     int wp_index_ = 0;
 
@@ -234,9 +260,13 @@ private:
     // Static obstacles (furniture) — pre-sampled points in room frame
     std::vector<Eigen::Vector2f> static_obstacle_points_room_;
 
+    // Room boundary walls — pre-sampled points in room frame (for path relaxation)
+    std::vector<Eigen::Vector2f> room_boundary_points_room_;
+
     // Output smoothing
     Eigen::Vector3f smoothed_vel_ = Eigen::Vector3f::Zero();
     bool has_prev_vel_ = false;
+    float prev_angle_err_ = 0.f;  // for PD derivative term
 
     // ---- MPPI state ----
     // Previous optimal control sequence (T steps of [adv, rot])
@@ -252,15 +282,18 @@ private:
     int   adaptive_K_;               // current number of samples
     int   adaptive_T_;               // current horizon length
     float adaptive_lambda_;          // current MPPI temperature
-    int   adaptive_n_inject_ = 2;    // current injection count
     float ess_smooth_ = 0.f;        // EMA-smoothed ESS
+    float explore_ = 0.f;           // continuous exploration signal [0,1] derived from ESS
     float last_mppi_ms_ = 0.f;      // last MPPI wall-clock time
-    int   adapt_counter_ = 0;       // counter for K/T adaptation interval
+    int   safety_guard_mood_cooldown_ = 0; // cycles until next mood bump allowed
 
-    // Compute ESS from weights and adapt K, T, λ, σ, injections
+    // Compute ESS from weights and adapt λ
     float compute_ess(const std::vector<float>& weights, int K) const;
     void adapt_from_ess(float ess, int K, int num_collisions);
     void refresh_active_params();
+
+    // Elastic-band path relaxation: push waypoints toward center of free space
+    void relax_path(int iterations = 20);
 
     // RNG
     std::mt19937 rng_{std::random_device{}()};
@@ -271,6 +304,7 @@ private:
     {
         std::vector<float> adv;
         std::vector<float> rot;
+        bool use_info_correction = false;
     };
 
     // Result of simulating a seed
@@ -294,11 +328,21 @@ private:
     // Nominal control toward carrot (initial guess for warm-start)
     Seed compute_nominal(const Eigen::Vector2f& carrot_robot, int steps) const;
 
-    // MPPI sampling: generate K perturbations around prev_optimal_
-    std::vector<Seed> sample_trajectories(const Eigen::Vector2f& carrot_robot);
+    // MPPI sampling: generate K perturbations around the nominal
+    std::vector<Seed> sample_trajectories(const Eigen::Vector2f& carrot_robot, const Seed& nominal);
 
-    SimResult simulate_and_score(const Seed& seed, const Eigen::Vector2f& carrot_robot);
+    SimResult simulate_and_score(const Seed& seed, const Eigen::Vector2f& carrot_robot, const Seed& nominal);
     void optimize_seed(Seed& seed, const Eigen::Vector2f& carrot_robot);
+
+    // Obstacle scoring helpers (single-weight 2-stage quadratic model)
+    float obstacle_step_cost(float esdf_val) const;
+    float obstacle_repulsion_strength(float esdf_val) const;
+
+    // PD carrot-follower (alternative to MPPI)
+    ControlOutput compute_pd(ControlOutput& out,
+                             const Eigen::Vector2f& carrot_robot,
+                             const std::vector<Eigen::Vector3f>& lidar_points,
+                             const Eigen::Affine2f& robot_pose);
 
     static Eigen::Vector2f room_to_robot(const Eigen::Vector2f& p_room,
                                           const Eigen::Affine2f& robot_pose);

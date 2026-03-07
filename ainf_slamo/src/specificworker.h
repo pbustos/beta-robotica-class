@@ -40,7 +40,11 @@
 #include "pointcloud_center_estimator.h"
 #include "polygon_path_planner.h"
 #include "trajectory_controller.h"
+#include "episodic_memory.h"
 #include <variant>
+#include <optional>
+#include <chrono>
+#include <limits>
 #include "common_types.h"
 
 /**
@@ -227,12 +231,36 @@ class SpecificWorker : public GenericWorker
 
 	// Trajectory controller (ESDF-based sampling local control)
 	rc::TrajectoryController trajectory_controller_;
+	rc::EpisodicMemory episodic_memory_;
+	std::optional<rc::EpisodicMemory::EpisodeRecord> active_episode_;
+	struct EpisodeAccum
+	{
+		bool has_prev_pose = false;
+		Eigen::Vector2f prev_pos = Eigen::Vector2f::Zero();
+		float start_to_goal_dist_m = 0.f;
+		int n_cycles = 0;
+		float distance_traveled_m = 0.f;
+		float min_esdf_m = std::numeric_limits<float>::max();
+		float blocked_time_s = 0.f;
+		int n_blocked_events = 0;
+		std::vector<float> speed_samples;
+		std::vector<float> rot_samples;
+		std::vector<float> ess_ratio_samples;
+		std::vector<float> cpu_samples;
+		std::vector<float> mppi_ms_samples;
+		std::chrono::steady_clock::time_point last_block_sample;
+		std::chrono::steady_clock::time_point last_metric_sample;
+		bool has_last_metric_sample = false;
+		bool was_blocked = false;
+	} episode_accum_;
 	bool low_speed_block_timer_active_ = false;
 	std::chrono::steady_clock::time_point low_speed_block_start_;
 	static constexpr float BLOCKED_SPEED_THRESHOLD = 0.03f;     // m/s
 	static constexpr float BLOCKED_TIME_THRESHOLD_SEC = 2.5f;   // s
 	float last_ess_ = 0.f;   // Latest ESS value for UI
 	int   last_ess_K_ = 1;   // Latest K for ESS ratio
+	std::chrono::steady_clock::time_point last_safety_guard_trigger_time_{};
+	static constexpr float SAFETY_GUARD_UI_HOLD_SEC = 0.8f;
 	std::chrono::steady_clock::time_point last_joystick_time_;
 	static constexpr float JOYSTICK_TIMEOUT_SEC = 0.5f;
 	void send_velocity_command(float adv, float side, float rot);
@@ -262,6 +290,17 @@ class SpecificWorker : public GenericWorker
 	float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
 	float estimate_orientation_from_points(const std::vector<Eigen::Vector3f> &pts) const;
 	void update_ui(const rc::RoomConceptAI::UpdateResult &res, const rc::VelocityCommand &current_velocity, int fps_val);
+	void start_episode(const std::string &mission_type,
+	                   const std::optional<Eigen::Vector2f> &target_point = std::nullopt,
+	                   const std::string &target_object = "");
+	void update_episode_metrics(const rc::RoomConceptAI::UpdateResult &res,
+	                           const rc::TrajectoryController::ControlOutput *ctrl,
+	                           float current_speed,
+	                           float current_rot,
+	                           float cpu_usage,
+	                           float mppi_ms,
+	                           bool blocked_state);
+	void finish_episode(const std::string &status);
 
 	// Room polygon capture
 	void draw_room_polygon();
