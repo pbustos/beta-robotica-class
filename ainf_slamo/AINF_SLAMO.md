@@ -1,7 +1,7 @@
 # AINF_SLAMO — Technical Documentation
 
 **Active Inference SLAM with LiDAR, MPPI Navigation and a Known Room Model**
-Version 2.0 — March 2026
+Version 2.1 — June 2025
 
 ---
 
@@ -26,6 +26,11 @@ Version 2.0 — March 2026
 17. [MPPI Trajectory Controller](#17-mppi-trajectory-controller)
     - [17.10 ESS-Based Adaptive Parameter Tuning](#1710-ess-based-adaptive-parameter-tuning)
   - [17.11 Mood Superparameter (Calm–Excited)](#1711-mood-superparameter-calmexcited)
+  - [17.12 Multi-Step Command Extraction](#1712-multi-step-command-extraction)
+  - [17.13 Top-K Decisive Blending](#1713-top-k-decisive-blending)
+  - [17.14 Catmull-Rom Path Smoothing](#1714-catmull-rom-path-smoothing)
+  - [17.15 Lateral Clearance Cost](#1715-lateral-clearance-cost)
+  - [17.16 Path Blockage Detection and Obstacle Avoidance](#1716-path-blockage-detection-and-obstacle-avoidance)
 18. [Complete Algorithm Loop](#18-complete-algorithm-loop)
 19. [Parameters Reference](#19-parameters-reference)
 20. [Key Implementation Notes](#20-key-implementation-notes)
@@ -77,18 +82,24 @@ The system has two main subsystems:
 
   Shift+Right click ──────►┌──────────────────────┐
     (set target)           │  PolygonPathPlanner   │───► path waypoints
-                           │  (Visibility Graph)   │         │
-                           └──────────────────────┘         ▼
-                                                 ┌──────────────────────┐
-                          LiDAR points ─────────►│  TrajectoryController │
-                          Robot pose ───────────►│  (MPPI + ESDF)        │
-                                                 │  • Warm-start seq.    │
-                                                 │  • AR(1) sampling     │
-                                                 │  • Injection seeds    │
-                                                 └──────────┬───────────┘
-                                                            │
-                                                            ▼
-                                                   (adv, rot) → robot
+  Ctrl+Right click ────►   │  (Visibility Graph    │     (Catmull-Rom spline)
+    (cancel mission)       │   + obstacle support) │         │
+                           └───────────▲──────────┘         ▼
+                                       │          ┌──────────────────────┐
+                          LiDAR points ┼─────────►│  TrajectoryController │
+                          Robot pose ──┼─────────►│  (MPPI + ESDF)        │
+                                       │          │  • Warm-start seq.    │
+                                       │          │  • AR(1) sampling     │
+                                       │          │  • Injection seeds    │
+                                       │          │  • Lateral clearance  │
+                                       │          │  • Blockage detection │
+                                       │          └──────────┬───────────┘
+                                       │                     │
+                              replan   │    path_blocked?    │
+                              ◄────────┘◄────────────────────┘
+                           (cluster LiDAR →                  │
+                            OBB polygon →                    ▼
+                            temp obstacle)          (adv, rot) → robot
 ```
 
 > **Note:** The Webots GT pose is used **only** for debug error statistics
@@ -601,23 +612,25 @@ simple (possibly concave) polygon, without any grid discretisation.
 - Query: $O(n^2)$ to connect start/goal + $O(n \log n)$ Dijkstra.
 - Memory: $O(n^2)$ for the graph — a few hundred entries.
 
-### 16.2 Future: Interior Obstacles
+### 16.2 Interior Obstacles
 
-The Visibility Graph extends naturally to **polygonal obstacles inside the room**
-(furniture, columns). The only change is:
+The Visibility Graph extends to **polygonal obstacles inside the room**
+(furniture, columns):
 
 - Obstacle polygons are **expanded outward** by `robot_radius` (Minkowski outward
   offset).
 - Obstacle vertices are added to the visibility graph.
 - The visibility check tests against **all** boundary segments (room + obstacles).
 
-The `plan()` interface remains unchanged.
+The `plan()` interface accepts obstacles via `set_obstacles()`.  At runtime,
+static furniture from the room layout **and** temporary obstacles detected by the
+blockage-detection system (§17.12) are both registered before each replan.
 
 ### 16.3 User Interaction
 
 - **Shift + Right Click** on the viewer sets a navigation target.
-- The path is planned from the current robot pose to the target.
-- The result is drawn as a **cyan polyline** with waypoint dots and a **red
+- **Ctrl + Right Click** cancels the current navigation mission.
+- The path is drawn as a **light-green polyline** with waypoint dots and a **red
   target marker**.
 
 ### 16.4 Parameters
@@ -650,7 +663,7 @@ At each control cycle (20 Hz), the controller:
 2. Computes a **carrot** point on the path ahead of the robot.
 3. **Warm-starts**: shifts the previous optimal control sequence by one step
    and blends it with a nominal control (proportional to the carrot).
-4. **Samples** $K=50$ candidate trajectories as perturbations of the
+4. **Samples** $K=100$ candidate trajectories as perturbations of the
    warm-started sequence plus structured injection seeds.
 5. Optionally **refines** each sample with gradient-based ESDF optimization.
 6. **Scores** each trajectory using an Expected Free Energy (EFE) cost.
@@ -754,23 +767,25 @@ $$G = G_{\text{goal}} + G_{\text{obs}} + G_{\text{smooth}} + G_{\text{vel}} + G_
 
 | Component | Formula | Weight |
 |-----------|---------|--------|
-| **Goal** | Endpoint distance to carrot + heading alignment + backward penalty | `lambda_goal` = 4.0 |
-| **Obstacle** | Discounted sum of quadratic + exponential ESDF penalties | `lambda_obstacle` = 10.0 |
-| **Smooth** | $(u_0 - u^{\text{base}}_0)^2$ — continuity with warm-start | `lambda_smooth` = 0.5 |
+| **Goal** | Endpoint distance to carrot + heading alignment + backward penalty | `lambda_goal` = 5.0 |
+| **Obstacle** | Discounted sum of quadratic + exponential ESDF penalties | `lambda_obstacle` = 8.0 |
+| **Smooth** | $(u_0 - u^{\text{base}}_0)^2$ — continuity with warm-start | `lambda_smooth` = 0.05 |
 | **Velocity** | $\sum (v^2 + 4\omega^2)$ — penalise unnecessary rotation 4× | `lambda_velocity` = 0.01 |
-| **Delta** | $\sum (\Delta v^2 + 4\Delta\omega^2)$ — penalise jerky commands | `lambda_delta_vel` = 0.05 |
+| **Delta** | $\sum (\Delta v^2 + 4\Delta\omega^2)$ — penalise jerky commands | `lambda_delta_vel` = 0.18 |
 | **Progress** | Penalise per-step motion away from carrot (discounted) | `lambda_goal` |
-| **Collision** | +1000 if trajectory enters ESDF < `robot_radius` | — |
+| **Collision** | +400 if trajectory enters ESDF < `robot_radius` | — |
 
 ### 17.7 Gaussian Brake
 
 Before sending the command to the robot, the advance velocity is modulated by
 the rotation magnitude:
 
-$$v_{\text{out}} = v_{\text{smooth}} \cdot \exp\!\left(-k \cdot \left(\frac{\omega}{\omega_{\max}}\right)^2\right), \qquad k = 2$$
+$$v_{\text{out}} = v_{\text{smooth}} \cdot \exp\!\left(-k \cdot \left(\frac{\omega}{\omega_{\max}}\right)^2\right), \qquad k = 0.6$$
 
-This causes the robot to slow down during sharp turns, staying nearly in place
-during tight manoeuvres — critical for doorway navigation.
+With $k = 0.6$ the braking effect is mild — the robot slows to about 85 % of
+full speed at half the rotational limit.  Stronger oscillation control is
+handled by `lambda_delta_vel = 0.18` in the EFE scoring, so the brake acts as a
+lightweight final safety net rather than the primary turn-speed limiter.
 
 ### 17.8 Integration with Localisation
 
@@ -783,22 +798,22 @@ a high-quality prediction prior for the next localisation update.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `num_samples` | 50 | K: initial trajectory samples (adapted by ESS, §17.10) |
-| `trajectory_steps` | 30 | T: initial horizon steps (adapted by ESS, §17.10) |
-| `trajectory_dt` | 0.15 s | Time step per horizon step |
-| `mppi_lambda` | 5.0 | Initial temperature (adapted by ESS, §17.10) |
+| `num_samples` | 100 | K: initial trajectory samples (adapted by ESS, §17.10) |
+| `trajectory_steps` | 50 | T: initial horizon steps (adapted by ESS, §17.10) |
+| `trajectory_dt` | 0.10 s | Time step per horizon step |
+| `mppi_lambda` | 8.0 | Initial temperature (adapted by ESS, §17.10) |
 | `sigma_adv` | 0.12 m/s | Initial advance noise std (adapted by ESS) |
 | `sigma_rot` | 0.25 rad/s | Initial rotation noise std (adapted by ESS) |
 | `noise_alpha` | 0.80 | AR(1) temporal correlation |
 | `warm_start_adv_weight` | 0.5 | Blend weight for previous adv sequence |
-| `warm_start_rot_weight` | 0.5 | Blend weight for previous rot sequence |
-| `d_safe` | 0.4 m | Safety distance for obstacle penalties |
+| `warm_start_rot_weight` | 0.3 | Blend weight for previous rot sequence |
+| `d_safe` | 0.35 m | Safety distance for obstacle penalties |
 | `robot_radius` | 0.3 m | Hard collision threshold |
-| `carrot_lookahead` | 1.5 m | Lookahead distance on path |
+| `carrot_lookahead` | 2.0 m | Lookahead distance on path |
 | `goal_threshold` | 0.25 m | Distance to consider goal reached |
-| `optim_iterations` | 2 | ESDF gradient refinement passes per seed |
-| `velocity_smoothing` | 0.45 | EMA alpha for output smoothing |
-| `gauss_k` | 1.0 | Gaussian brake intensity |
+| `optim_iterations` | 0 | ESDF gradient refinement passes per seed |
+| `velocity_smoothing` | 0.60 | EMA alpha for output smoothing |
+| `gauss_k` | 0.6 | Gaussian brake intensity |
 | `num_trajectories_to_draw` | 10 | Trajectories shown in viewer |
 | `mood` | 0.5 | High-level behavior knob in [0, 1]: 0 = calm, 1 = excited |
 | `enable_mood` | true | Enables runtime remapping of MPPI parameters from mood |
@@ -860,7 +875,7 @@ more evenly. The ESS directly diagnoses the need:
 | 0.15 – 0.30 | **Moderate soften** — too few effective samples | λ ×= 1.08 |
 | > 0.50 | **Sharpen** — many redundant samples, be more selective | λ ×= 0.96 |
 
-Clamped to $[\lambda_{\min}, \lambda_{\max}] = [1.0, 20.0]$.
+Clamped to $[\lambda_{\min}, \lambda_{\max}] = [1.0, 500.0]$.
 
 This creates a **negative feedback loop**: when weights collapse (low ESS),
 λ increases, which softens weights, which raises ESS. The system converges to
@@ -911,7 +926,7 @@ meaningful and should be stable:
 | 0.15 – 0.30 | Need more samples | K ×= 1.20 |
 | > 0.60 | Can safely reduce | K ×= 0.85 |
 
-Clamped to $[K_{\min}, K_{\max}] = [20, 120]$.
+Clamped to $[K_{\min}, K_{\max}] = [20, 300]$.
 
 **T (horizon length):**
 
@@ -925,7 +940,7 @@ samples collide early, but the ESS among survivors may still look acceptable.
 | < 0.25 | > 0.50 | Obstacle blocking — need to see further | T ×= 1.15 |
 | > 0.60 | < 0.20 | Open space — save compute | T ×= 0.90 |
 
-Clamped to $[T_{\min}, T_{\max}] = [15, 80]$.
+Clamped to $[T_{\min}, T_{\max}] = [15, 120]$.
 
 #### 17.10.7 CPU Budget Cap
 
@@ -984,9 +999,9 @@ and T (planning horizon), preferring neither.
 |-----------|---------|-------------|
 | `ess_smoothing` | 0.25 | EMA alpha for ESS (higher = faster response) |
 | `adapt_interval` | 2 | K/T adaptation period (cycles) |
-| `K_min` / `K_max` | 20 / 120 | Adaptive sample count bounds |
-| `T_min` / `T_max` | 15 / 80 | Adaptive horizon bounds |
-| `lambda_min` / `lambda_max` | 1.0 / 20.0 | Adaptive temperature bounds |
+| `K_min` / `K_max` | 20 / 300 | Adaptive sample count bounds |
+| `T_min` / `T_max` | 15 / 120 | Adaptive horizon bounds |
+| `lambda_min` / `lambda_max` | 1.0 / 500.0 | Adaptive temperature bounds |
 | `sigma_min_adv` / `sigma_max_adv` | 0.04 / 0.25 m/s | Adaptive σ_adv clamp |
 | `sigma_min_rot` / `sigma_max_rot` | 0.08 / 0.40 rad/s | Adaptive σ_rot clamp |
 | `cpu_budget_ms` | 5.0 ms | Max MPPI compute per cycle |
@@ -1023,6 +1038,89 @@ Main effects by family:
 
 This allows continuous behavioral tuning from the UI with one slider while
 preserving low-level parameter safety constraints.
+
+### 17.12 Multi-Step Command Extraction
+
+Instead of sending only the first time-step of the MPPI optimal sequence, the
+controller averages the first $N=3$ steps:
+
+$$u^* = \frac{1}{N}\sum_{t=0}^{N-1} u^{\text{opt}}_t$$
+
+This smooths transient spikes that occasionally appear at $t=0$ (e.g. when
+the warm-start shifts a large correction into the first slot) and provides a
+more representative snapshot of the intended short-term manoeuvre.
+
+### 17.13 Top-K Decisive Blending
+
+When the ESS ratio is healthy, the standard MPPI weighted average mixes many
+similar trajectories. When ESS collapses, the average is dominated by a single
+best trajectory but the weighted sum can still dilute it with near-zero weight
+contributions. To improve decisiveness:
+
+- The controller selects the **top-3** trajectories by MPPI weight.
+- Applies a **softmax** reweighting over only those three candidates.
+- Blends the result with the full MPPI average using a factor that increases as
+  ESS drops (controlled by `ess_blend_best_start` and `ess_blend_best_max`).
+
+This ensures committed action through tight passages without losing the
+exploration diversity of full MPPI in open space.
+
+### 17.14 Catmull-Rom Path Smoothing
+
+After the `PolygonPathPlanner` produces a visibility-graph shortest path (a
+polyline with sharp corners at polygon vertices), the controller applies a
+**centripetal Catmull-Rom spline** to generate a smooth, curvature-continuous
+path:
+
+1. Ghost control points are added before the first and after the last waypoint.
+2. Each segment between consecutive waypoints is subdivided into interpolated
+   points using the Catmull-Rom formulation with $\alpha = 0.5$ (centripetal
+   parameterisation, which avoids cusps and self-intersections).
+3. The resulting densified path replaces the original polyline.
+
+The spline runs once when a new path is set (`set_path()`).
+
+### 17.15 Lateral Clearance Cost
+
+In narrow corridors the MPPI trajectories may hug one wall because the forward
+cost landscape is symmetric. A **lateral clearance** term breaks this symmetry:
+
+- Two side probes are placed at $\pm 0.22\,\text{m}$ from each trajectory point.
+- The ESDF is queried at both probes.
+- If the minimum side clearance is less than `robot_radius + lateral_clearance_margin`
+  ($0.3 + 0.25 = 0.55\,\text{m}$), a quadratic penalty scaled by
+  `lambda_lateral_clearance = 3.8` is added.
+- An additional `lateral_closing_gain = 1.5` penalty is applied when the
+  clearance is *decreasing* along the trajectory (approaching a wall).
+
+This encourages the robot to stay centred in passages rather than drifting
+toward one side.
+
+### 17.16 Path Blockage Detection and Obstacle Avoidance
+
+The controller monitors the ESDF values along the upcoming path waypoints to
+detect dynamic obstacles that were not present when the path was planned:
+
+1. **Detection**: At each cycle, waypoints within `blockage_lookahead_m = 1.5 m`
+   are checked. A waypoint is "blocked" if its ESDF value is below
+   `blockage_esdf_threshold = 0.25 m`. If at least `blockage_min_waypoints = 4`
+   consecutive waypoints are blocked, a blockage candidate is registered.
+
+2. **Confirmation**: The blockage must persist for `blockage_confirm_cycles = 15`
+   consecutive cycles (~0.75 s at 20 Hz) to avoid false positives from
+   transient sensor noise.
+
+3. **Replan**: Once confirmed, the controller reports `path_blocked = true` with
+   the blockage centre and approximate radius. The main loop in
+   `specificworker.cpp`:
+   - Clusters the nearby LiDAR points into an obstacle region.
+   - Fits an OBB (oriented bounding box) polygon around the cluster.
+   - Registers it as a **temporary obstacle** in the `PolygonPathPlanner`.
+   - Replans the path around the obstacle.
+   - Temporary obstacles expire after a configurable TTL.
+
+4. **Cooldown**: After triggering a replan, a `blockage_cooldown_cycles = 100`
+   guard prevents re-triggering while the new path stabilises.
 
 ---
 
@@ -1095,15 +1193,24 @@ LOOP every 50 ms:
       ├── Build local ESDF from lidar points (+static obstacles)
       ├── Warm-start: shift prev_optimal_ + blend nominal
       ├── Sample K trajectories (injections + AR(1) perturbations)
-      ├── Optimize each sample with ESDF gradient
-      ├── Score (EFE) and compute MPPI weighted average
+      ├── Score (EFE incl. lateral clearance) and compute MPPI weighted average
+      ├── Top-K decisive blending                              [§17.13]
+      ├── Multi-step command extraction (avg first 3 steps)    [§17.12]
       ├── Compute ESS → adapt K, T, λ, σ, n_inject           [§17.10]
       ├── Store optimal sequence for next cycle
       ├── Apply EMA smoothing + Gaussian brake
       ├── Send (adv, rot) to robot
       └── Feed commands into velocity_history for localisation
 
- 14. STORE for next cycle
+ 14. BLOCKAGE DETECTION (if path active)                 [§17.16]
+      ├── Check ESDF along upcoming path waypoints
+      ├── IF persistent blockage confirmed:
+      │   ├── Cluster LiDAR points near blockage centre
+      │   ├── Fit OBB polygon → register as temp obstacle
+      │   └── Replan path around obstacle
+      └── Temp obstacles expire after TTL
+
+ 15. STORE for next cycle
      └── μ_{k} = smooth pose,  Σ_{k} = posterior cov
 ```
 
@@ -1192,39 +1299,39 @@ LOOP every 50 ms:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `num_samples` | 50 | K: initial trajectory samples per cycle (adapted by ESS) |
-| `trajectory_steps` | 30 | T: initial horizon steps (adapted by ESS) |
-| `trajectory_dt` | 0.15 s | Time step per horizon step |
+| `num_samples` | 100 | K: initial trajectory samples per cycle (adapted by ESS) |
+| `trajectory_steps` | 50 | T: initial horizon steps (adapted by ESS) |
+| `trajectory_dt` | 0.10 s | Time step per horizon step |
 | `mood` | 0.5 | High-level calm-excited superparameter in [0, 1] |
 | `enable_mood` | true | Enables mood-based runtime remapping |
 | `mood_speed_gain` | 0.35 | Mood influence on speed and lookahead |
 | `mood_exploration_gain` | 0.40 | Mood influence on exploration and optimizer effort |
 | `mood_reactivity_gain` | 0.35 | Mood influence on smoothing and response speed |
 | `mood_caution_gain` | 0.30 | Mood influence on safety-vs-aggressiveness balance |
-| `mppi_lambda` | 5.0 | Initial temperature (adapted by ESS, §17.10.3) |
+| `mppi_lambda` | 8.0 | Initial temperature (adapted by ESS, §17.10.3) |
 | `sigma_adv` | 0.12 m/s | Initial advance noise std (adapted by ESS, §17.10.4) |
 | `sigma_rot` | 0.25 rad/s | Initial rotation noise std (adapted by ESS, §17.10.4) |
 | `noise_alpha` | 0.80 | AR(1) temporal correlation coefficient |
-| `K_min` / `K_max` | 20 / 120 | Adaptive sample count bounds |
-| `T_min` / `T_max` | 15 / 80 | Adaptive horizon bounds |
-| `lambda_min` / `lambda_max` | 1.0 / 20.0 | Adaptive temperature bounds |
+| `K_min` / `K_max` | 20 / 300 | Adaptive sample count bounds |
+| `T_min` / `T_max` | 15 / 120 | Adaptive horizon bounds |
+| `lambda_min` / `lambda_max` | 1.0 / 500.0 | Adaptive temperature bounds |
 | `sigma_min_adv` / `sigma_max_adv` | 0.04 / 0.25 m/s | Adaptive σ_adv clamp range |
 | `sigma_min_rot` / `sigma_max_rot` | 0.08 / 0.40 rad/s | Adaptive σ_rot clamp range |
 | `ess_smoothing` | 0.25 | EMA alpha for ESS ratio (higher = faster response) |
 | `adapt_interval` | 2 | K/T adaptation period (cycles) |
 | `cpu_budget_ms` | 5.0 ms | Max MPPI compute time per cycle |
 | `warm_start_adv_weight` | 0.5 | Blend weight: prev vs nominal (advance) |
-| `warm_start_rot_weight` | 0.5 | Blend weight: prev vs nominal (rotation) |
-| `max_adv` | 0.6 m/s | Maximum forward velocity |
-| `max_rot` | 0.8 rad/s | Maximum angular velocity |
-| `d_safe` | 0.4 m | Safety distance for obstacle cost |
+| `warm_start_rot_weight` | 0.3 | Blend weight: prev vs nominal (rotation) |
+| `max_adv` | 0.8 m/s | Maximum forward velocity |
+| `max_rot` | 0.7 rad/s | Maximum angular velocity |
+| `d_safe` | 0.35 m | Safety distance for obstacle cost |
 | `robot_radius` | 0.3 m | Hard collision threshold in ESDF |
-| `carrot_lookahead` | 1.5 m | Path lookahead distance |
+| `carrot_lookahead` | 2.0 m | Path lookahead distance |
 | `goal_threshold` | 0.25 m | Distance to consider goal reached |
-| `optim_iterations` | 2 | ESDF gradient refinement passes |
+| `optim_iterations` | 0 | ESDF gradient refinement passes |
 | `optim_lr` | 0.05 | Learning rate for seed optimization |
-| `velocity_smoothing` | 0.45 | EMA alpha for output smoothing |
-| `gauss_k` | 1.0 | Gaussian brake intensity (rotation→advance) |
+| `velocity_smoothing` | 0.60 | EMA alpha for output smoothing |
+| `gauss_k` | 0.6 | Gaussian brake intensity (rotation→advance) |
 | `grid_resolution` | 0.05 m | ESDF grid cell size |
 | `grid_half_size` | 4.0 m | ESDF grid extent from robot |
 | `num_trajectories_to_draw` | 10 | Trajectories shown in viewer |
@@ -1289,8 +1396,15 @@ lightweight enough to run 50 samples × 30 steps at 20 Hz on a single CPU core.
 The trajectory controller combines two sampling strategies:
 - **Structured injection seeds** (2–6 deterministic lateral offsets) guarantee
   spatial coverage for obstacle avoidance and doorway navigation.
-- **AR(1) Gaussian perturbations** (44–118 random samples around the warm-started
+- **AR(1) Gaussian perturbations** (random samples around the warm-started
   sequence) provide temporal coherence and smooth convergence.
+
+Additional post-processing:
+- **Top-K decisive blending** (§17.13) prevents over-averaging when ESS collapses.
+- **Multi-step extraction** (§17.12) smooths the output command.
+- **Catmull-Rom spline** (§17.14) provides curvature-continuous paths.
+- **Lateral clearance** (§17.15) centres the robot in narrow passages.
+- **Blockage detection** (§17.16) triggers replanning around dynamic obstacles.
 
 All five key parameters (K, T, λ, σ, n_inject) are **self-tuned** at runtime
 using the **Effective Sample Size** of the MPPI importance weights (§17.10).
@@ -1304,5 +1418,5 @@ moderate K).
 
 ---
 
-*This document was generated from the source code of `ainf_slamo` (March 2026, v2.0).*
+*This document was generated from the source code of `ainf_slamo` (June 2025, v2.1).*
 

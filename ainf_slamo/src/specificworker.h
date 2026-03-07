@@ -1,5 +1,5 @@
 /*
- *    Copyright (C) 2026 by YOUR NAME HERE
+ *    Copyright (C) 2026 by RoboComp
  *
  *    This file is part of RoboComp
  *
@@ -18,8 +18,8 @@
  */
 
 /**
-	\brief
-	@author authorname
+	\brief AINF_SLAMO – Active Inference SLAM and Navigation
+	@author robocomp
 */
 
 #ifndef SPECIFICWORKER_H

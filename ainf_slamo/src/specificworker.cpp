@@ -75,7 +75,7 @@ SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, 
 
 SpecificWorker::~SpecificWorker()
 {
-	std::cout << "Destroying SpecificWorker" << std::endl;
+	qInfo() << "Destroying SpecificWorker";
 
     // Stop state machine timers to prevent compute/emergency callbacks during teardown
     statemachine.stop();
@@ -109,7 +109,7 @@ SpecificWorker::~SpecificWorker()
 
 void SpecificWorker::initialize()
 {
-    std::cout << "Initializing worker" << std::endl;
+    qInfo() << "Initializing worker";
 
     // Initialize CPU usage tracking
     num_processors_ = sysconf(_SC_NPROCESSORS_ONLN);
@@ -269,7 +269,7 @@ void SpecificWorker::initialize()
 
     // Lidar thread is created
     read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
-    std::cout << __FUNCTION__ << " Started lidar reader" << std::endl;
+    qInfo() << __FUNCTION__ << "Started lidar reader";
 
     // Wait for first lidar so we can initialize the concept with a data-driven guess
     // GT pose from webots (robot) is optional — used only for debug/statistics
@@ -363,7 +363,7 @@ void SpecificWorker::initialize()
 
     // Start localization thread (room_ai runs independently from compute loop)
     localization_th_ = std::thread(&SpecificWorker::run_localization, this);
-    std::cout << __FUNCTION__ << " Started localization thread" << std::endl;
+    qInfo() << __FUNCTION__ << "Started localization thread";
 
 	setPeriod("Compute", 50);
 }
@@ -1071,7 +1071,7 @@ void SpecificWorker::read_lidar()
 
             const float body_offset_sq = params.ROBOT_SEMI_WIDTH * params.ROBOT_SEMI_WIDTH;
 
-            // ---- Lanzar ambas peticiones lidar en paralelo (async Ice) HELIOS ----
+            // ---- Launch both lidar requests in parallel (async Ice) — HELIOS ----
             std::future<RoboCompLidar3D::TData> future_high;
             try
             {
@@ -1081,7 +1081,7 @@ void SpecificWorker::read_lidar()
                         params.LIDAR_LOW_DECIMATION_FACTOR);
             }
             catch (const Ice::Exception &e)
-            { std::cout << "[read_lidar] BPEARL async launch failed: " << e.what() << std::endl; }
+            { qWarning() << "[read_lidar] HELIOS async launch failed:" << e.what(); }
 
             // BPEARL
             std::future<RoboCompLidar3D::TData> future_low;
@@ -1093,9 +1093,9 @@ void SpecificWorker::read_lidar()
                     params.LIDAR_LOW_DECIMATION_FACTOR_LOW);
             }
             catch (const Ice::Exception &e)
-            { std::cout << "[read_lidar] BPEARL async launch failed: " << e.what() << std::endl; }
+            { qWarning() << "[read_lidar] BPEARL async launch failed:" << e.what(); }
 
-            // ---- Esperar y procesar HELIOS ----
+            // ---- Wait and process HELIOS ----
             const auto data_high = future_high.get();
             std::vector<Eigen::Vector3f> points_high, points_low_high;
             points_low_high.reserve(data_high.points.size());
@@ -1114,7 +1114,7 @@ void SpecificWorker::read_lidar()
             }
             buffer_sync.put<1>(std::make_pair(std::move(points_high), data_high.timestamp), timestamp);
 
-            // ---- Esperar y procesar BPEARL ----
+            // ---- Wait and process BPEARL ----
             const auto data_low = future_low.get();
             points_low_high.reserve(points_low_high.size() + data_low.points.size());
             for (const auto &p : data_low.points)
@@ -1133,7 +1133,7 @@ void SpecificWorker::read_lidar()
             std::this_thread::sleep_for(wait_period);
         }
         catch (const Ice::Exception &e)
-        { std::cout << "Error reading from Lidar3D or robot pose: " << e.what() << std::endl; }
+        { qWarning() << "Error reading from Lidar3D or robot pose:" << e.what(); }
     }
 } // Thread to read the lidar
 
@@ -2745,9 +2745,6 @@ void SpecificWorker::run_localization()
         }
 
         // ===== 3. READ LIDAR DATA =====
-        // const auto timestamp = static_cast<std::uint64_t>(
-        //     std::chrono::duration_cast<std::chrono::milliseconds>(
-        //         std::chrono::system_clock::now().time_since_epoch()).count());
         const auto &[gt_, lidar_high_, lidar_low_] = buffer_sync.read_last();
 
         if (!lidar_high_.has_value())
@@ -3211,18 +3208,18 @@ void SpecificWorker::Navigator_stop()
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::emergency()
 {
-    std::cout << "Emergency worker" << std::endl;
+    qInfo() << "Emergency worker";
 }
 
 void SpecificWorker::restore()
 {
-    std::cout << "Restore worker" << std::endl;
+    qInfo() << "Restore worker";
 
 }
 
 int SpecificWorker::startup_check()
 {
-	std::cout << "Startup check" << std::endl;
+	qInfo() << "Startup check";
 	QTimer::singleShot(200, QCoreApplication::instance(), SLOT(quit()));
 	return 0;
 }
