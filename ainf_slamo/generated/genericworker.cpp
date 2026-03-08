@@ -24,11 +24,14 @@ GenericWorker::GenericWorker(const ConfigLoader& configLoader, TuplePrx tprx) : 
 {
 
 	this->configLoader = configLoader;
-	
-	lidar3d_proxy = std::get<0>(tprx);
-	lidar3d1_proxy = std::get<1>(tprx);
-	omnirobot_proxy = std::get<2>(tprx);
-	webots2robocomp_proxy = std::get<3>(tprx);
+    if (!this->configLoader.get<bool>("Component.Debug.Verbose")) {
+        qInstallMessageHandler([](QtMsgType, const QMessageLogContext&, const QString&) {});
+    }
+	camerargbdsimple_proxy = std::get<0>(tprx);
+	lidar3d_proxy = std::get<1>(tprx);
+	lidar3d1_proxy = std::get<2>(tprx);
+	omnirobot_proxy = std::get<3>(tprx);
+	webots2robocomp_proxy = std::get<4>(tprx);
 
 	states["Initialize"] = std::make_unique<GRAFCETStep>("Initialize", BASIC_PERIOD, nullptr, std::bind(&GenericWorker::initialize, this));
 	states["Compute"] = std::make_unique<GRAFCETStep>("Compute", configLoader.get<int>("Period.Compute"), std::bind(&GenericWorker::compute, this));
@@ -55,8 +58,6 @@ GenericWorker::GenericWorker(const ConfigLoader& configLoader, TuplePrx tprx) : 
 		show();
 	#endif
 
-
-    
 }
 
 /**
@@ -139,3 +140,6 @@ void GenericWorker::hibernationTick(){
 	hibernation = true;
 }
 
+
+void GenericWorker::initialize(){
+};

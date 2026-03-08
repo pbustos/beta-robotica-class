@@ -104,9 +104,9 @@ public:
         // EFE weights (scoring)
         float lambda_goal      = 5.0f;
         float lambda_obstacle  = 8.0f;   // global obstacle weight (single multiplier)
-        float lambda_smooth    = 0.05f;
-        float lambda_velocity  = 0.01f;
-        float lambda_delta_vel = 0.18f;
+        float lambda_smooth    = 0.1f;  // smoothness cost multiplier (penalizes control changes between steps)
+        float lambda_velocity  = 0.01f;  // velocity cost multiplier (penalizes excessive speed, encourages earlier arrival) 
+        float lambda_delta_vel = 0.18f;  // extra penalty on changes in velocity (oscillation penalty)
         float lambda_heading   = 0.6f;   // heading term multiplier relative to lambda_goal
         float lambda_progress  = 1.0f;   // moving-away penalty multiplier relative to lambda_goal
 
@@ -117,10 +117,10 @@ public:
 
         // Lateral clearance shaping (pre-SG): penalize trajectories that run
         // too close to side obstacles, helping recentring in narrow passages.
-        float lambda_lateral_clearance = 3.8f;
+        float lambda_lateral_clearance = 5.0f;
         float lateral_probe_offset = 0.22f;         // side probe offset from trajectory centerline
         float lateral_clearance_margin = 0.25;     // desired extra side clearance over robot radius
-        float lateral_closing_gain = 1.5f;          // extra penalty when side clearance is decreasing
+        float lateral_closing_gain = 2.0f;          // extra penalty when side clearance is decreasing
 
         // Continuous clearance relaxation near final goal (no hard switch):
         // far from goal -> use d_safe, close to goal -> relax toward robot_radius + goal_obstacle_margin
@@ -212,15 +212,15 @@ public:
         float pd_speed_cos_power = 1.0f; // adv = max_adv * cos^power(angle_err)
 
         // Visualization
-        int num_trajectories_to_draw = 10;
+        int num_trajectories_to_draw = 20;
 
         // Gaussian brake for high rotation (to prevent oscillation)
         // Reduced from 1.5: lambda_delta_vel now handles oscillation in scoring,
         // and nominal cos(angle_err) already reduces speed when turning.
-        float gauss_k = 0.6f;
+        float gauss_k = 0.5f;
 
         // Path blockage detection
-        float blockage_esdf_threshold = 0.25f;   // ESDF below this on path = blocked (well under d_safe)
+        float blockage_esdf_threshold = 0.2f;   // ESDF below this on path = blocked (well under d_safe)
         int   blockage_min_waypoints = 4;        // need N consecutive blocked waypoints
         float blockage_lookahead_m = 1.5f;       // only check waypoints within this distance ahead
         int   blockage_confirm_cycles = 15;      // consecutive cycles before declaring blockage (~0.75s at 20Hz)

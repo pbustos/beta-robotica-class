@@ -40,7 +40,7 @@ private:
 	size_t id;
 
 	// Array handlers for each method
-	std::array<std::function<void(RoboCompJoystickAdapter::TData)>, 1> sendDataHandlers;
+	std::array<std::function<void(RoboCompJoystickAdapter::TData&)>, 1> sendDataHandlers;
 
 };
 

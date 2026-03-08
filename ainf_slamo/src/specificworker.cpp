@@ -16,6 +16,7 @@
  *    You should have received a copy of the GNU General Public License
  *    along with RoboComp.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 #include "specificworker.h"
 #include <QSplitter>
 #include <QJsonDocument>
@@ -27,6 +28,7 @@
 #include <QDateTime>
 #include <QDomDocument>
 #include <QSettings>
+#include <QDataStream>
 #include <QShortcut>
 #include <unistd.h>  // For sysconf
 #include <cmath>     // For std::fabs
@@ -36,9 +38,7 @@
 #include <numeric>
 #include <algorithm>
 
-namespace
-{
-float percentile_copy(std::vector<float> values, float q)
+float SpecificWorker::percentile_copy(std::vector<float> values, float q)
 {
     if (values.empty())
         return 0.f;
@@ -46,7 +46,6 @@ float percentile_copy(std::vector<float> values, float q)
     const std::size_t idx = static_cast<std::size_t>(q * static_cast<float>(values.size() - 1));
     std::nth_element(values.begin(), values.begin() + static_cast<long>(idx), values.end());
     return values[idx];
-}
 }
 
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
@@ -61,7 +60,6 @@ SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, 
     #ifdef HIBERNATION_ENABLED
             hibernationChecker.start(500);
     #endif
-    
             statemachine.setChildMode(QState::ExclusiveStates);
             statemachine.start();
     
@@ -97,6 +95,26 @@ SpecificWorker::~SpecificWorker()
 	QSettings settings("robocomp", "ainf_slamo");
 	settings.setValue("window/geometry", this->saveGeometry());
 
+	// Save 2D viewer zoom
+	if (viewer)
+	{
+		QByteArray ba;
+		QDataStream ds(&ba, QIODevice::WriteOnly);
+		ds << viewer->transform();
+		settings.setValue("viewer2d/transform", ba);
+	}
+	// Save splitter proportions
+	if (splitter_)
+		settings.setValue("splitter/state", splitter_->saveState());
+	// Save 3D camera pose
+	if (viewer_3d_)
+	{
+		auto cs = viewer_3d_->camera_state();
+		settings.setValue("camera/position",   cs.position);
+		settings.setValue("camera/viewCenter", cs.viewCenter);
+		settings.setValue("camera/upVector",   cs.upVector);
+	}
+
 	// Stop trajectory controller
 	if (trajectory_controller_.is_active())
 	{
@@ -124,7 +142,6 @@ void SpecificWorker::initialize()
     viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0.0, 0.2, QColor("Blue"));
     viewer->show();
 
-#ifdef HAS_QT3D
     // Add 3D viewer alongside the 2D viewer in a horizontal splitter.
     // AbstractGraphicViewer already created a QVBoxLayout on this->frame;
     // we grab 'viewer' back from it, insert a QSplitter, and add Viewer3D.
@@ -133,17 +150,82 @@ void SpecificWorker::initialize()
         frame_layout->removeWidget(viewer);
         auto* splitter = new QSplitter(Qt::Horizontal, this->frame);
         splitter->addWidget(viewer);
-        viewer_3d_ = new rc::Viewer3D(splitter, 2.5f);
+        viewer_3d_ = std::make_unique<rc::Viewer3D>(splitter, 2.5f);
         splitter->addWidget(viewer_3d_->container_widget());
-        splitter->setSizes({600, 500});
+        scene_tree_ = std::make_unique<SceneTreePanel>(splitter);
+        splitter->addWidget(scene_tree_.get());
+        splitter->setSizes({450, 450, 220});
+        splitter_ = splitter;   // store for state save/restore
         frame_layout->addWidget(splitter);
+        
+        // Connect object picking to navigation
+        connect(viewer_3d_.get(), &rc::Viewer3D::objectPicked, this, [this](const QString& n) {
+            this->Navigator_gotoObject(n.toStdString());
+        });
+
+        // Connect floor picking to navigation
+        connect(viewer_3d_.get(), &rc::Viewer3D::floorPicked, this, [this](float x, float y) {
+            RoboCompNavigator::TPoint p;
+            p.x = x;
+            p.y = y;
+            this->Navigator_gotoPoint(p);
+        });
+        
+        // Connect mission cancellation
+        connect(viewer_3d_.get(), &rc::Viewer3D::cancelMissionRequested, this, [this]() {
+            if (!trajectory_controller_.is_active() && current_path_.empty()) return;
+            qInfo() << "Navigation cancelled by Ctrl+Right click (3D View)";
+            active_episode_.reset();
+            episode_accum_ = EpisodeAccum{};
+            if (label_episodeStatus != nullptr)
+            {
+                label_episodeStatus->setText("EP: CANCELLED");
+                label_episodeStatus->setStyleSheet("background-color: #FFE0B2; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+            }
+            trajectory_controller_.stop();
+            current_path_.clear();
+            clear_path();
+            try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+        });
     }
-#endif
 
     // Restore saved window geometry/size
     QSettings settings("robocomp", "ainf_slamo");
     if (settings.contains("window/geometry"))
         this->restoreGeometry(settings.value("window/geometry").toByteArray());
+
+    // Restore 2D viewer zoom; on first run apply a zoomed-out default
+    if (settings.contains("viewer2d/transform"))
+    {
+        QByteArray ba = settings.value("viewer2d/transform").toByteArray();
+        QDataStream ds(&ba, QIODevice::ReadOnly);
+        QTransform t;
+        ds >> t;
+        viewer->setTransform(t);
+    }
+    else
+    {
+        // First run: ~8 px/m so the full room fits; Y stays flipped (negative scale)
+        viewer->setTransform(QTransform().scale(8.0, -8.0));
+    }
+    // Restore splitter proportions; fall back to defaults if any pane is collapsed
+    if (splitter_ && settings.contains("splitter/state"))
+    {
+        splitter_->restoreState(settings.value("splitter/state").toByteArray());
+        const auto sizes = splitter_->sizes();
+        const bool any_zero = sizes.size() < 3 || std::any_of(sizes.begin(), sizes.end(), [](int s){ return s == 0; });
+        if (any_zero)
+            splitter_->setSizes({450, 450, 220});
+    }
+    // Restore 3D camera pose
+    if (viewer_3d_ && settings.contains("camera/position"))
+    {
+        rc::Viewer3D::CameraState cs;
+        cs.position   = settings.value("camera/position",   QVector3D(0.f, 15.f, 15.f)).value<QVector3D>();
+        cs.viewCenter = settings.value("camera/viewCenter", QVector3D(0.f,  0.f,  0.f)).value<QVector3D>();
+        cs.upVector   = settings.value("camera/upVector",   QVector3D(0.f,  1.f,  0.f)).value<QVector3D>();
+        viewer_3d_->set_camera_state(cs);
+    }
 
     // Connect capture room button
     connect(pushButton_captureRoom, &QPushButton::toggled, this, &SpecificWorker::slot_capture_room_toggled);
@@ -169,6 +251,20 @@ void SpecificWorker::initialize()
     // Lidar / Trajectory drawing toggles
     connect(pushButton_showLidar, &QPushButton::toggled, this, [this](bool checked) { draw_lidar_ = checked; });
     connect(pushButton_showTrajs, &QPushButton::toggled, this, [this](bool checked) { draw_trajectories_ = checked; });
+
+    // Camera viewer popup
+    camera_viewer_ = std::make_unique<CameraViewer>(camerargbdsimple_proxy, this);
+    camera_viewer_->set_period_ms(50);
+    if (pushButton_camera != nullptr)
+    {
+        connect(pushButton_camera, &QPushButton::toggled, this, [this](bool checked) {
+            if (checked) camera_viewer_->show();
+            else         camera_viewer_->hide();
+        });
+        connect(camera_viewer_.get(), &QDialog::finished, this, [this](int) {
+            if (pushButton_camera) pushButton_camera->setChecked(false);
+        });
+    }
 
     // PD / MPPI mode toggle
     connect(pushButton_pdMode, &QPushButton::toggled, this, [this](bool checked)
@@ -433,7 +529,6 @@ void SpecificWorker::compute()
         else
             draw_lidar_points({}, {}, res.robot_pose);  // clear drawn points
 
-#ifdef HAS_QT3D
         if (viewer_3d_)
         {
             if (draw_lidar_)
@@ -448,7 +543,6 @@ void SpecificWorker::compute()
             else
                 viewer_3d_->update_lidar_points({}, {}, 0.f, 0.f, 0.f);
         }
-#endif
 
         if (params.USE_WEBOTS)
         {
@@ -522,15 +616,17 @@ void SpecificWorker::compute()
             // ── Obstacle avoidance: detect blockage → cluster → replan ──
             if (ctrl.path_blocked && lidar_low_high_.has_value())
             {
+                float obs_height = 0.f;
                 const auto polygon = cluster_lidar_to_polygon(
                     lidar_low_high_->first,
                     ctrl.blockage_center_room,
                     std::min(ctrl.blockage_radius + 0.1f, 1.0f),  // tight search, capped at 1m
-                    res.robot_pose);
+                    res.robot_pose,
+                    obs_height);
 
                 if (!polygon.empty())
                 {
-                    replan_around_obstacle(polygon, ctrl.blockage_center_room, res.robot_pose);
+                    replan_around_obstacle(polygon, obs_height, ctrl.blockage_center_room, res.robot_pose);
                 }
                 else
                 {
@@ -940,15 +1036,15 @@ void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eige
 	viewer->robot_poly()->setPos(display_x, display_y);
 	viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
 
-#ifdef HAS_QT3D
 	if (viewer_3d_)
 		viewer_3d_->update_robot_pose(display_x, display_y, display_angle);
-#endif
 
 	// Keep view centered on the robot (if enabled)
-	if (auto_center_)
-		viewer->centerOn(display_x, display_y);
-
+        if (auto_center_ || !initial_center_done_)
+        {
+                viewer->centerOn(display_x, display_y);
+                initial_center_done_ = true;
+        }
 	// ============ Update robot coordinates in UI
 	lcdNumber_robotX->display(static_cast<double>(display_x));
 	lcdNumber_robotY->display(static_cast<double>(display_y));
@@ -1376,8 +1472,11 @@ std::vector<Eigen::Vector2f> SpecificWorker::cluster_lidar_to_polygon(
     const std::vector<Eigen::Vector3f>& lidar_points,
     const Eigen::Vector2f& blockage_center_room,
     float search_radius,
-    const Eigen::Affine2f& robot_pose) const
+    const Eigen::Affine2f& robot_pose,
+    float& height_out) const
 {
+    height_out = 0.f;
+
     // Transform blockage center to robot frame
     const Eigen::Rotation2Df rot(robot_pose.rotation());
     const Eigen::Vector2f t = robot_pose.translation();
@@ -1386,15 +1485,25 @@ std::vector<Eigen::Vector2f> SpecificWorker::cluster_lidar_to_polygon(
     // Collect 2D lidar points within search_radius of blockage center (robot frame)
     const float r2 = search_radius * search_radius;
     std::vector<Eigen::Vector2f> cluster;
+    float z_min =  std::numeric_limits<float>::max();
+    float z_max = -std::numeric_limits<float>::max();
     for (const auto& p : lidar_points)
     {
         const Eigen::Vector2f p2d(p.x(), p.y());
         if ((p2d - center_robot).squaredNorm() < r2)
+        {
             cluster.push_back(p2d);
+            z_min = std::min(z_min, p.z());
+            z_max = std::max(z_max, p.z());
+        }
     }
 
     if (cluster.size() < 3)
         return {};  // too few points to form a polygon
+
+    // Estimate height from Z range of clustered points
+    if (z_max > z_min)
+        height_out = z_max - z_min;
 
     // Compute centroid
     Eigen::Vector2f centroid = Eigen::Vector2f::Zero();
@@ -1454,6 +1563,7 @@ std::vector<Eigen::Vector2f> SpecificWorker::cluster_lidar_to_polygon(
 }
 
 bool SpecificWorker::replan_around_obstacle(const std::vector<Eigen::Vector2f>& obstacle_polygon,
+                                             float obstacle_height,
                                              const Eigen::Vector2f& center,
                                              const Eigen::Affine2f& robot_pose)
 {
@@ -1471,6 +1581,7 @@ bool SpecificWorker::replan_around_obstacle(const std::vector<Eigen::Vector2f>& 
             existing.center = center;
             existing.created = std::chrono::steady_clock::now();
             existing.replan_count++;
+            if (obstacle_height > 0.05f) existing.height = obstacle_height;
             merged = true;
             break;
         }
@@ -1483,6 +1594,7 @@ bool SpecificWorker::replan_around_obstacle(const std::vector<Eigen::Vector2f>& 
         obs.center = center;
         obs.created = std::chrono::steady_clock::now();
         obs.replan_count = 1;
+        obs.height = obstacle_height;
         temp_obstacles_.push_back(std::move(obs));
     }
 
@@ -1580,16 +1692,14 @@ void SpecificWorker::draw_temp_obstacles()
         temp_obstacle_draw_items_.push_back(item);
     }
 
-#ifdef HAS_QT3D
     if (viewer_3d_)
     {
-        std::vector<std::vector<Eigen::Vector2f>> obs_polys;
-        obs_polys.reserve(temp_obstacles_.size());
+        std::vector<rc::Viewer3D::ObstacleItem> obs_items;
+        obs_items.reserve(temp_obstacles_.size());
         for (const auto& obs : temp_obstacles_)
-            obs_polys.push_back(obs.vertices);
-        viewer_3d_->update_obstacles(obs_polys);
+            obs_items.push_back({obs.vertices, obs.height});
+        viewer_3d_->update_obstacles(obs_items);
     }
-#endif
 }
 
 void SpecificWorker::draw_trajectory_debug(const rc::TrajectoryController::ControlOutput &ctrl,
@@ -1778,6 +1888,9 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
     }
     target_marker_->setPos(goal.x(), goal.y());
     target_marker_->setVisible(true);
+
+    if (viewer_3d_)
+        viewer_3d_->update_path(path);
 }
 
 void SpecificWorker::draw_path_threadsafe(const std::vector<Eigen::Vector2f>& path)
@@ -1830,6 +1943,9 @@ void SpecificWorker::clear_path(bool stop_controller, bool clear_stored_path)
             item->setVisible(false);
     if (traj_carrot_marker_) traj_carrot_marker_->setVisible(false);
     if (traj_robot_to_carrot_) traj_robot_to_carrot_->setVisible(false);
+
+    if (viewer_3d_ && clear_stored_path)
+        viewer_3d_->update_path({});
 }
 
 
@@ -1988,11 +2104,9 @@ void SpecificWorker::draw_room_polygon()
     polygon_item = viewer->scene.addPolygon(poly, pen, QBrush(Qt::NoBrush));
     polygon_item->setZValue(8);
 
-#ifdef HAS_QT3D
     // Sync 3D walls whenever the room polygon is finalised
     if (viewer_3d_ && !capturing_room_polygon && room_polygon_.size() >= 3)
         viewer_3d_->rebuild_walls(room_polygon_);
-#endif
 }
 
 void SpecificWorker::draw_furniture()
@@ -2025,7 +2139,22 @@ void SpecificWorker::draw_furniture()
     if (!furniture_polygons_.empty())
         qInfo() << "[draw_furniture] Drew" << furniture_polygons_.size() << "furniture polygons";
 
-#ifdef HAS_QT3D
+    // Refresh scene tree panel
+    if (scene_tree_)
+    {
+        std::vector<SceneTreePanel::FurnitureEntry> entries;
+        entries.reserve(furniture_polygons_.size());
+        for (const auto& fp : furniture_polygons_)
+        {
+            SceneTreePanel::FurnitureEntry e;
+            e.id       = fp.id;
+            e.label    = fp.label;
+            e.vertices = fp.vertices;
+            entries.push_back(std::move(e));
+        }
+        scene_tree_->refresh(room_polygon_, entries);
+    }
+
     if (viewer_3d_)
     {
         std::vector<rc::Viewer3D::FurnitureItem> items;
@@ -2051,7 +2180,6 @@ void SpecificWorker::draw_furniture()
         }
         viewer_3d_->update_furniture(items);
     }
-#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2577,6 +2705,39 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
                                 << "layer=" << allPaths.back().layer_label
                                 << "vertices=" << allPaths.back().pts.size();
                     }
+                }
+            }
+            else if (tag == "rect")
+            {
+                // Inkscape draws rectangles as <rect> elements; convert to 4-point polygon.
+                const float rx = elem.attribute("x", "0").toFloat();
+                const float ry = elem.attribute("y", "0").toFloat();
+                const float rw = elem.attribute("width",  "0").toFloat();
+                const float rh = elem.attribute("height", "0").toFloat();
+                if (rw > 0.f && rh > 0.f)
+                {
+                    // Points stored Y-flipped to match parsePath convention (-cy)
+                    std::vector<Eigen::Vector2f> pts = {
+                        { rx,      -ry       },
+                        { rx + rw, -ry       },
+                        { rx + rw, -(ry + rh)},
+                        { rx,      -(ry + rh)}
+                    };
+                    bool isIdentity = (currentMat[0]==1 && currentMat[1]==0 && currentMat[2]==0 &&
+                                       currentMat[3]==1 && currentMat[4]==0 && currentMat[5]==0);
+                    if (!isIdentity) applyMatrix(pts, currentMat);
+
+                    ParsedPath pp;
+                    pp.pts = std::move(pts);
+                    pp.id  = elem.attribute("id");
+                    pp.label = elem.attribute("inkscape:label");
+                    if (pp.label.isEmpty()) pp.label = pp.id;
+                    pp.layer_label = currentLayerLabel;
+                    allPaths.push_back(std::move(pp));
+
+                    qInfo() << "[SVG] Found rect id=" << allPaths.back().id
+                            << "label=" << allPaths.back().label
+                            << "layer=" << allPaths.back().layer_label;
                 }
             }
             else

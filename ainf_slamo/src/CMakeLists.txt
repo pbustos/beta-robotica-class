@@ -36,6 +36,8 @@ LIST(APPEND SOURCES
   ../src/pointcloud_center_estimator.cpp
   ../src/polygon_path_planner.cpp
   ../src/trajectory_controller.cpp
+  ../src/scene_tree_panel.cpp
+  ../src/camera_viewer.cpp
 )
 
 # Headers set
@@ -46,18 +48,17 @@ LIST(APPEND HEADERS
   ../src/episodic_memory.h
   ../src/polygon_path_planner.h
   ../src/trajectory_controller.h
+  ../src/scene_tree_panel.h
+  ../src/camera_viewer.h
 )
 
 
 LIST(APPEND LIBS ${LIBS} "${TORCH_LIBRARIES}" tbb Qt6PrintSupport Qt6Xml
             Eigen3::Eigen Boost::system Boost::filesystem )
 
-if(TARGET Qt6::3DCore AND TARGET Qt6::3DRender AND TARGET Qt6::3DExtras)
-  add_compile_definitions(HAS_QT3D)
   LIST(APPEND SOURCES ../src/viewer_3d.cpp)
   LIST(APPEND HEADERS ../src/viewer_3d.h)
   LIST(APPEND LIBS Qt6::3DCore Qt6::3DRender Qt6::3DExtras)
-endif()
 
 # no-char8_t to avoid a problem with ICE Connection lib.
 add_definitions(-O3 -fmax-errors=1 -fno-char8_t)

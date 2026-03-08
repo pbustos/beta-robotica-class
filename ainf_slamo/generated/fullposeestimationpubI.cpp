@@ -21,7 +21,7 @@
 FullPoseEstimationPubI::FullPoseEstimationPubI(GenericWorker *_worker, const size_t id): worker(_worker), id(id)
 {
 	newFullPoseHandlers = {
-		[this](auto a) { return worker->FullPoseEstimationPub_newFullPose(a); }
+		[this](auto &a) { return worker->FullPoseEstimationPub_newFullPose(a); }
 	};
 
 }

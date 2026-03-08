@@ -1,4 +1,3 @@
-#ifdef HAS_QT3D
 
 #include "viewer_3d.h"
 
@@ -9,7 +8,13 @@
 #include <Qt3DExtras/QForwardRenderer>
 #include <Qt3DExtras/QSphereMesh>
 #include <Qt3DRender/QMesh>
+#include <Qt3DRender/QObjectPicker>
+#include <Qt3DRender/QPickEvent>
+#include <Qt3DRender/QPickingSettings>
+#include <Qt3DRender/QRenderSettings>
 #include <QSizePolicy>
+#include <QLabel>
+#include <QTimer>
 #include <QCoreApplication>
 #include <QDir>
 #include <cmath>
@@ -45,7 +50,7 @@ void WebotsStyleCameraController::moveCamera(
     {
         // Translate in camera-local XY (screen plane), moving view centre too
         cam->translate(QVector3D(-state.rxAxisValue * linearSpeed() * dt,
-                                  state.ryAxisValue * linearSpeed() * dt,
+                                 -state.ryAxisValue * linearSpeed() * dt,
                                   0.f),
                        Qt3DRender::QCamera::TranslateViewCenter);
     }
@@ -53,7 +58,7 @@ void WebotsStyleCameraController::moveCamera(
     // ---- Zoom: scroll wheel -----------------------------------------------
     if (qAbs(state.tzAxisValue) > 0.f)
     {
-        cam->translate(QVector3D(0.f, 0.f, -state.tzAxisValue * linearSpeed() * dt),
+        cam->translate(QVector3D(0.f, 0.f, state.tzAxisValue * linearSpeed() * dt),
                        Qt3DRender::QCamera::DontTranslateViewCenter);
     }
 }
@@ -69,20 +74,39 @@ Viewer3D::Viewer3D(QWidget* parent, float wall_height)
     window_    = new Qt3DExtras::Qt3DWindow();
     window_->defaultFrameGraph()->setClearColor(QColor(28, 28, 38));
 
+    // ---- Enable object picking --------------------------------------------
+    // Without TrianglePicking the QObjectPicker pressed signal never fires.
+    auto* pickSettings = window_->renderSettings()->pickingSettings();
+    pickSettings->setPickMethod(Qt3DRender::QPickingSettings::TrianglePicking);
+    pickSettings->setPickResultMode(Qt3DRender::QPickingSettings::NearestPick);
+    pickSettings->setFaceOrientationPickingMode(Qt3DRender::QPickingSettings::FrontAndBackFace);
+
     container_ = QWidget::createWindowContainer(window_, parent);
     container_->setMinimumSize(350, 250);
     container_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     container_->setFocusPolicy(Qt::StrongFocus);   // allow keyboard input for camera
 
+    // ---- Pick-result overlay label ----------------------------------------
+    pick_label_ = new QLabel(container_);
+    pick_label_->setStyleSheet(
+        "QLabel { color: white; background-color: rgba(0,0,0,170);"
+        " border-radius: 6px; padding: 6px 12px;"
+        " font-size: 14px; font-weight: bold; }");
+    pick_label_->hide();
+    pick_timer_ = new QTimer(this);
+    pick_timer_->setSingleShot(true);
+    connect(pick_timer_, &QTimer::timeout, pick_label_, &QLabel::hide);
+
     // ---- Root entity -------------------------------------------------------
     root_entity_ = new Qt3DCore::QEntity();
 
     // ---- Camera ------------------------------------------------------------
-    Qt3DRender::QCamera* camera = window_->camera();
-    camera->lens()->setPerspectiveProjection(45.f, 16.f / 9.f, 0.05f, 500.f);
-    camera->setPosition(QVector3D(0.f, 15.f, 15.f));
-    camera->setViewCenter(QVector3D(0.f, 0.f, 0.f));
-    camera->setUpVector(QVector3D(0.f, 1.f, 0.f));
+    camera_ = window_->camera();
+    camera_->lens()->setPerspectiveProjection(45.f, 16.f / 9.f, 0.05f, 500.f);
+    camera_->setPosition(QVector3D(0.f, 15.f, 15.f));
+    camera_->setViewCenter(QVector3D(0.f, 0.f, 0.f));
+    camera_->setUpVector(QVector3D(0.f, 1.f, 0.f));
+    Qt3DRender::QCamera* camera = camera_;  // kept for camCtrl below
 
     auto* camCtrl = new WebotsStyleCameraController(root_entity_);
     camCtrl->setCamera(camera);
@@ -110,7 +134,7 @@ Viewer3D::Viewer3D(QWidget* parent, float wall_height)
     ambEntity->addComponent(ambLight);
     ambEntity->addComponent(ambTransform);
 
-    // ---- Robot mesh (meshes/shadow.obj) ------------------------------------
+// ---- Robot mesh (meshes/shadow.obj) ------------------------------------
     auto* robotEntity = new Qt3DCore::QEntity(root_entity_);
 
     auto* robotMesh = new Qt3DRender::QMesh(robotEntity);
@@ -127,7 +151,7 @@ Viewer3D::Viewer3D(QWidget* parent, float wall_height)
     robot_transform_ = new Qt3DCore::QTransform(robotEntity);
     // Mesh correction: shadow.obj uses Z-up and faces +Z.
     //   Step 1: -90° around X  → stands upright (fixes "leaning on floor")
-    //   Step 2: 180° around Y  → faces +X in room frame (fixes "looking backwards")
+    //   Step 2: 180° around Y  → properly aligned based on visual offset
     robot_base_rot_ = QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, 180.f)
                     * QQuaternion::fromAxisAndAngle(1.f, 0.f, 0.f, -90.f);
     robot_transform_->setTranslation(QVector3D(0.f, robot_half_h_, 0.f));  // X=0 at start, negated when updated
@@ -135,12 +159,30 @@ Viewer3D::Viewer3D(QWidget* parent, float wall_height)
     robotEntity->addComponent(robotMesh);
     robotEntity->addComponent(robotMat);
     robotEntity->addComponent(robot_transform_);
+    attach_picker(robotEntity, "Robot");
 
     // ---- Pre-allocate lidar point pool ------------------------------------
     init_lidar_pool();
 
     // ---- Commit root entity ------------------------------------------------
     window_->setRootEntity(root_entity_);
+}
+
+// ---------------------------------------------------------------------------
+// Camera state I/O
+// ---------------------------------------------------------------------------
+rc::Viewer3D::CameraState rc::Viewer3D::camera_state() const
+{
+    if (!camera_) return {};
+    return { camera_->position(), camera_->viewCenter(), camera_->upVector() };
+}
+
+void rc::Viewer3D::set_camera_state(const CameraState& s)
+{
+    if (!camera_) return;
+    camera_->setPosition(s.position);
+    camera_->setViewCenter(s.viewCenter);
+    camera_->setUpVector(s.upVector);
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +233,8 @@ void Viewer3D::build_floor(const std::vector<Eigen::Vector2f>& poly)
     floor_entity_->addComponent(floorMesh);
     floor_entity_->addComponent(floorMat);
     floor_entity_->addComponent(floorXf);
+
+    attach_picker(floor_entity_, "Floor");
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +303,7 @@ void Viewer3D::rebuild_walls(const std::vector<Eigen::Vector2f>& poly)
         wallE->addComponent(mesh);
         wallE->addComponent(mat);
         wallE->addComponent(tf);
+        attach_picker(wallE, QStringLiteral("Wall %1").arg(i+1));
 
         wall_entities_.push_back(wallE);
     }
@@ -272,9 +317,8 @@ void Viewer3D::update_robot_pose(float x, float y, float theta_rad)
     if (!robot_transform_) return;
     robot_transform_->setTranslation(QVector3D(-x, robot_half_h_, y));
     // Heading in room frame: positive theta_rad = CCW around Z in 2D.
-    // In Qt3D (Y-up) that maps to a rotation around +Y by -theta_rad.
     const QQuaternion heading = QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f,
-                                    qRadiansToDegrees(-theta_rad));
+                                    qRadiansToDegrees(theta_rad));
     // Apply base correction first, then heading on top.
     robot_transform_->setRotation(heading * robot_base_rot_);
 }
@@ -282,7 +326,7 @@ void Viewer3D::update_robot_pose(float x, float y, float theta_rad)
 // ---------------------------------------------------------------------------
 // update_obstacles  – called after temp_obstacles_ list changes
 // ---------------------------------------------------------------------------
-void Viewer3D::update_obstacles(const std::vector<std::vector<Eigen::Vector2f>>& obs_polys)
+void Viewer3D::update_obstacles(const std::vector<ObstacleItem>& obstacles)
 {
     // Remove all previous obstacle entities
     for (auto* e : obstacle_entities_)
@@ -295,8 +339,9 @@ void Viewer3D::update_obstacles(const std::vector<std::vector<Eigen::Vector2f>>&
     static const QColor obs_diffuse(240, 110, 25);
     static const QColor obs_ambient(100, 44, 10);
 
-    for (const auto& poly : obs_polys)
+    for (const auto& item : obstacles)
     {
+        const auto& poly = item.vertices;
         if (poly.size() < 3) continue;
 
         // AABB approximation of the obstacle polygon
@@ -311,7 +356,8 @@ void Viewer3D::update_obstacles(const std::vector<std::vector<Eigen::Vector2f>>&
         const float cy    = (min_y + max_y) * 0.5f;
         const float ext_x = std::max(0.15f, max_x - min_x);
         const float ext_y = std::max(0.15f, max_y - min_y);
-        const float h     = wall_height_ * 0.85f;  // slightly shorter than walls
+        // Use lidar-estimated height when available; fall back to 85 % of wall height
+        const float h = (item.height > 0.05f) ? item.height : (wall_height_ * 0.85f);
 
         auto* obsE = new Qt3DCore::QEntity(root_entity_);
 
@@ -332,6 +378,7 @@ void Viewer3D::update_obstacles(const std::vector<std::vector<Eigen::Vector2f>>&
         obsE->addComponent(mesh);
         obsE->addComponent(mat);
         obsE->addComponent(tf);
+        attach_picker(obsE, QString("Obstacle %1 (h=%2 m)").arg(obstacle_entities_.size() + 1).arg(h, 0, 'f', 2));
 
         obstacle_entities_.push_back(obsE);
     }
@@ -377,7 +424,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
                            float                shininess,
                            const Eigen::Vector2f& centroid,
                            const QQuaternion&   rot,
-                           const QVector3D&     scale3d) -> void
+                           const QVector3D&     scale3d,
+                           const QString&       pick_name) -> void
     {
         auto* e = new Qt3DCore::QEntity(root_entity_);
 
@@ -397,6 +445,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         e->addComponent(mesh);
         e->addComponent(mat);
         e->addComponent(tf);
+        attach_picker(e, pick_name);
 
         furniture_entities_.push_back(e);
     };
@@ -415,7 +464,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             const float sy = (size.y() > 0.1f) ? size.y() / 0.8f : 1.f;
             make_entity(abs_mesh("meshes/table.obj"),
                         QColor(160, 100, 55), QColor(70, 44, 24), 20.f,
-                        cen, base_rot, QVector3D(sx, sy, 1.f));
+                        cen, base_rot, QVector3D(sx, sy, 1.f),
+                        QString::fromStdString(item.label));
         }
         else if (ql.contains("banco") || ql.contains("bench"))
         {
@@ -423,23 +473,49 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
                 QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, 90.f) * base_rot;
             make_entity(abs_mesh("meshes/bench.obj"),
                         QColor(130, 85, 45), QColor(55, 36, 19), 15.f,
-                        cen, bench_rot, QVector3D(1.f, 1.f, 1.f));
+                        cen, bench_rot, QVector3D(1.f, 1.f, 1.f),
+                        QString::fromStdString(item.label));
         }
         else if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot"))
         {
-            // Two entities at same position: light-brown pot + green tree
+            // Two entities at same position: light-brown pot + green tree crown
             make_entity(abs_mesh("meshes/pot_only.obj"),
                         QColor(195, 155, 95), QColor(90, 70, 40), 10.f,
-                        cen, base_rot, QVector3D(1.f, 1.f, 1.f));
+                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        QString::fromStdString(item.label));
+            // Crown scaled to 2/3 of original diameter
             make_entity(abs_mesh("meshes/tree_only.obj"),
                         QColor(55, 130, 45), QColor(25, 60, 20), 5.f,
-                        cen, base_rot, QVector3D(1.f, 1.f, 1.f));
+                        cen, base_rot, QVector3D(0.666f, 0.666f, 0.666f),
+                        QString::fromStdString(item.label) + " (tree)");
+        }
+        else if (ql.contains("silla") || ql.contains("chair"))
+        {
+            make_entity(abs_mesh("meshes/chair.obj"),
+                        QColor(110, 85, 60), QColor(50, 35, 20), 18.f,
+                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        QString::fromStdString(item.label));
+        }
+        else if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen") ||
+                 ql.contains("ordenador") || ql.contains("computer"))
+        {
+            // Stand: base plate + post, light grey
+            make_entity(abs_mesh("meshes/monitor_stand.obj"),
+                        QColor(160, 160, 165), QColor(65, 65, 68), 35.f,
+                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        QString::fromStdString(item.label) + " (stand)");
+            // Screen panel: near-black with slight blue tint
+            make_entity(abs_mesh("meshes/monitor_screen.obj"),
+                        QColor(20, 22, 30), QColor(10, 11, 15), 80.f,
+                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        QString::fromStdString(item.label));
         }
         else if (ql.contains("vitrina") || ql.contains("cabinet") || ql.contains("shelf"))
         {
             make_entity(abs_mesh("meshes/bench.obj"),
                         QColor(180, 200, 220), QColor(70, 80, 90), 40.f,
-                        cen, base_rot, QVector3D(1.f, 1.f, 1.f));
+                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        QString::fromStdString(item.label));
         }
         else
         {
@@ -454,6 +530,67 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// attach_picker – add a QObjectPicker to entity e; on Shift+Right-click
+//                 show an overlay label with the object name for 3 s.
+// ---------------------------------------------------------------------------
+void Viewer3D::attach_picker(Qt3DCore::QEntity* e, const QString& name)
+{
+    auto* picker = new Qt3DRender::QObjectPicker(e);
+    picker->setHoverEnabled(false);
+    picker->setDragEnabled(false);
+    e->addComponent(picker);
+
+    connect(picker, &Qt3DRender::QObjectPicker::pressed,
+            this, [this, name](Qt3DRender::QPickEvent* ev)
+    {
+        if (ev->button() == Qt3DRender::QPickEvent::RightButton)
+        {
+            if (ev->modifiers() & static_cast<int>(Qt::ShiftModifier))
+            {
+                qInfo() << "[Viewer3D] Picked:" << name;
+                if (name == "Floor") {
+                    float room_x = -ev->worldIntersection().x();
+                    float room_y = ev->worldIntersection().z();
+                    emit floorPicked(room_x, room_y);
+                } else {
+                    emit objectPicked(name);
+                }
+
+                if (pick_label_ && container_)
+                {
+                    pick_label_->setText(name);
+                    pick_label_->adjustSize();
+                    // Centre at the bottom of the 3D viewport
+                    pick_label_->move(
+                        (container_->width()  - pick_label_->width())  / 2,
+                         container_->height() - pick_label_->height()  - 16);
+                    pick_label_->show();
+                    pick_label_->raise();
+                    pick_timer_->start(3000);
+                }
+            }
+            else if (ev->modifiers() & static_cast<int>(Qt::ControlModifier))
+            {
+                qInfo() << "[Viewer3D] Mission cancel requested via object:" << name;
+                emit cancelMissionRequested();
+
+                if (pick_label_ && container_)
+                {
+                    pick_label_->setText("CANCELLED");
+                    pick_label_->adjustSize();
+                    pick_label_->move(
+                        (container_->width()  - pick_label_->width())  / 2,
+                         container_->height() - pick_label_->height()  - 16);
+                    pick_label_->show();
+                    pick_label_->raise();
+                    pick_timer_->start(3000);
+                }
+            }
+        }
+    });
+}
 
 // ---------------------------------------------------------------------------
 // init_lidar_pool  – pre-create shared sphere meshes + per-point transforms
@@ -533,6 +670,85 @@ void Viewer3D::update_lidar_points(
     fill(pts_lo, lidar_lo_xf_);
 }
 
+// ---------------------------------------------------------------------------
+// Path visualization (Ribbon geometry)
+// ---------------------------------------------------------------------------
+void Viewer3D::init_path_entity()
+{
+    path_entity_ = new Qt3DCore::QEntity(root_entity_);
+
+    auto* material = new Qt3DExtras::QPhongMaterial(path_entity_);
+    material->setAmbient(QColor(255, 100, 0)); // Bright orange path
+    material->setDiffuse(QColor(255, 130, 0));
+    material->setShininess(0.0f);
+
+    path_geo_ = new Qt3DCore::QGeometry(path_entity_);
+    path_buf_ = new Qt3DCore::QBuffer(path_geo_);
+    path_attr_ = new Qt3DCore::QAttribute(path_geo_);
+    path_attr_->setAttributeType(Qt3DCore::QAttribute::VertexAttribute);
+    path_attr_->setBuffer(path_buf_);
+    path_attr_->setVertexBaseType(Qt3DCore::QAttribute::Float);
+    path_attr_->setVertexSize(3);
+    path_attr_->setByteOffset(0);
+    path_attr_->setByteStride(3 * sizeof(float));
+    path_attr_->setName(Qt3DCore::QAttribute::defaultPositionAttributeName());
+    path_geo_->addAttribute(path_attr_);
+
+    path_renderer_ = new Qt3DRender::QGeometryRenderer(path_entity_);
+    path_renderer_->setGeometry(path_geo_);
+    path_renderer_->setPrimitiveType(Qt3DRender::QGeometryRenderer::TriangleStrip);
+
+    path_entity_->addComponent(path_renderer_);
+    path_entity_->addComponent(material);
+}
+
+void Viewer3D::update_path(const std::vector<Eigen::Vector2f>& path)
+{
+    if (!path_entity_) init_path_entity();
+    
+    if (path.size() < 2) {
+        path_renderer_->setVertexCount(0);
+        return;
+    }
+
+    const float half_width = 0.05f; //  Total width 10cm
+
+    QByteArray data;
+    data.resize(static_cast<int>(path.size()) * 2 * 3 * static_cast<int>(sizeof(float)));
+    auto* raw = reinterpret_cast<float*>(data.data());
+
+    for (size_t i = 0; i < path.size(); ++i) {
+        Eigen::Vector2f p = path[i];
+        Eigen::Vector2f dir(1.f, 0.f);
+        if (i < path.size() - 1) {
+            dir = (path[i+1] - p).normalized();
+        } else if (i > 0) {
+            dir = (p - path[i-1]).normalized();
+        }
+        
+        Eigen::Vector2f left(-dir.y(), dir.x());
+        
+        Eigen::Vector2f P1 = p + left * half_width;
+        Eigen::Vector2f P2 = p - left * half_width;
+
+        // Note: X is negated, Y maps to Z. Height is slightly above floor (1cm) to avoid Z-fighting.
+        const float H = 0.02f;
+        
+        // V1 (Left)
+        raw[i*6 + 0] = -P1.x();
+        raw[i*6 + 1] = H;
+        raw[i*6 + 2] = P1.y();
+        
+        // V2 (Right)
+        raw[i*6 + 3] = -P2.x();
+        raw[i*6 + 4] = H;
+        raw[i*6 + 5] = P2.y();
+    }
+    
+    path_buf_->setData(data);
+    path_attr_->setCount(static_cast<int>(path.size()) * 2);
+    path_renderer_->setVertexCount(static_cast<int>(path.size()) * 2);
+}
+
 } // namespace rc
 
-#endif // HAS_QT3D

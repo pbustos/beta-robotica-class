@@ -34,10 +34,11 @@
 #include <fps/fps.h>
 #include <timer/timer.h>
 #include <sys/resource.h>  // For CPU usage
-#include "abstract_graphic_viewer/abstract_graphic_viewer.h"
-#ifdef HAS_QT3D
+#include <abstract_graphic_viewer/abstract_graphic_viewer.h>
 #include "viewer_3d.h"
-#endif
+#include "scene_tree_panel.h"
+#include "camera_viewer.h"
+#include <QSplitter>
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include "room_concept_ai.h"
 #include "pointcloud_center_estimator.h"
@@ -48,6 +49,7 @@
 #include <optional>
 #include <chrono>
 #include <limits>
+#include <memory>
 #include "common_types.h"
 
 /**
@@ -112,10 +114,9 @@ class SpecificWorker : public GenericWorker
 
 	// Graphics
 	AbstractGraphicViewer *viewer;
-#ifdef HAS_QT3D
-	rc::Viewer3D *viewer_3d_ = nullptr;
-#endif
-
+	std::unique_ptr<rc::Viewer3D> viewer_3d_;            // 3D viewer (owned by us)
+	std::unique_ptr<SceneTreePanel> scene_tree_;          // 3rd pane: scene element tree
+	std::unique_ptr<CameraViewer>  camera_viewer_;        // Camera popup dialog
 
 	struct Params
 	{
@@ -185,6 +186,7 @@ class SpecificWorker : public GenericWorker
 		Eigen::Vector2f center;                      // center of obstacle
 		std::chrono::steady_clock::time_point created;
 		int replan_count = 0;                        // how many times this obstacle triggered replan
+		float height = 0.f;                          // estimated height from LiDAR Z range (metres; 0 = unknown)
 	};
 	std::vector<TempObstacle> temp_obstacles_;
 	std::vector<QGraphicsPolygonItem*> temp_obstacle_draw_items_;
@@ -194,15 +196,19 @@ class SpecificWorker : public GenericWorker
 
 	/// Cluster LiDAR points near a blockage center and compute an OBB polygon.
 	/// Returns empty vector if too few points found.
+	/// height_out receives the Z range (max_z - min_z) of the clustered points,
+	/// or 0 if the cluster contains fewer than 3 points.
 	std::vector<Eigen::Vector2f> cluster_lidar_to_polygon(
 		const std::vector<Eigen::Vector3f>& lidar_points,
 		const Eigen::Vector2f& blockage_center_room,
 		float search_radius,
-		const Eigen::Affine2f& robot_pose) const;
+		const Eigen::Affine2f& robot_pose,
+		float& height_out) const;
 
 	/// Add a temporary obstacle and replan the current path.
 	/// Returns true if replan succeeded.
 	bool replan_around_obstacle(const std::vector<Eigen::Vector2f>& obstacle_polygon,
+	                            float obstacle_height,
 	                            const Eigen::Vector2f& center,
 	                            const Eigen::Affine2f& robot_pose);
 
@@ -212,14 +218,17 @@ class SpecificWorker : public GenericWorker
 	/// Draw temporary obstacles in the viewer
 	void draw_temp_obstacles();
 
+	/// Compute the q-th percentile of a vector (pass by value for in-place partial sort)
+	static float percentile_copy(std::vector<float> values, float q);
+
 	// Flip state tracking
 	bool flip_x_applied_ = false;
 	bool flip_y_applied_ = false;
-	bool auto_center_ = false;  // Auto-center view on robot
-	bool draw_lidar_ = true;    // Toggle lidar point drawing
-	bool draw_trajectories_ = true;  // Toggle MPPI trajectory drawing
-
-	// Velocity commands (thread-safe via BufferSync)
+	bool auto_center_ = false;       // Auto-center view on robot
+	bool draw_lidar_ = false;        // Toggle lidar point rendering
+	bool draw_trajectories_ = false; // Toggle trajectory debug rendering
+        bool initial_center_done_ = false; // Flag to center view once at start
+	QSplitter* splitter_ = nullptr;  // Horizontal splitter (2D | 3D views)
 	BufferSync<InOut<rc::VelocityCommand, rc::VelocityCommand>> velocity_buffer_{20};
 
 	// Measured odometry readings from FullPoseEstimationPub (thread-safe via BufferSync)
@@ -377,7 +386,4 @@ private slots:
 
 };
 
-#endif
-
-
-
+#endif // SPECIFICWORKER_H

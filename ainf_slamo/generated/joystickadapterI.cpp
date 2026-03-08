@@ -21,7 +21,7 @@
 JoystickAdapterI::JoystickAdapterI(GenericWorker *_worker, const size_t id): worker(_worker), id(id)
 {
 	sendDataHandlers = {
-		[this](auto a) { return worker->JoystickAdapter_sendData(a); }
+		[this](auto &a) { return worker->JoystickAdapter_sendData(a); }
 	};
 
 }

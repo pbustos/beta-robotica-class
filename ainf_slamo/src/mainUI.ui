@@ -420,6 +420,13 @@
             </widget>
            </item>
        <item>
+        <widget class="QPushButton" name="pushButton_camera">
+         <property name="text"><string>Camera</string></property>
+         <property name="checkable"><bool>true</bool></property>
+         <property name="toolTip"><string>Open live camera view</string></property>
+        </widget>
+       </item>
+       <item>
         <spacer name="horizontalSpacer_buttons">
          <property name="orientation"><enum>Qt::Horizontal</enum></property>
          <property name="sizeHint" stdset="0">

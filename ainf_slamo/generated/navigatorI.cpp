@@ -25,7 +25,7 @@ NavigatorI::NavigatorI(GenericWorker *_worker, const size_t id): worker(_worker)
 	};
 
 	getPathHandlers = {
-		[this](auto a, auto b, auto c) { return worker->Navigator_getPath(a, b, c); }
+		[this](auto &a, auto &b, auto &c) { return worker->Navigator_getPath(a, b, c); }
 	};
 
 	getRobotPoseHandlers = {
@@ -37,11 +37,11 @@ NavigatorI::NavigatorI(GenericWorker *_worker, const size_t id): worker(_worker)
 	};
 
 	gotoObjectHandlers = {
-		[this](auto a) { return worker->Navigator_gotoObject(a); }
+		[this](auto &a) { return worker->Navigator_gotoObject(a); }
 	};
 
 	gotoPointHandlers = {
-		[this](auto a) { return worker->Navigator_gotoPoint(a); }
+		[this](auto &a) { return worker->Navigator_gotoPoint(a); }
 	};
 
 	resumeHandlers = {

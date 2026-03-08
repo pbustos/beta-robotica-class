@@ -40,7 +40,7 @@ private:
 	size_t id;
 
 	// Array handlers for each method
-	std::array<std::function<void(RoboCompFullPoseEstimation::FullPoseEuler)>, 1> newFullPoseHandlers;
+	std::array<std::function<void(RoboCompFullPoseEstimation::FullPoseEuler&)>, 1> newFullPoseHandlers;
 
 };
 
