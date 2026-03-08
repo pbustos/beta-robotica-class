@@ -35,6 +35,9 @@
 #include <timer/timer.h>
 #include <sys/resource.h>  // For CPU usage
 #include "abstract_graphic_viewer/abstract_graphic_viewer.h"
+#ifdef HAS_QT3D
+#include "viewer_3d.h"
+#endif
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include "room_concept_ai.h"
 #include "pointcloud_center_estimator.h"
@@ -109,6 +112,9 @@ class SpecificWorker : public GenericWorker
 
 	// Graphics
 	AbstractGraphicViewer *viewer;
+#ifdef HAS_QT3D
+	rc::Viewer3D *viewer_3d_ = nullptr;
+#endif
 
 
 	struct Params

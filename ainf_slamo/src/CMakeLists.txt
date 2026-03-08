@@ -53,7 +53,10 @@ LIST(APPEND LIBS ${LIBS} "${TORCH_LIBRARIES}" tbb Qt6PrintSupport Qt6Xml
             Eigen3::Eigen Boost::system Boost::filesystem )
 
 if(TARGET Qt6::3DCore AND TARGET Qt6::3DRender AND TARGET Qt6::3DExtras)
-  LIST(APPEND LIBS Qt63DCore Qt63DRender Qt63DExtras)
+  add_compile_definitions(HAS_QT3D)
+  LIST(APPEND SOURCES ../src/viewer_3d.cpp)
+  LIST(APPEND HEADERS ../src/viewer_3d.h)
+  LIST(APPEND LIBS Qt6::3DCore Qt6::3DRender Qt6::3DExtras)
 endif()
 
 # no-char8_t to avoid a problem with ICE Connection lib.

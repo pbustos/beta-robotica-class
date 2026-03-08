@@ -17,6 +17,7 @@
  *    along with RoboComp.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "specificworker.h"
+#include <QSplitter>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -122,6 +123,22 @@ void SpecificWorker::initialize()
     viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM, true);
     viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0.0, 0.2, QColor("Blue"));
     viewer->show();
+
+#ifdef HAS_QT3D
+    // Add 3D viewer alongside the 2D viewer in a horizontal splitter.
+    // AbstractGraphicViewer already created a QVBoxLayout on this->frame;
+    // we grab 'viewer' back from it, insert a QSplitter, and add Viewer3D.
+    {
+        QLayout* frame_layout = this->frame->layout();  // QVBoxLayout from AGV ctor
+        frame_layout->removeWidget(viewer);
+        auto* splitter = new QSplitter(Qt::Horizontal, this->frame);
+        splitter->addWidget(viewer);
+        viewer_3d_ = new rc::Viewer3D(splitter, 2.5f);
+        splitter->addWidget(viewer_3d_->container_widget());
+        splitter->setSizes({600, 500});
+        frame_layout->addWidget(splitter);
+    }
+#endif
 
     // Restore saved window geometry/size
     QSettings settings("robocomp", "ainf_slamo");
@@ -415,6 +432,23 @@ void SpecificWorker::compute()
             draw_lidar_points(lidar_high_->first, lidar_low_high_->first, res.robot_pose);
         else
             draw_lidar_points({}, {}, res.robot_pose);  // clear drawn points
+
+#ifdef HAS_QT3D
+        if (viewer_3d_)
+        {
+            if (draw_lidar_)
+            {
+                const float rpx = res.robot_pose.translation().x();
+                const float rpy = res.robot_pose.translation().y();
+                const float rpt = std::atan2(res.robot_pose.linear()(1,0),
+                                             res.robot_pose.linear()(0,0));
+                viewer_3d_->update_lidar_points(lidar_high_->first, lidar_low_high_->first,
+                                                rpx, rpy, rpt);
+            }
+            else
+                viewer_3d_->update_lidar_points({}, {}, 0.f, 0.f, 0.f);
+        }
+#endif
 
         if (params.USE_WEBOTS)
         {
@@ -905,6 +939,11 @@ void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eige
 	const float display_angle = std::atan2(robot_pose.linear()(1,0), robot_pose.linear()(0,0));
 	viewer->robot_poly()->setPos(display_x, display_y);
 	viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
+
+#ifdef HAS_QT3D
+	if (viewer_3d_)
+		viewer_3d_->update_robot_pose(display_x, display_y, display_angle);
+#endif
 
 	// Keep view centered on the robot (if enabled)
 	if (auto_center_)
@@ -1540,6 +1579,17 @@ void SpecificWorker::draw_temp_obstacles()
         item->setZValue(5);
         temp_obstacle_draw_items_.push_back(item);
     }
+
+#ifdef HAS_QT3D
+    if (viewer_3d_)
+    {
+        std::vector<std::vector<Eigen::Vector2f>> obs_polys;
+        obs_polys.reserve(temp_obstacles_.size());
+        for (const auto& obs : temp_obstacles_)
+            obs_polys.push_back(obs.vertices);
+        viewer_3d_->update_obstacles(obs_polys);
+    }
+#endif
 }
 
 void SpecificWorker::draw_trajectory_debug(const rc::TrajectoryController::ControlOutput &ctrl,
@@ -1937,6 +1987,12 @@ void SpecificWorker::draw_room_polygon()
     QPen pen(capturing_room_polygon ? Qt::yellow : Qt::magenta, capturing_room_polygon ? 0.08 : 0.15);
     polygon_item = viewer->scene.addPolygon(poly, pen, QBrush(Qt::NoBrush));
     polygon_item->setZValue(8);
+
+#ifdef HAS_QT3D
+    // Sync 3D walls whenever the room polygon is finalised
+    if (viewer_3d_ && !capturing_room_polygon && room_polygon_.size() >= 3)
+        viewer_3d_->rebuild_walls(room_polygon_);
+#endif
 }
 
 void SpecificWorker::draw_furniture()
@@ -1968,6 +2024,34 @@ void SpecificWorker::draw_furniture()
 
     if (!furniture_polygons_.empty())
         qInfo() << "[draw_furniture] Drew" << furniture_polygons_.size() << "furniture polygons";
+
+#ifdef HAS_QT3D
+    if (viewer_3d_)
+    {
+        std::vector<rc::Viewer3D::FurnitureItem> items;
+        items.reserve(furniture_polygons_.size());
+        for (const auto& fp : furniture_polygons_)
+        {
+            if (fp.vertices.empty()) continue;
+            Eigen::Vector2f cen = Eigen::Vector2f::Zero();
+            float min_x = fp.vertices[0].x(), max_x = fp.vertices[0].x();
+            float min_y = fp.vertices[0].y(), max_y = fp.vertices[0].y();
+            for (const auto& v : fp.vertices)
+            {
+                cen += v;
+                min_x = std::min(min_x, v.x()); max_x = std::max(max_x, v.x());
+                min_y = std::min(min_y, v.y()); max_y = std::max(max_y, v.y());
+            }
+            cen /= static_cast<float>(fp.vertices.size());
+            rc::Viewer3D::FurnitureItem fi;
+            fi.label    = fp.label;
+            fi.centroid = cen;
+            fi.size     = Eigen::Vector2f(max_x - min_x, max_y - min_y);
+            items.push_back(fi);
+        }
+        viewer_3d_->update_furniture(items);
+    }
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
