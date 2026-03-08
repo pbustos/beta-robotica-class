@@ -1,0 +1,16 @@
+# Proxies for required interfaces
+Proxies.CameraRGBDSimple = "camerargbdsimple:tcp -h localhost -p 10096"
+
+# Endpoints for implements interfaces
+Endpoints.ImageSegmentation = "tcp -p 0"
+
+Display = True
+Period.Compute = 50
+Period.Emergency = 500
+
+Component.Debug.Verbose = true
+
+Ice.Warn.Connections = "0"
+Ice.Trace.Network = "0"
+Ice.Trace.Protocol = "0"
+Ice.MessageSizeMax = "20004800"
