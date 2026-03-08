@@ -158,15 +158,51 @@ def launch_process(command, cwd=None, name=None):
     return proc, ps_proc
 
 components = toml_loader()
+
+def remove_existing_processes(components):
+    for comp in components:
+        cmd = comp.get("cmd", "")
+        if not cmd:
+            continue
+        # Extract the executable name from the command
+        exe_name = cmd.split()[0].split("/")[-1]
+        comp_name = comp.get("name", "")
+        
+        for p in psutil.process_iter(['name', 'cmdline']):
+            try:
+                p_name = p.info.get('name', '') or ''
+                p_cmdline = p.info.get('cmdline', []) or []
+                cmd_str = " ".join(p_cmdline)
+                
+                # Identify if process belongs to the component (match exe_name or comp_name)
+                if (exe_name and exe_name in p_name) or (exe_name and exe_name in cmd_str) or (comp_name and comp_name in p_name):
+                    # Do not kill this script or webots
+                    if "subcognitive.py" not in cmd_str and "webots" not in p_name.lower() and p.pid != os.getpid():
+                        console.print(f"[yellow]Killing existing process meant for '{comp_name}' (PID: {p.pid})[/yellow]")
+                        p.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, TypeError):
+                pass
+    time.sleep(1)
+
+remove_existing_processes(components)
+
 def print_components_table(components):
     table = Table(title="🧠 Loaded Components", box=box.SIMPLE_HEAVY)
     table.add_column("Name", style="bold cyan")
+    table.add_column("Endpoint", style="bold blue")
+    table.add_column("Port", style="bold magenta")
     table.add_column("CWD", style="dim")
     table.add_column("Command", style="magenta")
 
     for comp in components:
+        ice = comp.get("ice_name", "") or ""
+        ep = ice.split(":")[0] if ":" in ice else "-"
+        port = ice.split("-p ")[1].split()[0] if "-p " in ice else "-"
+
         table.add_row(
             comp["name"],
+            ep,
+            port,
             comp.get("cwd", "-"),
             comp.get("cmd", "-")
         )
@@ -192,13 +228,19 @@ for comp in components:
 def build_table():
     table = Table(title="🧠 RoboComp Component Monitor", box=box.SIMPLE_HEAVY)
     table.add_column("Name", style="bold cyan")
+    table.add_column("Endpoint", style="bold blue")
+    table.add_column("Port", style="bold magenta")
     table.add_column("Status", style="bold")
     table.add_column("Uptime", justify="right")
     table.add_column("Memory", justify="right")
     table.add_column("CPU", justify="right")
 
     for name, info in processes.items():
-        ice_name = info["ice_name"]
+        ice_name = info.get("ice_name")
+        ice_str = ice_name or ""
+        ep = ice_str.split(":")[0] if ":" in ice_str else "-"
+        port = ice_str.split("-p ")[1].split()[0] if "-p " in ice_str else "-"
+        
         status = "[yellow]⏳ Checking...[/yellow]"
         
         # Special handling for Webots
@@ -241,6 +283,8 @@ def build_table():
 
         table.add_row(
             name,
+            ep,
+            port,
             status,
             uptime_str,
             f"{mem:6.1f} MB",
