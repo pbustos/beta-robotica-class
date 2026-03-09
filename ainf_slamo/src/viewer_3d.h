@@ -138,6 +138,12 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
                                 float robot_x, float robot_y, float robot_theta_rad);
 
         /**
+         * @brief Update segmented object 3D points.
+         * Input points are in room/layout frame (x,y horizontal, z height).
+         */
+        void update_segmented_points(const std::vector<Eigen::Vector3f>& points_layout);
+
+        /**
          * @brief Update all temporary obstacle mesh entities.
          * Each item carries the 2-D polygon (room frame, meters) and the estimated
          * height derived from the LiDAR Z range.  height == 0 means "use default".
@@ -182,8 +188,10 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
         // Lidar point-cloud pool (pre-allocated spheres, repositioned each frame)
         static constexpr int kLidarPoolHigh = 500;
         static constexpr int kLidarPoolLow  = 250;
+        static constexpr int kSegmentedPool = 2000;
         std::vector<Qt3DCore::QTransform*> lidar_hi_xf_;
         std::vector<Qt3DCore::QTransform*> lidar_lo_xf_;
+        std::vector<Qt3DCore::QTransform*> segmented_xf_;
         void init_lidar_pool();
 
         // Trajectory path

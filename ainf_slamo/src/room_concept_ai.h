@@ -68,8 +68,8 @@ public:
 
         float wall_thickness = 0.1f;
         float wall_height = 2.4f;        // meters
-        int max_lidar_points = 500;      // Subsample for speed
-        float pose_smoothing = 0.3f;     // EMA smoothing factor (0=no smoothing, 1=full smoothing)
+        int max_lidar_points = 1000;      // Subsample for speed
+        float pose_smoothing = 0.7f;     // EMA smoothing factor (0=no smoothing, 1=full smoothing)
 
         // GPU/CPU selection
         // Note: For small tensors (~200 points), CPU is faster due to GPU transfer overhead

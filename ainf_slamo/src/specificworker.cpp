@@ -160,7 +160,17 @@ void SpecificWorker::initialize()
         
         // Connect object picking to navigation
         connect(viewer_3d_.get(), &rc::Viewer3D::objectPicked, this, [this](const QString& n) {
-            this->Navigator_gotoObject(n.toStdString());
+            QString picked = n.trimmed();
+            const int idx = picked.indexOf(" (");
+            if (idx > 0)
+                picked = picked.left(idx);
+
+            qInfo() << "[Viewer3D] Selected object:" << picked;
+
+            if (scene_tree_)
+                scene_tree_->select_item_by_name(picked);
+
+            this->Navigator_gotoObject(picked.toStdString());
         });
 
         // Connect floor picking to navigation
@@ -253,7 +263,7 @@ void SpecificWorker::initialize()
     connect(pushButton_showTrajs, &QPushButton::toggled, this, [this](bool checked) { draw_trajectories_ = checked; });
 
     // Camera viewer popup
-    camera_viewer_ = std::make_unique<CameraViewer>(camerargbdsimple_proxy, this);
+    camera_viewer_ = std::make_unique<CameraViewer>(imagesegmentation_proxy, this);
     camera_viewer_->set_period_ms(50);
     if (pushButton_camera != nullptr)
     {
@@ -359,6 +369,11 @@ void SpecificWorker::initialize()
     std::string layout_file = "";
     try { layout_file  = configLoader.get<std::string>("layout_file");  } catch(...) {}
     try { params.USE_WEBOTS = configLoader.get<bool>("use_webots"); } catch(...) {}
+    try { params.CAMERA_TX = static_cast<float>(configLoader.get<double>("camera_tx")); } catch(...) {}
+    try { params.CAMERA_TY = static_cast<float>(configLoader.get<double>("camera_ty")); } catch(...) {}
+    try { params.CAMERA_TZ = static_cast<float>(configLoader.get<double>("camera_tz")); } catch(...) {}
+    qInfo() << "Segmented camera extrinsics (tx, ty, tz):"
+        << params.CAMERA_TX << params.CAMERA_TY << params.CAMERA_TZ;
     load_polygon_from_file(layout_file);
 
     // Show mode indicator in UI
@@ -542,6 +557,8 @@ void SpecificWorker::compute()
             }
             else
                 viewer_3d_->update_lidar_points({}, {}, 0.f, 0.f, 0.f);
+
+            update_segmented_points_3d(res.robot_pose);
         }
 
         if (params.USE_WEBOTS)
@@ -651,6 +668,47 @@ void SpecificWorker::compute()
                      viz_ms, mppi_ms, cycle_ms,
                      static_cast<int>(cycle_pct),
                      static_cast<int>(cpu_total - cycle_pct));
+    }
+}
+
+void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pose)
+{
+    if (!viewer_3d_)
+        return;
+
+    try
+    {
+        const auto tdata = imagesegmentation_proxy->getAll();
+        std::size_t total_points = 0;
+        for (const auto &obj : tdata.objects)
+            total_points += obj.points3D.size();
+
+        std::vector<Eigen::Vector3f> points_layout;
+        points_layout.reserve(total_points);
+
+        for (const auto &obj : tdata.objects)
+        {
+            for (const auto &p : obj.points3D)
+            {
+                // points3D now come in RoboComp local frame.
+                // Convert camera frame -> robot frame via translation extrinsics,
+                // then robot frame -> local layout frame, then local layout -> global layout.
+                const float x_robot = p.x + params.CAMERA_TX;
+                const float y_robot = p.y + params.CAMERA_TY;
+                const float z_robot = p.z + params.CAMERA_TZ;
+
+                const Eigen::Vector2f p_layout_local(x_robot, y_robot);
+                const Eigen::Vector2f p_layout = robot_pose * p_layout_local;
+                constexpr float z_lift = 0.05f;  // keep points slightly above floor
+                points_layout.emplace_back(p_layout.x(), p_layout.y(), z_robot + z_lift);
+            }
+        }
+
+        viewer_3d_->update_segmented_points(points_layout);
+    }
+    catch (const Ice::Exception &)
+    {
+        viewer_3d_->update_segmented_points({});
     }
 }
 

@@ -27,7 +27,7 @@ GenericWorker::GenericWorker(const ConfigLoader& configLoader, TuplePrx tprx) : 
     if (!this->configLoader.get<bool>("Component.Debug.Verbose")) {
         qInstallMessageHandler([](QtMsgType, const QMessageLogContext&, const QString&) {});
     }
-	camerargbdsimple_proxy = std::get<0>(tprx);
+	imagesegmentation_proxy = std::get<0>(tprx);
 	lidar3d_proxy = std::get<1>(tprx);
 	lidar3d1_proxy = std::get<2>(tprx);
 	omnirobot_proxy = std::get<3>(tprx);

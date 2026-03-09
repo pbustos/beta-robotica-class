@@ -140,6 +140,10 @@ class SpecificWorker : public GenericWorker
 		QRectF GRID_MAX_DIM{-8, -5, 16, 10};
 		int MAX_LIDAR_DRAW_POINTS = 500;
 		float ODOMETRY_NOISE_FACTOR = 0.1f;  // Gaussian noise std added to odometry (fraction of reading)
+		// Camera extrinsics: camera frame origin expressed in robot frame (meters)
+		float CAMERA_TX = 0.0f;
+		float CAMERA_TY = -0.11f;
+		float CAMERA_TZ = 0.92f;
 	};
 	Params params;
 
@@ -333,6 +337,7 @@ class SpecificWorker : public GenericWorker
 	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points_high,
 	                       const std::vector<Eigen::Vector3f> &points_low,
 	                       const Eigen::Affine2f &robot_pose);
+	void update_segmented_points_3d(const Eigen::Affine2f &robot_pose);
 	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);
 	void display_robot(const Eigen::Affine2f &robot_pose, const Eigen::Matrix3f &covariance);
 	void display_gt_error(const Eigen::Affine2f &estimated_pose, const std::optional<Eigen::Affine2f> &gt_pose_opt);

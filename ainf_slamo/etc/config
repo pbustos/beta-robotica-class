@@ -3,8 +3,7 @@ Proxies.Lidar3D = "lidar3d:tcp -h localhost -p 11990" #HELIOS
 Proxies.Lidar3D1 = "lidar3d:tcp -h localhost -p 11989" #BPEARL
 Proxies.Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 10006"
 Proxies.OmniRobot = "omnirobot:tcp -h localhost -p 10004"
-Proxies.CameraRGBDSimple = "camerargbdsimple:tcp -h localhost -p 10096"
-
+Proxies.ImageSegmentation = "imagesegmentation:tcp -h localhost -p 14111"
 
 # Endpoints for implementation interfaces
 Endpoints.Navigator = "tcp -p 13212"
@@ -27,6 +26,13 @@ layout_file = "completo_unified.svg"
 # Set to false when running on a real robot (disables Webots GT pose and related UI)
 # Note: keep the Proxies.Webots2Robocomp line above even when false — the proxy is created but never used
 use_webots = true
+
+# Camera-to-robot translation (meters) for segmented 3D points.
+# points3D are provided in camera frame; these offsets move them to robot frame.
+# Positive axes must match the incoming ImageSegmentation points3D convention.
+camera_tx = 0.0
+camera_ty = -0.11
+camera_tz = 0.92  # m
 
 Component.Debug.Verbose = false
 

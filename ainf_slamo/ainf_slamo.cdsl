@@ -4,13 +4,13 @@ import "OmniRobot.idsl";
 import "JoystickAdapter.idsl";
 import "FullPoseEstimationPub.idsl";
 import "Navigator.idsl";
-import "CameraRGBDSimple.idsl";
+import "ImageSegmentation.idsl";
 
 Component ainf_slamo
 {
     Communications
     {
-        requires Lidar3D, Lidar3D, Webots2Robocomp, OmniRobot, CameraRGBDSimple;
+        requires Lidar3D, Lidar3D, Webots2Robocomp, OmniRobot, ImageSegmentation;
         implements Navigator;
         subscribesTo JoystickAdapter, FullPoseEstimationPub;
     };

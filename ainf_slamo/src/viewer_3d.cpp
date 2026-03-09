@@ -58,7 +58,8 @@ void WebotsStyleCameraController::moveCamera(
     // ---- Zoom: scroll wheel -----------------------------------------------
     if (qAbs(state.tzAxisValue) > 0.f)
     {
-        cam->translate(QVector3D(0.f, 0.f, state.tzAxisValue * linearSpeed() * dt),
+        constexpr float zoom_gain = 2.0f;
+        cam->translate(QVector3D(0.f, 0.f, state.tzAxisValue * linearSpeed() * dt * zoom_gain),
                        Qt3DRender::QCamera::DontTranslateViewCenter);
     }
 }
@@ -455,25 +456,29 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         const QString ql = QString::fromStdString(item.label).toLower();
         const Eigen::Vector2f& cen  = item.centroid;
         const Eigen::Vector2f& size = item.size;
+        const bool long_along_x = size.x() >= size.y();
+        const QQuaternion axis_rot = long_along_x
+            ? base_rot
+            : (QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, 90.f) * base_rot);
 
         if (ql.contains("mesa") || ql.contains("table"))
         {
             // Scale table mesh (native 1.2 m × 0.8 m in obj X × Y) to SVG AABB.
             // After -90°X rotation: obj-X→room-X, obj-Y→room-Z  → scale accordingly.
-            const float sx = (size.x() > 0.1f) ? size.x() / 1.2f : 1.f;
-            const float sy = (size.y() > 0.1f) ? size.y() / 0.8f : 1.f;
+            const float long_dim  = std::max(size.x(), size.y());
+            const float short_dim = std::min(size.x(), size.y());
+            const float sx = (long_dim  > 0.1f) ? long_dim  / 1.2f : 1.f;
+            const float sy = (short_dim > 0.1f) ? short_dim / 0.8f : 1.f;
             make_entity(abs_mesh("meshes/table.obj"),
                         QColor(160, 100, 55), QColor(70, 44, 24), 20.f,
-                        cen, base_rot, QVector3D(sx, sy, 1.f),
+                        cen, axis_rot, QVector3D(sx, sy, 1.f),
                         QString::fromStdString(item.label));
         }
         else if (ql.contains("banco") || ql.contains("bench"))
         {
-            const QQuaternion bench_rot =
-                QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, 90.f) * base_rot;
             make_entity(abs_mesh("meshes/bench.obj"),
                         QColor(130, 85, 45), QColor(55, 36, 19), 15.f,
-                        cen, bench_rot, QVector3D(1.f, 1.f, 1.f),
+                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
                         QString::fromStdString(item.label));
         }
         else if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot"))
@@ -493,7 +498,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         {
             make_entity(abs_mesh("meshes/chair.obj"),
                         QColor(110, 85, 60), QColor(50, 35, 20), 18.f,
-                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
                         QString::fromStdString(item.label));
         }
         else if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen") ||
@@ -502,19 +507,19 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             // Stand: base plate + post, light grey
             make_entity(abs_mesh("meshes/monitor_stand.obj"),
                         QColor(160, 160, 165), QColor(65, 65, 68), 35.f,
-                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
                         QString::fromStdString(item.label) + " (stand)");
             // Screen panel: near-black with slight blue tint
             make_entity(abs_mesh("meshes/monitor_screen.obj"),
                         QColor(20, 22, 30), QColor(10, 11, 15), 80.f,
-                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
                         QString::fromStdString(item.label));
         }
         else if (ql.contains("vitrina") || ql.contains("cabinet") || ql.contains("shelf"))
         {
             make_entity(abs_mesh("meshes/bench.obj"),
                         QColor(180, 200, 220), QColor(70, 80, 90), 40.f,
-                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
                         QString::fromStdString(item.label));
         }
         else
@@ -630,6 +635,7 @@ void Viewer3D::init_lidar_pool()
 
     make_pool(kLidarPoolHigh, 0.04f, QColor(50, 230, 50),  QColor(20, 100, 20),  lidar_hi_xf_);
     make_pool(kLidarPoolLow,  0.04f, QColor(50, 220, 220), QColor(20,  90, 90),  lidar_lo_xf_);
+    make_pool(kSegmentedPool, 0.03f, QColor(70, 140, 255), QColor(25, 55, 120), segmented_xf_);
 }
 
 // ---------------------------------------------------------------------------
@@ -668,6 +674,27 @@ void Viewer3D::update_lidar_points(
 
     fill(pts_hi, lidar_hi_xf_);
     fill(pts_lo, lidar_lo_xf_);
+}
+
+// ---------------------------------------------------------------------------
+// update_segmented_points – room-frame points shown as red cloud
+// ---------------------------------------------------------------------------
+void Viewer3D::update_segmented_points(const std::vector<Eigen::Vector3f>& points_layout)
+{
+    static const QVector3D hidden(0.f, -500.f, 0.f);
+
+    const int pool_size = static_cast<int>(segmented_xf_.size());
+    const int pt_count  = static_cast<int>(points_layout.size());
+    const int stride    = (pt_count > pool_size && pool_size > 0) ? (pt_count / pool_size) : 1;
+
+    int idx = 0;
+    for (int i = 0; i < pt_count && idx < pool_size; i += stride, ++idx)
+    {
+        const auto &p = points_layout[i];
+        segmented_xf_[idx]->setTranslation(QVector3D(-p.x(), p.z(), p.y()));
+    }
+    for (int i = idx; i < pool_size; ++i)
+        segmented_xf_[i]->setTranslation(hidden);
 }
 
 // ---------------------------------------------------------------------------
