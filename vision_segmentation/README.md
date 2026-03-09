@@ -105,6 +105,57 @@ bin/vision_segmentation config
 - With `Display=False`, rendering work is skipped to maximize throughput.
 - The component prints FPS periodically.
 
+## Coordinate frames
+
+This component uses three coordinate frames for 3D points:
+
+### 1) Camera frame (depth projection input)
+
+From depth intrinsics projection:
+
+- `x_cam`: right
+- `y_cam`: up
+- `z_cam`: forward (depth)
+
+Projection equations:
+
+- `x_cam = (u - cx) * z / fx`
+- `y_cam = (cy - v) * z / fy`
+- `z_cam = z`
+
+### 2) RoboComp frame (published `Point3D`)
+
+Published segmented object points (`SegmentedObject.points3D`) are converted to RoboComp frame:
+
+- `X+`: right
+- `Y+`: forward
+- `Z+`: up
+
+Conversion from camera frame:
+
+- `x_robocomp = x_cam`
+- `y_robocomp = z_cam`
+- `z_robocomp = y_cam`
+
+### 3) Qt3D frame (visualization only)
+
+For on-screen point cloud rendering, RoboComp points are remapped to Qt3D frame:
+
+- `+X`: right
+- `+Y`: up
+- `+Z`: forward (view-center direction convention)
+
+Current remap used in display path:
+
+- `x_qt = -x_robocomp`
+- `y_qt = z_robocomp`
+- `z_qt = y_robocomp`
+
+Important:
+
+- The sign flip in `x_qt` is applied only for Qt3D drawing (to match the current viewer orientation).
+- ICE output (`Point3D`) remains in RoboComp frame.
+
 ## Troubleshooting
 
 - **Low FPS (expected around 20Hz but getting less)**

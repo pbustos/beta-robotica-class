@@ -31,7 +31,6 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget, QLabel
 from PySide6.Qt3DCore import Qt3DCore
 from PySide6.Qt3DRender import Qt3DRender
 from PySide6.Qt3DExtras import Qt3DExtras
-from rich.console import Console
 from genericworker import *
 import interfaces as ifaces
 try:
@@ -50,9 +49,6 @@ cv2_qt_font_dir = os.path.join(os.path.dirname(cv2.__file__), 'qt', 'fonts')
 os.makedirs(cv2_qt_font_dir, exist_ok=True)
 
 sys.path.append('/opt/robocomp/lib')
-console = Console(highlight=False)
-
-
 class SpecificWorker(GenericWorker):
     def __init__(self, proxy_map, configData, startup_check=False):
         super(SpecificWorker, self).__init__(proxy_map, configData)
@@ -67,7 +63,7 @@ class SpecificWorker(GenericWorker):
 
         # Load the latest YOLO model (YOLO26 large) for object detection
         print("Loading YOLO model...")
-        self.yolo_model = YOLO('yolo26m-seg.pt')
+        self.yolo_model = YOLO('yolo26l-seg.pt')
         print("YOLO loaded.")
 
         # FPS tracking variables
@@ -75,8 +71,6 @@ class SpecificWorker(GenericWorker):
         self.fps_last_time = time.time()
         
         # State variables for serving to clients
-        self.current_segmented_objects = []
-        self.current_image_out = ifaces.RoboCompImageSegmentation.TImage()
         self.last_image_request_time = 0.0
         self.last_objects_request_time = 0.0
         self.image_request_hold_seconds = 1.0
@@ -85,8 +79,8 @@ class SpecificWorker(GenericWorker):
         # Latest published snapshot for ICE consumers
         initial_timestamp = int(time.time() * 1000)
         self._latest_snapshot = (
-            self.current_segmented_objects,
-            self.current_image_out,
+            [],
+            ifaces.RoboCompImageSegmentation.TImage(),
             initial_timestamp,
         )
 
@@ -153,7 +147,7 @@ class SpecificWorker(GenericWorker):
 
             image_out = self._build_output_image(img_struct, annotated_img.tobytes())
 
-            self._publish_frame(segmented_objects, image_out, int(time.time() * 1000))
+            self._latest_snapshot = (segmented_objects, image_out, int(time.time() * 1000))
 
             self._update_2d_display(annotated_img)
             
@@ -237,20 +231,6 @@ class SpecificWorker(GenericWorker):
         img_out.image = image_bytes
         return img_out
 
-    def _is_image_output_requested(self):
-        return (time.time() - self.last_image_request_time) <= self.image_request_hold_seconds
-
-    def _is_objects_output_requested(self):
-        return (time.time() - self.last_objects_request_time) <= self.objects_request_hold_seconds
-
-    def _publish_frame(self, segmented_objects, image_out, timestamp_ms):
-        self._latest_snapshot = (segmented_objects, image_out, timestamp_ms)
-        self.current_segmented_objects = segmented_objects
-        self.current_image_out = image_out
-
-    def _read_front_buffer(self):
-        return self._latest_snapshot
-
     def _get_depth_intrinsics(self, depth_struct):
         depth_np = np.frombuffer(depth_struct.depth, dtype=np.float32).reshape(
             (depth_struct.height, depth_struct.width)
@@ -266,16 +246,21 @@ class SpecificWorker(GenericWorker):
             return None, None, None, None, None
 
         z = depth_np[v, u]
-        valid = (z > 0) & np.isfinite(z) & ~np.isnan(z)
+        valid = (z > 0) & np.isfinite(z)
         if not np.any(valid):
             return None, None, None, None, None
 
         z_val = z[valid]
         u_val = u[valid]
         v_val = v[valid]
-        x_val = (u_val - cx) * z_val / fx
-        y_val = (cy - v_val) * z_val / fy
-        return x_val, y_val, z_val, u_val, v_val
+        x_cam = (u_val - cx) * z_val / fx
+        y_cam = (cy - v_val) * z_val / fy
+        z_cam = z_val
+
+        x_robocomp = x_cam
+        y_robocomp = z_cam
+        z_robocomp = y_cam
+        return x_robocomp, y_robocomp, z_robocomp, u_val, v_val
 
     def _build_segmented_object(self, contour_i32, label_name, conf, depth_np, fx, fy, cx, cy):
         seg_obj = ifaces.RoboCompImageSegmentation.SegmentedObject()
@@ -315,16 +300,19 @@ class SpecificWorker(GenericWorker):
     def _process_segmentation(self, results, annotated_img, depth_np, fx, fy, cx, cy, img_height, img_width):
         seg_mask = np.zeros((img_height, img_width), dtype=np.uint8)
         segmented_objects = []
-        draw_overlay = self.display_enabled or self._is_image_output_requested()
-        need_objects = self._is_objects_output_requested()
+        now = time.time()
+        draw_overlay = self.display_enabled or ((now - self.last_image_request_time) <= self.image_request_hold_seconds)
+        need_objects = (now - self.last_objects_request_time) <= self.objects_request_hold_seconds
         need_seg_mask = self.display_enabled
 
-        if not (hasattr(results[0], 'masks') and results[0].masks is not None):
+        result = results[0]
+
+        if not (hasattr(result, 'masks') and result.masks is not None):
             return annotated_img, seg_mask, segmented_objects
 
-        contours = results[0].masks.xy
-        classes = results[0].boxes.cls.cpu().numpy()
-        confs = results[0].boxes.conf.cpu().numpy()
+        contours = result.masks.xy
+        classes = result.boxes.cls.cpu().numpy()
+        confs = result.boxes.conf.cpu().numpy()
         names = self.yolo_model.names
 
         for contour, cls, conf in zip(contours, classes, confs):
@@ -363,20 +351,23 @@ class SpecificWorker(GenericWorker):
             return
 
         v, u = np.where(seg_mask > 0)
-        x_val, y_val, z_val, u_val, v_val = self._project_depth_points(u, v, depth_np, fx, fy, cx, cy)
+        x_robocomp, y_robocomp, z_robocomp, u_val, v_val = self._project_depth_points(u, v, depth_np, fx, fy, cx, cy)
 
-        if z_val is None:
+        if y_robocomp is None:
             self.pos_attr.setCount(0)
             self.color_attr.setCount(0)
             return
 
-        pts_array = np.column_stack((x_val, y_val, z_val)).astype(np.float32)
+        x_qt = -x_robocomp
+        y_qt = z_robocomp
+        z_qt = y_robocomp
+        pts_array = np.column_stack((x_qt, y_qt, z_qt)).astype(np.float32)
         self.vertex_buffer.setData(QByteArray(pts_array.tobytes()))
-        self.pos_attr.setCount(len(z_val))
+        self.pos_attr.setCount(len(z_qt))
 
         point_colors = (img[v_val, u_val] / 255.0).astype(np.float32)
         self.color_buffer.setData(QByteArray(point_colors.tobytes()))
-        self.color_attr.setCount(len(z_val))
+        self.color_attr.setCount(len(z_qt))
 
     def _update_2d_display(self, annotated_img):
         if not self.display_enabled:
@@ -483,14 +474,14 @@ class SpecificWorker(GenericWorker):
     #
     def ImageSegmentation_getSegmentedObjects(self):
         self.last_objects_request_time = time.time()
-        objects, _, _ = self._read_front_buffer()
+        objects, _, _ = self._latest_snapshot
         return objects
     
     # IMPLEMENTATION of getAll method from ImageSegmentation interface
     def ImageSegmentation_getAll(self):
         self.last_image_request_time = time.time()
         self.last_objects_request_time = time.time()
-        objects, image, timestamp = self._read_front_buffer()
+        objects, image, timestamp = self._latest_snapshot
 
         ret = ifaces.RoboCompImageSegmentation.TData()
         ret.objects = objects
@@ -504,7 +495,7 @@ class SpecificWorker(GenericWorker):
     #
     def ImageSegmentation_getImage(self):
         self.last_image_request_time = time.time()
-        _, image, _ = self._read_front_buffer()
+        _, image, _ = self._latest_snapshot
         return image
     
 
