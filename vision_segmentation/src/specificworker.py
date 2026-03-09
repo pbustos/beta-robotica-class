@@ -20,9 +20,11 @@
 #
 
 import os
+import sys
 os.environ["QT_QPA_PLATFORM"] = "xcb"
 os.environ["QT_LOGGING_RULES"] = "*.debug=false;qt.qpa.*=false"
 
+from PySide6 import QtCore
 from PySide6.QtCore import QTimer, QByteArray
 from PySide6.QtGui import QVector3D, QColor, QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget, QLabel
@@ -35,6 +37,8 @@ import interfaces as ifaces
 import cv2
 import numpy as np
 import os
+import queue
+import threading
 import time
 from ultralytics import YOLO
 
@@ -79,10 +83,12 @@ class SpecificWorker(GenericWorker):
         self.Period = configData["Period"]["Compute"]
         self.Display = configData["Display"] if "Display" in configData else "True"
         self.display_enabled = str(self.Display).lower() in ["true", "1", "yes", "on"]
+        self.use_proxy_thread = str(configData.get("ProxyThread", "False")).lower() in ["true", "1", "yes", "on"]
+        self.proxy_poll_period = max(float(self.Period) / 1000.0, 0.005)
 
         # Load the latest YOLO model (YOLO26 large) for object detection
         print("Loading YOLO model...")
-        self.yolo_model = YOLO('yolo26l-seg.pt')
+        self.yolo_model = YOLO('yolo26m-seg.pt')
         print("YOLO loaded.")
 
         # FPS tracking variables
@@ -91,26 +97,191 @@ class SpecificWorker(GenericWorker):
         
         # State variables for serving to clients
         self.current_segmented_objects = []
-        self.current_image_out = None
+        self.current_image_out = ifaces.RoboCompImageSegmentation.TImage()
+        self.last_image_request_time = 0.0
+        self.last_objects_request_time = 0.0
+        self.image_request_hold_seconds = 1.0
+        self.objects_request_hold_seconds = 1.0
+
+        # Compute-stage profiler
+        self.profile_enabled = True
+        self.profile_period = 3.0
+        self.profile_last_time = time.time()
+        self.profile_frames = 0
+        self.profile_stats = {
+            "proxy": 0.0,
+            "decode": 0.0,
+            "yolo": 0.0,
+            "depth": 0.0,
+            "segmentation": 0.0,
+            "qt3d": 0.0,
+            "build_image": 0.0,
+            "publish": 0.0,
+            "display2d": 0.0,
+            "total": 0.0,
+        }
+
+        # Double buffering for compute() producer and ICE consumers
+        self._buffer_lock = threading.Lock()
+        initial_timestamp = int(time.time() * 1000)
+        self._front_buffer = {
+            "objects": self.current_segmented_objects,
+            "image": self.current_image_out,
+            "timestamp": initial_timestamp,
+        }
+        self._back_buffer = {
+            "objects": [],
+            "image": ifaces.RoboCompImageSegmentation.TImage(),
+            "timestamp": initial_timestamp,
+        }
+
+        # Background proxy reader queue (decouples network latency from compute loop)
+        self._proxy_queue = queue.Queue(maxsize=2)
+        self._proxy_last_rgbd = None
+        self._proxy_thread_stop = threading.Event()
+        self._proxy_thread = None
 
         # Display toggle from config
         if self.display_enabled:
             self.setup_qt3d()
+        else:
+            self.hide()
         
         if startup_check:
             self.startup_check()
         else:
+            if self.use_proxy_thread:
+                self._start_proxy_thread()
             self.timer.timeout.connect(self.compute)
             self.timer.start(self.Period)
 
     def __del__(self):
         """Destructor"""
-
-   
+        self._stop_proxy_thread()
 
     @QtCore.Slot()
     def compute(self):
-        # FPS Counter logic
+        self._update_fps()
+
+        try:
+            t_start = time.perf_counter()
+
+            t0 = time.perf_counter()
+            if self.use_proxy_thread:
+                rgbd = self._get_latest_rgbd()
+                if rgbd is None:
+                    rgbd = self.camerargbdsimple_proxy.getAll("camera")
+            else:
+                rgbd = self.camerargbdsimple_proxy.getAll("camera")
+            img_struct = rgbd.image
+            depth_struct = rgbd.depth
+            t_proxy = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
+            img = np.frombuffer(img_struct.image, dtype=np.uint8)
+            img = img.reshape(img_struct.height, img_struct.width, 3)
+            t_decode = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            results = self.yolo_model(img, verbose=False)
+            t_yolo = time.perf_counter() - t0
+            
+            annotated_img = img.copy()
+
+            t0 = time.perf_counter()
+            depth_np, fx, fy, cx, cy = self._get_depth_intrinsics(depth_struct)
+            t_depth = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            annotated_img, seg_mask, segmented_objects = self._process_segmentation(
+                results,
+                annotated_img,
+                depth_np,
+                fx,
+                fy,
+                cx,
+                cy,
+                img_struct.height,
+                img_struct.width,
+            )
+            t_seg = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            self._update_qt3d_from_mask(seg_mask, depth_np, fx, fy, cx, cy, img)
+            t_qt3d = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            image_out = self._build_output_image(img_struct, annotated_img.tobytes())
+            t_build = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            self._publish_frame(segmented_objects, image_out, int(time.time() * 1000))
+            t_publish = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            self._update_2d_display(annotated_img)
+            t_display = time.perf_counter() - t0
+
+            t_total = time.perf_counter() - t_start
+            self._update_profile_stats(
+                t_proxy,
+                t_decode,
+                t_yolo,
+                t_depth,
+                t_seg,
+                t_qt3d,
+                t_build,
+                t_publish,
+                t_display,
+                t_total,
+            )
+            
+        except Exception as e:
+            print(f"Error reading image: {e}")
+
+    def _start_proxy_thread(self):
+        if self._proxy_thread is not None:
+            return
+
+        self._proxy_thread = threading.Thread(target=self._proxy_loop, daemon=True)
+        self._proxy_thread.start()
+
+    def _stop_proxy_thread(self):
+        self._proxy_thread_stop.set()
+        if self._proxy_thread is not None and self._proxy_thread.is_alive():
+            self._proxy_thread.join(timeout=0.5)
+
+    def _proxy_loop(self):
+        while not self._proxy_thread_stop.is_set():
+            try:
+                rgbd = self.camerargbdsimple_proxy.getAll("camera")
+                if self._proxy_queue.full():
+                    try:
+                        self._proxy_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                self._proxy_queue.put_nowait(rgbd)
+                time.sleep(self.proxy_poll_period)
+            except Exception as e:
+                print(f"Proxy thread error: {e}")
+                time.sleep(0.01)
+
+    def _get_latest_rgbd(self):
+        latest = None
+        try:
+            while True:
+                latest = self._proxy_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+        if latest is not None:
+            self._proxy_last_rgbd = latest
+
+        return self._proxy_last_rgbd
+
+    ###############################################################################
+
+    def _update_fps(self):
         self.fps_frames += 1
         current_time = time.time()
         if (current_time - self.fps_last_time) >= 3.0:
@@ -119,107 +290,226 @@ class SpecificWorker(GenericWorker):
             self.fps_frames = 0
             self.fps_last_time = current_time
 
-        try:
-            # Read proxy data
-            rgbd = self.camerargbdsimple_proxy.getAll("camera")
-            img_struct = rgbd.image
-            depth_struct = rgbd.depth
-            #print(f"Received RGBD data: Image({img_struct.width}x{img_struct.height}), Depth({depth_struct.width}x{depth_struct.height})")
-            
-            # Convert to OpenCV image (already in RGB from ICE)
-            img = np.frombuffer(img_struct.image, dtype=np.uint8)
-            img = img.reshape(img_struct.height, img_struct.width, 3)
+    def _build_output_image(self, img_struct, image_bytes):
+        img_out = ifaces.RoboCompImageSegmentation.TImage()
+        img_out.compressed = img_struct.compressed
+        img_out.cameraID = img_struct.cameraID
+        img_out.width = img_struct.width
+        img_out.height = img_struct.height
+        img_out.depth = img_struct.depth
+        img_out.focalx = img_struct.focalx
+        img_out.focaly = img_struct.focaly
+        img_out.alivetime = img_struct.alivetime
+        img_out.period = img_struct.period
+        img_out.image = image_bytes
+        return img_out
 
-            # --- YOLO Prediction ---
-            results = self.yolo_model(img, verbose=False)
-            
-            # Annotated image for the 2D view (RGB format)
-            annotated_img = img.copy()
-            
-            # Create a segmentation mask for all objects
-            seg_mask = np.zeros((img_struct.height, img_struct.width), dtype=np.uint8)
+    def _update_profile_stats(
+        self,
+        t_proxy,
+        t_decode,
+        t_yolo,
+        t_depth,
+        t_seg,
+        t_qt3d,
+        t_build,
+        t_publish,
+        t_display,
+        t_total,
+    ):
+        if not self.profile_enabled:
+            return
 
-            # Extract segmentation masks (contours) if available
-            if hasattr(results[0], 'masks') and results[0].masks is not None:
-                contours = results[0].masks.xy
-                classes = results[0].boxes.cls.cpu().numpy()
-                confs = results[0].boxes.conf.cpu().numpy()
-                
-                for contour, cls, conf in zip(contours, classes, confs):
-                    if len(contour) == 0:
-                        continue
-                    points = np.int32([contour])
-                    # Draw contour (green)
-                    cv2.polylines(annotated_img, points, isClosed=True, color=(0, 255, 0), thickness=2)
-                    
-                    # Fill polygon on the seg_mask
-                    cv2.fillPoly(seg_mask, points, 1)
-                    
-                    # Draw label (red) near the first point of the contour
-                    label = f"{self.yolo_model.names[int(cls)]} {conf:.2f}"
-                    cv2.putText(annotated_img, label, tuple(points[0][0]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-            else:
-                annotated_img = results[0].plot()
+        self.profile_stats["proxy"] += t_proxy
+        self.profile_stats["decode"] += t_decode
+        self.profile_stats["yolo"] += t_yolo
+        self.profile_stats["depth"] += t_depth
+        self.profile_stats["segmentation"] += t_seg
+        self.profile_stats["qt3d"] += t_qt3d
+        self.profile_stats["build_image"] += t_build
+        self.profile_stats["publish"] += t_publish
+        self.profile_stats["display2d"] += t_display
+        self.profile_stats["total"] += t_total
+        self.profile_frames += 1
 
-            # Get valid depth points that correspond to segmented objects
-            v, u = np.where(seg_mask > 0)
-            
-            if len(u) > 0:
-                # Assuming depth is 32-bit float in standard RoboComp structure
-                depth_np = np.frombuffer(depth_struct.depth, dtype=np.float32).reshape((depth_struct.height, depth_struct.width))
-                Z = depth_np[v, u]
-                
-                W, H = depth_struct.width, depth_struct.height
-                fx = depth_struct.focalx if depth_struct.focalx > 0 else 585.756
-                fy = depth_struct.focaly if depth_struct.focaly > 0 else 585.756
-                cx, cy = W / 2.0, H / 2.0
-                
-                # Filter out zeroes or nans
-                valid = (Z > 0) & np.isfinite(Z) & ~np.isnan(Z)
-                Z_val = Z[valid]
-                u_val = u[valid]
-                v_val = v[valid]
-                
-                if len(Z_val) > 0:
-                    # Inverse projection from 2D (u,v) to 3D (X,Y,Z) based on Webots coordinate frames (+X right, +Y up, +Z into screen)
-                    X = (u_val - cx) * Z_val / fx
-                    Y = (cy - v_val) * Z_val / fy
-                    if self.display_enabled:
-                        # Stack to Nx3 shape
-                        pts_array = np.column_stack((X, Y, Z_val)).astype(np.float32)
-                        
-                        # 1. Position buffer
-                        ba_pos = QByteArray(pts_array.tobytes())
-                        self.vertex_buffer.setData(ba_pos)
-                        self.pos_attr.setCount(len(Z_val))
-                        
-                        # 2. Color buffer mapping
-                        point_colors = img[v_val, u_val] / 255.0
-                        flattened_colors = point_colors.astype(np.float32)
-                        
-                        ba_color = QByteArray(flattened_colors.tobytes())
-                        self.color_buffer.setData(ba_color)
-                        self.color_attr.setCount(len(Z_val))
-                else:
-                    if self.display_enabled:
-                        self.pos_attr.setCount(0)
-                        self.color_attr.setCount(0)
-            else:
-                # Clear points if none selected
-                if self.display_enabled:
-                    self.pos_attr.setCount(0)
-                    self.color_attr.setCount(0)
-            # Show RGB image in QLabel (left panel)
-            if self.display_enabled:
-                h, w, ch = img.shape
-                bytes_per_line = ch * w
-                q_img = QImage(img.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                self.image_label.setPixmap(QPixmap.fromImage(q_img))
-            
-        except Exception as e:
-            print(f"Error reading image: {e}")
+        now = time.time()
+        elapsed = now - self.profile_last_time
+        if elapsed < self.profile_period or self.profile_frames == 0:
+            return
 
-    ###############################################################################
+        avg_total_ms = (self.profile_stats["total"] / self.profile_frames) * 1000.0
+        print("[PROFILE] Average compute stage timings (ms/frame):")
+        for key in ["proxy", "decode", "yolo", "depth", "segmentation", "qt3d", "build_image", "publish", "display2d"]:
+            avg_ms = (self.profile_stats[key] / self.profile_frames) * 1000.0
+            ratio = (avg_ms / avg_total_ms * 100.0) if avg_total_ms > 0 else 0.0
+            print(f"  - {key:12s}: {avg_ms:6.2f} ms ({ratio:5.1f}%)")
+        print(f"  - {'total':12s}: {avg_total_ms:6.2f} ms")
+
+        self.profile_last_time = now
+        self.profile_frames = 0
+        for key in self.profile_stats:
+            self.profile_stats[key] = 0.0
+
+    def _is_image_output_requested(self):
+        return (time.time() - self.last_image_request_time) <= self.image_request_hold_seconds
+
+    def _is_objects_output_requested(self):
+        return (time.time() - self.last_objects_request_time) <= self.objects_request_hold_seconds
+
+    def _publish_frame(self, segmented_objects, image_out, timestamp_ms):
+        with self._buffer_lock:
+            self._back_buffer["objects"] = segmented_objects
+            self._back_buffer["image"] = image_out
+            self._back_buffer["timestamp"] = timestamp_ms
+            self._front_buffer, self._back_buffer = self._back_buffer, self._front_buffer
+
+            self.current_segmented_objects = self._front_buffer["objects"]
+            self.current_image_out = self._front_buffer["image"]
+
+    def _read_front_buffer(self):
+        with self._buffer_lock:
+            return (
+                self._front_buffer["objects"],
+                self._front_buffer["image"],
+                self._front_buffer["timestamp"],
+            )
+
+    def _get_depth_intrinsics(self, depth_struct):
+        depth_np = np.frombuffer(depth_struct.depth, dtype=np.float32).reshape(
+            (depth_struct.height, depth_struct.width)
+        )
+        fx = depth_struct.focalx if depth_struct.focalx > 0 else 585.756
+        fy = depth_struct.focaly if depth_struct.focaly > 0 else 585.756
+        cx = depth_struct.width / 2.0
+        cy = depth_struct.height / 2.0
+        return depth_np, fx, fy, cx, cy
+
+    def _project_depth_points(self, u, v, depth_np, fx, fy, cx, cy):
+        if len(u) == 0:
+            return None, None, None, None, None
+
+        z = depth_np[v, u]
+        valid = (z > 0) & np.isfinite(z) & ~np.isnan(z)
+        if not np.any(valid):
+            return None, None, None, None, None
+
+        z_val = z[valid]
+        u_val = u[valid]
+        v_val = v[valid]
+        x_val = (u_val - cx) * z_val / fx
+        y_val = (cy - v_val) * z_val / fy
+        return x_val, y_val, z_val, u_val, v_val
+
+    def _build_segmented_object(self, contour_i32, label_name, conf, depth_np, fx, fy, cx, cy):
+        seg_obj = ifaces.RoboCompImageSegmentation.SegmentedObject()
+        seg_obj.label = label_name
+        seg_obj.score = float(conf)
+
+        contour_points = contour_i32.reshape(-1, 2)
+        seg_obj.imagePolygon = [
+            ifaces.RoboCompImageSegmentation.Point2D(x=int(p[0]), y=int(p[1]))
+            for p in contour_points
+        ]
+
+        x0, y0, width, height = cv2.boundingRect(contour_i32)
+        if width <= 0 or height <= 0:
+            seg_obj.points3D = []
+            return seg_obj
+
+        local_mask = np.zeros((height, width), dtype=np.uint8)
+        shifted = (contour_points - np.array([x0, y0], dtype=np.int32)).reshape(-1, 1, 2)
+        cv2.fillPoly(local_mask, [shifted], 1)
+
+        local_v, local_u = np.where(local_mask > 0)
+        obj_u = local_u + x0
+        obj_v = local_v + y0
+
+        x_val, y_val, z_val, _, _ = self._project_depth_points(obj_u, obj_v, depth_np, fx, fy, cx, cy)
+        if z_val is None:
+            seg_obj.points3D = []
+            return seg_obj
+
+        seg_obj.points3D = [
+            ifaces.RoboCompImageSegmentation.Point3D(x=float(x), y=float(y), z=float(z))
+            for x, y, z in zip(x_val, y_val, z_val)
+        ]
+        return seg_obj
+
+    def _process_segmentation(self, results, annotated_img, depth_np, fx, fy, cx, cy, img_height, img_width):
+        seg_mask = np.zeros((img_height, img_width), dtype=np.uint8)
+        segmented_objects = []
+        draw_overlay = self.display_enabled or self._is_image_output_requested()
+        need_objects = self._is_objects_output_requested()
+        need_seg_mask = self.display_enabled
+
+        if not (hasattr(results[0], 'masks') and results[0].masks is not None):
+            return annotated_img, seg_mask, segmented_objects
+
+        contours = results[0].masks.xy
+        classes = results[0].boxes.cls.cpu().numpy()
+        confs = results[0].boxes.conf.cpu().numpy()
+        names = self.yolo_model.names
+
+        for contour, cls, conf in zip(contours, classes, confs):
+            contour_i32 = np.asarray(contour, dtype=np.int32)
+            if contour_i32.size == 0:
+                continue
+
+            contour_poly = contour_i32.reshape(-1, 1, 2)
+            if draw_overlay:
+                cv2.polylines(annotated_img, [contour_poly], isClosed=True, color=(0, 255, 0), thickness=2)
+            if need_seg_mask:
+                cv2.fillPoly(seg_mask, [contour_poly], 1)
+
+            class_id = int(cls)
+            label_name = names[class_id] if isinstance(names, (list, tuple)) else names.get(class_id, str(class_id))
+            if draw_overlay:
+                cv2.putText(
+                    annotated_img,
+                    f"{label_name} {float(conf):.2f}",
+                    tuple(contour_i32[0]),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 0, 0),
+                    2,
+                )
+
+            if need_objects:
+                segmented_objects.append(
+                    self._build_segmented_object(contour_poly, label_name, conf, depth_np, fx, fy, cx, cy)
+                )
+
+        return annotated_img, seg_mask, segmented_objects
+
+    def _update_qt3d_from_mask(self, seg_mask, depth_np, fx, fy, cx, cy, img):
+        if not self.display_enabled:
+            return
+
+        v, u = np.where(seg_mask > 0)
+        x_val, y_val, z_val, u_val, v_val = self._project_depth_points(u, v, depth_np, fx, fy, cx, cy)
+
+        if z_val is None:
+            self.pos_attr.setCount(0)
+            self.color_attr.setCount(0)
+            return
+
+        pts_array = np.column_stack((x_val, y_val, z_val)).astype(np.float32)
+        self.vertex_buffer.setData(QByteArray(pts_array.tobytes()))
+        self.pos_attr.setCount(len(z_val))
+
+        point_colors = (img[v_val, u_val] / 255.0).astype(np.float32)
+        self.color_buffer.setData(QByteArray(point_colors.tobytes()))
+        self.color_attr.setCount(len(z_val))
+
+    def _update_2d_display(self, annotated_img):
+        if not self.display_enabled:
+            return
+
+        h, w, ch = annotated_img.shape
+        bytes_per_line = ch * w
+        q_img = QImage(annotated_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        self.image_label.setPixmap(QPixmap.fromImage(q_img))
+
 
     def setup_qt3d(self):
         # Set up a layout if the UI didn't create one
@@ -315,16 +605,20 @@ class SpecificWorker(GenericWorker):
     # IMPLEMENTATION of getSegmentedObjects method from ImageSegmentation interface
     #
     def ImageSegmentation_getSegmentedObjects(self):
-        # We return the currently cached segmented list
-        return self.current_segmented_objects
+        self.last_objects_request_time = time.time()
+        objects, _, _ = self._read_front_buffer()
+        return objects
     
     # IMPLEMENTATION of getAll method from ImageSegmentation interface
     def ImageSegmentation_getAll(self):
+        self.last_image_request_time = time.time()
+        self.last_objects_request_time = time.time()
+        objects, image, timestamp = self._read_front_buffer()
 
         ret = ifaces.RoboCompImageSegmentation.TData()
-        ret.segmentedObjects = self.current_segmented_objects
-        ret.image = self.current_image_out if self.current_image_out is not None else ifaces.RoboCompImageSegmentation.TImage()
-        ret.timestamp = int(time.time() * 1000)  # Current time in milliseconds
+        ret.objects = objects
+        ret.image = image
+        ret.timestamp = timestamp
         return ret
     
     #
@@ -332,10 +626,9 @@ class SpecificWorker(GenericWorker):
     # IMPLEMENTATION of getImage method from ImageSegmentation interface
     #
     def ImageSegmentation_getImage(self):
-
-        ret = ifaces.RoboCompImageSegmentation.TImage()
-        ret.image = self.current_image_out if self.current_image_out is not None else ifaces.RoboCompImageSegmentation.TImage()
-        return ret
+        self.last_image_request_time = time.time()
+        _, image, _ = self._read_front_buffer()
+        return image
     
 
     ######################

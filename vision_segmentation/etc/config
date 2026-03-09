@@ -2,13 +2,14 @@
 Proxies.CameraRGBDSimple = "camerargbdsimple:tcp -h localhost -p 10096"
 
 # Endpoints for implements interfaces
-Endpoints.ImageSegmentation = "tcp -p 0"
+Endpoints.ImageSegmentation = "tcp -p 14111"
 
-Display = True
+Display = False
+ProxyThread = True
 Period.Compute = 50
 Period.Emergency = 500
 
-Component.Debug.Verbose = true
+Component.Debug.Verbose = False
 
 Ice.Warn.Connections = "0"
 Ice.Trace.Network = "0"
