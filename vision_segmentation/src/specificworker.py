@@ -34,6 +34,10 @@ from PySide6.Qt3DExtras import Qt3DExtras
 from rich.console import Console
 from genericworker import *
 import interfaces as ifaces
+try:
+    from .webots_style_camera_controller import WebotsStyleCameraController
+except ImportError:
+    from webots_style_camera_controller import WebotsStyleCameraController
 import cv2
 import numpy as np
 import queue
@@ -49,33 +53,6 @@ sys.path.append('/opt/robocomp/lib')
 console = Console(highlight=False)
 
 
-class WebotsStyleCameraController(Qt3DExtras.QAbstractCameraController):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-    def moveCamera(self, state, dt):
-        cam = self.camera()
-        if not cam:
-            return
-
-        # ---- Orbit: left button drag ------------------------------------------
-        if state.leftMouseButtonActive and not state.rightMouseButtonActive:
-            cam.panAboutViewCenter(state.rxAxisValue * self.lookSpeed() * dt)
-            cam.tiltAboutViewCenter(-state.ryAxisValue * self.lookSpeed() * dt)
-
-        # ---- Pan: right button drag -------------------------------------------
-        if state.rightMouseButtonActive:
-            cam.translate(QVector3D(-state.rxAxisValue * self.linearSpeed() * dt,
-                                    -state.ryAxisValue * self.linearSpeed() * dt,
-                                    0.0),
-                          Qt3DRender.QCamera.TranslateViewCenter)
-
-        # ---- Zoom: scroll wheel -----------------------------------------------
-        if abs(state.tzAxisValue) > 0.0:
-            cam.translate(QVector3D(0.0, 0.0, state.tzAxisValue * self.linearSpeed() * dt),
-                          Qt3DRender.QCamera.DontTranslateViewCenter)
-
-
 class SpecificWorker(GenericWorker):
     def __init__(self, proxy_map, configData, startup_check=False):
         super(SpecificWorker, self).__init__(proxy_map, configData)
@@ -84,6 +61,9 @@ class SpecificWorker(GenericWorker):
         self.display_enabled = str(self.Display).lower() in ["true", "1", "yes", "on"]
         self.use_proxy_thread = str(configData.get("ProxyThread", "False")).lower() in ["true", "1", "yes", "on"]
         self.proxy_poll_period = max(float(self.Period) / 1000.0, 0.005)
+        self.proxy_min_sleep = 0.001
+        self.proxy_max_sleep = 0.050
+        self.proxy_wait_ms = max(1, int(self.proxy_poll_period * 1000.0))
 
         # Load the latest YOLO model (YOLO26 large) for object detection
         print("Loading YOLO model...")
@@ -111,7 +91,7 @@ class SpecificWorker(GenericWorker):
         )
 
         # Background proxy reader queue (decouples network latency from compute loop)
-        self._proxy_queue = queue.Queue(maxsize=2)
+        self._proxy_queue = queue.Queue(maxsize=1)
         self._proxy_last_rgbd = None
         self._proxy_thread_stop = threading.Event()
         self._proxy_thread = None
@@ -180,10 +160,12 @@ class SpecificWorker(GenericWorker):
         except Exception as e:
             print(f"Error reading image: {e}")
 
+    #######################################################################################
     def _start_proxy_thread(self):
         if self._proxy_thread is not None:
             return
 
+        self._proxy_thread_stop.clear()
         self._proxy_thread = threading.Thread(target=self._proxy_loop, daemon=True)
         self._proxy_thread.start()
 
@@ -192,33 +174,43 @@ class SpecificWorker(GenericWorker):
         if self._proxy_thread is not None and self._proxy_thread.is_alive():
             self._proxy_thread.join(timeout=0.5)
 
+    def _update_proxy_wait_from_period(self, rgbd):
+        period_ms = getattr(rgbd.image, "period", None)
+        if period_ms is None:
+            return
+
+        period_ms = int(period_ms)
+        if self.proxy_wait_ms > (period_ms + 2):
+            self.proxy_wait_ms -= 1
+        elif self.proxy_wait_ms < (period_ms - 2):
+            self.proxy_wait_ms += 1
+
+        min_ms = max(1, int(self.proxy_min_sleep * 1000.0))
+        max_ms = max(min_ms, int(self.proxy_max_sleep * 1000.0))
+        self.proxy_wait_ms = max(min_ms, min(self.proxy_wait_ms, max_ms))
+
     def _proxy_loop(self):
         while not self._proxy_thread_stop.is_set():
             try:
                 rgbd = self.camerargbdsimple_proxy.getAll("camera")
-                if self._proxy_queue.full():
-                    try:
-                        self._proxy_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                self._proxy_queue.put_nowait(rgbd)
-                time.sleep(self.proxy_poll_period)
+                self._update_proxy_wait_from_period(rgbd)
+
+                self._proxy_queue.put(rgbd, timeout=0.1)
+                self._proxy_thread_stop.wait(self.proxy_wait_ms / 1000.0)
+            except queue.Full:
+                self._proxy_thread_stop.wait(self.proxy_wait_ms / 1000.0)
             except Exception as e:
                 print(f"Proxy thread error: {e}")
-                time.sleep(0.01)
+                self._proxy_thread_stop.wait(0.01)
 
     def _get_latest_rgbd(self):
-        latest = None
         try:
-            while True:
-                latest = self._proxy_queue.get_nowait()
-        except queue.Empty:
-            pass
-
-        if latest is not None:
+            latest = self._proxy_queue.get(timeout=0.1)
             self._proxy_last_rgbd = latest
+        except queue.Empty:
+            latest = self._proxy_last_rgbd
 
-        return self._proxy_last_rgbd
+        return latest
 
     ###############################################################################
 
