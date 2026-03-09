@@ -818,14 +818,9 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
     try
     {
         const auto tdata = imagesegmentation_proxy->getAll();
-        std::size_t total_points = 0;
-        for (const auto &obj : tdata.objects)
-            total_points += obj.points3D.size();
-
         std::vector<Eigen::Vector3f> points_layout;
-        points_layout.reserve(total_points);
         std::vector<rc::Viewer3D::SegmentedBoxItem> boxes_layout;
-        boxes_layout.reserve(tdata.objects.size());
+        boxes_layout.reserve(1);
 
         struct CamObjInfo
         {
@@ -838,13 +833,10 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
             float img_area = 0.f;
         };
         std::vector<CamObjInfo> cam_infos(tdata.objects.size());
+        std::vector<std::vector<Eigen::Vector3f>> obj_points_by_idx(tdata.objects.size());
+        std::vector<rc::Viewer3D::SegmentedBoxItem> obj_box_by_idx(tdata.objects.size());
+        std::vector<bool> obj_box_valid(tdata.objects.size(), false);
 
-        const bool has_image_size = (tdata.image.width > 0 && tdata.image.height > 0);
-        const float img_cx = has_image_size ? (0.5f * static_cast<float>(tdata.image.width)) : 0.f;
-        const float img_cy = has_image_size ? (0.5f * static_cast<float>(tdata.image.height)) : 0.f;
-        std::size_t focus_idx = tdata.objects.size();
-        float best_focus_dist = std::numeric_limits<float>::max();
-        float best_focus_area = -1.f;
         std::size_t fallback_idx = tdata.objects.size();
         std::size_t fallback_points = 0;
 
@@ -858,30 +850,6 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
             {
                 fallback_points = obj.points3D.size();
                 fallback_idx = obj_idx;
-            }
-
-            if (has_image_size && !obj.imagePolygon.empty())
-            {
-                float u_sum = 0.f, v_sum = 0.f;
-                int u_min = obj.imagePolygon.front().x, u_max = obj.imagePolygon.front().x;
-                int v_min = obj.imagePolygon.front().y, v_max = obj.imagePolygon.front().y;
-                for (const auto &pix : obj.imagePolygon)
-                {
-                    u_sum += static_cast<float>(pix.x);
-                    v_sum += static_cast<float>(pix.y);
-                    u_min = std::min(u_min, pix.x); u_max = std::max(u_max, pix.x);
-                    v_min = std::min(v_min, pix.y); v_max = std::max(v_max, pix.y);
-                }
-                const float u_c = u_sum / static_cast<float>(obj.imagePolygon.size());
-                const float v_c = v_sum / static_cast<float>(obj.imagePolygon.size());
-                const float d = std::hypot(u_c - img_cx, v_c - img_cy);
-                const float a = static_cast<float>((u_max - u_min + 1) * (v_max - v_min + 1));
-                if (d < best_focus_dist - 1e-3f || (std::abs(d - best_focus_dist) <= 1e-3f && a > best_focus_area))
-                {
-                    best_focus_dist = d;
-                    best_focus_area = a;
-                    focus_idx = obj_idx;
-                }
             }
 
             for (const auto &p : obj.points3D)
@@ -920,9 +888,6 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                 if (obj_points_layout.size() < 8)
                     obj_points_layout = obj_points_layout_all;
             }
-
-            for (const auto &p : obj_points_layout)
-                points_layout.emplace_back(p);
 
             if (obj_points_layout.size() >= 4)
             {
@@ -977,28 +942,47 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                     std::max(0.08f, max_z - min_z),
                     std::max(0.08f, max_v - min_v));
                 box.yaw_rad = std::atan2(major_axis.y(), major_axis.x());
-                boxes_layout.emplace_back(std::move(box));
 
                 CamObjInfo &ci = cam_infos[obj_idx];
                 ci.valid = true;
                 ci.label = obj.label.empty() ? ("object_" + std::to_string(obj_idx + 1)) : obj.label;
                 ci.center = center_xy;
-                ci.size = boxes_layout.back().size;
-                ci.yaw_rad = boxes_layout.back().yaw_rad;
-                ci.img_dist = (focus_idx == obj_idx) ? best_focus_dist : ci.img_dist;
-                ci.img_area = best_focus_area;
+                ci.size = box.size;
+                ci.yaw_rad = box.yaw_rad;
 
-                if (focus_idx == obj_idx)
-                {
-                    grounding_focus_points_ = obj_points_layout;
-                    grounding_focus_center_ = center_xy;
-                    grounding_focus_label_ = ci.label;
-                }
+                obj_points_by_idx[obj_idx] = std::move(obj_points_layout);
+                obj_box_by_idx[obj_idx] = box;
+                obj_box_valid[obj_idx] = true;
+            }
+        }
+
+        const Eigen::Affine2f world_to_robot = robot_pose.inverse();
+        std::size_t focus_idx = tdata.objects.size();
+        float best_abs_bearing = std::numeric_limits<float>::max();
+        for (std::size_t i = 0; i < cam_infos.size(); ++i)
+        {
+            if (!cam_infos[i].valid) continue;
+            const Eigen::Vector2f c_robot = world_to_robot * cam_infos[i].center;
+            const float bearing = std::abs(std::atan2(c_robot.x(), c_robot.y()));
+            if (bearing < best_abs_bearing)
+            {
+                best_abs_bearing = bearing;
+                focus_idx = i;
             }
         }
 
         if (focus_idx >= tdata.objects.size())
             focus_idx = fallback_idx;
+
+        if (focus_idx < obj_points_by_idx.size() && obj_box_valid[focus_idx])
+        {
+            points_layout = obj_points_by_idx[focus_idx];
+            boxes_layout.clear();
+            boxes_layout.emplace_back(obj_box_by_idx[focus_idx]);
+            grounding_focus_points_ = points_layout;
+            grounding_focus_center_ = cam_infos[focus_idx].center;
+            grounding_focus_label_ = cam_infos[focus_idx].label;
+        }
 
         if (focus_idx < cam_infos.size() && cam_infos[focus_idx].valid)
         {
@@ -1032,7 +1016,6 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                 forward.normalize();
                 const Eigen::Vector2f left(-forward.y(), forward.x());
 
-                const Eigen::Affine2f world_to_robot = robot_pose.inverse();
                 const Eigen::Vector2f cam_center_robot = world_to_robot * cam.center;
                 const float cam_bearing = std::atan2(cam_center_robot.x(), cam_center_robot.y());
                 auto wrap_angle = [](float a)
@@ -1052,59 +1035,7 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                 int best_world_index = -1;
                 bool matched_with_relaxed_gate = false;
 
-                struct CandidateDebug
-                {
-                    QString name;
-                    float score = 0.f;
-                    float bearing_deg = 0.f;
-                    float center_dist = 0.f;
-                    float dist = 0.f;
-                    bool bearing_gate_ok = true;
-                };
-                std::vector<CandidateDebug> strict_debug_candidates;
-                std::vector<CandidateDebug> relaxed_debug_candidates;
-
-                auto print_top3_debug = [&](const std::vector<CandidateDebug>& candidates, const char* pass_name)
-                {
-                    if (candidates.empty())
-                    {
-                        const QString msg = QString("[GroundingDebug] cam='%1' pass=%2 no front candidates")
-                            .arg(QString::fromStdString(cam.label))
-                            .arg(pass_name);
-                        qWarning().noquote() << msg;
-                        std::println("{}", msg.toStdString());
-                        return;
-                    }
-
-                    std::vector<CandidateDebug> top = candidates;
-                    std::sort(top.begin(), top.end(), [](const CandidateDebug& a, const CandidateDebug& b)
-                    {
-                        return a.score > b.score;
-                    });
-                    if (top.size() > 3)
-                        top.resize(3);
-
-                    QStringList parts;
-                    for (const auto& c : top)
-                    {
-                        parts << QString("%1 s=%2 b=%3° c=%4 d=%5 gate=%6")
-                                     .arg(c.name)
-                                     .arg(c.score, 0, 'f', 3)
-                                     .arg(c.bearing_deg, 0, 'f', 1)
-                                     .arg(c.center_dist, 0, 'f', 2)
-                                     .arg(c.dist, 0, 'f', 2)
-                                     .arg(c.bearing_gate_ok ? "ok" : "out");
-                    }
-
-                    const QString msg = QString("[GroundingDebug] cam='%1' pass=%2 top3: %3")
-                        .arg(QString::fromStdString(cam.label))
-                        .arg(pass_name)
-                        .arg(parts.join(" | "));
-                    qWarning().noquote() << msg;
-                    std::println("{}", msg.toStdString());
-                };
-
-                auto evaluate_candidates = [&](bool strict_bearing_gate, std::vector<CandidateDebug>* debug_out)
+                auto evaluate_candidates = [&](bool strict_bearing_gate)
                 {
                     float local_best_score = -1.f;
                     QString local_best_world = "-";
@@ -1163,17 +1094,6 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                             ? (0.15f * score_pose + 0.10f * score_lat + 0.45f * score_center + 0.20f * score_bearing + 0.08f * score_size + 0.02f * score_label)
                             : (0.18f * score_pose + 0.12f * score_lat + 0.52f * score_center + 0.10f * score_bearing + 0.06f * score_size + 0.02f * score_label);
 
-                        if (debug_out != nullptr)
-                        {
-                            debug_out->push_back(CandidateDebug{
-                                QString::fromStdString(fp.label.empty() ? fp.id : fp.label),
-                                total,
-                                qRadiansToDegrees(bearing_diff),
-                                center_dist,
-                                dist,
-                                bearing_gate_ok});
-                        }
-
                         if (strict_bearing_gate && !bearing_gate_ok) continue;
 
                         if (total > local_best_score)
@@ -1204,16 +1124,12 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                     return false;
                 };
 
-                const bool strict_match = evaluate_candidates(true, &strict_debug_candidates);
+                const bool strict_match = evaluate_candidates(true);
                 if (!strict_match)
                 {
-                    const bool relaxed_match = evaluate_candidates(false, &relaxed_debug_candidates);
+                    const bool relaxed_match = evaluate_candidates(false);
                     matched_with_relaxed_gate = relaxed_match;
                 }
-
-                print_top3_debug(strict_debug_candidates, "strict");
-                if (!strict_match)
-                    print_top3_debug(relaxed_debug_candidates, "relaxed");
 
                 if (best_score > 0.f)
                 {
