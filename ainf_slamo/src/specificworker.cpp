@@ -19,9 +19,14 @@
 
 #include "specificworker.h"
 #include <QSplitter>
+#include <QVBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include <QSizePolicy>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QHash>
 #include <QFileDialog>
 #include <QTextStream>
 #include <QRegularExpression>
@@ -104,16 +109,16 @@ SpecificWorker::~SpecificWorker()
 		settings.setValue("viewer2d/transform", ba);
 	}
 	// Save splitter proportions
-	if (splitter_)
-		settings.setValue("splitter/state", splitter_->saveState());
+    if (splitter_)
+    {
+        settings.setValue("splitter/state", splitter_->saveState());
+    }
+    if (right_splitter_)
+    {
+        settings.setValue("right_splitter/state", right_splitter_->saveState());
+    }
 	// Save 3D camera pose
-	if (viewer_3d_)
-	{
-		auto cs = viewer_3d_->camera_state();
-		settings.setValue("camera/position",   cs.position);
-		settings.setValue("camera/viewCenter", cs.viewCenter);
-		settings.setValue("camera/upVector",   cs.upVector);
-	}
+    save_camera_state_to_settings();
 
 	// Stop trajectory controller
 	if (trajectory_controller_.is_active())
@@ -150,10 +155,58 @@ void SpecificWorker::initialize()
         frame_layout->removeWidget(viewer);
         auto* splitter = new QSplitter(Qt::Horizontal, this->frame);
         splitter->addWidget(viewer);
+
         viewer_3d_ = std::make_unique<rc::Viewer3D>(splitter, 2.5f);
         splitter->addWidget(viewer_3d_->container_widget());
-        scene_tree_ = std::make_unique<SceneTreePanel>(splitter);
-        splitter->addWidget(scene_tree_.get());
+
+        auto* right_splitter = new QSplitter(Qt::Vertical, splitter);
+        scene_tree_ = std::make_unique<SceneTreePanel>(right_splitter);
+        right_splitter->addWidget(scene_tree_.get());
+
+        grounding_panel_ = new QWidget(right_splitter);
+        auto* grounding_layout = new QVBoxLayout(grounding_panel_);
+        grounding_layout->setContentsMargins(8, 6, 8, 6);
+        grounding_layout->setSpacing(4);
+        auto* grounding_title = new QLabel("Grounding", grounding_panel_);
+        grounding_title->setStyleSheet("font-weight: bold; font-size: 10pt;");
+        grounding_status_label_ = new QLabel("Status: waiting camera detections", grounding_panel_);
+        grounding_cam_label_ = new QLabel("Camera object: -", grounding_panel_);
+        grounding_world_label_ = new QLabel("World object: -", grounding_panel_);
+        grounding_score_label_ = new QLabel("Score: -", grounding_panel_);
+        grounding_sdf_label_ = new QLabel("SDF fit: -", grounding_panel_);
+        grounding_fit_mesh_button_ = new QPushButton("Fit Grounded Mesh", grounding_panel_);
+
+        grounding_panel_->setMinimumWidth(0);
+        grounding_panel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        grounding_status_label_->setMinimumWidth(0);
+        grounding_cam_label_->setMinimumWidth(0);
+        grounding_world_label_->setMinimumWidth(0);
+        grounding_score_label_->setMinimumWidth(0);
+        grounding_sdf_label_->setMinimumWidth(0);
+        grounding_status_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        grounding_cam_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        grounding_world_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        grounding_score_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        grounding_sdf_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        grounding_status_label_->setWordWrap(false);
+        grounding_cam_label_->setWordWrap(false);
+        grounding_world_label_->setWordWrap(false);
+        grounding_score_label_->setWordWrap(false);
+        grounding_sdf_label_->setWordWrap(false);
+
+        grounding_layout->addWidget(grounding_title);
+        grounding_layout->addWidget(grounding_status_label_);
+        grounding_layout->addWidget(grounding_cam_label_);
+        grounding_layout->addWidget(grounding_world_label_);
+        grounding_layout->addWidget(grounding_score_label_);
+        grounding_layout->addWidget(grounding_sdf_label_);
+        grounding_layout->addWidget(grounding_fit_mesh_button_);
+        grounding_layout->addStretch();
+        right_splitter->addWidget(grounding_panel_);
+        right_splitter->setSizes({300, 140});
+        right_splitter_ = right_splitter;
+
+        splitter->addWidget(right_splitter);
         splitter->setSizes({450, 450, 220});
         splitter_ = splitter;   // store for state save/restore
         frame_layout->addWidget(splitter);
@@ -197,6 +250,71 @@ void SpecificWorker::initialize()
             clear_path();
             try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
         });
+
+        connect(grounding_fit_mesh_button_, &QPushButton::clicked, this, [this]()
+        {
+            if (grounding_focus_points_.size() < 12)
+            {
+                if (grounding_status_label_)
+                    grounding_status_label_->setText("Status: not enough camera points for mesh SDF fit");
+                if (grounding_sdf_label_)
+                    grounding_sdf_label_->setText("SDF fit: -");
+                return;
+            }
+
+            if (grounding_world_index_ < 0 || grounding_world_index_ >= static_cast<int>(furniture_polygons_.size()))
+            {
+                if (grounding_status_label_)
+                    grounding_status_label_->setText("Status: no grounded world mesh selected");
+                if (grounding_sdf_label_)
+                    grounding_sdf_label_->setText("SDF fit: -");
+                return;
+            }
+
+            auto &selected = furniture_polygons_[grounding_world_index_];
+            if (selected.vertices.size() < 3)
+            {
+                if (grounding_status_label_)
+                    grounding_status_label_->setText("Status: grounded world mesh has too few vertices");
+                if (grounding_sdf_label_)
+                    grounding_sdf_label_->setText("SDF fit: -");
+                return;
+            }
+
+            const auto fit = mesh_sdf_optimizer_.optimize_mesh_with_pose(grounding_focus_points_, selected.vertices, room_polygon_);
+            if (!fit.ok)
+            {
+                if (grounding_status_label_)
+                    grounding_status_label_->setText("Status: mesh SDF fit failed");
+                if (grounding_sdf_label_)
+                    grounding_sdf_label_->setText("SDF fit: failed");
+                return;
+            }
+
+            selected.vertices = fit.vertices;
+            save_fitted_meshes_to_json();
+            draw_furniture();
+
+            if (grounding_status_label_)
+            {
+                grounding_status_label_->setText(
+                    QString("Status: mesh+pose fit done for '%1' (%2 -> %3) it=%4")
+                        .arg(QString::fromStdString(selected.label.empty() ? selected.id : selected.label))
+                        .arg(fit.initial_loss, 0, 'f', 4)
+                        .arg(fit.final_loss, 0, 'f', 4)
+                        .arg(fit.iterations));
+            }
+            if (grounding_sdf_label_)
+            {
+                const float improvement = fit.initial_loss - fit.final_loss;
+                grounding_sdf_label_->setText(
+                    QString("SDF fit: final=%1 (\u0394=%2) pose=(%3,%4)")
+                        .arg(fit.final_loss, 0, 'f', 6)
+                        .arg(improvement, 0, 'f', 6)
+                        .arg(fit.translation.x(), 0, 'f', 3)
+                        .arg(fit.translation.y(), 0, 'f', 3));
+            }
+        });
     }
 
     // Restore saved window geometry/size
@@ -226,6 +344,14 @@ void SpecificWorker::initialize()
         const bool any_zero = sizes.size() < 3 || std::any_of(sizes.begin(), sizes.end(), [](int s){ return s == 0; });
         if (any_zero)
             splitter_->setSizes({450, 450, 220});
+    }
+    if (right_splitter_ && settings.contains("right_splitter/state"))
+    {
+        right_splitter_->restoreState(settings.value("right_splitter/state").toByteArray());
+        const auto rsizes = right_splitter_->sizes();
+        const bool any_zero = rsizes.size() < 2 || std::any_of(rsizes.begin(), rsizes.end(), [](int s){ return s == 0; });
+        if (any_zero)
+            right_splitter_->setSizes({380, 140});
     }
     // Restore 3D camera pose
     if (viewer_3d_ && settings.contains("camera/position"))
@@ -578,6 +704,7 @@ void SpecificWorker::compute()
     if (++pose_save_counter >= 600)
     {
         save_last_pose();
+        save_camera_state_to_settings();
         pose_save_counter = 0;
     }
 
@@ -671,6 +798,18 @@ void SpecificWorker::compute()
     }
 }
 
+void SpecificWorker::save_camera_state_to_settings() const
+{
+    if (!viewer_3d_)
+        return;
+
+    QSettings settings("robocomp", "ainf_slamo");
+    const auto cs = viewer_3d_->camera_state();
+    settings.setValue("camera/position", cs.position);
+    settings.setValue("camera/viewCenter", cs.viewCenter);
+    settings.setValue("camera/upVector", cs.upVector);
+}
+
 void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pose)
 {
     if (!viewer_3d_)
@@ -688,11 +827,62 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
         std::vector<rc::Viewer3D::SegmentedBoxItem> boxes_layout;
         boxes_layout.reserve(tdata.objects.size());
 
+        struct CamObjInfo
+        {
+            bool valid = false;
+            std::string label;
+            Eigen::Vector2f center = Eigen::Vector2f::Zero();
+            Eigen::Vector3f size = Eigen::Vector3f::Zero();
+            float yaw_rad = 0.f;
+            float img_dist = std::numeric_limits<float>::max();
+            float img_area = 0.f;
+        };
+        std::vector<CamObjInfo> cam_infos(tdata.objects.size());
+
+        const bool has_image_size = (tdata.image.width > 0 && tdata.image.height > 0);
+        const float img_cx = has_image_size ? (0.5f * static_cast<float>(tdata.image.width)) : 0.f;
+        const float img_cy = has_image_size ? (0.5f * static_cast<float>(tdata.image.height)) : 0.f;
+        std::size_t focus_idx = tdata.objects.size();
+        float best_focus_dist = std::numeric_limits<float>::max();
+        float best_focus_area = -1.f;
+        std::size_t fallback_idx = tdata.objects.size();
+        std::size_t fallback_points = 0;
+
         for (std::size_t obj_idx = 0; obj_idx < tdata.objects.size(); ++obj_idx)
         {
             const auto &obj = tdata.objects[obj_idx];
-            std::vector<Eigen::Vector3f> obj_points_layout;
-            obj_points_layout.reserve(obj.points3D.size());
+            std::vector<Eigen::Vector3f> obj_points_layout_all;
+            obj_points_layout_all.reserve(obj.points3D.size());
+
+            if (obj.points3D.size() > fallback_points)
+            {
+                fallback_points = obj.points3D.size();
+                fallback_idx = obj_idx;
+            }
+
+            if (has_image_size && !obj.imagePolygon.empty())
+            {
+                float u_sum = 0.f, v_sum = 0.f;
+                int u_min = obj.imagePolygon.front().x, u_max = obj.imagePolygon.front().x;
+                int v_min = obj.imagePolygon.front().y, v_max = obj.imagePolygon.front().y;
+                for (const auto &pix : obj.imagePolygon)
+                {
+                    u_sum += static_cast<float>(pix.x);
+                    v_sum += static_cast<float>(pix.y);
+                    u_min = std::min(u_min, pix.x); u_max = std::max(u_max, pix.x);
+                    v_min = std::min(v_min, pix.y); v_max = std::max(v_max, pix.y);
+                }
+                const float u_c = u_sum / static_cast<float>(obj.imagePolygon.size());
+                const float v_c = v_sum / static_cast<float>(obj.imagePolygon.size());
+                const float d = std::hypot(u_c - img_cx, v_c - img_cy);
+                const float a = static_cast<float>((u_max - u_min + 1) * (v_max - v_min + 1));
+                if (d < best_focus_dist - 1e-3f || (std::abs(d - best_focus_dist) <= 1e-3f && a > best_focus_area))
+                {
+                    best_focus_dist = d;
+                    best_focus_area = a;
+                    focus_idx = obj_idx;
+                }
+            }
 
             for (const auto &p : obj.points3D)
             {
@@ -707,9 +897,32 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                 const Eigen::Vector2f p_layout = robot_pose * p_layout_local;
                 constexpr float z_lift = 0.05f;  // keep points slightly above floor
                 const Eigen::Vector3f p3(p_layout.x(), p_layout.y(), z_robot + z_lift);
-                points_layout.emplace_back(p3);
-                obj_points_layout.emplace_back(p3);
+                obj_points_layout_all.emplace_back(p3);
             }
+
+            std::vector<Eigen::Vector3f> obj_points_layout;
+            obj_points_layout.reserve(obj_points_layout_all.size());
+            if (!obj_points_layout_all.empty())
+            {
+                float min_obj_z = std::numeric_limits<float>::max();
+                for (const auto &p : obj_points_layout_all)
+                    min_obj_z = std::min(min_obj_z, p.z());
+
+                constexpr float floor_clip_margin = 0.06f;  // remove points near per-object floor level
+                const float floor_z = min_obj_z + floor_clip_margin;
+                for (const auto &p : obj_points_layout_all)
+                {
+                    if (p.z() > floor_z)
+                        obj_points_layout.emplace_back(p);
+                }
+
+                // If filtering removed too much, keep original to avoid losing tiny objects
+                if (obj_points_layout.size() < 8)
+                    obj_points_layout = obj_points_layout_all;
+            }
+
+            for (const auto &p : obj_points_layout)
+                points_layout.emplace_back(p);
 
             if (obj_points_layout.size() >= 4)
             {
@@ -765,16 +978,283 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                     std::max(0.08f, max_v - min_v));
                 box.yaw_rad = std::atan2(major_axis.y(), major_axis.x());
                 boxes_layout.emplace_back(std::move(box));
+
+                CamObjInfo &ci = cam_infos[obj_idx];
+                ci.valid = true;
+                ci.label = obj.label.empty() ? ("object_" + std::to_string(obj_idx + 1)) : obj.label;
+                ci.center = center_xy;
+                ci.size = boxes_layout.back().size;
+                ci.yaw_rad = boxes_layout.back().yaw_rad;
+                ci.img_dist = (focus_idx == obj_idx) ? best_focus_dist : ci.img_dist;
+                ci.img_area = best_focus_area;
+
+                if (focus_idx == obj_idx)
+                {
+                    grounding_focus_points_ = obj_points_layout;
+                    grounding_focus_center_ = center_xy;
+                    grounding_focus_label_ = ci.label;
+                }
             }
+        }
+
+        if (focus_idx >= tdata.objects.size())
+            focus_idx = fallback_idx;
+
+        if (focus_idx < cam_infos.size() && cam_infos[focus_idx].valid)
+        {
+            grounding_focus_center_ = cam_infos[focus_idx].center;
+            grounding_focus_label_ = cam_infos[focus_idx].label;
         }
 
         viewer_3d_->update_segmented_points(points_layout);
         viewer_3d_->update_segmented_boxes(boxes_layout);
+
+        if (grounding_status_label_ && grounding_cam_label_ && grounding_world_label_ && grounding_score_label_)
+        {
+            if (focus_idx >= cam_infos.size() || !cam_infos[focus_idx].valid)
+            {
+                grounding_focus_points_.clear();
+                grounding_focus_label_.clear();
+                grounding_world_index_ = -1;
+                grounding_status_label_->setText("Status: no valid camera box to ground");
+                grounding_cam_label_->setText("Camera object: -");
+                grounding_world_label_->setText("World object: -");
+                grounding_score_label_->setText("Score: -");
+            }
+            else
+            {
+                const auto &cam = cam_infos[focus_idx];
+                grounding_cam_label_->setText(QString("Camera object: %1").arg(QString::fromStdString(cam.label)));
+
+                const Eigen::Vector2f robot_pos = robot_pose.translation();
+                Eigen::Vector2f forward = robot_pose.linear() * Eigen::Vector2f(0.f, 1.f);
+                if (forward.norm() < 1e-6f) forward = Eigen::Vector2f(0.f, 1.f);
+                forward.normalize();
+                const Eigen::Vector2f left(-forward.y(), forward.x());
+
+                const Eigen::Affine2f world_to_robot = robot_pose.inverse();
+                const Eigen::Vector2f cam_center_robot = world_to_robot * cam.center;
+                const float cam_bearing = std::atan2(cam_center_robot.x(), cam_center_robot.y());
+                auto wrap_angle = [](float a)
+                {
+                    while (a > static_cast<float>(M_PI)) a -= static_cast<float>(2.0 * M_PI);
+                    while (a < static_cast<float>(-M_PI)) a += static_cast<float>(2.0 * M_PI);
+                    return a;
+                };
+                constexpr float max_bearing_diff = 35.f * static_cast<float>(M_PI) / 180.f;
+
+                float best_score = -1.f;
+                QString best_world = "-";
+                float best_dist = 0.f, best_lat = 0.f;
+                float best_size_ratio = 1.f;
+                float best_center_dist = 0.f;
+                float best_bearing_deg = 0.f;
+                int best_world_index = -1;
+                bool matched_with_relaxed_gate = false;
+
+                struct CandidateDebug
+                {
+                    QString name;
+                    float score = 0.f;
+                    float bearing_deg = 0.f;
+                    float center_dist = 0.f;
+                    float dist = 0.f;
+                    bool bearing_gate_ok = true;
+                };
+                std::vector<CandidateDebug> strict_debug_candidates;
+                std::vector<CandidateDebug> relaxed_debug_candidates;
+
+                auto print_top3_debug = [&](const std::vector<CandidateDebug>& candidates, const char* pass_name)
+                {
+                    if (candidates.empty())
+                    {
+                        const QString msg = QString("[GroundingDebug] cam='%1' pass=%2 no front candidates")
+                            .arg(QString::fromStdString(cam.label))
+                            .arg(pass_name);
+                        qWarning().noquote() << msg;
+                        std::println("{}", msg.toStdString());
+                        return;
+                    }
+
+                    std::vector<CandidateDebug> top = candidates;
+                    std::sort(top.begin(), top.end(), [](const CandidateDebug& a, const CandidateDebug& b)
+                    {
+                        return a.score > b.score;
+                    });
+                    if (top.size() > 3)
+                        top.resize(3);
+
+                    QStringList parts;
+                    for (const auto& c : top)
+                    {
+                        parts << QString("%1 s=%2 b=%3° c=%4 d=%5 gate=%6")
+                                     .arg(c.name)
+                                     .arg(c.score, 0, 'f', 3)
+                                     .arg(c.bearing_deg, 0, 'f', 1)
+                                     .arg(c.center_dist, 0, 'f', 2)
+                                     .arg(c.dist, 0, 'f', 2)
+                                     .arg(c.bearing_gate_ok ? "ok" : "out");
+                    }
+
+                    const QString msg = QString("[GroundingDebug] cam='%1' pass=%2 top3: %3")
+                        .arg(QString::fromStdString(cam.label))
+                        .arg(pass_name)
+                        .arg(parts.join(" | "));
+                    qWarning().noquote() << msg;
+                    std::println("{}", msg.toStdString());
+                };
+
+                auto evaluate_candidates = [&](bool strict_bearing_gate, std::vector<CandidateDebug>* debug_out)
+                {
+                    float local_best_score = -1.f;
+                    QString local_best_world = "-";
+                    float local_best_dist = 0.f, local_best_lat = 0.f;
+                    float local_best_size_ratio = 1.f;
+                    float local_best_center_dist = 0.f;
+                    float local_best_bearing_deg = 0.f;
+                    int local_best_world_index = -1;
+
+                    for (std::size_t world_idx = 0; world_idx < furniture_polygons_.size(); ++world_idx)
+                    {
+                        const auto &fp = furniture_polygons_[world_idx];
+                        if (fp.vertices.size() < 3) continue;
+
+                        Eigen::Vector2f cen = Eigen::Vector2f::Zero();
+                        float min_x = fp.vertices[0].x(), max_x = fp.vertices[0].x();
+                        float min_y = fp.vertices[0].y(), max_y = fp.vertices[0].y();
+                        for (const auto &v : fp.vertices)
+                        {
+                            cen += v;
+                            min_x = std::min(min_x, v.x()); max_x = std::max(max_x, v.x());
+                            min_y = std::min(min_y, v.y()); max_y = std::max(max_y, v.y());
+                        }
+                        cen /= static_cast<float>(fp.vertices.size());
+
+                        const Eigen::Vector2f diff = cen - robot_pos;
+                        const float along = diff.dot(forward);
+                        if (along <= 0.05f) continue;
+                        const float lateral = std::abs(diff.dot(left));
+                        const float dist = diff.norm();
+
+                        const Eigen::Vector2f w_robot = world_to_robot * cen;
+                        const float world_bearing = std::atan2(w_robot.x(), w_robot.y());
+                        const float bearing_diff = std::abs(wrap_angle(world_bearing - cam_bearing));
+                        const bool bearing_gate_ok = bearing_diff <= max_bearing_diff;
+
+                        const float center_dist = (cen - cam.center).norm();
+
+                        const float world_sx = std::max(0.08f, max_x - min_x);
+                        const float world_sz = std::max(0.08f, max_y - min_y);
+                        const float cam_area = std::max(0.01f, cam.size.x() * cam.size.z());
+                        const float world_area = std::max(0.01f, world_sx * world_sz);
+                        const float size_ratio = cam_area / world_area;
+
+                        const float score_pose = 1.f / (1.f + dist);
+                        const float score_lat = 1.f / (1.f + lateral);
+                        const float score_center = 1.f / (1.f + center_dist);
+                        const float score_bearing = 1.f - std::min(1.f, bearing_diff / (2.f * max_bearing_diff));
+                        const float score_size = 1.f / (1.f + std::abs(std::log(size_ratio)));
+
+                        const QString qcam = QString::fromStdString(cam.label).toLower();
+                        const QString qworld = QString::fromStdString(fp.label).toLower();
+                        const float score_label = (qcam.contains(qworld) || qworld.contains(qcam)) ? 1.f : 0.f;
+
+                        const float total = strict_bearing_gate
+                            ? (0.15f * score_pose + 0.10f * score_lat + 0.45f * score_center + 0.20f * score_bearing + 0.08f * score_size + 0.02f * score_label)
+                            : (0.18f * score_pose + 0.12f * score_lat + 0.52f * score_center + 0.10f * score_bearing + 0.06f * score_size + 0.02f * score_label);
+
+                        if (debug_out != nullptr)
+                        {
+                            debug_out->push_back(CandidateDebug{
+                                QString::fromStdString(fp.label.empty() ? fp.id : fp.label),
+                                total,
+                                qRadiansToDegrees(bearing_diff),
+                                center_dist,
+                                dist,
+                                bearing_gate_ok});
+                        }
+
+                        if (strict_bearing_gate && !bearing_gate_ok) continue;
+
+                        if (total > local_best_score)
+                        {
+                            local_best_score = total;
+                            local_best_world = QString::fromStdString(fp.label.empty() ? fp.id : fp.label);
+                            local_best_dist = dist;
+                            local_best_lat = lateral;
+                            local_best_size_ratio = size_ratio;
+                            local_best_center_dist = center_dist;
+                            local_best_bearing_deg = qRadiansToDegrees(bearing_diff);
+                            local_best_world_index = static_cast<int>(world_idx);
+                        }
+                    }
+
+                    if (local_best_score > 0.f)
+                    {
+                        best_score = local_best_score;
+                        best_world = local_best_world;
+                        best_dist = local_best_dist;
+                        best_lat = local_best_lat;
+                        best_size_ratio = local_best_size_ratio;
+                        best_center_dist = local_best_center_dist;
+                        best_bearing_deg = local_best_bearing_deg;
+                        best_world_index = local_best_world_index;
+                        return true;
+                    }
+                    return false;
+                };
+
+                const bool strict_match = evaluate_candidates(true, &strict_debug_candidates);
+                if (!strict_match)
+                {
+                    const bool relaxed_match = evaluate_candidates(false, &relaxed_debug_candidates);
+                    matched_with_relaxed_gate = relaxed_match;
+                }
+
+                print_top3_debug(strict_debug_candidates, "strict");
+                if (!strict_match)
+                    print_top3_debug(relaxed_debug_candidates, "relaxed");
+
+                if (best_score > 0.f)
+                {
+                    grounding_world_index_ = best_world_index;
+                    grounding_status_label_->setText(matched_with_relaxed_gate
+                        ? "Status: grounded to front world object (relaxed alignment)"
+                        : "Status: grounded to front world object");
+                    grounding_world_label_->setText(QString("World object: %1").arg(best_world));
+                    grounding_score_label_->setText(
+                        QString("Score: %1 | center=%2m d=%3m lat=%4m ang=%5° areaRatio=%6")
+                            .arg(best_score, 0, 'f', 2)
+                            .arg(best_center_dist, 0, 'f', 2)
+                            .arg(best_dist, 0, 'f', 2)
+                            .arg(best_lat, 0, 'f', 2)
+                            .arg(best_bearing_deg, 0, 'f', 1)
+                            .arg(best_size_ratio, 0, 'f', 2));
+                }
+                else
+                {
+                    grounding_world_index_ = -1;
+                    grounding_status_label_->setText("Status: no front candidate aligned with camera object");
+                    grounding_world_label_->setText("World object: -");
+                    grounding_score_label_->setText("Score: -");
+                }
+            }
+        }
     }
     catch (const Ice::Exception &)
     {
         viewer_3d_->update_segmented_points({});
         viewer_3d_->update_segmented_boxes({});
+        grounding_focus_points_.clear();
+        grounding_focus_label_.clear();
+        grounding_world_index_ = -1;
+        if (grounding_status_label_ && grounding_cam_label_ && grounding_world_label_ && grounding_score_label_)
+        {
+            grounding_status_label_->setText("Status: segmentation unavailable");
+            grounding_cam_label_->setText("Camera object: -");
+            grounding_world_label_->setText("World object: -");
+            grounding_score_label_->setText("Score: -");
+        }
     }
 }
 
@@ -2287,19 +2767,43 @@ void SpecificWorker::draw_furniture()
         {
             if (fp.vertices.empty()) continue;
             Eigen::Vector2f cen = Eigen::Vector2f::Zero();
-            float min_x = fp.vertices[0].x(), max_x = fp.vertices[0].x();
-            float min_y = fp.vertices[0].y(), max_y = fp.vertices[0].y();
             for (const auto& v : fp.vertices)
             {
                 cen += v;
-                min_x = std::min(min_x, v.x()); max_x = std::max(max_x, v.x());
-                min_y = std::min(min_y, v.y()); max_y = std::max(max_y, v.y());
             }
             cen /= static_cast<float>(fp.vertices.size());
+
+            Eigen::Matrix2f cov = Eigen::Matrix2f::Zero();
+            for (const auto& v : fp.vertices)
+            {
+                const Eigen::Vector2f d = v - cen;
+                cov += d * d.transpose();
+            }
+            cov /= static_cast<float>(std::max<std::size_t>(1, fp.vertices.size()));
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig(cov);
+            Eigen::Vector2f axis_x(1.f, 0.f);
+            if (eig.info() == Eigen::Success)
+                axis_x = eig.eigenvectors().col(1).normalized();
+            Eigen::Vector2f axis_z(-axis_x.y(), axis_x.x());
+
+            float min_u = std::numeric_limits<float>::max();
+            float max_u = -std::numeric_limits<float>::max();
+            float min_v = std::numeric_limits<float>::max();
+            float max_v = -std::numeric_limits<float>::max();
+            for (const auto& p : fp.vertices)
+            {
+                const Eigen::Vector2f d = p - cen;
+                const float u = d.dot(axis_x);
+                const float v = d.dot(axis_z);
+                min_u = std::min(min_u, u); max_u = std::max(max_u, u);
+                min_v = std::min(min_v, v); max_v = std::max(max_v, v);
+            }
+
             rc::Viewer3D::FurnitureItem fi;
             fi.label    = fp.label;
             fi.centroid = cen;
-            fi.size     = Eigen::Vector2f(max_x - min_x, max_y - min_y);
+            fi.size     = Eigen::Vector2f(std::max(0.08f, max_u - min_u), std::max(0.08f, max_v - min_v));
+            fi.yaw_rad  = std::atan2(axis_x.y(), axis_x.x());
             items.push_back(fi);
         }
         viewer_3d_->update_furniture(items);
@@ -2611,6 +3115,107 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
     }
 }
 
+void SpecificWorker::save_fitted_meshes_to_json()
+{
+    QJsonArray objects;
+    for (const auto& fp : furniture_polygons_)
+    {
+        if (fp.vertices.size() < 3)
+            continue;
+
+        QJsonObject obj;
+        obj["id"] = QString::fromStdString(fp.id);
+        obj["label"] = QString::fromStdString(fp.label);
+
+        QJsonArray verts;
+        for (const auto& v : fp.vertices)
+        {
+            QJsonArray p;
+            p.append(static_cast<double>(v.x()));
+            p.append(static_cast<double>(v.y()));
+            verts.append(p);
+        }
+        obj["vertices"] = verts;
+        objects.append(obj);
+    }
+
+    QJsonObject root;
+    root["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    root["objects"] = objects;
+
+    QFile file(FITTED_MESHES_FILE);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    {
+        qWarning() << "Cannot write fitted meshes to" << FITTED_MESHES_FILE;
+        return;
+    }
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    file.close();
+    qInfo() << "Saved fitted meshes to" << FITTED_MESHES_FILE << "objects=" << objects.size();
+}
+
+void SpecificWorker::load_fitted_meshes_from_json()
+{
+    QFile file(FITTED_MESHES_FILE);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        qInfo() << "No fitted meshes file found at" << FITTED_MESHES_FILE;
+        return;
+    }
+
+    QJsonParseError parseError;
+    const auto doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    file.close();
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+    {
+        qWarning() << "Failed parsing fitted meshes file:" << parseError.errorString();
+        return;
+    }
+
+    const auto arr = doc.object().value("objects").toArray();
+    QHash<QString, std::vector<Eigen::Vector2f>> by_id;
+    QHash<QString, std::vector<Eigen::Vector2f>> by_label;
+    for (const auto& item : arr)
+    {
+        const auto obj = item.toObject();
+        std::vector<Eigen::Vector2f> verts;
+        const auto jverts = obj.value("vertices").toArray();
+        verts.reserve(jverts.size());
+        for (const auto& vv : jverts)
+        {
+            const auto p = vv.toArray();
+            if (p.size() < 2) continue;
+            verts.emplace_back(static_cast<float>(p[0].toDouble()), static_cast<float>(p[1].toDouble()));
+        }
+        if (verts.size() < 3)
+            continue;
+
+        const QString id = obj.value("id").toString().trimmed();
+        const QString label = obj.value("label").toString().trimmed();
+        if (!id.isEmpty()) by_id.insert(id, verts);
+        if (!label.isEmpty()) by_label.insert(label, verts);
+    }
+
+    int loaded_count = 0;
+    for (auto& fp : furniture_polygons_)
+    {
+        const QString qid = QString::fromStdString(fp.id);
+        const QString qlabel = QString::fromStdString(fp.label);
+        if (by_id.contains(qid))
+        {
+            fp.vertices = by_id.value(qid);
+            ++loaded_count;
+        }
+        else if (by_label.contains(qlabel))
+        {
+            fp.vertices = by_label.value(qlabel);
+            ++loaded_count;
+        }
+    }
+
+    qInfo() << "Loaded fitted meshes from" << FITTED_MESHES_FILE << "matched objects=" << loaded_count;
+}
+
 void SpecificWorker::load_polygon_from_file(const std::string& filename)
 {
     QFile file(QString::fromStdString(filename));
@@ -2636,6 +3241,7 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
     // Parse SVG file
     QString content = QString::fromUtf8(data);
     load_polygon_from_svg(content);
+    load_fitted_meshes_from_json();
 
     qInfo() << "Polygon loaded from" << QString::fromStdString(filename)
             << "with" << room_polygon_.size() << "vertices";

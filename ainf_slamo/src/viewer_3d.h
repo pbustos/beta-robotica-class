@@ -29,10 +29,13 @@ namespace rc
  *
  * | Gesture                   | Action                        |
  * |---------------------------|-------------------------------|
- * | Left drag                 | Orbit around view centre      |
- * | Middle drag / Alt+Left    | Pan (translate view centre)   |
- * | Right drag (up/down)      | Zoom (dolly)                  |
+ * | Left drag                 | Orbit around current pivot    |
+ * | Right drag                | Pan (translate camera + pivot)|
+ * | Middle drag or Left+Right | Zoom (vertical) + Roll (horiz)|
  * | Scroll wheel              | Zoom (dolly)                  |
+ *
+ * Left-click on an entity updates the orbit pivot (camera view centre)
+ * to the picked world intersection point, reproducing Webots' click-to-orbit feel.
  */
 class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
 {
@@ -123,7 +126,8 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
         struct FurnitureItem {
             std::string label;
             Eigen::Vector2f centroid;  // (x, z) in room coords
-            Eigen::Vector2f size;      // (width_x, depth_z) AABB in room metres
+            Eigen::Vector2f size;      // oriented footprint extents (local_x, local_z)
+            float yaw_rad = 0.f;       // orientation around vertical axis
         };
         void update_furniture(const std::vector<FurnitureItem>& items);
 

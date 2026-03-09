@@ -38,6 +38,7 @@
 #include "viewer_3d.h"
 #include "scene_tree_panel.h"
 #include "camera_viewer.h"
+#include "mesh_sdf_optimizer.h"
 #include <QSplitter>
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include "room_concept_ai.h"
@@ -51,6 +52,10 @@
 #include <limits>
 #include <memory>
 #include "common_types.h"
+
+class QWidget;
+class QLabel;
+class QPushButton;
 
 /**
  * \brief Class SpecificWorker implements the core functionality of the component.
@@ -233,6 +238,19 @@ class SpecificWorker : public GenericWorker
 	bool draw_trajectories_ = false; // Toggle trajectory debug rendering
         bool initial_center_done_ = false; // Flag to center view once at start
 	QSplitter* splitter_ = nullptr;  // Horizontal splitter (2D | 3D views)
+	QSplitter* right_splitter_ = nullptr; // Vertical splitter in right pane (3D top | grounding bottom)
+	QWidget* grounding_panel_ = nullptr;
+	QLabel* grounding_status_label_ = nullptr;
+	QLabel* grounding_cam_label_ = nullptr;
+	QLabel* grounding_world_label_ = nullptr;
+	QLabel* grounding_score_label_ = nullptr;
+	QLabel* grounding_sdf_label_ = nullptr;
+	QPushButton* grounding_fit_mesh_button_ = nullptr;
+	std::vector<Eigen::Vector3f> grounding_focus_points_;
+	Eigen::Vector2f grounding_focus_center_ = Eigen::Vector2f::Zero();
+	std::string grounding_focus_label_;
+	int grounding_world_index_ = -1;
+	rc::MeshSDFOptimizer mesh_sdf_optimizer_;
 	BufferSync<InOut<rc::VelocityCommand, rc::VelocityCommand>> velocity_buffer_{20};
 
 	// Measured odometry readings from FullPoseEstimationPub (thread-safe via BufferSync)
@@ -365,12 +383,16 @@ class SpecificWorker : public GenericWorker
     void load_layout_from_file(const std::string& filename);
     void load_polygon_from_file(const std::string& filename);
     void load_polygon_from_svg(const QString& svg_content);
+	void save_fitted_meshes_to_json();
+	void load_fitted_meshes_from_json();
 
 	// Pose persistence (for fast restart)
 	void save_last_pose();
+	void save_camera_state_to_settings() const;
 	bool load_last_pose();  // Returns true if pose was loaded successfully
 	void perform_grid_search(const std::vector<Eigen::Vector3f>& lidar_points);
 	static constexpr const char* LAST_POSE_FILE = "./last_pose.json";
+	static constexpr const char* FITTED_MESHES_FILE = "./fitted_meshes.json";
 
 	// GT calibration: offset from Webots frame to map frame
 	Eigen::Affine2f gt_offset_ = Eigen::Affine2f::Identity();

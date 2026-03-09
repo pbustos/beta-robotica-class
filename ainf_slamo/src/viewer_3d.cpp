@@ -27,9 +27,10 @@ namespace rc {
 // ---------------------------------------------------------------------------
 // WebotsStyleCameraController::moveCamera
 // Webots 3D viewport:
-//   Left drag   → orbit (rotate scene around view centre)
-//   Wheel       → zoom (dolly)
-//   Right drag  → pan (translate camera + view centre)
+//   Left drag              → orbit around pivot (view centre)
+//   Right drag             → pan (translate camera + view centre)
+//   Middle or Left+Right   → vertical zoom + horizontal roll
+//   Wheel                  → zoom (dolly)
 // ---------------------------------------------------------------------------
 void WebotsStyleCameraController::moveCamera(
     const Qt3DExtras::QAbstractCameraController::InputState& state, float dt)
@@ -37,31 +38,60 @@ void WebotsStyleCameraController::moveCamera(
     auto* cam = camera();
     if (!cam) return;
 
-    // NOTE: Qt3D always delivers mouse-move deltas in rx/ryAxisValue.
-    //       tx/tyAxisValue are keyboard axes only – do NOT use them for mouse pan.
+    const float look = lookSpeed() * dt;
+    const float lin  = linearSpeed() * dt;
+    const float cam_dist = (cam->position() - cam->viewCenter()).length();
+    const float pan_scale = std::clamp(cam_dist / 12.0f, 0.12f, 2.0f);
+    const float pan_lin = lin * pan_scale;
+    const bool dual_button = state.leftMouseButtonActive && state.rightMouseButtonActive;
+    const bool zoom_roll_mode = state.middleMouseButtonActive || dual_button;
 
-    // ---- Orbit: left button drag ------------------------------------------
-    if (state.leftMouseButtonActive && !state.rightMouseButtonActive)
+    // ---- Orbit: left drag around current pivot ----------------------------
+    if (state.leftMouseButtonActive && !state.rightMouseButtonActive && !state.middleMouseButtonActive)
     {
-        cam->panAboutViewCenter ( state.rxAxisValue * lookSpeed() * dt);
-        cam->tiltAboutViewCenter(-state.ryAxisValue * lookSpeed() * dt);
+        const float yaw_deg = state.rxAxisValue * look;
+        const float pitch_deg = -state.ryAxisValue * look;
+
+        const QVector3D view_dir = (cam->viewCenter() - cam->position()).normalized();
+        const float up_align = QVector3D::dotProduct(view_dir, QVector3D(0.f, 1.f, 0.f));
+        // Avoid gimbal-ish flipping close to poles.
+        const bool pitch_would_flip = (up_align > 0.985f && pitch_deg < 0.f) ||
+                                      (up_align < -0.985f && pitch_deg > 0.f);
+
+        cam->panAboutViewCenter(yaw_deg);
+        if (!pitch_would_flip)
+            cam->tiltAboutViewCenter(pitch_deg);
     }
 
-    // ---- Pan: right button drag (same rx/ry axes, different camera op) ----
-    if (state.rightMouseButtonActive)
+    // ---- Pan: right drag ---------------------------------------------------
+    if (state.rightMouseButtonActive && !state.leftMouseButtonActive && !state.middleMouseButtonActive)
     {
-        // Translate in camera-local XY (screen plane), moving view centre too
-        cam->translate(QVector3D(-state.rxAxisValue * linearSpeed() * dt,
-                                 -state.ryAxisValue * linearSpeed() * dt,
+        // Translate in camera-local XY (screen plane), moving view centre too.
+        cam->translate(QVector3D(-state.rxAxisValue * pan_lin,
+                                 -state.ryAxisValue * pan_lin,
                                   0.f),
                        Qt3DRender::QCamera::TranslateViewCenter);
+    }
+
+    // ---- Middle / Left+Right: zoom + roll --------------------------------
+    if (zoom_roll_mode)
+    {
+        // Vertical drag: dolly
+        constexpr float zoom_gain = 2.4f;
+        cam->translate(QVector3D(0.f, 0.f, state.ryAxisValue * lin * zoom_gain),
+                       Qt3DRender::QCamera::DontTranslateViewCenter);
+
+        // Horizontal drag: roll around view axis
+        const float roll_deg = -state.rxAxisValue * look * 0.75f;
+        if (std::abs(roll_deg) > 1e-4f)
+            cam->roll(roll_deg);
     }
 
     // ---- Zoom: scroll wheel -----------------------------------------------
     if (qAbs(state.tzAxisValue) > 0.f)
     {
-        constexpr float zoom_gain = 2.0f;
-        cam->translate(QVector3D(0.f, 0.f, state.tzAxisValue * linearSpeed() * dt * zoom_gain),
+        constexpr float wheel_zoom_gain = 2.6f;
+        cam->translate(QVector3D(0.f, 0.f, state.tzAxisValue * lin * wheel_zoom_gain),
                        Qt3DRender::QCamera::DontTranslateViewCenter);
     }
 }
@@ -458,19 +488,15 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         const QString ql = QString::fromStdString(item.label).toLower();
         const Eigen::Vector2f& cen  = item.centroid;
         const Eigen::Vector2f& size = item.size;
-        const bool long_along_x = size.x() >= size.y();
-        const QQuaternion axis_rot = long_along_x
-            ? base_rot
-            : (QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, 90.f) * base_rot);
+        const QQuaternion yaw_rot = QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, qRadiansToDegrees(item.yaw_rad));
+        const QQuaternion axis_rot = yaw_rot * base_rot;
 
         if (ql.contains("mesa") || ql.contains("table"))
         {
-            // Scale table mesh (native 1.2 m × 0.8 m in obj X × Y) to SVG AABB.
-            // After -90°X rotation: obj-X→room-X, obj-Y→room-Z  → scale accordingly.
-            const float long_dim  = std::max(size.x(), size.y());
-            const float short_dim = std::min(size.x(), size.y());
-            const float sx = (long_dim  > 0.1f) ? long_dim  / 1.2f : 1.f;
-            const float sy = (short_dim > 0.1f) ? short_dim / 0.8f : 1.f;
+            // Scale table mesh (native 1.2 m × 0.8 m in obj X × Y) to oriented footprint.
+            // After -90°X rotation: obj-X→local room-X, obj-Y→local room-Z.
+            const float sx = (size.x() > 0.1f) ? size.x() / 1.2f : 1.f;
+            const float sy = (size.y() > 0.1f) ? size.y() / 0.8f : 1.f;
             make_entity(abs_mesh("meshes/table.obj"),
                         QColor(160, 100, 55), QColor(70, 44, 24), 20.f,
                         cen, axis_rot, QVector3D(sx, sy, 1.f),
@@ -488,12 +514,12 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             // Two entities at same position: light-brown pot + green tree crown
             make_entity(abs_mesh("meshes/pot_only.obj"),
                         QColor(195, 155, 95), QColor(90, 70, 40), 10.f,
-                        cen, base_rot, QVector3D(1.f, 1.f, 1.f),
+                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
                         QString::fromStdString(item.label));
             // Crown scaled to 2/3 of original diameter
             make_entity(abs_mesh("meshes/tree_only.obj"),
                         QColor(55, 130, 45), QColor(25, 60, 20), 5.f,
-                        cen, base_rot, QVector3D(0.666f, 0.666f, 0.666f),
+                        cen, axis_rot, QVector3D(0.666f, 0.666f, 0.666f),
                         QString::fromStdString(item.label) + " (tree)");
         }
         else if (ql.contains("silla") || ql.contains("chair"))
@@ -552,6 +578,15 @@ void Viewer3D::attach_picker(Qt3DCore::QEntity* e, const QString& name)
     connect(picker, &Qt3DRender::QObjectPicker::pressed,
             this, [this, name](Qt3DRender::QPickEvent* ev)
     {
+        if (ev->button() == Qt3DRender::QPickEvent::LeftButton)
+        {
+            // Keep plain left-drag orbit stable (no implicit translation on press).
+            // Optional explicit recenter: Alt+Left click.
+            if (camera_ && (ev->modifiers() & static_cast<int>(Qt::AltModifier)))
+                camera_->setViewCenter(ev->worldIntersection());
+            return;
+        }
+
         if (ev->button() == Qt3DRender::QPickEvent::RightButton)
         {
             if (ev->modifiers() & static_cast<int>(Qt::ShiftModifier))

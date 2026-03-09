@@ -38,6 +38,7 @@ LIST(APPEND SOURCES
   ../src/trajectory_controller.cpp
   ../src/scene_tree_panel.cpp
   ../src/camera_viewer.cpp
+  ../src/mesh_sdf_optimizer.cpp
 )
 
 # Headers set
@@ -50,6 +51,7 @@ LIST(APPEND HEADERS
   ../src/trajectory_controller.h
   ../src/scene_tree_panel.h
   ../src/camera_viewer.h
+  ../src/mesh_sdf_optimizer.h
 )
 
 
