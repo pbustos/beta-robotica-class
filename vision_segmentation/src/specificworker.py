@@ -36,7 +36,6 @@ from genericworker import *
 import interfaces as ifaces
 import cv2
 import numpy as np
-import os
 import queue
 import threading
 import time
@@ -103,37 +102,13 @@ class SpecificWorker(GenericWorker):
         self.image_request_hold_seconds = 1.0
         self.objects_request_hold_seconds = 1.0
 
-        # Compute-stage profiler
-        self.profile_enabled = True
-        self.profile_period = 3.0
-        self.profile_last_time = time.time()
-        self.profile_frames = 0
-        self.profile_stats = {
-            "proxy": 0.0,
-            "decode": 0.0,
-            "yolo": 0.0,
-            "depth": 0.0,
-            "segmentation": 0.0,
-            "qt3d": 0.0,
-            "build_image": 0.0,
-            "publish": 0.0,
-            "display2d": 0.0,
-            "total": 0.0,
-        }
-
-        # Double buffering for compute() producer and ICE consumers
-        self._buffer_lock = threading.Lock()
+        # Latest published snapshot for ICE consumers
         initial_timestamp = int(time.time() * 1000)
-        self._front_buffer = {
-            "objects": self.current_segmented_objects,
-            "image": self.current_image_out,
-            "timestamp": initial_timestamp,
-        }
-        self._back_buffer = {
-            "objects": [],
-            "image": ifaces.RoboCompImageSegmentation.TImage(),
-            "timestamp": initial_timestamp,
-        }
+        self._latest_snapshot = (
+            self.current_segmented_objects,
+            self.current_image_out,
+            initial_timestamp,
+        )
 
         # Background proxy reader queue (decouples network latency from compute loop)
         self._proxy_queue = queue.Queue(maxsize=2)
@@ -164,9 +139,6 @@ class SpecificWorker(GenericWorker):
         self._update_fps()
 
         try:
-            t_start = time.perf_counter()
-
-            t0 = time.perf_counter()
             if self.use_proxy_thread:
                 rgbd = self._get_latest_rgbd()
                 if rgbd is None:
@@ -175,24 +147,16 @@ class SpecificWorker(GenericWorker):
                 rgbd = self.camerargbdsimple_proxy.getAll("camera")
             img_struct = rgbd.image
             depth_struct = rgbd.depth
-            t_proxy = time.perf_counter() - t0
-            
-            t0 = time.perf_counter()
+
             img = np.frombuffer(img_struct.image, dtype=np.uint8)
             img = img.reshape(img_struct.height, img_struct.width, 3)
-            t_decode = time.perf_counter() - t0
 
-            t0 = time.perf_counter()
             results = self.yolo_model(img, verbose=False)
-            t_yolo = time.perf_counter() - t0
             
             annotated_img = img.copy()
 
-            t0 = time.perf_counter()
             depth_np, fx, fy, cx, cy = self._get_depth_intrinsics(depth_struct)
-            t_depth = time.perf_counter() - t0
 
-            t0 = time.perf_counter()
             annotated_img, seg_mask, segmented_objects = self._process_segmentation(
                 results,
                 annotated_img,
@@ -204,37 +168,14 @@ class SpecificWorker(GenericWorker):
                 img_struct.height,
                 img_struct.width,
             )
-            t_seg = time.perf_counter() - t0
 
-            t0 = time.perf_counter()
             self._update_qt3d_from_mask(seg_mask, depth_np, fx, fy, cx, cy, img)
-            t_qt3d = time.perf_counter() - t0
 
-            t0 = time.perf_counter()
             image_out = self._build_output_image(img_struct, annotated_img.tobytes())
-            t_build = time.perf_counter() - t0
 
-            t0 = time.perf_counter()
             self._publish_frame(segmented_objects, image_out, int(time.time() * 1000))
-            t_publish = time.perf_counter() - t0
 
-            t0 = time.perf_counter()
             self._update_2d_display(annotated_img)
-            t_display = time.perf_counter() - t0
-
-            t_total = time.perf_counter() - t_start
-            self._update_profile_stats(
-                t_proxy,
-                t_decode,
-                t_yolo,
-                t_depth,
-                t_seg,
-                t_qt3d,
-                t_build,
-                t_publish,
-                t_display,
-                t_total,
-            )
             
         except Exception as e:
             print(f"Error reading image: {e}")
@@ -304,52 +245,6 @@ class SpecificWorker(GenericWorker):
         img_out.image = image_bytes
         return img_out
 
-    def _update_profile_stats(
-        self,
-        t_proxy,
-        t_decode,
-        t_yolo,
-        t_depth,
-        t_seg,
-        t_qt3d,
-        t_build,
-        t_publish,
-        t_display,
-        t_total,
-    ):
-        if not self.profile_enabled:
-            return
-
-        self.profile_stats["proxy"] += t_proxy
-        self.profile_stats["decode"] += t_decode
-        self.profile_stats["yolo"] += t_yolo
-        self.profile_stats["depth"] += t_depth
-        self.profile_stats["segmentation"] += t_seg
-        self.profile_stats["qt3d"] += t_qt3d
-        self.profile_stats["build_image"] += t_build
-        self.profile_stats["publish"] += t_publish
-        self.profile_stats["display2d"] += t_display
-        self.profile_stats["total"] += t_total
-        self.profile_frames += 1
-
-        now = time.time()
-        elapsed = now - self.profile_last_time
-        if elapsed < self.profile_period or self.profile_frames == 0:
-            return
-
-        avg_total_ms = (self.profile_stats["total"] / self.profile_frames) * 1000.0
-        print("[PROFILE] Average compute stage timings (ms/frame):")
-        for key in ["proxy", "decode", "yolo", "depth", "segmentation", "qt3d", "build_image", "publish", "display2d"]:
-            avg_ms = (self.profile_stats[key] / self.profile_frames) * 1000.0
-            ratio = (avg_ms / avg_total_ms * 100.0) if avg_total_ms > 0 else 0.0
-            print(f"  - {key:12s}: {avg_ms:6.2f} ms ({ratio:5.1f}%)")
-        print(f"  - {'total':12s}: {avg_total_ms:6.2f} ms")
-
-        self.profile_last_time = now
-        self.profile_frames = 0
-        for key in self.profile_stats:
-            self.profile_stats[key] = 0.0
-
     def _is_image_output_requested(self):
         return (time.time() - self.last_image_request_time) <= self.image_request_hold_seconds
 
@@ -357,22 +252,12 @@ class SpecificWorker(GenericWorker):
         return (time.time() - self.last_objects_request_time) <= self.objects_request_hold_seconds
 
     def _publish_frame(self, segmented_objects, image_out, timestamp_ms):
-        with self._buffer_lock:
-            self._back_buffer["objects"] = segmented_objects
-            self._back_buffer["image"] = image_out
-            self._back_buffer["timestamp"] = timestamp_ms
-            self._front_buffer, self._back_buffer = self._back_buffer, self._front_buffer
-
-            self.current_segmented_objects = self._front_buffer["objects"]
-            self.current_image_out = self._front_buffer["image"]
+        self._latest_snapshot = (segmented_objects, image_out, timestamp_ms)
+        self.current_segmented_objects = segmented_objects
+        self.current_image_out = image_out
 
     def _read_front_buffer(self):
-        with self._buffer_lock:
-            return (
-                self._front_buffer["objects"],
-                self._front_buffer["image"],
-                self._front_buffer["timestamp"],
-            )
+        return self._latest_snapshot
 
     def _get_depth_intrinsics(self, depth_struct):
         depth_np = np.frombuffer(depth_struct.depth, dtype=np.float32).reshape(
