@@ -7,6 +7,7 @@
 #include <Qt3DExtras/QOrbitCameraController>
 #include <Qt3DExtras/QForwardRenderer>
 #include <Qt3DExtras/QSphereMesh>
+#include <Qt3DExtras/QExtrudedTextMesh>
 #include <Qt3DRender/QMesh>
 #include <Qt3DRender/QObjectPicker>
 #include <Qt3DRender/QPickEvent>
@@ -15,6 +16,7 @@
 #include <QSizePolicy>
 #include <QLabel>
 #include <QTimer>
+#include <QFont>
 #include <QCoreApplication>
 #include <QDir>
 #include <cmath>
@@ -695,6 +697,107 @@ void Viewer3D::update_segmented_points(const std::vector<Eigen::Vector3f>& point
     }
     for (int i = idx; i < pool_size; ++i)
         segmented_xf_[i]->setTranslation(hidden);
+}
+
+// ---------------------------------------------------------------------------
+// update_segmented_boxes – oriented 3D boxes + label per segmented object
+// ---------------------------------------------------------------------------
+void Viewer3D::update_segmented_boxes(const std::vector<SegmentedBoxItem>& boxes)
+{
+    for (auto* e : segmented_box_entities_)
+    {
+        e->setParent(static_cast<Qt3DCore::QNode*>(nullptr));
+        delete e;
+    }
+    segmented_box_entities_.clear();
+
+    static const QColor edge_diffuse(90, 170, 255);
+    static const QColor edge_ambient(30, 75, 140);
+    constexpr float edge_thickness = 0.015f;
+
+    for (const auto& box : boxes)
+    {
+        const float sx = std::max(0.05f, box.size.x());
+        const float sy = std::max(0.05f, box.size.y());
+        const float sz = std::max(0.05f, box.size.z());
+
+        auto* box_entity = new Qt3DCore::QEntity(root_entity_);
+        auto* box_tf = new Qt3DCore::QTransform(box_entity);
+        box_tf->setTranslation(QVector3D(-box.center.x(), box.center_height, box.center.y()));
+        box_tf->setRotationY(qRadiansToDegrees(box.yaw_rad));
+        box_entity->addComponent(box_tf);
+
+        auto make_edge = [&](const QVector3D& local_center,
+                             float ex, float ey, float ez,
+                             bool add_picker)
+        {
+            auto* edge_e = new Qt3DCore::QEntity(box_entity);
+            auto* edge_mesh = new Qt3DExtras::QCuboidMesh();
+            edge_mesh->setXExtent(ex);
+            edge_mesh->setYExtent(ey);
+            edge_mesh->setZExtent(ez);
+
+            auto* edge_mat = new Qt3DExtras::QPhongMaterial(edge_e);
+            edge_mat->setDiffuse(edge_diffuse);
+            edge_mat->setAmbient(edge_ambient);
+            edge_mat->setSpecular(QColor(180, 220, 255));
+            edge_mat->setShininess(30.f);
+
+            auto* edge_tf = new Qt3DCore::QTransform(edge_e);
+            edge_tf->setTranslation(local_center);
+
+            edge_e->addComponent(edge_mesh);
+            edge_e->addComponent(edge_mat);
+            edge_e->addComponent(edge_tf);
+            if (add_picker)
+                attach_picker(edge_e, QString::fromStdString(box.label));
+        };
+
+        const float hx = sx * 0.5f;
+        const float hy = sy * 0.5f;
+        const float hz = sz * 0.5f;
+
+        // 4 edges parallel to X
+        make_edge(QVector3D(0.f, -hy, -hz), sx, edge_thickness, edge_thickness, true);
+        make_edge(QVector3D(0.f, -hy,  hz), sx, edge_thickness, edge_thickness, false);
+        make_edge(QVector3D(0.f,  hy, -hz), sx, edge_thickness, edge_thickness, false);
+        make_edge(QVector3D(0.f,  hy,  hz), sx, edge_thickness, edge_thickness, false);
+        // 4 edges parallel to Y
+        make_edge(QVector3D(-hx, 0.f, -hz), edge_thickness, sy, edge_thickness, false);
+        make_edge(QVector3D(-hx, 0.f,  hz), edge_thickness, sy, edge_thickness, false);
+        make_edge(QVector3D( hx, 0.f, -hz), edge_thickness, sy, edge_thickness, false);
+        make_edge(QVector3D( hx, 0.f,  hz), edge_thickness, sy, edge_thickness, false);
+        // 4 edges parallel to Z
+        make_edge(QVector3D(-hx, -hy, 0.f), edge_thickness, edge_thickness, sz, false);
+        make_edge(QVector3D(-hx,  hy, 0.f), edge_thickness, edge_thickness, sz, false);
+        make_edge(QVector3D( hx, -hy, 0.f), edge_thickness, edge_thickness, sz, false);
+        make_edge(QVector3D( hx,  hy, 0.f), edge_thickness, edge_thickness, sz, false);
+
+        segmented_box_entities_.push_back(box_entity);
+
+        auto* text_entity = new Qt3DCore::QEntity(root_entity_);
+        auto* text_mesh = new Qt3DExtras::QExtrudedTextMesh();
+        QFont f("Sans Serif", 24, QFont::Bold);
+        text_mesh->setFont(f);
+        text_mesh->setText(QString::fromStdString(box.label));
+        text_mesh->setDepth(0.02f);
+
+        auto* text_mat = new Qt3DExtras::QPhongMaterial(text_entity);
+        text_mat->setDiffuse(QColor(245, 245, 245));
+        text_mat->setAmbient(QColor(180, 180, 180));
+        text_mat->setSpecular(QColor(0, 0, 0));
+        text_mat->setShininess(0.f);
+
+        auto* text_tf = new Qt3DCore::QTransform(text_entity);
+        text_tf->setTranslation(QVector3D(-box.center.x(), box.center_height + 0.02f, box.center.y()));
+        text_tf->setRotationY(qRadiansToDegrees(box.yaw_rad));
+        text_tf->setScale(0.015f);
+
+        text_entity->addComponent(text_mesh);
+        text_entity->addComponent(text_mat);
+        text_entity->addComponent(text_tf);
+        segmented_box_entities_.push_back(text_entity);
+    }
 }
 
 // ---------------------------------------------------------------------------

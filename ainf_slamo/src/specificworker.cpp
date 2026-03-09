@@ -685,9 +685,15 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
 
         std::vector<Eigen::Vector3f> points_layout;
         points_layout.reserve(total_points);
+        std::vector<rc::Viewer3D::SegmentedBoxItem> boxes_layout;
+        boxes_layout.reserve(tdata.objects.size());
 
-        for (const auto &obj : tdata.objects)
+        for (std::size_t obj_idx = 0; obj_idx < tdata.objects.size(); ++obj_idx)
         {
+            const auto &obj = tdata.objects[obj_idx];
+            std::vector<Eigen::Vector3f> obj_points_layout;
+            obj_points_layout.reserve(obj.points3D.size());
+
             for (const auto &p : obj.points3D)
             {
                 // points3D now come in RoboComp local frame.
@@ -700,15 +706,75 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                 const Eigen::Vector2f p_layout_local(x_robot, y_robot);
                 const Eigen::Vector2f p_layout = robot_pose * p_layout_local;
                 constexpr float z_lift = 0.05f;  // keep points slightly above floor
-                points_layout.emplace_back(p_layout.x(), p_layout.y(), z_robot + z_lift);
+                const Eigen::Vector3f p3(p_layout.x(), p_layout.y(), z_robot + z_lift);
+                points_layout.emplace_back(p3);
+                obj_points_layout.emplace_back(p3);
+            }
+
+            if (obj_points_layout.size() >= 4)
+            {
+                Eigen::Vector2f mean_xy = Eigen::Vector2f::Zero();
+                float min_z = std::numeric_limits<float>::max();
+                float max_z = -std::numeric_limits<float>::max();
+                for (const auto &p : obj_points_layout)
+                {
+                    mean_xy += Eigen::Vector2f(p.x(), p.y());
+                    min_z = std::min(min_z, p.z());
+                    max_z = std::max(max_z, p.z());
+                }
+                mean_xy /= static_cast<float>(obj_points_layout.size());
+
+                Eigen::Matrix2f cov = Eigen::Matrix2f::Zero();
+                for (const auto &p : obj_points_layout)
+                {
+                    const Eigen::Vector2f d = Eigen::Vector2f(p.x(), p.y()) - mean_xy;
+                    cov += d * d.transpose();
+                }
+                cov /= static_cast<float>(obj_points_layout.size());
+
+                Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig(cov);
+                Eigen::Vector2f major_axis(1.f, 0.f);
+                if (eig.info() == Eigen::Success)
+                    major_axis = eig.eigenvectors().col(1).normalized();
+                const Eigen::Vector2f minor_axis(-major_axis.y(), major_axis.x());
+
+                float min_u = std::numeric_limits<float>::max();
+                float max_u = -std::numeric_limits<float>::max();
+                float min_v = std::numeric_limits<float>::max();
+                float max_v = -std::numeric_limits<float>::max();
+                for (const auto &p : obj_points_layout)
+                {
+                    const Eigen::Vector2f d = Eigen::Vector2f(p.x(), p.y()) - mean_xy;
+                    const float u = d.dot(major_axis);
+                    const float v = d.dot(minor_axis);
+                    min_u = std::min(min_u, u); max_u = std::max(max_u, u);
+                    min_v = std::min(min_v, v); max_v = std::max(max_v, v);
+                }
+
+                const float c_u = 0.5f * (min_u + max_u);
+                const float c_v = 0.5f * (min_v + max_v);
+                const Eigen::Vector2f center_xy = mean_xy + major_axis * c_u + minor_axis * c_v;
+
+                rc::Viewer3D::SegmentedBoxItem box;
+                box.label = obj.label.empty() ? ("object_" + std::to_string(obj_idx + 1)) : obj.label;
+                box.center = center_xy;
+                box.center_height = 0.5f * (min_z + max_z);
+                box.size = Eigen::Vector3f(
+                    std::max(0.08f, max_u - min_u),
+                    std::max(0.08f, max_z - min_z),
+                    std::max(0.08f, max_v - min_v));
+                box.yaw_rad = std::atan2(major_axis.y(), major_axis.x());
+                boxes_layout.emplace_back(std::move(box));
             }
         }
 
         viewer_3d_->update_segmented_points(points_layout);
+        viewer_3d_->update_segmented_boxes(boxes_layout);
     }
     catch (const Ice::Exception &)
     {
         viewer_3d_->update_segmented_points({});
+        viewer_3d_->update_segmented_boxes({});
     }
 }
 

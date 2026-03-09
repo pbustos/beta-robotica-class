@@ -144,6 +144,19 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
         void update_segmented_points(const std::vector<Eigen::Vector3f>& points_layout);
 
         /**
+         * @brief One oriented 3D bounding box for a segmented object.
+         * Center is in room/layout frame; yaw rotates around vertical axis.
+         */
+        struct SegmentedBoxItem {
+            std::string label;
+            Eigen::Vector2f center;   // (x,y) in room coords
+            float center_height = 0.f;
+            Eigen::Vector3f size{0.2f, 0.2f, 0.2f}; // (x,y,z) extents in box local frame
+            float yaw_rad = 0.f;
+        };
+        void update_segmented_boxes(const std::vector<SegmentedBoxItem>& boxes);
+
+        /**
          * @brief Update all temporary obstacle mesh entities.
          * Each item carries the 2-D polygon (room frame, meters) and the estimated
          * height derived from the LiDAR Z range.  height == 0 means "use default".
@@ -181,6 +194,9 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
 
         // Temp obstacles
         std::vector<Qt3DCore::QEntity*> obstacle_entities_;
+
+        // Segmented object 3D oriented boxes (+ text labels)
+        std::vector<Qt3DCore::QEntity*> segmented_box_entities_;
 
         // Furniture meshes (one entity per SVG furniture path)
         std::vector<Qt3DCore::QEntity*> furniture_entities_;
