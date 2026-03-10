@@ -1,6 +1,27 @@
 find_package(Qt6 COMPONENTS Xml PrintSupport REQUIRED)
 find_package(Qt6 COMPONENTS 3DCore 3DRender 3DExtras QUIET)
 
+# # Find PyTorch
+# # Set LibTorch path
+# set(CMAKE_PREFIX_PATH "/home/robocomp/software/libtorch")
+
+# # ---- Torch / CUDA handling ----
+# # Some libtorch distributions try to enable CUDA during find_package(Torch).
+# # If CUDA isn't available/configured, CMake errors out with:
+# #   CMAKE_CUDA_ARCHITECTURES must be non-empty if set.
+# # We default to CPU-only.
+# set(USE_CUDA OFF CACHE BOOL "Disable CUDA for this component" FORCE)
+# set(CAFFE2_USE_CUDA OFF CACHE BOOL "Disable Caffe2 CUDA" FORCE)
+# set(CMAKE_DISABLE_FIND_PACKAGE_CUDA OFF CACHE BOOL "Allow CUDA detection for CUDA-enabled libtorch" FORCE)
+# set(CUDAToolkit_ROOT "/usr/local/cuda" CACHE PATH "CUDA toolkit root" FORCE)
+# set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "CUDA compiler" FORCE)
+# # PyTorch ignores CMAKE_CUDA_ARCHITECTURES and expects TORCH_CUDA_ARCH_LIST.
+# # Keep a single source of truth to avoid CMake warning noise from Caffe2.
+# set(TORCH_CUDA_ARCH_LIST "12.0" CACHE STRING "CUDA arch list for LibTorch" FORCE)
+
+# 1. Enable CUDA language so CMake initializes detection scripts
+enable_language(CUDA)
+
 # Find PyTorch
 # Set LibTorch path
 set(CMAKE_PREFIX_PATH "/home/robocomp/software/libtorch")
@@ -10,14 +31,23 @@ set(CMAKE_PREFIX_PATH "/home/robocomp/software/libtorch")
 # If CUDA isn't available/configured, CMake errors out with:
 #   CMAKE_CUDA_ARCHITECTURES must be non-empty if set.
 # We default to CPU-only.
-set(USE_CUDA OFF CACHE BOOL "Disable CUDA for this component" FORCE)
-set(CAFFE2_USE_CUDA OFF CACHE BOOL "Disable Caffe2 CUDA" FORCE)
+set(USE_CUDA ON CACHE BOOL "Enable CUDA for this component" FORCE)
+set(CAFFE2_USE_CUDA ON CACHE BOOL "Enable Caffe2 CUDA" FORCE)
 set(CMAKE_DISABLE_FIND_PACKAGE_CUDA OFF CACHE BOOL "Allow CUDA detection for CUDA-enabled libtorch" FORCE)
 set(CUDAToolkit_ROOT "/usr/local/cuda" CACHE PATH "CUDA toolkit root" FORCE)
 set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "CUDA compiler" FORCE)
 # PyTorch ignores CMAKE_CUDA_ARCHITECTURES and expects TORCH_CUDA_ARCH_LIST.
 # Keep a single source of truth to avoid CMake warning noise from Caffe2.
-set(TORCH_CUDA_ARCH_LIST "12.0" CACHE STRING "CUDA arch list for LibTorch" FORCE)
+
+# 2. Set CUDA arch list without deprecated FindCUDA macros.
+if(NOT DEFINED TORCH_CUDA_ARCH_LIST OR "${TORCH_CUDA_ARCH_LIST}" STREQUAL "")
+  if(DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+    set(TORCH_CUDA_ARCH_LIST "${CMAKE_CUDA_ARCHITECTURES}" CACHE STRING "CUDA architectures" FORCE)
+  else()
+    set(TORCH_CUDA_ARCH_LIST "12.0" CACHE STRING "CUDA architectures" FORCE)
+  endif()
+  message(STATUS "Using TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}")
+endif()
 
 
 find_package(Torch REQUIRED)

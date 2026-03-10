@@ -39,6 +39,7 @@
 #include "scene_tree_panel.h"
 #include "camera_viewer.h"
 #include "mesh_sdf_optimizer.h"
+#include "object_ownership_em.h"
 #include <QSplitter>
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include "room_concept_ai.h"
@@ -187,6 +188,7 @@ class SpecificWorker : public GenericWorker
 	std::vector<FurniturePolygon> furniture_polygons_;
 	std::vector<QGraphicsPolygonItem*> furniture_draw_items_;
 	void draw_furniture();
+	void apply_ownership_em_visuals();
 
 	// ===== Temporary obstacle management (unforeseen obstacle avoidance) =====
 	struct TempObstacle
@@ -254,6 +256,11 @@ class SpecificWorker : public GenericWorker
 	int focused_model_index_ = -1;
 	std::string current_layout_file_;
 	rc::MeshSDFOptimizer mesh_sdf_optimizer_;
+	rc::ObjectOwnershipEM ownership_em_;
+	bool ownership_em_enabled_ = true;
+	bool em_validator_overlay_lock_ = false;
+	bool em_overlay_persistent_active_ = false;
+	int ownership_em_log_counter_ = 0;
 	BufferSync<InOut<rc::VelocityCommand, rc::VelocityCommand>> velocity_buffer_{20};
 
 	// Measured odometry readings from FullPoseEstimationPub (thread-safe via BufferSync)
@@ -331,6 +338,15 @@ class SpecificWorker : public GenericWorker
 	std::chrono::steady_clock::time_point low_speed_block_start_;
 	static constexpr float BLOCKED_SPEED_THRESHOLD = 0.03f;     // m/s
 	static constexpr float BLOCKED_TIME_THRESHOLD_SEC = 2.5f;   // s
+	bool safeguard_recovery_active_ = false;
+	bool safeguard_replan_pending_ = false;
+	int safeguard_recovery_cycles_ = 0;
+	int safeguard_clear_counter_ = 0;
+	Eigen::Vector2f safeguard_blockage_center_ = Eigen::Vector2f::Zero();
+	float safeguard_blockage_radius_ = 0.35f;
+	static constexpr int SAFEGUARD_RECOVERY_MAX_CYCLES = 30; // ~1.5s at 20Hz
+	static constexpr int SAFEGUARD_CLEAR_CONFIRM_CYCLES = 4;
+	static constexpr float SAFEGUARD_BACKWARD_SPEED = -0.12f;
 	float last_ess_ = 0.f;   // Latest ESS value for UI
 	int   last_ess_K_ = 1;   // Latest K for ESS ratio
 	std::chrono::steady_clock::time_point last_safety_guard_trigger_time_{};
@@ -358,6 +374,10 @@ class SpecificWorker : public GenericWorker
 	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points_high,
 	                       const std::vector<Eigen::Vector3f> &points_low,
 	                       const Eigen::Affine2f &robot_pose);
+	void rebuild_ownership_em_models();
+	void run_ownership_em_step(const std::vector<Eigen::Vector3f>& points_robot,
+	                           const Eigen::Affine2f& robot_pose);
+	void run_camera_em_validator();
 	void update_camera_wireframe_overlay(const Eigen::Affine2f &robot_pose);
 	int find_furniture_index_by_name(const QString& name) const;
 	float model_height_from_label(const std::string& label) const;

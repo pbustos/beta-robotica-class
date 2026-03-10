@@ -33,6 +33,9 @@
 #include <QDateTime>
 #include <QDomDocument>
 #include <QSettings>
+#include <QCoreApplication>
+#include <QEventLoop>
+#include <QThread>
 #include <QDataStream>
 #include <QShortcut>
 #include <unistd.h>  // For sysconf
@@ -279,19 +282,7 @@ void SpecificWorker::initialize()
 
         connect(grounding_fit_mesh_button_, &QPushButton::clicked, this, [this]()
         {
-            grounding_focus_points_.clear();
-            grounding_focus_label_.clear();
-            grounding_world_index_ = -1;
-            if (grounding_status_label_)
-                grounding_status_label_->setText("Status: SDF fitting disabled");
-            if (grounding_cam_label_)
-                grounding_cam_label_->setText("Camera object: -");
-            if (grounding_world_label_)
-                grounding_world_label_->setText("World object: -");
-            if (grounding_score_label_)
-                grounding_score_label_->setText("Score: -");
-            if (grounding_sdf_label_)
-                grounding_sdf_label_->setText("SDF fit: disabled");
+            run_camera_em_validator();
         });
 
         connect(grounding_reload_svg_button_, &QPushButton::clicked, this, [this]()
@@ -400,6 +391,21 @@ void SpecificWorker::initialize()
         connect(pushButton_camera, &QPushButton::toggled, this, [this](bool checked) {
             if (checked) camera_viewer_->show();
             else         camera_viewer_->hide();
+        });
+        connect(camera_viewer_.get(), &CameraViewer::emRequested, this, [this]() {
+            if (em_overlay_persistent_active_)
+            {
+                em_overlay_persistent_active_ = false;
+                em_validator_overlay_lock_ = false;
+                camera_viewer_->clear_wireframe_overlay();
+                camera_viewer_->clear_em_points_overlay();
+                if (grounding_status_label_)
+                    grounding_status_label_->setText("Status: EM overlay cleared");
+                if (grounding_sdf_label_)
+                    grounding_sdf_label_->setText("SDF fit: -");
+            }
+            else
+                run_camera_em_validator();
         });
         connect(camera_viewer_.get(), &QDialog::finished, this, [this](int) {
             if (pushButton_camera) pushButton_camera->setChecked(false);
@@ -665,8 +671,20 @@ void SpecificWorker::compute()
     }
     const auto &res = res_opt.value();
 
+    if (ownership_em_enabled_ && lidar_low_high_.has_value())
+        run_ownership_em_step(lidar_low_high_->first, res.robot_pose);
+
     if (camera_viewer_)
-        update_camera_wireframe_overlay(res.robot_pose);
+    {
+        camera_viewer_->set_infrastructure_context(res.robot_pose,
+                                                   room_polygon_,
+                                                   params.CAMERA_TX,
+                                                   params.CAMERA_TY,
+                                                   params.CAMERA_TZ,
+                                                   2.5f);
+        if (!em_validator_overlay_lock_)
+            update_camera_wireframe_overlay(res.robot_pose);
+    }
 
     auto t0 = std::chrono::steady_clock::now();
 
@@ -763,39 +781,107 @@ void SpecificWorker::compute()
         }
         else
         {
-            send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
-            auto cmd = rc::VelocityCommand(ctrl.side, ctrl.adv, ctrl.rot);
-            velocity_buffer_.put<0>(std::move(cmd), timestamp);
-
             const float speed = std::hypot(ctrl.adv, ctrl.side);
             const float rot = std::fabs(ctrl.rot);
             const float cpu_usage = get_cpu_usage();
             const bool blocked_like = (ctrl.dist_to_goal > trajectory_controller_.params.goal_threshold)
                                    && (speed < BLOCKED_SPEED_THRESHOLD);
-            update_episode_metrics(res, &ctrl, speed, rot, cpu_usage, mppi_ms, blocked_like);
 
-            if (do_draw && draw_trajectories_) draw_trajectory_debug(ctrl, res.robot_pose);
-
-            // ── Obstacle avoidance: detect blockage → cluster → replan ──
-            if (ctrl.path_blocked && lidar_low_high_.has_value())
+            if (ctrl.path_blocked)
             {
-                float obs_height = 0.f;
-                const auto polygon = cluster_lidar_to_polygon(
-                    lidar_low_high_->first,
-                    ctrl.blockage_center_room,
-                    std::min(ctrl.blockage_radius + 0.1f, 1.0f),  // tight search, capped at 1m
-                    res.robot_pose,
-                    obs_height);
+                safeguard_blockage_center_ = ctrl.blockage_center_room;
+                safeguard_blockage_radius_ = std::max(0.20f, ctrl.blockage_radius);
+            }
 
-                if (!polygon.empty())
+            if (!safeguard_recovery_active_ && ctrl.safety_guard_triggered && blocked_like)
+            {
+                safeguard_recovery_active_ = true;
+                safeguard_replan_pending_ = true;
+                safeguard_recovery_cycles_ = 0;
+                safeguard_clear_counter_ = 0;
+                qWarning() << "[SafeguardRecovery] Triggered: starting backward recovery";
+            }
+
+            bool recovering_now = false;
+            if (safeguard_recovery_active_)
+            {
+                recovering_now = true;
+                safeguard_recovery_cycles_++;
+                if (ctrl.safety_guard_triggered)
+                    safeguard_clear_counter_ = 0;
+                else
+                    safeguard_clear_counter_++;
+
+                const bool recovered = (safeguard_clear_counter_ >= SAFEGUARD_CLEAR_CONFIRM_CYCLES);
+                const bool timeout = (safeguard_recovery_cycles_ >= SAFEGUARD_RECOVERY_MAX_CYCLES);
+
+                if (!recovered && !timeout)
                 {
-                    replan_around_obstacle(polygon, obs_height, ctrl.blockage_center_room, res.robot_pose);
+                    send_velocity_command(SAFEGUARD_BACKWARD_SPEED, 0.f, 0.f);
+                    auto cmd = rc::VelocityCommand(0.f, SAFEGUARD_BACKWARD_SPEED, 0.f);
+                    velocity_buffer_.put<0>(std::move(cmd), timestamp);
                 }
                 else
                 {
-                    qWarning() << "[ObstacleAvoid] Blockage detected but LiDAR cluster too sparse to model";
+                    safeguard_recovery_active_ = false;
+                    safeguard_recovery_cycles_ = 0;
+                    safeguard_clear_counter_ = 0;
+
+                    send_velocity_command(0.f, 0.f, 0.f);
+                    auto stop_cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
+                    velocity_buffer_.put<0>(std::move(stop_cmd), timestamp);
+
+                    if (safeguard_replan_pending_ && lidar_low_high_.has_value())
+                    {
+                        float obs_height = 0.f;
+                        const auto polygon = cluster_lidar_to_polygon(
+                            lidar_low_high_->first,
+                            safeguard_blockage_center_,
+                            std::min(safeguard_blockage_radius_ + 0.15f, 1.1f),
+                            res.robot_pose,
+                            obs_height);
+
+                        if (!polygon.empty())
+                            replan_around_obstacle(polygon, obs_height, safeguard_blockage_center_, res.robot_pose);
+                        else
+                            qWarning() << "[SafeguardRecovery] Recovery ended but obstacle cluster too sparse for replan";
+                    }
+                    safeguard_replan_pending_ = false;
+                    recovering_now = false;
                 }
             }
+
+            if (!recovering_now)
+            {
+                send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
+                auto cmd = rc::VelocityCommand(ctrl.side, ctrl.adv, ctrl.rot);
+                velocity_buffer_.put<0>(std::move(cmd), timestamp);
+
+                // ── Obstacle avoidance: detect blockage → cluster → replan ──
+                if (ctrl.path_blocked && lidar_low_high_.has_value())
+                {
+                    float obs_height = 0.f;
+                    const auto polygon = cluster_lidar_to_polygon(
+                        lidar_low_high_->first,
+                        ctrl.blockage_center_room,
+                        std::min(ctrl.blockage_radius + 0.1f, 1.0f),  // tight search, capped at 1m
+                        res.robot_pose,
+                        obs_height);
+
+                    if (!polygon.empty())
+                    {
+                        replan_around_obstacle(polygon, obs_height, ctrl.blockage_center_room, res.robot_pose);
+                    }
+                    else
+                    {
+                        qWarning() << "[ObstacleAvoid] Blockage detected but LiDAR cluster too sparse to model";
+                    }
+                }
+            }
+
+            update_episode_metrics(res, &ctrl, speed, rot, cpu_usage, mppi_ms, blocked_like || recovering_now);
+
+            if (do_draw && draw_trajectories_) draw_trajectory_debug(ctrl, res.robot_pose);
         }
         viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
     }
@@ -827,6 +913,640 @@ void SpecificWorker::save_camera_state_to_settings() const
     settings.setValue("camera/position", cs.position);
     settings.setValue("camera/viewCenter", cs.viewCenter);
     settings.setValue("camera/upVector", cs.upVector);
+}
+
+void SpecificWorker::rebuild_ownership_em_models()
+{
+    if (!ownership_em_enabled_)
+        return;
+
+    rc::ObjectOwnershipEM::Config cfg;
+    cfg.max_iterations = 3;
+    cfg.convergence_eps = 1e-3f;
+    cfg.anneal_t_start = 2.0f;
+    cfg.anneal_t_end = 0.8f;
+    cfg.robust_sigma = 0.30f;
+    cfg.max_pose_jump_xy = 0.30f;
+    cfg.max_pose_jump_yaw = 0.20f;
+    ownership_em_.configure(cfg);
+
+    std::vector<rc::ObjectOwnershipEM::ClassModel> models;
+    models.reserve(furniture_polygons_.size() + 1);
+    std::vector<rc::ObjectOwnershipEM::ClassState> states;
+    states.reserve(furniture_polygons_.size() + 1);
+
+    auto expected_height = [](const std::string& label) -> float
+    {
+        const QString ql = QString::fromStdString(label).toLower();
+        if (ql.contains("silla") || ql.contains("chair")) return 0.95f;
+        if (ql.contains("mesa") || ql.contains("table")) return 0.75f;
+        if (ql.contains("banco") || ql.contains("bench")) return 0.52f;
+        if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen")) return 1.10f;
+        return 0.85f;
+    };
+
+    for (const auto& fp : furniture_polygons_)
+    {
+        if (fp.vertices.size() < 3)
+            continue;
+
+        Eigen::Vector2f cen = Eigen::Vector2f::Zero();
+        for (const auto& v : fp.vertices) cen += v;
+        cen /= static_cast<float>(fp.vertices.size());
+
+        Eigen::Matrix2f cov = Eigen::Matrix2f::Zero();
+        for (const auto& v : fp.vertices)
+        {
+            const Eigen::Vector2f d = v - cen;
+            cov += d * d.transpose();
+        }
+        cov /= static_cast<float>(fp.vertices.size());
+
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig(cov);
+        Eigen::Vector2f axis_x(1.f, 0.f);
+        if (eig.info() == Eigen::Success)
+            axis_x = eig.eigenvectors().col(1).normalized();
+
+        rc::ObjectOwnershipEM::ClassModel m;
+        m.class_id = fp.label.empty() ? fp.id : fp.label;
+        m.prior_weight = 1.0f;
+        m.expected_height = expected_height(fp.label.empty() ? fp.id : fp.label);
+        models.emplace_back(std::move(m));
+
+        rc::ObjectOwnershipEM::ClassState s;
+        s.class_id = fp.label.empty() ? fp.id : fp.label;
+        s.position = Eigen::Vector3f(cen.x(), cen.y(), 0.5f * expected_height(fp.label.empty() ? fp.id : fp.label));
+        s.yaw_rad = std::atan2(axis_x.y(), axis_x.x());
+        s.scale = 1.0f;
+        s.confidence = 0.5f;
+        s.active = true;
+        states.emplace_back(std::move(s));
+    }
+
+    rc::ObjectOwnershipEM::ClassModel bg;
+    bg.class_id = "background";
+    bg.is_background = true;
+    bg.prior_weight = 0.8f;
+    bg.expected_height = 0.0f;
+    models.emplace_back(std::move(bg));
+
+    rc::ObjectOwnershipEM::ClassState bg_state;
+    bg_state.class_id = "background";
+    bg_state.active = true;
+    bg_state.confidence = 0.5f;
+    states.emplace_back(std::move(bg_state));
+
+    ownership_em_.set_models(models);
+    ownership_em_.set_initial_states(states);
+}
+
+void SpecificWorker::run_ownership_em_step(const std::vector<Eigen::Vector3f>& points_robot,
+                                           const Eigen::Affine2f& robot_pose)
+{
+    if (!ownership_em_enabled_ || points_robot.empty())
+        return;
+
+    rc::ObjectOwnershipEM::ObservationBatch batch;
+    batch.robot_pose = robot_pose;
+    batch.timestamp_ms = static_cast<std::int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    const float c = std::cos(std::atan2(robot_pose.linear()(1, 0), robot_pose.linear()(0, 0)));
+    const float s = std::sin(std::atan2(robot_pose.linear()(1, 0), robot_pose.linear()(0, 0)));
+    const float rx = robot_pose.translation().x();
+    const float ry = robot_pose.translation().y();
+
+    constexpr std::size_t max_points = 1800;
+    const std::size_t stride = std::max<std::size_t>(1, points_robot.size() / max_points);
+    batch.points_world.reserve(points_robot.size() / stride + 1);
+
+    for (std::size_t i = 0; i < points_robot.size(); i += stride)
+    {
+        const auto& p = points_robot[i];
+        const float wx = c * p.x() - s * p.y() + rx;
+        const float wy = s * p.x() + c * p.y() + ry;
+        batch.points_world.emplace_back(wx, wy, p.z());
+    }
+
+    ownership_em_.set_observations(batch);
+    if (!ownership_em_.run_single_iteration())
+        return;
+
+    apply_ownership_em_visuals();
+
+    if (++ownership_em_log_counter_ >= 40)
+    {
+        ownership_em_log_counter_ = 0;
+        const auto& m = ownership_em_.get_metrics();
+        qInfo() << "[OwnershipEM] objective=" << m.objective
+                << "entropy=" << m.avg_entropy
+                << "bg=" << m.background_fraction;
+    }
+}
+
+void SpecificWorker::run_camera_em_validator()
+{
+    if (!camera_viewer_)
+        return;
+
+    em_validator_overlay_lock_ = true;
+    bool keep_overlay_lock = false;
+    struct OverlayUnlock
+    {
+        bool &flag;
+        bool &keep;
+        ~OverlayUnlock() { if (!keep) flag = false; }
+    } overlay_unlock{em_validator_overlay_lock_, keep_overlay_lock};
+    em_overlay_persistent_active_ = false;
+    camera_viewer_->clear_em_points_overlay();
+
+    if (grounding_status_label_)
+        grounding_status_label_->setText("Status: running EM validator...");
+
+    std::optional<rc::RoomConceptAI::UpdateResult> res_opt;
+    {
+        std::lock_guard lock(loc_result_mutex_);
+        res_opt = loc_result_;
+    }
+    if (!res_opt.has_value() || !res_opt->ok)
+    {
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Status: EM validator needs localization");
+        return;
+    }
+    const Eigen::Affine2f robot_pose = res_opt->robot_pose;
+
+    auto centroid_of = [](const FurniturePolygon& fp) -> Eigen::Vector2f
+    {
+        Eigen::Vector2f c = Eigen::Vector2f::Zero();
+        if (fp.vertices.empty())
+            return c;
+        for (const auto& v : fp.vertices) c += v;
+        c /= static_cast<float>(fp.vertices.size());
+        return c;
+    };
+
+    try
+    {
+        const auto tdata = imagesegmentation_proxy->getAll();
+
+        std::vector<Eigen::Vector3f> points_cam_all;
+        std::vector<Eigen::Vector3f> points_world_all;
+        points_cam_all.reserve(12000);
+        points_world_all.reserve(12000);
+
+        for (const auto& obj : tdata.objects)
+        {
+            for (const auto& p : obj.points3D)
+            {
+                const Eigen::Vector3f p_cam(p.x, p.y, p.z);
+                const float x_robot = p.x + params.CAMERA_TX;
+                const float y_robot = p.y + params.CAMERA_TY;
+                const float z_robot = p.z + params.CAMERA_TZ;
+                const Eigen::Vector2f p_world_xy = robot_pose * Eigen::Vector2f(x_robot, y_robot);
+                const Eigen::Vector3f p_world(p_world_xy.x(), p_world_xy.y(), z_robot);
+                points_cam_all.emplace_back(p_cam);
+                points_world_all.emplace_back(p_world);
+            }
+        }
+
+        const bool enough_points = points_world_all.size() >= 30;
+
+        constexpr std::size_t max_points = 2200;
+        const std::size_t stride = std::max<std::size_t>(1, points_world_all.empty() ? 1 : points_world_all.size() / max_points);
+        std::vector<Eigen::Vector3f> points_cam;
+        std::vector<Eigen::Vector3f> points_world;
+        points_cam.reserve(points_world_all.empty() ? 0 : (points_world_all.size() / stride + 1));
+        points_world.reserve(points_world_all.empty() ? 0 : (points_world_all.size() / stride + 1));
+        for (std::size_t i = 0; i < points_world_all.size(); i += stride)
+        {
+            points_cam.emplace_back(points_cam_all[i]);
+            points_world.emplace_back(points_world_all[i]);
+        }
+
+        if (furniture_polygons_.empty())
+        {
+            if (grounding_status_label_)
+                grounding_status_label_->setText("Status: no map furniture for EM classes");
+            return;
+        }
+
+        const Eigen::Affine2f world_to_robot = robot_pose.inverse();
+        const auto &timg = tdata.image;
+        const int img_w = std::max(1, timg.width);
+        const int img_h = std::max(1, timg.height);
+        float fx = static_cast<float>(timg.focalx);
+        float fy = static_cast<float>(timg.focaly);
+        const float max_reasonable_fx = static_cast<float>(img_w) * 5.f;
+        const float max_reasonable_fy = static_cast<float>(img_h) * 5.f;
+        if (!std::isfinite(fx) || fx < 10.f || fx > max_reasonable_fx) fx = static_cast<float>(img_w) * 0.9f;
+        if (!std::isfinite(fy) || fy < 10.f || fy > max_reasonable_fy) fy = static_cast<float>(img_h) * 0.9f;
+        const float cx = static_cast<float>(img_w) * 0.5f;
+        const float cy = static_cast<float>(img_h) * 0.5f;
+        constexpr float near_depth = 0.05f;
+
+        auto to_camera_sel = [this](const Eigen::Vector2f& p_robot, float z_world) -> Eigen::Vector3f
+        {
+            return Eigen::Vector3f(p_robot.x() - params.CAMERA_TX,
+                                   p_robot.y() - params.CAMERA_TY,
+                                   z_world - params.CAMERA_TZ);
+        };
+
+        auto projects_inside = [&](const Eigen::Vector3f& p_cam) -> bool
+        {
+            // Camera frame convention used in this component:
+            // x = lateral, y = forward(depth), z = up.
+            const float depth = p_cam.y();
+            if (depth <= near_depth) return false;
+            const float lateral = p_cam.x();
+            const float u = cx + fx * (lateral / depth);
+            const float v = cy - fy * (p_cam.z() / depth);
+            return std::isfinite(u) && std::isfinite(v) && u >= 0.f && u < static_cast<float>(img_w) && v >= 0.f && v < static_cast<float>(img_h);
+        };
+
+        std::vector<int> candidate_indices;
+        candidate_indices.reserve(furniture_polygons_.size());
+        for (std::size_t i = 0; i < furniture_polygons_.size(); ++i)
+        {
+            const auto& fp = furniture_polygons_[i];
+            if (fp.vertices.size() < 3)
+                continue;
+
+            const std::string base_name = fp.label.empty() ? fp.id : fp.label;
+            const float h = model_height_from_label(base_name);
+
+            int projected_in_frustum = 0;
+            for (const auto& v : fp.vertices)
+            {
+                const Eigen::Vector2f vr = world_to_robot * v;
+                const Eigen::Vector3f pc0 = to_camera_sel(vr, 0.f);
+                const Eigen::Vector3f pc1 = to_camera_sel(vr, h);
+                if (projects_inside(pc0)) ++projected_in_frustum;
+                if (projects_inside(pc1)) ++projected_in_frustum;
+            }
+
+            if (projected_in_frustum == 0)
+            {
+                const Eigen::Vector2f c_world = centroid_of(fp);
+                const Eigen::Vector2f c_robot = world_to_robot * c_world;
+                const Eigen::Vector3f c_cam = to_camera_sel(c_robot, 0.5f * h);
+                if (projects_inside(c_cam))
+                    projected_in_frustum = 1;
+            }
+
+            // Require at least one valid projection in the true frustum test.
+            if (projected_in_frustum > 0)
+                candidate_indices.push_back(static_cast<int>(i));
+        }
+
+        if (candidate_indices.empty())
+        {
+            if (grounding_status_label_)
+                grounding_status_label_->setText("Status: no model objects inside camera frustum");
+            return;
+        }
+
+        struct EMClass
+        {
+            int furniture_index = -1;
+            std::string label;
+            float height = 0.8f;
+            std::vector<Eigen::Vector2f> vertices;
+            float last_sdf = 0.f;
+        };
+
+        std::vector<EMClass> classes;
+        classes.reserve(candidate_indices.size());
+        for (int idx : candidate_indices)
+        {
+            const auto& fp = furniture_polygons_[idx];
+            EMClass c;
+            c.furniture_index = idx;
+            c.label = fp.label.empty() ? fp.id : fp.label;
+            c.height = model_height_from_label(c.label);
+            c.vertices = fp.vertices;
+            classes.emplace_back(std::move(c));
+        }
+
+        const int K = static_cast<int>(classes.size());
+        const int N = static_cast<int>(points_world.size());
+        if (K <= 0)
+            return;
+
+        std::vector<QString> class_labels;
+        std::vector<QColor> class_colors;
+        class_labels.reserve(K + 1);
+        class_colors.reserve(K + 1);
+        QStringList visible_model_names;
+        visible_model_names.reserve(K);
+        for (int k = 0; k < K; ++k)
+        {
+            class_labels.emplace_back(QString::fromStdString(classes[static_cast<std::size_t>(k)].label));
+            class_colors.emplace_back(QColor::fromHsv((47 * k) % 360, 220, 255, 220));
+            visible_model_names << class_labels.back();
+        }
+        class_labels.emplace_back("background");
+        class_colors.emplace_back(QColor(170, 170, 170, 200));
+
+        const QString visible_names_text = visible_model_names.isEmpty()
+            ? QString("Visible models: -")
+            : QString("Visible models: %1").arg(visible_model_names.join(", "));
+
+        auto point_seg_distance = [](const Eigen::Vector2f& p,
+                                     const Eigen::Vector2f& a,
+                                     const Eigen::Vector2f& b) -> float
+        {
+            const Eigen::Vector2f ab = b - a;
+            const float ab2 = std::max(1e-9f, ab.squaredNorm());
+            const float t = std::clamp((p - a).dot(ab) / ab2, 0.f, 1.f);
+            const Eigen::Vector2f q = a + t * ab;
+            return (p - q).norm();
+        };
+
+        auto point_polygon_distance = [&](const Eigen::Vector2f& p,
+                                          const std::vector<Eigen::Vector2f>& poly) -> float
+        {
+            if (poly.size() < 2)
+                return 1e3f;
+            float best = std::numeric_limits<float>::max();
+            for (std::size_t i = 0; i < poly.size(); ++i)
+            {
+                const auto& a = poly[i];
+                const auto& b = poly[(i + 1) % poly.size()];
+                best = std::min(best, point_seg_distance(p, a, b));
+            }
+            return best;
+        };
+
+        // Draw initial visible wireframes immediately (even before EM iterations)
+        {
+            auto to_camera = [this](const Eigen::Vector2f& p_robot, float z_world) -> Eigen::Vector3f
+            {
+                return Eigen::Vector3f(p_robot.x() - params.CAMERA_TX,
+                                       p_robot.y() - params.CAMERA_TY,
+                                       z_world - params.CAMERA_TZ);
+            };
+
+            std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>> init_segments;
+            std::vector<QColor> init_segment_colors;
+            std::vector<Eigen::Vector3f> init_ann_points;
+            std::vector<QString> init_ann_texts;
+            std::vector<QColor> init_ann_colors;
+            for (int k = 0; k < K; ++k)
+            {
+                const auto& c = classes[static_cast<std::size_t>(k)];
+                const QColor col = class_colors[static_cast<std::size_t>(k)];
+                Eigen::Vector2f center = Eigen::Vector2f::Zero();
+                for (const auto& v : c.vertices) center += v;
+                center /= static_cast<float>(std::max<std::size_t>(1, c.vertices.size()));
+                init_ann_points.emplace_back(to_camera(world_to_robot * center, c.height + 0.05f));
+                init_ann_texts.emplace_back(QString::fromStdString(c.label) + " | L=--");
+                init_ann_colors.emplace_back(col);
+                for (std::size_t i = 0; i < c.vertices.size(); ++i)
+                {
+                    const auto& a = c.vertices[i];
+                    const auto& b = c.vertices[(i + 1) % c.vertices.size()];
+                    const Eigen::Vector2f ar = world_to_robot * a;
+                    const Eigen::Vector2f br = world_to_robot * b;
+                    init_segments.emplace_back(to_camera(ar, 0.f), to_camera(br, 0.f));
+                    init_segment_colors.emplace_back(col);
+                    init_segments.emplace_back(to_camera(ar, c.height), to_camera(br, c.height));
+                    init_segment_colors.emplace_back(col);
+                    init_segments.emplace_back(to_camera(ar, 0.f), to_camera(ar, c.height));
+                    init_segment_colors.emplace_back(col);
+                }
+            }
+            camera_viewer_->set_wireframe_segments_camera_colored(init_segments, init_segment_colors, visible_names_text);
+            camera_viewer_->set_wireframe_annotations_camera(init_ann_points, init_ann_texts, init_ann_colors);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 15);
+        }
+
+        if (!enough_points || N <= 0)
+        {
+            if (grounding_status_label_)
+                grounding_status_label_->setText("Status: visible models shown (insufficient 3D points for EM)");
+            keep_overlay_lock = true;
+            em_overlay_persistent_active_ = true;
+            return;
+        }
+
+        std::vector<float> q(static_cast<std::size_t>(N * (K + 1)), 1.f / static_cast<float>(K + 1));
+        std::vector<int> point_classes(static_cast<std::size_t>(N), K);
+
+        constexpr int max_iters = 8;
+        constexpr float sigma_xy = 0.25f;
+        constexpr float sigma_z = 0.40f;
+
+        auto to_camera = [this](const Eigen::Vector2f& p_robot, float z_world) -> Eigen::Vector3f
+        {
+            return Eigen::Vector3f(p_robot.x() - params.CAMERA_TX,
+                                   p_robot.y() - params.CAMERA_TY,
+                                   z_world - params.CAMERA_TZ);
+        };
+
+        float last_mean_sdf = 0.f;
+        for (int iter = 0; iter < max_iters; ++iter)
+        {
+            // E-step: class likelihoods from current class geometry (SDF-like distance to polygon contour)
+            float objective = 0.f;
+            for (int i = 0; i < N; ++i)
+            {
+                const auto& pw = points_world[static_cast<std::size_t>(i)];
+                const Eigen::Vector2f pxy = pw.head<2>();
+
+                std::vector<float> logp(static_cast<std::size_t>(K + 1), 0.f);
+                float max_logp = -std::numeric_limits<float>::max();
+
+                for (int k = 0; k < K; ++k)
+                {
+                    const auto& c = classes[static_cast<std::size_t>(k)];
+                    const float dxy = point_polygon_distance(pxy, c.vertices);
+                    const float dz = std::abs(pw.z() - 0.5f * c.height);
+                    const float e = (dxy * dxy) / (2.f * sigma_xy * sigma_xy)
+                                  + 0.35f * (dz * dz) / (2.f * sigma_z * sigma_z);
+                    const float l = -e;
+                    logp[static_cast<std::size_t>(k)] = l;
+                    max_logp = std::max(max_logp, l);
+                }
+                const float l_bg = -0.7f * std::abs(pw.z());
+                logp[static_cast<std::size_t>(K)] = l_bg;
+                max_logp = std::max(max_logp, l_bg);
+
+                float sumw = 0.f;
+                for (int k = 0; k < K + 1; ++k)
+                {
+                    const float w = std::exp(logp[static_cast<std::size_t>(k)] - max_logp);
+                    q[static_cast<std::size_t>(i * (K + 1) + k)] = w;
+                    sumw += w;
+                }
+                sumw = std::max(sumw, 1e-8f);
+
+                int best_k = K;
+                float best_q = -1.f;
+                for (int k = 0; k < K + 1; ++k)
+                {
+                    const float qq = q[static_cast<std::size_t>(i * (K + 1) + k)] / sumw;
+                    q[static_cast<std::size_t>(i * (K + 1) + k)] = qq;
+                    if (qq > best_q)
+                    {
+                        best_q = qq;
+                        best_k = k;
+                    }
+                }
+                point_classes[static_cast<std::size_t>(i)] = best_k;
+                objective += -std::log(std::max(best_q, 1e-8f));
+            }
+            objective /= static_cast<float>(N);
+
+            std::vector<float> class_likelihood(static_cast<std::size_t>(K), 0.f);
+            for (int k = 0; k < K; ++k)
+            {
+                float sum_q = 0.f;
+                for (int i = 0; i < N; ++i)
+                    sum_q += q[static_cast<std::size_t>(i * (K + 1) + k)];
+                class_likelihood[static_cast<std::size_t>(k)] = sum_q / static_cast<float>(N);
+            }
+
+            // Wireframe overlay for visible map classes (updated per iteration).
+            std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>> segments;
+            std::vector<QColor> segment_colors;
+            std::vector<Eigen::Vector3f> annotation_points;
+            std::vector<QString> annotation_texts;
+            std::vector<QColor> annotation_colors;
+            for (const auto& c : classes)
+            {
+                if (c.vertices.size() < 3)
+                    continue;
+                const float z0 = 0.f;
+                const float z1 = c.height;
+                const int class_idx = static_cast<int>(&c - classes.data());
+                const QColor class_color = (class_idx >= 0 && class_idx < static_cast<int>(class_colors.size()))
+                    ? class_colors[static_cast<std::size_t>(class_idx)]
+                    : QColor(255, 220, 60, 220);
+
+                Eigen::Vector2f center = Eigen::Vector2f::Zero();
+                for (const auto& v : c.vertices) center += v;
+                center /= static_cast<float>(std::max<std::size_t>(1, c.vertices.size()));
+                const Eigen::Vector2f center_robot = world_to_robot * center;
+                annotation_points.emplace_back(to_camera(center_robot, z1 + 0.05f));
+                const float lk = (class_idx >= 0 && class_idx < static_cast<int>(class_likelihood.size()))
+                    ? class_likelihood[static_cast<std::size_t>(class_idx)] : 0.f;
+                annotation_texts.emplace_back(QString::fromStdString(c.label) + QString(" | L=%1").arg(lk, 0, 'f', 2));
+                annotation_colors.emplace_back(class_color);
+
+                for (std::size_t i = 0; i < c.vertices.size(); ++i)
+                {
+                    const auto& a = c.vertices[i];
+                    const auto& b = c.vertices[(i + 1) % c.vertices.size()];
+                    const Eigen::Vector2f ar = world_to_robot * a;
+                    const Eigen::Vector2f br = world_to_robot * b;
+                    segments.emplace_back(to_camera(ar, z0), to_camera(br, z0));
+                    segment_colors.emplace_back(class_color);
+                    segments.emplace_back(to_camera(ar, z1), to_camera(br, z1));
+                    segment_colors.emplace_back(class_color);
+                    segments.emplace_back(to_camera(ar, z0), to_camera(ar, z1));
+                    segment_colors.emplace_back(class_color);
+                }
+            }
+            camera_viewer_->set_wireframe_segments_camera_colored(segments, segment_colors, visible_names_text);
+            camera_viewer_->set_wireframe_annotations_camera(annotation_points, annotation_texts, annotation_colors);
+
+            const float bg_ratio = static_cast<float>(std::count(point_classes.begin(), point_classes.end(), K))
+                                 / static_cast<float>(std::max(1, N));
+            const QString title = QString("EM iter %1/%2 | obj=%3 bg=%4")
+                                      .arg(iter + 1)
+                                      .arg(max_iters)
+                                      .arg(objective, 0, 'f', 3)
+                                      .arg(bg_ratio, 0, 'f', 2);
+            camera_viewer_->set_em_points_overlay(points_cam, point_classes, class_colors, class_labels, title);
+
+            if (grounding_status_label_)
+                grounding_status_label_->setText(QString("Status: EM iter %1/%2").arg(iter + 1).arg(max_iters));
+            if (grounding_sdf_label_)
+                grounding_sdf_label_->setText(QString("SDF fit: mean=%1").arg(last_mean_sdf, 0, 'f', 4));
+
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 15);
+
+            // M-step: optimize each class pose/shape with high-probability points via autograd SDF optimizer.
+            float sdf_acc = 0.f;
+            int sdf_count = 0;
+            for (int k = 0; k < K; ++k)
+            {
+                std::vector<Eigen::Vector3f> class_points;
+                class_points.reserve(static_cast<std::size_t>(N / std::max(1, K)) + 1);
+                for (int i = 0; i < N; ++i)
+                {
+                    const float qik = q[static_cast<std::size_t>(i * (K + 1) + k)];
+                    if (qik > 0.45f || point_classes[static_cast<std::size_t>(i)] == k)
+                        class_points.emplace_back(points_world[static_cast<std::size_t>(i)]);
+                }
+
+                if (class_points.size() < 15)
+                    continue;
+
+                auto result = mesh_sdf_optimizer_.optimize_mesh_with_pose(class_points,
+                                                                           classes[static_cast<std::size_t>(k)].vertices,
+                                                                           room_polygon_);
+                if (!result.ok)
+                    continue;
+
+                classes[static_cast<std::size_t>(k)].vertices = result.vertices;
+                classes[static_cast<std::size_t>(k)].last_sdf = result.final_data_loss;
+                sdf_acc += result.final_data_loss;
+                ++sdf_count;
+            }
+
+            last_mean_sdf = (sdf_count > 0) ? (sdf_acc / static_cast<float>(sdf_count)) : last_mean_sdf;
+            QThread::msleep(70);
+        }
+
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Status: EM validator finished");
+        keep_overlay_lock = true;
+        em_overlay_persistent_active_ = true;
+    }
+    catch (const Ice::Exception&)
+    {
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Status: EM validator failed (segmentation unavailable)");
+        em_overlay_persistent_active_ = false;
+    }
+}
+
+void SpecificWorker::apply_ownership_em_visuals()
+{
+    if (!ownership_em_enabled_ || furniture_polygons_.empty() || furniture_draw_items_.empty())
+        return;
+
+    std::unordered_map<std::string, float> confidence_by_id;
+    confidence_by_id.reserve(ownership_em_.get_states().size() * 2);
+    for (const auto& st : ownership_em_.get_states())
+    {
+        if (!st.active)
+            continue;
+        confidence_by_id[st.class_id] = std::clamp(st.confidence, 0.f, 1.f);
+    }
+
+    const QColor base(50, 100, 255);
+    for (std::size_t i = 0; i < furniture_polygons_.size() && i < furniture_draw_items_.size(); ++i)
+    {
+        auto* item = furniture_draw_items_[i];
+        if (item == nullptr)
+            continue;
+
+        const auto& fp = furniture_polygons_[i];
+        float conf = 0.35f;
+        if (const auto it = confidence_by_id.find(fp.label); it != confidence_by_id.end())
+            conf = it->second;
+        else if (const auto it2 = confidence_by_id.find(fp.id); it2 != confidence_by_id.end())
+            conf = it2->second;
+
+        const qreal width = 0.04 + 0.10 * static_cast<qreal>(conf);
+        const int alpha = static_cast<int>(35.f + 165.f * conf);
+        item->setPen(QPen(base, width));
+        item->setBrush(QBrush(QColor(base.red(), base.green(), base.blue(), alpha)));
+    }
 }
 
 int SpecificWorker::find_furniture_index_by_name(const QString& name) const
@@ -2977,6 +3697,8 @@ void SpecificWorker::draw_furniture()
         furniture_draw_items_.push_back(item);
     }
 
+    apply_ownership_em_visuals();
+
     if (!furniture_polygons_.empty())
         qInfo() << "[draw_furniture] Drew" << furniture_polygons_.size() << "furniture polygons";
 
@@ -3049,6 +3771,8 @@ void SpecificWorker::draw_furniture()
         }
         viewer_3d_->update_furniture(items);
     }
+
+    rebuild_ownership_em_models();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
