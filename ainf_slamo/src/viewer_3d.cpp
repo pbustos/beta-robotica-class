@@ -38,11 +38,23 @@ void WebotsStyleCameraController::moveCamera(
     auto* cam = camera();
     if (!cam) return;
 
+    auto dolly_clamped = [cam](float signed_step)
+    {
+        QVector3D to_center = cam->viewCenter() - cam->position();
+        float dist = to_center.length();
+        if (dist < 1e-5f)
+            return;
+
+        const QVector3D dir = to_center / dist;
+        constexpr float min_dist = 0.35f;
+        constexpr float max_dist = 250.f;
+
+        const float new_dist = std::clamp(dist + signed_step, min_dist, max_dist);
+        cam->setPosition(cam->viewCenter() - dir * new_dist);
+    };
+
     const float look = lookSpeed() * dt;
     const float lin  = linearSpeed() * dt;
-    const float cam_dist = (cam->position() - cam->viewCenter()).length();
-    const float pan_scale = std::clamp(cam_dist / 12.0f, 0.12f, 2.0f);
-    const float pan_lin = lin * pan_scale;
     const bool dual_button = state.leftMouseButtonActive && state.rightMouseButtonActive;
     const bool zoom_roll_mode = state.middleMouseButtonActive || dual_button;
 
@@ -67,8 +79,8 @@ void WebotsStyleCameraController::moveCamera(
     if (state.rightMouseButtonActive && !state.leftMouseButtonActive && !state.middleMouseButtonActive)
     {
         // Translate in camera-local XY (screen plane), moving view centre too.
-        cam->translate(QVector3D(-state.rxAxisValue * pan_lin,
-                                 -state.ryAxisValue * pan_lin,
+        cam->translate(QVector3D(-state.rxAxisValue * linearSpeed() * dt,
+                                 -state.ryAxisValue * linearSpeed() * dt,
                                   0.f),
                        Qt3DRender::QCamera::TranslateViewCenter);
     }
@@ -76,10 +88,10 @@ void WebotsStyleCameraController::moveCamera(
     // ---- Middle / Left+Right: zoom + roll --------------------------------
     if (zoom_roll_mode)
     {
-        // Vertical drag: dolly
-        constexpr float zoom_gain = 2.4f;
-        cam->translate(QVector3D(0.f, 0.f, state.ryAxisValue * lin * zoom_gain),
-                       Qt3DRender::QCamera::DontTranslateViewCenter);
+        // Vertical drag: dolly (clamped around current pivot)
+        constexpr float drag_zoom_gain = 2.4f;
+        const float drag_step = state.ryAxisValue * lin * drag_zoom_gain;
+        dolly_clamped(drag_step);
 
         // Horizontal drag: roll around view axis
         const float roll_deg = -state.rxAxisValue * look * 0.75f;
@@ -90,9 +102,11 @@ void WebotsStyleCameraController::moveCamera(
     // ---- Zoom: scroll wheel -----------------------------------------------
     if (qAbs(state.tzAxisValue) > 0.f)
     {
-        constexpr float wheel_zoom_gain = 2.6f;
-        cam->translate(QVector3D(0.f, 0.f, state.tzAxisValue * lin * wheel_zoom_gain),
-                       Qt3DRender::QCamera::DontTranslateViewCenter);
+        // Wheel zoom must not depend on frame dt: large dt spikes caused jumps.
+        const float dist = (cam->viewCenter() - cam->position()).length();
+        const float adaptive = std::max(0.05f, dist * 0.12f);
+        const float wheel_step = state.tzAxisValue * adaptive;
+        dolly_clamped(wheel_step);
     }
 }
 
@@ -504,9 +518,16 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         }
         else if (ql.contains("banco") || ql.contains("bench"))
         {
+            // Benches need an extra +90º wrt table orientation.
+            // Keep size-axis convention: long dimension A along local X when A >= B.
+            const float a = size.x();
+            const float b = size.y();
+            const bool a_is_long = a >= b;
+            const float extra_yaw_deg = a_is_long ? -90.f : 90.f;
+            const QQuaternion bench_axis_correction = QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, extra_yaw_deg);
             make_entity(abs_mesh("meshes/bench.obj"),
                         QColor(130, 85, 45), QColor(55, 36, 19), 15.f,
-                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
+                        cen, bench_axis_correction * axis_rot, QVector3D(1.f, 1.f, 1.f),
                         QString::fromStdString(item.label));
         }
         else if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot"))
@@ -524,9 +545,13 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         }
         else if (ql.contains("silla") || ql.contains("chair"))
         {
+            // Chair native footprint is ~0.45 m × 0.45 m in obj X × Y.
+            // Scale it to fitted footprint to keep render aligned with optimized polygon.
+            const float sx = (size.x() > 0.1f) ? size.x() / 0.45f : 1.f;
+            const float sy = (size.y() > 0.1f) ? size.y() / 0.45f : 1.f;
             make_entity(abs_mesh("meshes/chair.obj"),
                         QColor(110, 85, 60), QColor(50, 35, 20), 18.f,
-                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
+                        cen, axis_rot, QVector3D(sx, sy, 1.f),
                         QString::fromStdString(item.label));
         }
         else if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen") ||
@@ -580,6 +605,9 @@ void Viewer3D::attach_picker(Qt3DCore::QEntity* e, const QString& name)
     {
         if (ev->button() == Qt3DRender::QPickEvent::LeftButton)
         {
+            if (name != "Floor")
+                emit objectLeftClicked(name);
+
             // Keep plain left-drag orbit stable (no implicit translation on press).
             // Optional explicit recenter: Alt+Left click.
             if (camera_ && (ev->modifiers() & static_cast<int>(Qt::AltModifier)))

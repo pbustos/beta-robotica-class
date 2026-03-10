@@ -175,6 +175,7 @@ void SpecificWorker::initialize()
         grounding_score_label_ = new QLabel("Score: -", grounding_panel_);
         grounding_sdf_label_ = new QLabel("SDF fit: -", grounding_panel_);
         grounding_fit_mesh_button_ = new QPushButton("Fit Grounded Mesh", grounding_panel_);
+        grounding_reload_svg_button_ = new QPushButton("Reload Meshes from SVG", grounding_panel_);
 
         grounding_panel_->setMinimumWidth(0);
         grounding_panel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -201,6 +202,7 @@ void SpecificWorker::initialize()
         grounding_layout->addWidget(grounding_score_label_);
         grounding_layout->addWidget(grounding_sdf_label_);
         grounding_layout->addWidget(grounding_fit_mesh_button_);
+        grounding_layout->addWidget(grounding_reload_svg_button_);
         grounding_layout->addStretch();
         right_splitter->addWidget(grounding_panel_);
         right_splitter->setSizes({300, 140});
@@ -223,7 +225,28 @@ void SpecificWorker::initialize()
             if (scene_tree_)
                 scene_tree_->select_item_by_name(picked);
 
+            focused_model_index_ = find_furniture_index_by_name(picked);
+
             this->Navigator_gotoObject(picked.toStdString());
+        });
+
+        connect(viewer_3d_.get(), &rc::Viewer3D::objectLeftClicked, this, [this](const QString& n) {
+            QString picked = n.trimmed();
+            const int idx = picked.indexOf(" (");
+            if (idx > 0)
+                picked = picked.left(idx);
+
+            const int picked_idx = find_furniture_index_by_name(picked);
+            if (picked_idx >= 0)
+            {
+                if (focused_model_index_ == picked_idx)
+                    focused_model_index_ = -1;
+                else
+                    focused_model_index_ = picked_idx;
+            }
+
+            if (scene_tree_)
+                scene_tree_->toggle_item_by_name(picked);
         });
 
         // Connect floor picking to navigation
@@ -253,67 +276,45 @@ void SpecificWorker::initialize()
 
         connect(grounding_fit_mesh_button_, &QPushButton::clicked, this, [this]()
         {
-            if (grounding_focus_points_.size() < 12)
-            {
-                if (grounding_status_label_)
-                    grounding_status_label_->setText("Status: not enough camera points for mesh SDF fit");
-                if (grounding_sdf_label_)
-                    grounding_sdf_label_->setText("SDF fit: -");
-                return;
-            }
-
-            if (grounding_world_index_ < 0 || grounding_world_index_ >= static_cast<int>(furniture_polygons_.size()))
-            {
-                if (grounding_status_label_)
-                    grounding_status_label_->setText("Status: no grounded world mesh selected");
-                if (grounding_sdf_label_)
-                    grounding_sdf_label_->setText("SDF fit: -");
-                return;
-            }
-
-            auto &selected = furniture_polygons_[grounding_world_index_];
-            if (selected.vertices.size() < 3)
-            {
-                if (grounding_status_label_)
-                    grounding_status_label_->setText("Status: grounded world mesh has too few vertices");
-                if (grounding_sdf_label_)
-                    grounding_sdf_label_->setText("SDF fit: -");
-                return;
-            }
-
-            const auto fit = mesh_sdf_optimizer_.optimize_mesh_with_pose(grounding_focus_points_, selected.vertices, room_polygon_);
-            if (!fit.ok)
-            {
-                if (grounding_status_label_)
-                    grounding_status_label_->setText("Status: mesh SDF fit failed");
-                if (grounding_sdf_label_)
-                    grounding_sdf_label_->setText("SDF fit: failed");
-                return;
-            }
-
-            selected.vertices = fit.vertices;
-            save_fitted_meshes_to_json();
-            draw_furniture();
-
+            grounding_focus_points_.clear();
+            grounding_focus_label_.clear();
+            grounding_world_index_ = -1;
             if (grounding_status_label_)
-            {
-                grounding_status_label_->setText(
-                    QString("Status: mesh+pose fit done for '%1' (%2 -> %3) it=%4")
-                        .arg(QString::fromStdString(selected.label.empty() ? selected.id : selected.label))
-                        .arg(fit.initial_loss, 0, 'f', 4)
-                        .arg(fit.final_loss, 0, 'f', 4)
-                        .arg(fit.iterations));
-            }
+                grounding_status_label_->setText("Status: SDF fitting disabled");
+            if (grounding_cam_label_)
+                grounding_cam_label_->setText("Camera object: -");
+            if (grounding_world_label_)
+                grounding_world_label_->setText("World object: -");
+            if (grounding_score_label_)
+                grounding_score_label_->setText("Score: -");
             if (grounding_sdf_label_)
+                grounding_sdf_label_->setText("SDF fit: disabled");
+        });
+
+        connect(grounding_reload_svg_button_, &QPushButton::clicked, this, [this]()
+        {
+            if (current_layout_file_.empty())
             {
-                const float improvement = fit.initial_loss - fit.final_loss;
-                grounding_sdf_label_->setText(
-                    QString("SDF fit: final=%1 (\u0394=%2) pose=(%3,%4)")
-                        .arg(fit.final_loss, 0, 'f', 6)
-                        .arg(improvement, 0, 'f', 6)
-                        .arg(fit.translation.x(), 0, 'f', 3)
-                        .arg(fit.translation.y(), 0, 'f', 3));
+                if (grounding_status_label_)
+                    grounding_status_label_->setText("Status: no layout file to reload from");
+                return;
             }
+
+            if (QFile::exists(FITTED_MESHES_FILE))
+            {
+                if (!QFile::remove(FITTED_MESHES_FILE))
+                {
+                    if (grounding_status_label_)
+                        grounding_status_label_->setText("Status: cannot remove fitted_meshes.json");
+                    return;
+                }
+            }
+
+            load_layout_from_file(current_layout_file_);
+            if (grounding_status_label_)
+                grounding_status_label_->setText("Status: meshes reloaded from SVG (fitted overrides cleared)");
+            if (grounding_sdf_label_)
+                grounding_sdf_label_->setText("SDF fit: -");
         });
     }
 
@@ -399,6 +400,17 @@ void SpecificWorker::initialize()
         });
         connect(camera_viewer_.get(), &QDialog::finished, this, [this](int) {
             if (pushButton_camera) pushButton_camera->setChecked(false);
+        });
+    }
+
+    if (scene_tree_)
+    {
+        connect(scene_tree_.get(), &SceneTreePanel::furnitureClicked, this, [this](const QString& name, bool selected)
+        {
+            if (selected)
+                focused_model_index_ = find_furniture_index_by_name(name);
+            else if (focused_model_index_ == find_furniture_index_by_name(name))
+                focused_model_index_ = -1;
         });
     }
 
@@ -650,6 +662,9 @@ void SpecificWorker::compute()
     }
     const auto &res = res_opt.value();
 
+    if (camera_viewer_)
+        update_camera_wireframe_overlay(res.robot_pose);
+
     auto t0 = std::chrono::steady_clock::now();
 
     // Visualization at 10 Hz (every other frame), compute stays at 20 Hz
@@ -684,7 +699,8 @@ void SpecificWorker::compute()
             else
                 viewer_3d_->update_lidar_points({}, {}, 0.f, 0.f, 0.f);
 
-            update_segmented_points_3d(res.robot_pose);
+            viewer_3d_->update_segmented_points({});
+            viewer_3d_->update_segmented_boxes({});
         }
 
         if (params.USE_WEBOTS)
@@ -810,10 +826,123 @@ void SpecificWorker::save_camera_state_to_settings() const
     settings.setValue("camera/upVector", cs.upVector);
 }
 
+int SpecificWorker::find_furniture_index_by_name(const QString& name) const
+{
+    auto normalize = [](QString s)
+    {
+        s = s.trimmed();
+        const int idx = s.indexOf(" (");
+        if (idx > 0)
+            s = s.left(idx);
+        return s.toLower();
+    };
+
+    const QString target = normalize(name);
+    if (target.isEmpty())
+        return -1;
+
+    int contains_match = -1;
+    for (std::size_t i = 0; i < furniture_polygons_.size(); ++i)
+    {
+        const auto& fp = furniture_polygons_[i];
+        const QString label = normalize(QString::fromStdString(fp.label));
+        const QString id = normalize(QString::fromStdString(fp.id));
+        if ((!label.isEmpty() && label == target) || (!id.isEmpty() && id == target))
+            return static_cast<int>(i);
+
+        if ((contains_match < 0) &&
+            ((!label.isEmpty() && (label.contains(target) || target.contains(label))) ||
+             (!id.isEmpty() && (id.contains(target) || target.contains(id)))))
+            contains_match = static_cast<int>(i);
+    }
+    return contains_match;
+}
+
+float SpecificWorker::model_height_from_label(const std::string& label) const
+{
+    const QString ql = QString::fromStdString(label).toLower();
+    if (ql.contains("silla") || ql.contains("chair")) return 0.95f;
+    if (ql.contains("mesa") || ql.contains("table")) return 0.75f;
+    if (ql.contains("banco") || ql.contains("bench")) return 0.48f;
+    if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen")) return 1.10f;
+    if (ql.contains("vitrina") || ql.contains("cabinet") || ql.contains("shelf")) return 1.60f;
+    if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot")) return 0.60f;
+    return 0.85f;
+}
+
+void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robot_pose)
+{
+    if (!camera_viewer_)
+        return;
+
+    if (focused_model_index_ < 0 || focused_model_index_ >= static_cast<int>(furniture_polygons_.size()))
+    {
+        camera_viewer_->clear_wireframe_overlay();
+        return;
+    }
+
+    const auto& fp = furniture_polygons_[focused_model_index_];
+    if (fp.vertices.size() < 3)
+    {
+        camera_viewer_->clear_wireframe_overlay();
+        return;
+    }
+
+    const Eigen::Affine2f world_to_robot = robot_pose.inverse();
+    const float height = model_height_from_label(fp.label);
+
+    auto to_camera = [this](const Eigen::Vector2f& p_world, float z_world) -> Eigen::Vector3f
+    {
+        // Camera frame in this component: x=lateral, y=forward, z=up.
+        return Eigen::Vector3f(p_world.x() - params.CAMERA_TX,
+                               p_world.y() - params.CAMERA_TY,
+                               z_world - params.CAMERA_TZ);
+    };
+
+    std::vector<Eigen::Vector2f> poly_robot;
+    poly_robot.reserve(fp.vertices.size());
+    for (const auto& v : fp.vertices)
+        poly_robot.emplace_back(world_to_robot * v);
+
+    std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>> segments;
+    segments.reserve(poly_robot.size() * 3);
+    for (std::size_t i = 0; i < poly_robot.size(); ++i)
+    {
+        const std::size_t j = (i + 1) % poly_robot.size();
+        const Eigen::Vector3f b0 = to_camera(poly_robot[i], 0.f);
+        const Eigen::Vector3f b1 = to_camera(poly_robot[j], 0.f);
+        const Eigen::Vector3f t0 = to_camera(poly_robot[i], height);
+        const Eigen::Vector3f t1 = to_camera(poly_robot[j], height);
+
+        segments.emplace_back(b0, b1); // base
+        segments.emplace_back(t0, t1); // top
+        segments.emplace_back(b0, t0); // vertical
+    }
+
+    const QString wire_label = QString::fromStdString(fp.label.empty() ? fp.id : fp.label);
+    camera_viewer_->set_wireframe_segments_camera(segments, wire_label);
+}
+
 void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pose)
 {
+    (void)robot_pose;
     if (!viewer_3d_)
         return;
+
+    // Segmented 3D object processing/projection is intentionally disabled.
+    viewer_3d_->update_segmented_points({});
+    viewer_3d_->update_segmented_boxes({});
+    grounding_focus_points_.clear();
+    grounding_focus_label_.clear();
+    grounding_world_index_ = -1;
+    if (grounding_status_label_ && grounding_cam_label_ && grounding_world_label_ && grounding_score_label_)
+    {
+        grounding_status_label_->setText("Status: segmented 3D grounding disabled");
+        grounding_cam_label_->setText("Camera object: -");
+        grounding_world_label_->setText("World object: -");
+        grounding_score_label_->setText("Score: -");
+    }
+    return;
 
     try
     {
@@ -958,16 +1087,60 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
 
         const Eigen::Affine2f world_to_robot = robot_pose.inverse();
         std::size_t focus_idx = tdata.objects.size();
-        float best_abs_bearing = std::numeric_limits<float>::max();
-        for (std::size_t i = 0; i < cam_infos.size(); ++i)
+        constexpr float min_forward_dist = 0.08f;
+        constexpr float strict_center_cone = 12.f * static_cast<float>(M_PI) / 180.f;
+        constexpr float relaxed_center_cone = 22.f * static_cast<float>(M_PI) / 180.f;
+
+        auto choose_focus_in_cone = [&](float max_abs_bearing) -> std::size_t
         {
-            if (!cam_infos[i].valid) continue;
-            const Eigen::Vector2f c_robot = world_to_robot * cam_infos[i].center;
-            const float bearing = std::abs(std::atan2(c_robot.x(), c_robot.y()));
-            if (bearing < best_abs_bearing)
+            std::size_t best_idx = tdata.objects.size();
+            float best_forward = std::numeric_limits<float>::max();
+            float best_abs_bearing = std::numeric_limits<float>::max();
+
+            for (std::size_t i = 0; i < cam_infos.size(); ++i)
             {
-                best_abs_bearing = bearing;
-                focus_idx = i;
+                if (!cam_infos[i].valid) continue;
+
+                const Eigen::Vector2f c_robot = world_to_robot * cam_infos[i].center;
+                const float forward = c_robot.y();
+                if (forward <= min_forward_dist) continue;  // must be in front of robot
+
+                const float abs_bearing = std::abs(std::atan2(c_robot.x(), c_robot.y()));
+                if (abs_bearing > max_abs_bearing) continue; // must be centered enough
+
+                // First object in line of sight (nearest forward) with center tie-break.
+                const bool better_forward = forward < best_forward - 1e-3f;
+                const bool same_forward = std::abs(forward - best_forward) <= 1e-3f;
+                const bool better_bearing = abs_bearing < best_abs_bearing;
+                if (better_forward || (same_forward && better_bearing))
+                {
+                    best_forward = forward;
+                    best_abs_bearing = abs_bearing;
+                    best_idx = i;
+                }
+            }
+            return best_idx;
+        };
+
+        focus_idx = choose_focus_in_cone(strict_center_cone);
+        if (focus_idx >= tdata.objects.size())
+            focus_idx = choose_focus_in_cone(relaxed_center_cone);
+
+        if (focus_idx >= tdata.objects.size())
+        {
+            // Last fallback: nearest bearing among forward objects.
+            float best_abs_bearing = std::numeric_limits<float>::max();
+            for (std::size_t i = 0; i < cam_infos.size(); ++i)
+            {
+                if (!cam_infos[i].valid) continue;
+                const Eigen::Vector2f c_robot = world_to_robot * cam_infos[i].center;
+                if (c_robot.y() <= min_forward_dist) continue;
+                const float abs_bearing = std::abs(std::atan2(c_robot.x(), c_robot.y()));
+                if (abs_bearing < best_abs_bearing)
+                {
+                    best_abs_bearing = abs_bearing;
+                    focus_idx = i;
+                }
             }
         }
 
@@ -2715,9 +2888,13 @@ void SpecificWorker::draw_furniture()
                 min_v = std::min(min_v, v); max_v = std::max(max_v, v);
             }
 
+            const float c_u = 0.5f * (min_u + max_u);
+            const float c_v = 0.5f * (min_v + max_v);
+            const Eigen::Vector2f obb_center = cen + axis_x * c_u + axis_z * c_v;
+
             rc::Viewer3D::FurnitureItem fi;
             fi.label    = fp.label;
-            fi.centroid = cen;
+            fi.centroid = obb_center;
             fi.size     = Eigen::Vector2f(std::max(0.08f, max_u - min_u), std::max(0.08f, max_v - min_v));
             fi.yaw_rad  = std::atan2(axis_x.y(), axis_x.x());
             items.push_back(fi);
@@ -3134,6 +3311,9 @@ void SpecificWorker::load_fitted_meshes_from_json()
 
 void SpecificWorker::load_polygon_from_file(const std::string& filename)
 {
+    if (!filename.empty())
+        current_layout_file_ = filename;
+
     QFile file(QString::fromStdString(filename));
     if (!file.open(QIODevice::ReadOnly))
     {

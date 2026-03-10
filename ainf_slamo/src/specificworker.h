@@ -246,10 +246,13 @@ class SpecificWorker : public GenericWorker
 	QLabel* grounding_score_label_ = nullptr;
 	QLabel* grounding_sdf_label_ = nullptr;
 	QPushButton* grounding_fit_mesh_button_ = nullptr;
+	QPushButton* grounding_reload_svg_button_ = nullptr;
 	std::vector<Eigen::Vector3f> grounding_focus_points_;
 	Eigen::Vector2f grounding_focus_center_ = Eigen::Vector2f::Zero();
 	std::string grounding_focus_label_;
 	int grounding_world_index_ = -1;
+	int focused_model_index_ = -1;
+	std::string current_layout_file_;
 	rc::MeshSDFOptimizer mesh_sdf_optimizer_;
 	BufferSync<InOut<rc::VelocityCommand, rc::VelocityCommand>> velocity_buffer_{20};
 
@@ -355,6 +358,9 @@ class SpecificWorker : public GenericWorker
 	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points_high,
 	                       const std::vector<Eigen::Vector3f> &points_low,
 	                       const Eigen::Affine2f &robot_pose);
+	void update_camera_wireframe_overlay(const Eigen::Affine2f &robot_pose);
+	int find_furniture_index_by_name(const QString& name) const;
+	float model_height_from_label(const std::string& label) const;
 	void update_segmented_points_3d(const Eigen::Affine2f &robot_pose);
 	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);
 	void display_robot(const Eigen::Affine2f &robot_pose, const Eigen::Matrix3f &covariance);

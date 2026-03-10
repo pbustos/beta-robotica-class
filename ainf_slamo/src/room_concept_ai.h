@@ -61,7 +61,7 @@ class RoomConceptAI
 public:
     struct Params
     {
-        int num_iterations = 50;          // Balance between speed and convergence
+        int num_iterations = 25;          // Balance between speed and convergence
         float learning_rate_pos = 0.05f;  // Moderate LR for position
         float learning_rate_rot = 0.01f;  // LR for rotation
         float min_loss_threshold = 0.1f;  // Early exit threshold

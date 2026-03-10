@@ -89,6 +89,8 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
     Q_SIGNALS:
         /// Emitted when the user Shift+Right-clicks a named 3D object.
         void objectPicked(const QString& name);
+        /// Emitted when the user Left-clicks a named 3D object.
+        void objectLeftClicked(const QString& name);
         /// Emitted when the user Shift+Right-clicks the floor.
         void floorPicked(float x, float y);
         /// Emitted when the user Ctrl+Right-clicks an object.
