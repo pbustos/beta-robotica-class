@@ -42,6 +42,9 @@
 #include <random>    // For odometry noise
 #include <numeric>
 #include <algorithm>
+#include <unordered_map>
+#include <set>
+#include <sstream>
 
 float SpecificWorker::percentile_copy(std::vector<float> values, float q)
 {
@@ -889,34 +892,179 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
     }
 
     const Eigen::Affine2f world_to_robot = robot_pose.inverse();
-    const float height = model_height_from_label(fp.label);
 
-    auto to_camera = [this](const Eigen::Vector2f& p_world, float z_world) -> Eigen::Vector3f
+    auto to_camera = [this](const Eigen::Vector2f& p_robot, float z_world) -> Eigen::Vector3f
     {
         // Camera frame in this component: x=lateral, y=forward, z=up.
-        return Eigen::Vector3f(p_world.x() - params.CAMERA_TX,
-                               p_world.y() - params.CAMERA_TY,
+        return Eigen::Vector3f(p_robot.x() - params.CAMERA_TX,
+                               p_robot.y() - params.CAMERA_TY,
                                z_world - params.CAMERA_TZ);
     };
 
-    std::vector<Eigen::Vector2f> poly_robot;
-    poly_robot.reserve(fp.vertices.size());
+    Eigen::Vector2f cen = Eigen::Vector2f::Zero();
+    for (const auto& v : fp.vertices) cen += v;
+    cen /= static_cast<float>(fp.vertices.size());
+
+    Eigen::Matrix2f cov = Eigen::Matrix2f::Zero();
     for (const auto& v : fp.vertices)
-        poly_robot.emplace_back(world_to_robot * v);
+    {
+        const Eigen::Vector2f d = v - cen;
+        cov += d * d.transpose();
+    }
+    cov /= static_cast<float>(std::max<std::size_t>(1, fp.vertices.size()));
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig(cov);
+    Eigen::Vector2f axis_x(1.f, 0.f);
+    if (eig.info() == Eigen::Success)
+        axis_x = eig.eigenvectors().col(1).normalized();
+    const float yaw = std::atan2(axis_x.y(), axis_x.x());
+
+    float min_u = std::numeric_limits<float>::max();
+    float max_u = -std::numeric_limits<float>::max();
+    float min_v = std::numeric_limits<float>::max();
+    float max_v = -std::numeric_limits<float>::max();
+    const Eigen::Vector2f axis_z(-axis_x.y(), axis_x.x());
+    for (const auto& p : fp.vertices)
+    {
+        const Eigen::Vector2f d = p - cen;
+        const float u = d.dot(axis_x);
+        const float v = d.dot(axis_z);
+        min_u = std::min(min_u, u); max_u = std::max(max_u, u);
+        min_v = std::min(min_v, v); max_v = std::max(max_v, v);
+    }
+    const Eigen::Vector2f size(std::max(0.08f, max_u - min_u), std::max(0.08f, max_v - min_v));
+
+    QString ql = QString::fromStdString(fp.label).toLower();
+    QString mesh_rel;
+    float sx = 1.f, sy = 1.f;
+    float sz = 1.f;
+    float z_offset_model = 0.f;
+    if (ql.contains("mesa") || ql.contains("table"))
+    {
+        mesh_rel = "meshes/table.obj";
+        sx = (size.x() > 0.1f) ? size.x() / 1.2f : 1.f;
+        sy = (size.y() > 0.1f) ? size.y() / 0.8f : 1.f;
+    }
+    else if (ql.contains("banco") || ql.contains("bench"))
+        mesh_rel = "meshes/bench.obj";
+    else if (ql.contains("silla") || ql.contains("chair"))
+    {
+        mesh_rel = "meshes/chair.obj";
+        sx = (size.x() > 0.1f) ? size.x() / 0.45f : 1.f;
+        sy = (size.y() > 0.1f) ? size.y() / 0.45f : 1.f;
+        sz = 1.20f;
+    }
+    else if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen") ||
+             ql.contains("ordenador") || ql.contains("computer"))
+    {
+        mesh_rel = "meshes/monitor_screen.obj";
+        z_offset_model = 0.45f;
+    }
+    else if (ql.contains("vitrina") || ql.contains("cabinet") || ql.contains("shelf"))
+        mesh_rel = "meshes/bench.obj";
+    else if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot"))
+        mesh_rel = "meshes/pot_only.obj";
+
+    if (mesh_rel.isEmpty())
+    {
+        camera_viewer_->clear_wireframe_overlay();
+        return;
+    }
+
+    struct MeshWire
+    {
+        std::vector<Eigen::Vector3f> vertices;
+        std::vector<std::pair<int,int>> edges;
+    };
+    static std::unordered_map<std::string, MeshWire> mesh_cache;
+
+    const QString component_root = QDir(QCoreApplication::applicationDirPath() + "/..").absolutePath();
+    const QString mesh_path_q = component_root + "/" + mesh_rel;
+    const std::string mesh_path = mesh_path_q.toStdString();
+
+    if (!mesh_cache.contains(mesh_path))
+    {
+        MeshWire mw;
+        QFile f(mesh_path_q);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        {
+            camera_viewer_->clear_wireframe_overlay();
+            return;
+        }
+
+        QTextStream in(&f);
+        std::set<std::pair<int,int>> edge_set;
+        while (!in.atEnd())
+        {
+            const QString line = in.readLine().trimmed();
+            if (line.startsWith("v "))
+            {
+                const auto parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+                if (parts.size() >= 4)
+                    mw.vertices.emplace_back(parts[1].toFloat(), parts[2].toFloat(), parts[3].toFloat());
+            }
+            else if (line.startsWith("f "))
+            {
+                const auto parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+                std::vector<int> idx;
+                idx.reserve(parts.size() - 1);
+                for (int i = 1; i < parts.size(); ++i)
+                {
+                    const QString tok = parts[i].split('/').front();
+                    bool ok = false;
+                    int vi = tok.toInt(&ok);
+                    if (ok && vi > 0) idx.push_back(vi - 1);
+                }
+                for (std::size_t i = 0; i < idx.size(); ++i)
+                {
+                    int a = idx[i];
+                    int b = idx[(i + 1) % idx.size()];
+                    if (a == b) continue;
+                    if (a > b) std::swap(a, b);
+                    edge_set.emplace(a, b);
+                }
+            }
+        }
+        mw.edges.assign(edge_set.begin(), edge_set.end());
+        mesh_cache.emplace(mesh_path, std::move(mw));
+    }
+
+    const auto& mw = mesh_cache.at(mesh_path);
+    if (mw.vertices.empty() || mw.edges.empty())
+    {
+        camera_viewer_->clear_wireframe_overlay();
+        return;
+    }
+
+    const float c = std::cos(yaw);
+    const float s = std::sin(yaw);
+    auto vertex_to_camera = [&](const Eigen::Vector3f& v) -> Eigen::Vector3f
+    {
+        const float lx = v.x() * sx;
+        const float ly = v.y() * sy;
+        const float lz = v.z() * sz + z_offset_model;
+
+        // Match viewer mesh convention: base_rot = RotX(-90°), then yaw about vertical.
+        // In room coordinates this is equivalent to rotating (x, -y) in the floor plane.
+        const float x0 = lx;
+        const float y0 = -ly;
+        const Eigen::Vector2f p_world(cen.x() + c * x0 - s * y0,
+                                      cen.y() + s * x0 + c * y0);
+        const Eigen::Vector2f p_robot = world_to_robot * p_world;
+        return to_camera(p_robot, lz);
+    };
+
+    std::vector<Eigen::Vector3f> verts_cam;
+    verts_cam.reserve(mw.vertices.size());
+    for (const auto& v : mw.vertices)
+        verts_cam.emplace_back(vertex_to_camera(v));
 
     std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>> segments;
-    segments.reserve(poly_robot.size() * 3);
-    for (std::size_t i = 0; i < poly_robot.size(); ++i)
+    segments.reserve(mw.edges.size());
+    for (const auto& e : mw.edges)
     {
-        const std::size_t j = (i + 1) % poly_robot.size();
-        const Eigen::Vector3f b0 = to_camera(poly_robot[i], 0.f);
-        const Eigen::Vector3f b1 = to_camera(poly_robot[j], 0.f);
-        const Eigen::Vector3f t0 = to_camera(poly_robot[i], height);
-        const Eigen::Vector3f t1 = to_camera(poly_robot[j], height);
-
-        segments.emplace_back(b0, b1); // base
-        segments.emplace_back(t0, t1); // top
-        segments.emplace_back(b0, t0); // vertical
+        if (e.first < 0 || e.second < 0 || e.first >= static_cast<int>(verts_cam.size()) || e.second >= static_cast<int>(verts_cam.size()))
+            continue;
+        segments.emplace_back(verts_cam[e.first], verts_cam[e.second]);
     }
 
     const QString wire_label = QString::fromStdString(fp.label.empty() ? fp.id : fp.label);

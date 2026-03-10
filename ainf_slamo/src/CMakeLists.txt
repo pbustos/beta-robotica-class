@@ -39,6 +39,7 @@ LIST(APPEND SOURCES
   ../src/scene_tree_panel.cpp
   ../src/camera_viewer.cpp
   ../src/mesh_sdf_optimizer.cpp
+  ../src/object_ownership_em.cpp
 )
 
 # Headers set
@@ -52,6 +53,7 @@ LIST(APPEND HEADERS
   ../src/scene_tree_panel.h
   ../src/camera_viewer.h
   ../src/mesh_sdf_optimizer.h
+  ../src/object_ownership_em.h
 )
 
 

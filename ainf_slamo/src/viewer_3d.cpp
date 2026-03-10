@@ -472,7 +472,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
                            const Eigen::Vector2f& centroid,
                            const QQuaternion&   rot,
                            const QVector3D&     scale3d,
-                           const QString&       pick_name) -> void
+                           const QString&       pick_name,
+                           float                y_offset = 0.f) -> void
     {
         auto* e = new Qt3DCore::QEntity(root_entity_);
 
@@ -485,7 +486,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         mat->setShininess(shininess);
 
         auto* tf = new Qt3DCore::QTransform(e);
-        tf->setTranslation(QVector3D(-centroid.x(), 0.f, centroid.y()));
+        tf->setTranslation(QVector3D(-centroid.x(), y_offset, centroid.y()));
         tf->setRotation(rot);
         tf->setScale3D(scale3d);
 
@@ -518,16 +519,10 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         }
         else if (ql.contains("banco") || ql.contains("bench"))
         {
-            // Benches need an extra +90º wrt table orientation.
-            // Keep size-axis convention: long dimension A along local X when A >= B.
-            const float a = size.x();
-            const float b = size.y();
-            const bool a_is_long = a >= b;
-            const float extra_yaw_deg = a_is_long ? -90.f : 90.f;
-            const QQuaternion bench_axis_correction = QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, extra_yaw_deg);
+            // Keep bench aligned with inferred yaw (no extra ±90° correction).
             make_entity(abs_mesh("meshes/bench.obj"),
                         QColor(130, 85, 45), QColor(55, 36, 19), 15.f,
-                        cen, bench_axis_correction * axis_rot, QVector3D(1.f, 1.f, 1.f),
+                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
                         QString::fromStdString(item.label));
         }
         else if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot"))
@@ -549,24 +544,21 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             // Scale it to fitted footprint to keep render aligned with optimized polygon.
             const float sx = (size.x() > 0.1f) ? size.x() / 0.45f : 1.f;
             const float sy = (size.y() > 0.1f) ? size.y() / 0.45f : 1.f;
+            const float sz = 1.20f;  // make chair model taller while keeping legs on floor
             make_entity(abs_mesh("meshes/chair.obj"),
                         QColor(110, 85, 60), QColor(50, 35, 20), 18.f,
-                        cen, axis_rot, QVector3D(sx, sy, 1.f),
+                        cen, axis_rot, QVector3D(sx, sy, sz),
                         QString::fromStdString(item.label));
         }
         else if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen") ||
                  ql.contains("ordenador") || ql.contains("computer"))
         {
-            // Stand: base plate + post, light grey
-            make_entity(abs_mesh("meshes/monitor_stand.obj"),
-                        QColor(160, 160, 165), QColor(65, 65, 68), 35.f,
-                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
-                        QString::fromStdString(item.label) + " (stand)");
-            // Screen panel: near-black with slight blue tint
+            // Screen panel only
             make_entity(abs_mesh("meshes/monitor_screen.obj"),
                         QColor(20, 22, 30), QColor(10, 11, 15), 80.f,
                         cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
-                        QString::fromStdString(item.label));
+                        QString::fromStdString(item.label),
+                        0.45f);
         }
         else if (ql.contains("vitrina") || ql.contains("cabinet") || ql.contains("shelf"))
         {
