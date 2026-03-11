@@ -24,9 +24,23 @@ Ensure they are installed and properly configured before proceeding.
 ### 1. System packages
 
 ```bash
-sudo apt install build-essential cmake git unzip wget \
-    qt6-base-dev qt6-declarative-dev qt6-scxml-dev \
+sudo apt install build-essential g++-14 cmake git unzip wget \
+  qt6-base-dev qt6-declarative-dev qt6-scxml-dev qt6-3d-dev \
     libqt6statemachineqml6 libqt6statemachine6 libboost-all-dev nvidia-cuda-toolkit
+```
+
+Set GCC/G++ 14 as selectable compiler alternatives:
+
+```bash
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 1
+sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 1
+```
+
+Choose the active compiler version:
+
+```bash
+sudo update-alternatives --config gcc
+sudo update-alternatives --config g++
 ```
 
 ### 2. LibTorch (C++ PyTorch)
