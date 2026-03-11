@@ -19,9 +19,6 @@ find_package(Qt6 COMPONENTS 3DCore 3DRender 3DExtras QUIET)
 # # Keep a single source of truth to avoid CMake warning noise from Caffe2.
 # set(TORCH_CUDA_ARCH_LIST "12.0" CACHE STRING "CUDA arch list for LibTorch" FORCE)
 
-# 1. Enable CUDA language so CMake initializes detection scripts
-enable_language(CUDA)
-
 # Find PyTorch
 # Set LibTorch path
 set(CMAKE_PREFIX_PATH "/home/robocomp/software/libtorch")
@@ -34,20 +31,15 @@ set(CMAKE_PREFIX_PATH "/home/robocomp/software/libtorch")
 set(USE_CUDA ON CACHE BOOL "Enable CUDA for this component" FORCE)
 set(CAFFE2_USE_CUDA ON CACHE BOOL "Enable Caffe2 CUDA" FORCE)
 set(CMAKE_DISABLE_FIND_PACKAGE_CUDA OFF CACHE BOOL "Allow CUDA detection for CUDA-enabled libtorch" FORCE)
-set(CUDAToolkit_ROOT "/usr/local/cuda" CACHE PATH "CUDA toolkit root" FORCE)
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "CUDA compiler" FORCE)
+set(CUDAToolkit_ROOT "/usr" CACHE PATH "CUDA toolkit root" FORCE)
+set(CMAKE_CUDA_COMPILER "/usr/bin/nvcc" CACHE FILEPATH "CUDA compiler" FORCE)
+set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "CUDA architectures" FORCE)
 # PyTorch ignores CMAKE_CUDA_ARCHITECTURES and expects TORCH_CUDA_ARCH_LIST.
 # Keep a single source of truth to avoid CMake warning noise from Caffe2.
+set(TORCH_CUDA_ARCH_LIST "8.6" CACHE STRING "CUDA architectures" FORCE)
 
-# 2. Set CUDA arch list without deprecated FindCUDA macros.
-if(NOT DEFINED TORCH_CUDA_ARCH_LIST OR "${TORCH_CUDA_ARCH_LIST}" STREQUAL "")
-  if(DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    set(TORCH_CUDA_ARCH_LIST "${CMAKE_CUDA_ARCHITECTURES}" CACHE STRING "CUDA architectures" FORCE)
-  else()
-    set(TORCH_CUDA_ARCH_LIST "12.0" CACHE STRING "CUDA architectures" FORCE)
-  endif()
-  message(STATUS "Using TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}")
-endif()
+# 1. Enable CUDA language so CMake initializes detection scripts
+enable_language(CUDA)
 
 
 find_package(Torch REQUIRED)
@@ -90,9 +82,13 @@ LIST(APPEND HEADERS
 LIST(APPEND LIBS ${LIBS} "${TORCH_LIBRARIES}" tbb Qt6PrintSupport Qt6Xml
             Eigen3::Eigen Boost::system Boost::filesystem )
 
+if(TARGET Qt6::3DCore AND TARGET Qt6::3DRender AND TARGET Qt6::3DExtras)
   LIST(APPEND SOURCES ../src/viewer_3d.cpp)
   LIST(APPEND HEADERS ../src/viewer_3d.h)
   LIST(APPEND LIBS Qt6::3DCore Qt6::3DRender Qt6::3DExtras)
+else()
+  message(WARNING "Qt3D targets not found; building without 3D viewer")
+endif()
 
 # no-char8_t to avoid a problem with ICE Connection lib.
 add_definitions(-O3 -fmax-errors=1 -fno-char8_t)
