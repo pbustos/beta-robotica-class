@@ -45,9 +45,84 @@
 #include <random>    // For odometry noise
 #include <numeric>
 #include <algorithm>
+#include <cstring>
 #include <unordered_map>
 #include <set>
 #include <sstream>
+#include <optional>
+#include <array>
+
+namespace
+{
+bool extract_depth_buffer_meters_sw(const RoboCompImageSegmentation::TDepth& depth,
+                                    int& width,
+                                    int& height,
+                                    std::vector<float>& out)
+{
+    width = depth.width;
+    height = depth.height;
+    if (width <= 0 || height <= 0)
+        return false;
+
+    const std::size_t expected = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    if (expected == 0)
+        return false;
+
+    const std::size_t nbytes = depth.depth.size();
+    const float scale = (std::abs(depth.depthFactor) > 1e-9f) ? depth.depthFactor : 1.f;
+
+    out.assign(expected, 0.f);
+
+    // Preferred format: packed float32 depth image in meters (or scaled by depthFactor).
+    if (nbytes >= expected * sizeof(float))
+    {
+        for (std::size_t i = 0; i < expected; ++i)
+        {
+            float v = 0.f;
+            std::memcpy(&v, depth.depth.data() + i * sizeof(float), sizeof(float));
+            out[i] = std::isfinite(v) ? v * scale : 0.f;
+        }
+    }
+    // Fallback: uint16 depth (usually millimeters).
+    else if (nbytes >= expected * sizeof(std::uint16_t))
+    {
+        for (std::size_t i = 0; i < expected; ++i)
+        {
+            std::uint16_t mm = 0;
+            std::memcpy(&mm, depth.depth.data() + i * sizeof(std::uint16_t), sizeof(std::uint16_t));
+            const float v = static_cast<float>(mm);
+            out[i] = std::isfinite(v) ? v : 0.f;
+        }
+    }
+    // Fallback: one byte per pixel (legacy/debug only).
+    else if (nbytes >= expected)
+    {
+        for (std::size_t i = 0; i < expected; ++i)
+        {
+            const float v = static_cast<float>(depth.depth[i]);
+            out[i] = std::isfinite(v) ? v : 0.f;
+        }
+    }
+    else
+        return false;
+
+    if (nbytes < expected * sizeof(float))
+    {
+        for (float& d : out)
+            d = std::isfinite(d) ? d * 0.001f * scale : 0.f;
+    }
+
+    return true;
+}
+
+bool extract_depth_from_tdata_sw(const RoboCompImageSegmentation::TData& tdata,
+                                 int& width,
+                                 int& height,
+                                 std::vector<float>& out)
+{
+    return extract_depth_buffer_meters_sw(tdata.depth, width, height, out);
+}
+}
 
 float SpecificWorker::percentile_copy(std::vector<float> values, float q)
 {
@@ -1089,50 +1164,18 @@ void SpecificWorker::run_camera_em_validator()
 
     try
     {
-        const auto tdata = imagesegmentation_proxy->getAll();
+        const auto tdata = imagesegmentation_proxy->getAll(false);
 
         std::vector<Eigen::Vector3f> points_cam_all;
         std::vector<Eigen::Vector3f> points_world_all;
         points_cam_all.reserve(12000);
         points_world_all.reserve(12000);
 
-        for (const auto& obj : tdata.objects)
-        {
-            for (const auto& p : obj.points3D)
-            {
-                const Eigen::Vector3f p_cam(p.x, p.y, p.z);
-                const float x_robot = p.x + params.CAMERA_TX;
-                const float y_robot = p.y + params.CAMERA_TY;
-                const float z_robot = p.z + params.CAMERA_TZ;
-                const Eigen::Vector2f p_world_xy = robot_pose * Eigen::Vector2f(x_robot, y_robot);
-                const Eigen::Vector3f p_world(p_world_xy.x(), p_world_xy.y(), z_robot);
-                points_cam_all.emplace_back(p_cam);
-                points_world_all.emplace_back(p_world);
-            }
-        }
+        int depth_w = 0;
+        int depth_h = 0;
+        std::vector<float> depth_m;
+        const bool have_depth = extract_depth_from_tdata_sw(tdata, depth_w, depth_h, depth_m);
 
-        const bool enough_points = points_world_all.size() >= 30;
-
-        constexpr std::size_t max_points = 2200;
-        const std::size_t stride = std::max<std::size_t>(1, points_world_all.empty() ? 1 : points_world_all.size() / max_points);
-        std::vector<Eigen::Vector3f> points_cam;
-        std::vector<Eigen::Vector3f> points_world;
-        points_cam.reserve(points_world_all.empty() ? 0 : (points_world_all.size() / stride + 1));
-        points_world.reserve(points_world_all.empty() ? 0 : (points_world_all.size() / stride + 1));
-        for (std::size_t i = 0; i < points_world_all.size(); i += stride)
-        {
-            points_cam.emplace_back(points_cam_all[i]);
-            points_world.emplace_back(points_world_all[i]);
-        }
-
-        if (furniture_polygons_.empty())
-        {
-            if (grounding_status_label_)
-                grounding_status_label_->setText("Status: no map furniture for EM classes");
-            return;
-        }
-
-        const Eigen::Affine2f world_to_robot = robot_pose.inverse();
         const auto &timg = tdata.image;
         const int img_w = std::max(1, timg.width);
         const int img_h = std::max(1, timg.height);
@@ -1142,6 +1185,73 @@ void SpecificWorker::run_camera_em_validator()
         const float max_reasonable_fy = static_cast<float>(img_h) * 5.f;
         if (!std::isfinite(fx) || fx < 10.f || fx > max_reasonable_fx) fx = static_cast<float>(img_w) * 0.9f;
         if (!std::isfinite(fy) || fy < 10.f || fy > max_reasonable_fy) fy = static_cast<float>(img_h) * 0.9f;
+
+        if (have_depth && depth_w > 0 && depth_h > 0)
+        {
+            const float cx_d = static_cast<float>(depth_w) * 0.5f;
+            const float cy_d = static_cast<float>(depth_h) * 0.5f;
+            const float fx_d = (depth_w == img_w) ? fx : (fx * static_cast<float>(depth_w) / static_cast<float>(img_w));
+            const float fy_d = (depth_h == img_h) ? fy : (fy * static_cast<float>(depth_h) / static_cast<float>(img_h));
+
+            constexpr float z_min = 0.08f;
+            constexpr float z_max = 8.0f;
+            const int img_channels = std::max(1, timg.depth);
+            const std::size_t img_expected = static_cast<std::size_t>(img_w) * static_cast<std::size_t>(img_h) * static_cast<std::size_t>(img_channels);
+            const bool has_rgb = timg.image.size() >= img_expected;
+
+            for (int v = 0; v < depth_h; ++v)
+            {
+                for (int u = 0; u < depth_w; ++u)
+                {
+                    const float d = depth_m[static_cast<std::size_t>(v) * static_cast<std::size_t>(depth_w) + static_cast<std::size_t>(u)];
+                    if (!std::isfinite(d) || d < z_min || d > z_max)
+                        continue;
+
+                    if (has_rgb)
+                    {
+                        const int u_img = std::clamp((u * img_w) / std::max(1, depth_w), 0, img_w - 1);
+                        const int v_img = std::clamp((v * img_h) / std::max(1, depth_h), 0, img_h - 1);
+                        const std::size_t pix = (static_cast<std::size_t>(v_img) * static_cast<std::size_t>(img_w)
+                                               + static_cast<std::size_t>(u_img)) * static_cast<std::size_t>(img_channels);
+                        if (pix + 2 < timg.image.size())
+                        {
+                            const unsigned char c0 = static_cast<unsigned char>(timg.image[pix + 0]);
+                            const unsigned char c1 = static_cast<unsigned char>(timg.image[pix + 1]);
+                            const unsigned char c2 = static_cast<unsigned char>(timg.image[pix + 2]);
+                            if (c0 == 0 && c1 == 0 && c2 == 0)
+                                continue;
+                        }
+                    }
+
+                    const float x_cam = (static_cast<float>(u) - cx_d) * d / std::max(1e-5f, fx_d);
+                    const float y_cam = d;
+                    const float z_cam = (cy_d - static_cast<float>(v)) * d / std::max(1e-5f, fy_d);
+
+                    const Eigen::Vector3f p_cam(x_cam, y_cam, z_cam);
+                    const float x_robot = x_cam + params.CAMERA_TX;
+                    const float y_robot = y_cam + params.CAMERA_TY;
+                    const float z_robot = z_cam + params.CAMERA_TZ;
+                    const Eigen::Vector2f p_world_xy = robot_pose * Eigen::Vector2f(x_robot, y_robot);
+                    const Eigen::Vector3f p_world(p_world_xy.x(), p_world_xy.y(), z_robot);
+                    points_cam_all.emplace_back(p_cam);
+                    points_world_all.emplace_back(p_world);
+                }
+            }
+        }
+
+        const bool enough_points = points_world_all.size() >= 30;
+
+        std::vector<Eigen::Vector3f> points_cam = points_cam_all;
+        std::vector<Eigen::Vector3f> points_world = points_world_all;
+
+        if (furniture_polygons_.empty())
+        {
+            if (grounding_status_label_)
+                grounding_status_label_->setText("Status: no map furniture for EM classes");
+            return;
+        }
+
+        const Eigen::Affine2f world_to_robot = robot_pose.inverse();
         const float cx = static_cast<float>(img_w) * 0.5f;
         const float cy = static_cast<float>(img_h) * 0.5f;
         constexpr float near_depth = 0.05f;
@@ -1243,11 +1353,11 @@ void SpecificWorker::run_camera_em_validator()
         for (int k = 0; k < K; ++k)
         {
             class_labels.emplace_back(QString::fromStdString(classes[static_cast<std::size_t>(k)].label));
-            class_colors.emplace_back(QColor::fromHsv((47 * k) % 360, 220, 255, 220));
+            class_colors.emplace_back(QColor::fromHsv((47 * k) % 360, 220, 255, 255));
             visible_model_names << class_labels.back();
         }
         class_labels.emplace_back("background");
-        class_colors.emplace_back(QColor(170, 170, 170, 200));
+        class_colors.emplace_back(QColor(0, 0, 0, 255));
 
         const QString visible_names_text = visible_model_names.isEmpty()
             ? QString("Visible models: -")
@@ -1288,6 +1398,162 @@ void SpecificWorker::run_camera_em_validator()
                                        z_world - params.CAMERA_TZ);
             };
 
+            auto oriented_box_corners = [](const std::vector<Eigen::Vector2f>& poly) -> std::array<Eigen::Vector2f, 4>
+            {
+                std::array<Eigen::Vector2f, 4> out{Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero()};
+                if (poly.empty())
+                    return out;
+
+                Eigen::Vector2f c = Eigen::Vector2f::Zero();
+                for (const auto& p : poly) c += p;
+                c /= static_cast<float>(poly.size());
+
+                Eigen::Matrix2f cov = Eigen::Matrix2f::Zero();
+                for (const auto& p : poly)
+                {
+                    const Eigen::Vector2f d = p - c;
+                    cov += d * d.transpose();
+                }
+                cov /= static_cast<float>(std::max<std::size_t>(1, poly.size()));
+
+                Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig(cov);
+                Eigen::Vector2f u(1.f, 0.f);
+                if (eig.info() == Eigen::Success)
+                    u = eig.eigenvectors().col(1).normalized();
+                Eigen::Vector2f v(-u.y(), u.x());
+
+                float umin = std::numeric_limits<float>::max();
+                float umax = -std::numeric_limits<float>::max();
+                float vmin = std::numeric_limits<float>::max();
+                float vmax = -std::numeric_limits<float>::max();
+                for (const auto& p : poly)
+                {
+                    const Eigen::Vector2f d = p - c;
+                    const float pu = d.dot(u);
+                    const float pv = d.dot(v);
+                    umin = std::min(umin, pu);
+                    umax = std::max(umax, pu);
+                    vmin = std::min(vmin, pv);
+                    vmax = std::max(vmax, pv);
+                }
+
+                out[0] = c + u * umin + v * vmin;
+                out[1] = c + u * umax + v * vmin;
+                out[2] = c + u * umax + v * vmax;
+                out[3] = c + u * umin + v * vmax;
+                return out;
+            };
+
+            auto append_mesh_like_wireframe = [&](const std::vector<Eigen::Vector2f>& poly,
+                                                  const std::string& label,
+                                                  float h,
+                                                  std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>>& out_segments,
+                                                  std::vector<QColor>& out_colors,
+                                                  const QColor& color)
+            {
+                if (poly.size() < 3)
+                    return;
+
+                const auto corners = oriented_box_corners(poly);
+                const auto& c0 = corners[0];
+                const auto& c1 = corners[1];
+                const auto& c2 = corners[2];
+                const auto& c3 = corners[3];
+
+                auto add = [&](const Eigen::Vector2f& a, float za, const Eigen::Vector2f& b, float zb)
+                {
+                    const Eigen::Vector2f ar = world_to_robot * a;
+                    const Eigen::Vector2f br = world_to_robot * b;
+                    out_segments.emplace_back(to_camera(ar, za), to_camera(br, zb));
+                    out_colors.emplace_back(color);
+                };
+
+                const Eigen::Vector2f center = 0.25f * (c0 + c1 + c2 + c3);
+                const Eigen::Vector2f front_mid = 0.5f * (c0 + c1);
+                const Eigen::Vector2f back_mid  = 0.5f * (c2 + c3);
+                const Eigen::Vector2f left_mid  = 0.5f * (c0 + c3);
+                const Eigen::Vector2f right_mid = 0.5f * (c1 + c2);
+                const QString ql = QString::fromStdString(label).toLower();
+
+                if (ql.contains("mesa") || ql.contains("table"))
+                {
+                    const float z_top = h;
+                    const float z_apron = 0.72f * h;
+                    const float t = 0.14f;
+
+                    const Eigen::Vector2f c01 = c0 + t * (c1 - c0);
+                    const Eigen::Vector2f c12 = c1 + t * (c2 - c1);
+                    const Eigen::Vector2f c23 = c2 + t * (c3 - c2);
+                    const Eigen::Vector2f c30 = c3 + t * (c0 - c3);
+
+                    // Tabletop contour
+                    add(c0, z_top, c1, z_top);
+                    add(c1, z_top, c2, z_top);
+                    add(c2, z_top, c3, z_top);
+                    add(c3, z_top, c0, z_top);
+                    // Apron rectangle
+                    add(c01, z_apron, c12, z_apron);
+                    add(c12, z_apron, c23, z_apron);
+                    add(c23, z_apron, c30, z_apron);
+                    add(c30, z_apron, c01, z_apron);
+                    // Legs
+                    add(c01, 0.f, c01, z_apron);
+                    add(c12, 0.f, c12, z_apron);
+                    add(c23, 0.f, c23, z_apron);
+                    add(c30, 0.f, c30, z_apron);
+                    // Center braces
+                    add(front_mid, 0.62f * h, back_mid, 0.62f * h);
+                    add(left_mid, 0.62f * h, right_mid, 0.62f * h);
+                    return;
+                }
+
+                if (ql.contains("silla") || ql.contains("chair"))
+                {
+                    const float z_seat = 0.50f * h;
+                    const float z_back = 0.98f * h;
+                    const float t = 0.18f;
+
+                    const Eigen::Vector2f s0 = c0 + t * (c1 - c0) + t * (c3 - c0);
+                    const Eigen::Vector2f s1 = c1 + t * (c0 - c1) + t * (c2 - c1);
+                    const Eigen::Vector2f s2 = c2 + t * (c1 - c2) + t * (c3 - c2);
+                    const Eigen::Vector2f s3 = c3 + t * (c2 - c3) + t * (c0 - c3);
+
+                    // Seat contour
+                    add(s0, z_seat, s1, z_seat);
+                    add(s1, z_seat, s2, z_seat);
+                    add(s2, z_seat, s3, z_seat);
+                    add(s3, z_seat, s0, z_seat);
+                    // Legs
+                    add(s0, 0.f, s0, z_seat);
+                    add(s1, 0.f, s1, z_seat);
+                    add(s2, 0.f, s2, z_seat);
+                    add(s3, 0.f, s3, z_seat);
+                    // Backrest at rear side (c2-c3)
+                    const Eigen::Vector2f b0 = 0.5f * (s2 + c2);
+                    const Eigen::Vector2f b1 = 0.5f * (s3 + c3);
+                    add(b0, z_seat, b0, z_back);
+                    add(b1, z_seat, b1, z_back);
+                    add(b0, z_back, b1, z_back);
+                    add(0.5f * (b0 + b1), z_seat, 0.5f * (b0 + b1), z_back);
+                    return;
+                }
+
+                // Default mesh-like wireframe: top contour + main supports.
+                const float z_top = h;
+                const float z_support = 0.92f * h;
+                add(c0, z_top, c1, z_top);
+                add(c1, z_top, c2, z_top);
+                add(c2, z_top, c3, z_top);
+                add(c3, z_top, c0, z_top);
+                add(c0, 0.f, c0, z_support);
+                add(c1, 0.f, c1, z_support);
+                add(c2, 0.f, c2, z_support);
+                add(c3, 0.f, c3, z_support);
+                add(front_mid, 0.70f * h, back_mid, 0.70f * h);
+                add(left_mid, 0.70f * h, right_mid, 0.70f * h);
+                add(center, 0.68f * h, center, z_top);
+            };
+
             std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>> init_segments;
             std::vector<QColor> init_segment_colors;
             std::vector<Eigen::Vector3f> init_ann_points;
@@ -1296,26 +1562,15 @@ void SpecificWorker::run_camera_em_validator()
             for (int k = 0; k < K; ++k)
             {
                 const auto& c = classes[static_cast<std::size_t>(k)];
-                const QColor col = class_colors[static_cast<std::size_t>(k)];
                 Eigen::Vector2f center = Eigen::Vector2f::Zero();
                 for (const auto& v : c.vertices) center += v;
                 center /= static_cast<float>(std::max<std::size_t>(1, c.vertices.size()));
                 init_ann_points.emplace_back(to_camera(world_to_robot * center, c.height + 0.05f));
                 init_ann_texts.emplace_back(QString::fromStdString(c.label) + " | L=--");
-                init_ann_colors.emplace_back(col);
-                for (std::size_t i = 0; i < c.vertices.size(); ++i)
-                {
-                    const auto& a = c.vertices[i];
-                    const auto& b = c.vertices[(i + 1) % c.vertices.size()];
-                    const Eigen::Vector2f ar = world_to_robot * a;
-                    const Eigen::Vector2f br = world_to_robot * b;
-                    init_segments.emplace_back(to_camera(ar, 0.f), to_camera(br, 0.f));
-                    init_segment_colors.emplace_back(col);
-                    init_segments.emplace_back(to_camera(ar, c.height), to_camera(br, c.height));
-                    init_segment_colors.emplace_back(col);
-                    init_segments.emplace_back(to_camera(ar, 0.f), to_camera(ar, c.height));
-                    init_segment_colors.emplace_back(col);
-                }
+                init_ann_colors.emplace_back(QColor(255, 255, 255, 255));
+                QColor wf_color = class_colors[static_cast<std::size_t>(k)];
+                wf_color.setAlpha(255);
+                append_mesh_like_wireframe(c.vertices, c.label, c.height, init_segments, init_segment_colors, wf_color);
             }
             camera_viewer_->set_wireframe_segments_camera_colored(init_segments, init_segment_colors, visible_names_text);
             camera_viewer_->set_wireframe_annotations_camera(init_ann_points, init_ann_texts, init_ann_colors);
@@ -1345,13 +1600,268 @@ void SpecificWorker::run_camera_em_validator()
                                    z_world - params.CAMERA_TZ);
         };
 
+        struct PixelDepth
+        {
+            int u = -1;
+            int v = -1;
+            float depth = 0.f;
+        };
+        std::vector<PixelDepth> point_pixels(static_cast<std::size_t>(N));
+        for (int i = 0; i < N; ++i)
+        {
+            const auto& pc = points_cam[static_cast<std::size_t>(i)];
+            const float d = pc.y();
+            if (d <= near_depth)
+                continue;
+            const float u = cx + fx * (pc.x() / d);
+            const float v = cy - fy * (pc.z() / d);
+            if (std::isfinite(u) && std::isfinite(v) && u >= 0.f && u < static_cast<float>(img_w) && v >= 0.f && v < static_cast<float>(img_h))
+            {
+                point_pixels[static_cast<std::size_t>(i)] = PixelDepth{static_cast<int>(u), static_cast<int>(v), d};
+            }
+        }
+
+        const int rw = std::max(1, img_w / 2);
+        const int rh = std::max(1, img_h / 2);
+        constexpr float inf_depth = std::numeric_limits<float>::infinity();
+
+        std::vector<Eigen::Vector2f> room_robot;
+        room_robot.reserve(room_polygon_.size());
+        for (const auto& p : room_polygon_)
+            room_robot.emplace_back(world_to_robot * p);
+
+        auto point_in_polygon = [](const Eigen::Vector2f& p, const std::vector<Eigen::Vector2f>& poly) -> bool
+        {
+            if (poly.size() < 3)
+                return false;
+            bool inside = false;
+            for (std::size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+            {
+                const auto& pi = poly[i];
+                const auto& pj = poly[j];
+                const bool intersect = ((pi.y() > p.y()) != (pj.y() > p.y())) &&
+                                       (p.x() < (pj.x() - pi.x()) * (p.y() - pi.y()) /
+                                                    std::max(1e-9f, (pj.y() - pi.y())) + pi.x());
+                if (intersect)
+                    inside = !inside;
+            }
+            return inside;
+        };
+
         float last_mean_sdf = 0.f;
         for (int iter = 0; iter < max_iters; ++iter)
         {
+            // Build per-class depth raster from current wireframe (safe, lightweight z-buffer).
+            std::vector<std::vector<float>> class_depth_raster(static_cast<std::size_t>(K), std::vector<float>(static_cast<std::size_t>(rw * rh), inf_depth));
+
+            auto project_uvd = [&](const Eigen::Vector3f& p_cam, float& u, float& v, float& d) -> bool
+            {
+                d = p_cam.y();
+                if (d <= near_depth)
+                    return false;
+                u = cx + fx * (p_cam.x() / d);
+                v = cy - fy * (p_cam.z() / d);
+                return std::isfinite(u) && std::isfinite(v);
+            };
+
+            auto raster_write = [&](std::vector<float>& ras, int u, int v, float d)
+            {
+                if (u < 0 || v < 0 || u >= rw || v >= rh || d <= near_depth)
+                    return;
+                const std::size_t idx = static_cast<std::size_t>(v) * static_cast<std::size_t>(rw) + static_cast<std::size_t>(u);
+                ras[idx] = std::min(ras[idx], d);
+            };
+
+            auto raster_segment = [&](std::vector<float>& ras, const Eigen::Vector3f& a_cam, const Eigen::Vector3f& b_cam)
+            {
+                float ua = 0.f, va = 0.f, da = 0.f;
+                float ub = 0.f, vb = 0.f, db = 0.f;
+                if (!project_uvd(a_cam, ua, va, da) || !project_uvd(b_cam, ub, vb, db))
+                    return;
+
+                const float du = ub - ua;
+                const float dv = vb - va;
+                const int steps = std::max(1, static_cast<int>(std::ceil(std::max(std::abs(du), std::abs(dv)) / 2.f)));
+                for (int s = 0; s <= steps; ++s)
+                {
+                    const float t = static_cast<float>(s) / static_cast<float>(steps);
+                    const float u = ua + t * du;
+                    const float v = va + t * dv;
+                    const float d = da + t * (db - da);
+                    raster_write(ras,
+                                 static_cast<int>(u * static_cast<float>(rw) / static_cast<float>(img_w)),
+                                 static_cast<int>(v * static_cast<float>(rh) / static_cast<float>(img_h)),
+                                 d);
+                }
+            };
+
+            for (int k = 0; k < K; ++k)
+            {
+                const auto& c = classes[static_cast<std::size_t>(k)];
+                if (c.vertices.size() < 3)
+                    continue;
+                auto& ras = class_depth_raster[static_cast<std::size_t>(k)];
+                for (std::size_t e = 0; e < c.vertices.size(); ++e)
+                {
+                    const auto& a = c.vertices[e];
+                    const auto& b = c.vertices[(e + 1) % c.vertices.size()];
+                    const Eigen::Vector2f ar = world_to_robot * a;
+                    const Eigen::Vector2f br = world_to_robot * b;
+                    raster_segment(ras, to_camera(ar, 0.f), to_camera(br, 0.f));
+                    raster_segment(ras, to_camera(ar, c.height), to_camera(br, c.height));
+                    raster_segment(ras, to_camera(ar, 0.f), to_camera(ar, c.height));
+                }
+            }
+
+            // Build infrastructure depth raster (walls/floor/ceiling) in camera depth units.
+            std::vector<float> infra_depth_raster(static_cast<std::size_t>(rw * rh), inf_depth);
+            if (room_robot.size() >= 3)
+            {
+                const Eigen::Vector3f cam_o(params.CAMERA_TX, params.CAMERA_TY, params.CAMERA_TZ);
+                constexpr float wall_h = 2.5f;
+
+                auto raster_write_depth = [&](int u, int v, float d)
+                {
+                    if (u < 0 || v < 0 || u >= rw || v >= rh || d <= near_depth)
+                        return;
+                    const std::size_t idx = static_cast<std::size_t>(v) * static_cast<std::size_t>(rw) + static_cast<std::size_t>(u);
+                    infra_depth_raster[idx] = std::min(infra_depth_raster[idx], d);
+                };
+
+                for (int vr = 0; vr < rh; ++vr)
+                {
+                    for (int ur = 0; ur < rw; ++ur)
+                    {
+                        const float u_full = (static_cast<float>(ur) + 0.5f) * static_cast<float>(img_w) / static_cast<float>(rw);
+                        const float v_full = (static_cast<float>(vr) + 0.5f) * static_cast<float>(img_h) / static_cast<float>(rh);
+                        const Eigen::Vector3f d_cam((u_full - cx) / std::max(1e-5f, fx),
+                                                    1.f,
+                                                    (cy - v_full) / std::max(1e-5f, fy));
+
+                        float best_t = inf_depth;
+
+                        // Floor / ceiling intersections.
+                        if (std::abs(d_cam.z()) > 1e-6f)
+                        {
+                            const float t_floor = (0.f - cam_o.z()) / d_cam.z();
+                            if (t_floor > near_depth)
+                            {
+                                const Eigen::Vector2f pxy = cam_o.head<2>() + t_floor * d_cam.head<2>();
+                                if (point_in_polygon(pxy, room_robot))
+                                    best_t = std::min(best_t, t_floor);
+                            }
+
+                            const float t_ceil = (wall_h - cam_o.z()) / d_cam.z();
+                            if (t_ceil > near_depth)
+                            {
+                                const Eigen::Vector2f pxy = cam_o.head<2>() + t_ceil * d_cam.head<2>();
+                                if (point_in_polygon(pxy, room_robot))
+                                    best_t = std::min(best_t, t_ceil);
+                            }
+                        }
+
+                        // Wall intersections in XY, then validate z in [0, wall_h].
+                        const Eigen::Vector2f o_xy = cam_o.head<2>();
+                        const Eigen::Vector2f r_xy = d_cam.head<2>();
+                        const auto cross2 = [](const Eigen::Vector2f& a, const Eigen::Vector2f& b) -> float
+                        {
+                            return a.x() * b.y() - a.y() * b.x();
+                        };
+                        for (std::size_t e = 0; e < room_robot.size(); ++e)
+                        {
+                            const Eigen::Vector2f a = room_robot[e];
+                            const Eigen::Vector2f b = room_robot[(e + 1) % room_robot.size()];
+                            const Eigen::Vector2f s = b - a;
+                            const float den = cross2(r_xy, s);
+                            if (std::abs(den) < 1e-8f)
+                                continue;
+
+                            const Eigen::Vector2f qmp = a - o_xy;
+                            const float t = cross2(qmp, s) / den;
+                            const float seg_u = cross2(qmp, r_xy) / den;
+                            if (t <= near_depth || seg_u < 0.f || seg_u > 1.f)
+                                continue;
+
+                            const float z_hit = cam_o.z() + t * d_cam.z();
+                            if (z_hit >= 0.f && z_hit <= wall_h)
+                                best_t = std::min(best_t, t);
+                        }
+
+                        if (std::isfinite(best_t))
+                            raster_write_depth(ur, vr, best_t);
+                    }
+                }
+            }
+
+            // Recompute active points with current object pose hypothesis.
+            std::vector<unsigned char> active_points(static_cast<std::size_t>(N), 0);
+            int active_count = 0;
+            for (int i = 0; i < N; ++i)
+            {
+                const auto pix = point_pixels[static_cast<std::size_t>(i)];
+                if (pix.u < 0 || pix.v < 0)
+                    continue;
+
+                const int ur = pix.u * rw / std::max(1, img_w);
+                const int vr = pix.v * rh / std::max(1, img_h);
+                float best_obj_pred = inf_depth;
+                for (int k = 0; k < K; ++k)
+                {
+                    const auto& ras = class_depth_raster[static_cast<std::size_t>(k)];
+                    for (int dv = -1; dv <= 1; ++dv)
+                    {
+                        for (int du = -1; du <= 1; ++du)
+                        {
+                            const int uu = ur + du;
+                            const int vv = vr + dv;
+                            if (uu < 0 || vv < 0 || uu >= rw || vv >= rh)
+                                continue;
+                            const float d_pred = ras[static_cast<std::size_t>(vv) * static_cast<std::size_t>(rw) + static_cast<std::size_t>(uu)];
+                            best_obj_pred = std::min(best_obj_pred, d_pred);
+                        }
+                    }
+                }
+
+                float best_infra_pred = inf_depth;
+                for (int dv = -1; dv <= 1; ++dv)
+                {
+                    for (int du = -1; du <= 1; ++du)
+                    {
+                        const int uu = ur + du;
+                        const int vv = vr + dv;
+                        if (uu < 0 || vv < 0 || uu >= rw || vv >= rh)
+                            continue;
+                        const float d_inf = infra_depth_raster[static_cast<std::size_t>(vv) * static_cast<std::size_t>(rw) + static_cast<std::size_t>(uu)];
+                        best_infra_pred = std::min(best_infra_pred, d_inf);
+                    }
+                }
+
+                const bool obj_supported = std::isfinite(best_obj_pred)
+                    && (std::abs(pix.depth - best_obj_pred) < 0.60f || pix.depth + 0.08f < best_obj_pred);
+                const bool infra_close = std::isfinite(best_infra_pred)
+                    && (pix.depth >= best_infra_pred - 0.05f);
+                const bool keep = obj_supported || !infra_close;
+
+                if (keep)
+                {
+                    active_points[static_cast<std::size_t>(i)] = 1;
+                    ++active_count;
+                }
+            }
+
             // E-step: class likelihoods from current class geometry (SDF-like distance to polygon contour)
             float objective = 0.f;
             for (int i = 0; i < N; ++i)
             {
+                if (active_points[static_cast<std::size_t>(i)] == 0)
+                {
+                    for (int k = 0; k < K; ++k)
+                        q[static_cast<std::size_t>(i * (K + 1) + k)] = 0.f;
+                    q[static_cast<std::size_t>(i * (K + 1) + K)] = 1.f;
+                    point_classes[static_cast<std::size_t>(i)] = K;
+                    continue;
+                }
+
                 const auto& pw = points_world[static_cast<std::size_t>(i)];
                 const Eigen::Vector2f pxy = pw.head<2>();
 
@@ -1363,9 +1873,38 @@ void SpecificWorker::run_camera_em_validator()
                     const auto& c = classes[static_cast<std::size_t>(k)];
                     const float dxy = point_polygon_distance(pxy, c.vertices);
                     const float dz = std::abs(pw.z() - 0.5f * c.height);
+                    float depth_pen = 0.f;
+                    const auto pix = point_pixels[static_cast<std::size_t>(i)];
+                    if (pix.u >= 0 && pix.v >= 0)
+                    {
+                        const int ur = pix.u * rw / std::max(1, img_w);
+                        const int vr = pix.v * rh / std::max(1, img_h);
+                        const auto& ras = class_depth_raster[static_cast<std::size_t>(k)];
+                        float best_pred = inf_depth;
+                        for (int dv = -1; dv <= 1; ++dv)
+                        {
+                            for (int du = -1; du <= 1; ++du)
+                            {
+                                const int uu = ur + du;
+                                const int vv = vr + dv;
+                                if (uu < 0 || vv < 0 || uu >= rw || vv >= rh)
+                                    continue;
+                                const float d_pred = ras[static_cast<std::size_t>(vv) * static_cast<std::size_t>(rw) + static_cast<std::size_t>(uu)];
+                                best_pred = std::min(best_pred, d_pred);
+                            }
+                        }
+                        if (std::isfinite(best_pred))
+                        {
+                            const float dr = std::abs(pix.depth - best_pred);
+                            depth_pen = std::min(dr, 2.0f);
+                            // If observed point is in front of model wireframe, class likely occluded by something else.
+                            if (pix.depth + 0.10f < best_pred)
+                                depth_pen += 0.60f;
+                        }
+                    }
                     const float e = (dxy * dxy) / (2.f * sigma_xy * sigma_xy)
                                   + 0.35f * (dz * dz) / (2.f * sigma_z * sigma_z);
-                    const float l = -e;
+                    const float l = -(e + 0.45f * depth_pen);
                     logp[static_cast<std::size_t>(k)] = l;
                     max_logp = std::max(max_logp, l);
                 }
@@ -1397,15 +1936,16 @@ void SpecificWorker::run_camera_em_validator()
                 point_classes[static_cast<std::size_t>(i)] = best_k;
                 objective += -std::log(std::max(best_q, 1e-8f));
             }
-            objective /= static_cast<float>(N);
+            objective /= static_cast<float>(std::max(1, active_count));
 
             std::vector<float> class_likelihood(static_cast<std::size_t>(K), 0.f);
             for (int k = 0; k < K; ++k)
             {
                 float sum_q = 0.f;
                 for (int i = 0; i < N; ++i)
-                    sum_q += q[static_cast<std::size_t>(i * (K + 1) + k)];
-                class_likelihood[static_cast<std::size_t>(k)] = sum_q / static_cast<float>(N);
+                    if (active_points[static_cast<std::size_t>(i)] != 0)
+                        sum_q += q[static_cast<std::size_t>(i * (K + 1) + k)];
+                class_likelihood[static_cast<std::size_t>(k)] = sum_q / static_cast<float>(std::max(1, active_count));
             }
 
             // Wireframe overlay for visible map classes (updated per iteration).
@@ -1414,40 +1954,169 @@ void SpecificWorker::run_camera_em_validator()
             std::vector<Eigen::Vector3f> annotation_points;
             std::vector<QString> annotation_texts;
             std::vector<QColor> annotation_colors;
+
+            auto oriented_box_corners_iter = [](const std::vector<Eigen::Vector2f>& poly) -> std::array<Eigen::Vector2f, 4>
+            {
+                std::array<Eigen::Vector2f, 4> out{Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero()};
+                if (poly.empty())
+                    return out;
+
+                Eigen::Vector2f c = Eigen::Vector2f::Zero();
+                for (const auto& p : poly) c += p;
+                c /= static_cast<float>(poly.size());
+
+                Eigen::Matrix2f cov = Eigen::Matrix2f::Zero();
+                for (const auto& p : poly)
+                {
+                    const Eigen::Vector2f d = p - c;
+                    cov += d * d.transpose();
+                }
+                cov /= static_cast<float>(std::max<std::size_t>(1, poly.size()));
+
+                Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig(cov);
+                Eigen::Vector2f u(1.f, 0.f);
+                if (eig.info() == Eigen::Success)
+                    u = eig.eigenvectors().col(1).normalized();
+                Eigen::Vector2f v(-u.y(), u.x());
+
+                float umin = std::numeric_limits<float>::max();
+                float umax = -std::numeric_limits<float>::max();
+                float vmin = std::numeric_limits<float>::max();
+                float vmax = -std::numeric_limits<float>::max();
+                for (const auto& p : poly)
+                {
+                    const Eigen::Vector2f d = p - c;
+                    const float pu = d.dot(u);
+                    const float pv = d.dot(v);
+                    umin = std::min(umin, pu);
+                    umax = std::max(umax, pu);
+                    vmin = std::min(vmin, pv);
+                    vmax = std::max(vmax, pv);
+                }
+
+                out[0] = c + u * umin + v * vmin;
+                out[1] = c + u * umax + v * vmin;
+                out[2] = c + u * umax + v * vmax;
+                out[3] = c + u * umin + v * vmax;
+                return out;
+            };
+
+            auto append_mesh_like_wireframe_iter = [&](const std::vector<Eigen::Vector2f>& poly,
+                                                       const std::string& label,
+                                                       float h,
+                                                       std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>>& out_segments,
+                                                       std::vector<QColor>& out_colors,
+                                                       const QColor& color)
+            {
+                if (poly.size() < 3)
+                    return;
+
+                const auto corners = oriented_box_corners_iter(poly);
+                const auto& c0 = corners[0];
+                const auto& c1 = corners[1];
+                const auto& c2 = corners[2];
+                const auto& c3 = corners[3];
+
+                auto add = [&](const Eigen::Vector2f& a, float za, const Eigen::Vector2f& b, float zb)
+                {
+                    const Eigen::Vector2f ar = world_to_robot * a;
+                    const Eigen::Vector2f br = world_to_robot * b;
+                    out_segments.emplace_back(to_camera(ar, za), to_camera(br, zb));
+                    out_colors.emplace_back(color);
+                };
+
+                const Eigen::Vector2f center = 0.25f * (c0 + c1 + c2 + c3);
+                const Eigen::Vector2f front_mid = 0.5f * (c0 + c1);
+                const Eigen::Vector2f back_mid  = 0.5f * (c2 + c3);
+                const Eigen::Vector2f left_mid  = 0.5f * (c0 + c3);
+                const Eigen::Vector2f right_mid = 0.5f * (c1 + c2);
+                const QString ql = QString::fromStdString(label).toLower();
+
+                if (ql.contains("mesa") || ql.contains("table"))
+                {
+                    const float z_top = h;
+                    const float z_apron = 0.72f * h;
+                    const float t = 0.14f;
+                    const Eigen::Vector2f c01 = c0 + t * (c1 - c0);
+                    const Eigen::Vector2f c12 = c1 + t * (c2 - c1);
+                    const Eigen::Vector2f c23 = c2 + t * (c3 - c2);
+                    const Eigen::Vector2f c30 = c3 + t * (c0 - c3);
+                    add(c0, z_top, c1, z_top);
+                    add(c1, z_top, c2, z_top);
+                    add(c2, z_top, c3, z_top);
+                    add(c3, z_top, c0, z_top);
+                    add(c01, z_apron, c12, z_apron);
+                    add(c12, z_apron, c23, z_apron);
+                    add(c23, z_apron, c30, z_apron);
+                    add(c30, z_apron, c01, z_apron);
+                    add(c01, 0.f, c01, z_apron);
+                    add(c12, 0.f, c12, z_apron);
+                    add(c23, 0.f, c23, z_apron);
+                    add(c30, 0.f, c30, z_apron);
+                    add(front_mid, 0.62f * h, back_mid, 0.62f * h);
+                    add(left_mid, 0.62f * h, right_mid, 0.62f * h);
+                    return;
+                }
+
+                if (ql.contains("silla") || ql.contains("chair"))
+                {
+                    const float z_seat = 0.50f * h;
+                    const float z_back = 0.98f * h;
+                    const float t = 0.18f;
+                    const Eigen::Vector2f s0 = c0 + t * (c1 - c0) + t * (c3 - c0);
+                    const Eigen::Vector2f s1 = c1 + t * (c0 - c1) + t * (c2 - c1);
+                    const Eigen::Vector2f s2 = c2 + t * (c1 - c2) + t * (c3 - c2);
+                    const Eigen::Vector2f s3 = c3 + t * (c2 - c3) + t * (c0 - c3);
+                    add(s0, z_seat, s1, z_seat);
+                    add(s1, z_seat, s2, z_seat);
+                    add(s2, z_seat, s3, z_seat);
+                    add(s3, z_seat, s0, z_seat);
+                    add(s0, 0.f, s0, z_seat);
+                    add(s1, 0.f, s1, z_seat);
+                    add(s2, 0.f, s2, z_seat);
+                    add(s3, 0.f, s3, z_seat);
+                    const Eigen::Vector2f b0 = 0.5f * (s2 + c2);
+                    const Eigen::Vector2f b1 = 0.5f * (s3 + c3);
+                    add(b0, z_seat, b0, z_back);
+                    add(b1, z_seat, b1, z_back);
+                    add(b0, z_back, b1, z_back);
+                    add(0.5f * (b0 + b1), z_seat, 0.5f * (b0 + b1), z_back);
+                    return;
+                }
+
+                const float z_top = h;
+                const float z_support = 0.92f * h;
+                add(c0, z_top, c1, z_top);
+                add(c1, z_top, c2, z_top);
+                add(c2, z_top, c3, z_top);
+                add(c3, z_top, c0, z_top);
+                add(c0, 0.f, c0, z_support);
+                add(c1, 0.f, c1, z_support);
+                add(c2, 0.f, c2, z_support);
+                add(c3, 0.f, c3, z_support);
+                add(front_mid, 0.70f * h, back_mid, 0.70f * h);
+                add(left_mid, 0.70f * h, right_mid, 0.70f * h);
+                add(center, 0.68f * h, center, z_top);
+            };
+
             for (const auto& c : classes)
             {
                 if (c.vertices.size() < 3)
                     continue;
-                const float z0 = 0.f;
-                const float z1 = c.height;
                 const int class_idx = static_cast<int>(&c - classes.data());
-                const QColor class_color = (class_idx >= 0 && class_idx < static_cast<int>(class_colors.size()))
-                    ? class_colors[static_cast<std::size_t>(class_idx)]
-                    : QColor(255, 220, 60, 220);
 
                 Eigen::Vector2f center = Eigen::Vector2f::Zero();
                 for (const auto& v : c.vertices) center += v;
                 center /= static_cast<float>(std::max<std::size_t>(1, c.vertices.size()));
                 const Eigen::Vector2f center_robot = world_to_robot * center;
-                annotation_points.emplace_back(to_camera(center_robot, z1 + 0.05f));
+                annotation_points.emplace_back(to_camera(center_robot, c.height + 0.05f));
                 const float lk = (class_idx >= 0 && class_idx < static_cast<int>(class_likelihood.size()))
                     ? class_likelihood[static_cast<std::size_t>(class_idx)] : 0.f;
                 annotation_texts.emplace_back(QString::fromStdString(c.label) + QString(" | L=%1").arg(lk, 0, 'f', 2));
-                annotation_colors.emplace_back(class_color);
-
-                for (std::size_t i = 0; i < c.vertices.size(); ++i)
-                {
-                    const auto& a = c.vertices[i];
-                    const auto& b = c.vertices[(i + 1) % c.vertices.size()];
-                    const Eigen::Vector2f ar = world_to_robot * a;
-                    const Eigen::Vector2f br = world_to_robot * b;
-                    segments.emplace_back(to_camera(ar, z0), to_camera(br, z0));
-                    segment_colors.emplace_back(class_color);
-                    segments.emplace_back(to_camera(ar, z1), to_camera(br, z1));
-                    segment_colors.emplace_back(class_color);
-                    segments.emplace_back(to_camera(ar, z0), to_camera(ar, z1));
-                    segment_colors.emplace_back(class_color);
-                }
+                annotation_colors.emplace_back(QColor(255, 255, 255, 255));
+                QColor wf_color = class_colors[static_cast<std::size_t>(std::max(0, class_idx))];
+                wf_color.setAlpha(255);
+                append_mesh_like_wireframe_iter(c.vertices, c.label, c.height, segments, segment_colors, wf_color);
             }
             camera_viewer_->set_wireframe_segments_camera_colored(segments, segment_colors, visible_names_text);
             camera_viewer_->set_wireframe_annotations_camera(annotation_points, annotation_texts, annotation_colors);
@@ -1477,6 +2146,8 @@ void SpecificWorker::run_camera_em_validator()
                 class_points.reserve(static_cast<std::size_t>(N / std::max(1, K)) + 1);
                 for (int i = 0; i < N; ++i)
                 {
+                    if (active_points[static_cast<std::size_t>(i)] == 0)
+                        continue;
                     const float qik = q[static_cast<std::size_t>(i * (K + 1) + k)];
                     if (qik > 0.45f || point_classes[static_cast<std::size_t>(i)] == k)
                         class_points.emplace_back(points_world[static_cast<std::size_t>(i)]);
@@ -1814,7 +2485,7 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
 
     try
     {
-        const auto tdata = imagesegmentation_proxy->getAll();
+        const auto tdata = imagesegmentation_proxy->getAll(false);
         std::vector<Eigen::Vector3f> points_layout;
         std::vector<rc::Viewer3D::SegmentedBoxItem> boxes_layout;
         boxes_layout.reserve(1);
