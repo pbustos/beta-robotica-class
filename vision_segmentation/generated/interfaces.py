@@ -135,6 +135,24 @@ class ImgType(list):
         super(ImgType, self).insert(index, item)
 setattr(RoboCompImageSegmentation, "ImgType", ImgType)
 
+class DepthType(list):
+    def __init__(self, iterable=list()):
+        super(DepthType, self).__init__(iterable)
+
+    def append(self, item):
+        assert isinstance(item, byte)
+        super(DepthType, self).append(item)
+
+    def extend(self, iterable):
+        for item in iterable:
+            assert isinstance(item, byte)
+        super(DepthType, self).extend(iterable)
+
+    def insert(self, index, item):
+        assert isinstance(item, byte)
+        super(DepthType, self).insert(index, item)
+setattr(RoboCompImageSegmentation, "DepthType", DepthType)
+
 
 import imagesegmentationI
 

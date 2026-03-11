@@ -26,13 +26,15 @@ Main data types:
 - `Point3D { float x; float y; float z; }`
 - `SegmentedObject { string label; float score; Polygon imagePolygon; PointCloud points3D; }`
 - `TImage { compressed, cameraID, width, height, depth, focalx, focaly, alivetime, period, image }`
-- `TData { ObjectList objects; TImage image; long timestamp; }`
+- `TDepth { compressed, cameraID, width, height, focalx, focaly, alivetime, period, depthFactor, depth }`
+- `TData { ObjectList objects; TImage image; TDepth depth; long timestamp; }`
 
 Implemented methods:
 
-- `ObjectList getSegmentedObjects()`
+- `ObjectList getSegmentedObjects(bool points3d)`
 - `TImage getImage()`
-- `TData getAll()`
+- `TDepth getDepth()`
+- `TData getAll(bool points3d)`
 
 ## Requirements
 
@@ -104,6 +106,9 @@ bin/vision_segmentation config
 
 - With `Display=False`, rendering work is skipped to maximize throughput.
 - The component prints FPS periodically.
+- `points3d=False` in `getAll`/`getSegmentedObjects` returns segmented objects with empty `points3D` for lower CPU cost.
+- In `ProxyThread=True` mode, camera reads are done only by the background thread to avoid parallel proxy access.
+- Snapshot publication (`objects`, `image`, `depth`, `timestamp`) is protected with a lock to avoid concurrent read/write races.
 
 ## Coordinate frames
 
@@ -160,8 +165,14 @@ Important:
 
 - **Low FPS (expected around 20Hz but getting less)**
 	- Set `Display=False` to disable GUI overhead.
-	- Try `ProxyThread=False` and compare performance (in some systems direct proxy reads are more stable).
+	- Try `ProxyThread=False` and compare performance.
 	- Use a lighter segmentation model checkpoint if needed.
+	- Use `points3d=False` from clients when 3D points are not needed.
+
+- **Intermittent segfault / random crash**
+	- Ensure all clients and this component are regenerated/restarted against the same `ImageSegmentation` interface version.
+	- Keep a single process reading the camera proxy in threaded mode (`ProxyThread=True` is already implemented this way).
+	- If instability persists, test with `Display=False` to rule out Qt3D/GUI driver issues.
 
 - **Proxy errors / no input frames**
 	- Verify `Proxies.CameraRGBDSimple` endpoint in `etc/config`.

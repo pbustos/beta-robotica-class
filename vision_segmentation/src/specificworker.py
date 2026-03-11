@@ -63,7 +63,7 @@ class SpecificWorker(GenericWorker):
 
         # Load the latest YOLO model (YOLO26 large) for object detection
         print("Loading YOLO model...")
-        self.yolo_model = YOLO('yolo26l-seg.pt')
+        self.yolo_model = YOLO('yolo26m-seg.pt')
         print("YOLO loaded.")
 
         # FPS tracking variables
@@ -78,9 +78,12 @@ class SpecificWorker(GenericWorker):
 
         # Latest published snapshot for ICE consumers
         initial_timestamp = int(time.time() * 1000)
+        self._state_lock = threading.Lock()
+        self._shutting_down = False
         self._latest_snapshot = (
             [],
             ifaces.RoboCompImageSegmentation.TImage(),
+            ifaces.RoboCompImageSegmentation.TDepth(),
             initial_timestamp,
         )
 
@@ -106,17 +109,35 @@ class SpecificWorker(GenericWorker):
 
     def __del__(self):
         """Destructor"""
+        self._shutdown()
+
+    def closeEvent(self, event):
+        self._shutdown()
+        super(SpecificWorker, self).closeEvent(event)
+
+    def _shutdown(self):
+        with self._state_lock:
+            if self._shutting_down:
+                return
+            self._shutting_down = True
+
+        if self.timer.isActive():
+            self.timer.stop()
         self._stop_proxy_thread()
 
     @QtCore.Slot()
     def compute(self):
+        with self._state_lock:
+            if self._shutting_down:
+                return
         self._update_fps()
 
         try:
             if self.use_proxy_thread:
                 rgbd = self._get_latest_rgbd()
                 if rgbd is None:
-                    rgbd = self.camerargbdsimple_proxy.getAll("camera")
+                    # Avoid racing the proxy thread with a parallel direct proxy call.
+                    return
             else:
                 rgbd = self.camerargbdsimple_proxy.getAll("camera")
             img_struct = rgbd.image
@@ -145,9 +166,13 @@ class SpecificWorker(GenericWorker):
 
             self._update_qt3d_from_mask(seg_mask, depth_np, fx, fy, cx, cy, img)
 
-            image_out = self._build_output_image(img_struct, annotated_img.tobytes())
+            image_out = self._build_output_image(img_struct, img.tobytes())
+            depth_out = self._build_output_depth(depth_struct)
 
-            self._latest_snapshot = (segmented_objects, image_out, int(time.time() * 1000))
+            with self._state_lock:
+                if self._shutting_down:
+                    return
+                self._latest_snapshot = (segmented_objects, image_out, depth_out, int(time.time() * 1000))
 
             self._update_2d_display(annotated_img)
             
@@ -167,6 +192,7 @@ class SpecificWorker(GenericWorker):
         self._proxy_thread_stop.set()
         if self._proxy_thread is not None and self._proxy_thread.is_alive():
             self._proxy_thread.join(timeout=0.5)
+        self._proxy_thread = None
 
     def _update_proxy_wait_from_period(self, rgbd):
         period_ms = getattr(rgbd.image, "period", None)
@@ -187,6 +213,8 @@ class SpecificWorker(GenericWorker):
         while not self._proxy_thread_stop.is_set():
             try:
                 rgbd = self.camerargbdsimple_proxy.getAll("camera")
+                if self._proxy_thread_stop.is_set():
+                    break
                 self._update_proxy_wait_from_period(rgbd)
 
                 self._proxy_queue.put(rgbd, timeout=0.1)
@@ -230,6 +258,20 @@ class SpecificWorker(GenericWorker):
         img_out.period = img_struct.period
         img_out.image = image_bytes
         return img_out
+
+    def _build_output_depth(self, depth_struct):
+        depth_out = ifaces.RoboCompImageSegmentation.TDepth()
+        depth_out.compressed = depth_struct.compressed
+        depth_out.cameraID = depth_struct.cameraID
+        depth_out.width = depth_struct.width
+        depth_out.height = depth_struct.height
+        depth_out.focalx = depth_struct.focalx
+        depth_out.focaly = depth_struct.focaly
+        depth_out.alivetime = depth_struct.alivetime
+        depth_out.period = depth_struct.period
+        depth_out.depthFactor = depth_struct.depthFactor
+        depth_out.depth = depth_struct.depth
+        return depth_out
 
     def _get_depth_intrinsics(self, depth_struct):
         depth_np = np.frombuffer(depth_struct.depth, dtype=np.float32).reshape(
@@ -301,7 +343,7 @@ class SpecificWorker(GenericWorker):
         seg_mask = np.zeros((img_height, img_width), dtype=np.uint8)
         segmented_objects = []
         now = time.time()
-        draw_overlay = self.display_enabled or ((now - self.last_image_request_time) <= self.image_request_hold_seconds)
+        draw_overlay = self.display_enabled
         need_objects = (now - self.last_objects_request_time) <= self.objects_request_hold_seconds
         need_seg_mask = self.display_enabled
 
@@ -375,7 +417,8 @@ class SpecificWorker(GenericWorker):
 
         h, w, ch = annotated_img.shape
         bytes_per_line = ch * w
-        q_img = QImage(annotated_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        # Force a deep copy so Qt does not keep a dangling pointer to numpy-owned memory.
+        q_img = QImage(annotated_img.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
         self.image_label.setPixmap(QPixmap.fromImage(q_img))
 
 
@@ -472,30 +515,54 @@ class SpecificWorker(GenericWorker):
 
     # IMPLEMENTATION of getSegmentedObjects method from ImageSegmentation interface
     #
-    def ImageSegmentation_getSegmentedObjects(self):
-        self.last_objects_request_time = time.time()
-        objects, _, _ = self._latest_snapshot
-        return objects
+    def _objects_with_optional_points(self, objects, points3d):
+        if points3d:
+            return objects
+
+        filtered_objects = []
+        for obj in objects:
+            filtered = ifaces.RoboCompImageSegmentation.SegmentedObject()
+            filtered.label = obj.label
+            filtered.score = obj.score
+            filtered.imagePolygon = obj.imagePolygon
+            filtered.points3D = []
+            filtered_objects.append(filtered)
+        return filtered_objects
+
+    def ImageSegmentation_getSegmentedObjects(self, points3d):
+        with self._state_lock:
+            self.last_objects_request_time = time.time()
+            objects, _, _, _ = self._latest_snapshot
+        return self._objects_with_optional_points(objects, points3d)
     
     # IMPLEMENTATION of getAll method from ImageSegmentation interface
-    def ImageSegmentation_getAll(self):
-        self.last_image_request_time = time.time()
-        self.last_objects_request_time = time.time()
-        objects, image, timestamp = self._latest_snapshot
+    def ImageSegmentation_getAll(self, points3d):
+        with self._state_lock:
+            self.last_image_request_time = time.time()
+            self.last_objects_request_time = time.time()
+            objects, image, depth, timestamp = self._latest_snapshot
 
         ret = ifaces.RoboCompImageSegmentation.TData()
-        ret.objects = objects
+        ret.objects = self._objects_with_optional_points(objects, points3d)
         ret.image = image
+        ret.depth = depth
         ret.timestamp = timestamp
         return ret
+
+    # IMPLEMENTATION of getDepth method from ImageSegmentation interface
+    def ImageSegmentation_getDepth(self):
+        with self._state_lock:
+            _, _, depth, _ = self._latest_snapshot
+        return depth
     
     #
     
     # IMPLEMENTATION of getImage method from ImageSegmentation interface
     #
     def ImageSegmentation_getImage(self):
-        self.last_image_request_time = time.time()
-        _, image, _ = self._latest_snapshot
+        with self._state_lock:
+            self.last_image_request_time = time.time()
+            _, image, _, _ = self._latest_snapshot
         return image
     
 
