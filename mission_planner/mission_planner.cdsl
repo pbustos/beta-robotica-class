@@ -1,10 +1,10 @@
-import "Gridder.idsl";
+import "Navigator.idsl";
 
 Component mission_planner
 {
     Communications
     {
-        requires Gridder;
+        requires Navigator;
     };
     language Cpp11;
     gui Qt(QWidget);

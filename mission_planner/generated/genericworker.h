@@ -41,11 +41,11 @@
 #include <unordered_map>
 
 
-#include <Gridder.h>
+#include <Navigator.h>
 
 #define BASIC_PERIOD 100
 
-using TuplePrx = std::tuple<RoboCompGridder::GridderPrxPtr>;
+using TuplePrx = std::tuple<RoboCompNavigator::NavigatorPrxPtr>;
 
 
 class GenericWorker : public QWidget, public Ui_guiDlg
@@ -64,7 +64,7 @@ public:
 	std::atomic_bool hibernation = false;
 
 
-	RoboCompGridder::GridderPrxPtr gridder_proxy;
+	RoboCompNavigator::NavigatorPrxPtr navigator_proxy;
 
 
 protected:

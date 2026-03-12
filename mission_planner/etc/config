@@ -1,5 +1,5 @@
 # Proxies for required interfaces
-Proxies.Gridder = "gridder:tcp -h localhost -p 13541"
+Proxies.Navigator = "navigator:tcp -h localhost -p 13212"
 
 
 

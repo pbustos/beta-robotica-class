@@ -78,7 +78,7 @@
 #include "../src/specificworker.h"
 
 
-#include <Gridder.h>
+#include <Navigator.h>
 
 #define USE_QTGUI
 
@@ -169,14 +169,14 @@ int mission_planner::run(int argc, char* argv[])
 
 	int status=EXIT_SUCCESS;
 
-	RoboCompGridder::GridderPrxPtr gridder_proxy;
+	RoboCompNavigator::NavigatorPrxPtr navigator_proxy;
 
 
 	//Require code
-	require<RoboCompGridder::GridderPrx, RoboCompGridder::GridderPrxPtr>(communicator(),
-	                    configLoader.get<std::string>("Proxies.Gridder"), "GridderProxy", gridder_proxy);
+	require<RoboCompNavigator::NavigatorPrx, RoboCompNavigator::NavigatorPrxPtr>(communicator(),
+	                    configLoader.get<std::string>("Proxies.Navigator"), "NavigatorProxy", navigator_proxy);
 
-	tprx = std::make_tuple(gridder_proxy);
+	tprx = std::make_tuple(navigator_proxy);
 	SpecificWorker *worker = new SpecificWorker(this->configLoader, tprx, startup_check_flag);
 	QObject::connect(worker, SIGNAL(kill()), &a, SLOT(quit()));
 
