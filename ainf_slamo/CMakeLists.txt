@@ -21,5 +21,31 @@ add_subdirectory(generated)
 
 INSTALL(FILES etc/config DESTINATION ${RC_COMPONENT_INSTALL_PATH}/etc-default/ RENAME ainf_slamo.conf )
 
+# Install runtime mesh assets used by the 3D viewer (bench/chair/monitor/etc.).
+# Without these files, only analytic furniture (e.g. tables) remains visible.
+INSTALL(DIRECTORY meshes DESTINATION ${RC_COMPONENT_INSTALL_PATH})
+
+# Optional: deploy Qt scene parser plugins (Assimp) so Qt3DRender::QMesh can
+# load OBJ files in installations where plugin discovery is incomplete.
+find_program(QTPATHS_EXECUTABLE NAMES qtpaths6 qtpaths)
+if(QTPATHS_EXECUTABLE)
+  execute_process(
+    COMMAND ${QTPATHS_EXECUTABLE} --plugin-dir
+    OUTPUT_VARIABLE QT_PLUGIN_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+
+  if(EXISTS "${QT_PLUGIN_DIR}/sceneparsers")
+    INSTALL(DIRECTORY "${QT_PLUGIN_DIR}/sceneparsers"
+            DESTINATION ${RC_COMPONENT_INSTALL_PATH}/bin/plugins)
+    message(STATUS "Installing Qt sceneparsers from: ${QT_PLUGIN_DIR}/sceneparsers")
+  else()
+    message(WARNING "Qt sceneparsers plugin directory not found under: ${QT_PLUGIN_DIR}")
+  endif()
+else()
+  message(WARNING "qtpaths not found; skipping Qt sceneparsers plugin install")
+endif()
+
 #ADD_CUSTOM_TARGET(doc doxygen Doxyfile)
 #ADD_CUSTOM_TARGET(installdoc mkdir -p ${RC_COMPONENT_INSTALL_PATH}/doc COMMAND cp -R doc/html ${RC_COMPONENT_INSTALL_PATH}/doc/ainf_slamo )
