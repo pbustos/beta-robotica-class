@@ -358,7 +358,7 @@ class SpecificWorker : public GenericWorker
 	std::chrono::steady_clock::time_point low_speed_block_start_;
 	static constexpr float BLOCKED_SPEED_THRESHOLD = 0.03f;     // m/s
 	static constexpr float BLOCKED_TIME_THRESHOLD_SEC = 2.5f;   // s
-	static constexpr float SOURCE_OBSTACLE_DENSITY_PROBE_EXTRA_RADIUS = 5.0f; 
+	static constexpr float SOURCE_OBSTACLE_DENSITY_PROBE_EXTRA_RADIUS = 3.0f; 
 	bool safeguard_recovery_active_ = false;
 	bool safeguard_replan_pending_ = false;
 	int safeguard_recovery_cycles_ = 0;
