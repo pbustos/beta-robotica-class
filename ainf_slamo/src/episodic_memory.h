@@ -19,6 +19,13 @@ namespace rc
                 std::string target_object_id;
             };
 
+            struct MissionSource
+            {
+                std::optional<float> source_x;
+                std::optional<float> source_y;
+                std::optional<float> obstacle_density;
+            };
+
             struct MissionContext
             {
                 std::string mission_type = "unknown";
@@ -87,6 +94,7 @@ namespace rc
                 std::string status = "unknown";
 
                 MissionContext mission;
+                MissionSource source;
                 MissionTarget target;
 
                 std::unordered_map<std::string, float> params_snapshot;

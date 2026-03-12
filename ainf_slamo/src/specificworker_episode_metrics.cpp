@@ -5,7 +5,57 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
+
+namespace
+{
+bool point_in_polygon_2d(const Eigen::Vector2f& p, const std::vector<Eigen::Vector2f>& poly)
+{
+    if (poly.size() < 3)
+        return false;
+
+    bool inside = false;
+    for (std::size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+    {
+        const auto& vi = poly[i];
+        const auto& vj = poly[j];
+        const bool intersects = ((vi.y() > p.y()) != (vj.y() > p.y())) &&
+                                 (p.x() < (vj.x() - vi.x()) * (p.y() - vi.y()) /
+                                              ((vj.y() - vi.y()) + 1e-9f) + vi.x());
+        if (intersects)
+            inside = !inside;
+    }
+    return inside;
+}
+
+float point_to_segment_distance(const Eigen::Vector2f& p,
+                                const Eigen::Vector2f& a,
+                                const Eigen::Vector2f& b)
+{
+    const Eigen::Vector2f ab = b - a;
+    const float denom = std::max(1e-9f, ab.squaredNorm());
+    const float t = std::clamp((p - a).dot(ab) / denom, 0.f, 1.f);
+    const Eigen::Vector2f q = a + t * ab;
+    return (p - q).norm();
+}
+
+float point_to_polygon_boundary_distance(const Eigen::Vector2f& p,
+                                         const std::vector<Eigen::Vector2f>& poly)
+{
+    if (poly.size() < 2)
+        return std::numeric_limits<float>::infinity();
+
+    float best = std::numeric_limits<float>::infinity();
+    for (std::size_t i = 0; i < poly.size(); ++i)
+    {
+        const auto& a = poly[i];
+        const auto& b = poly[(i + 1) % poly.size()];
+        best = std::min(best, point_to_segment_distance(p, a, b));
+    }
+    return best;
+}
+} // namespace
 
 float SpecificWorker::percentile_copy(std::vector<float> values, float q)
 {
@@ -15,6 +65,58 @@ float SpecificWorker::percentile_copy(std::vector<float> values, float q)
     const std::size_t idx = static_cast<std::size_t>(q * static_cast<float>(values.size() - 1));
     std::nth_element(values.begin(), values.begin() + static_cast<long>(idx), values.end());
     return values[idx];
+}
+
+float SpecificWorker::compute_source_obstacle_density(const Eigen::Vector2f& source_point) const
+{
+    if (room_polygon_.size() < 3)
+        return 0.f;
+
+    auto inside_any_obstacle = [this](const Eigen::Vector2f& p)
+    {
+        for (const auto& fp : furniture_polygons_)
+            if (point_in_polygon_2d(p, fp.vertices))
+                return true;
+        for (const auto& temp : temp_obstacles_)
+            if (point_in_polygon_2d(p, temp.vertices))
+                return true;
+        return false;
+    };
+
+    const bool inside_room = point_in_polygon_2d(source_point, room_polygon_);
+    if (!inside_room || inside_any_obstacle(source_point))
+        return 1.f;
+
+    const float robot_radius = std::max(0.05f, path_planner_.params.robot_radius);
+    const float probe_radius = robot_radius + SOURCE_OBSTACLE_DENSITY_PROBE_EXTRA_RADIUS;
+
+    constexpr int n_dirs = 72;
+    int blocked_dirs = 0;
+    for (int i = 0; i < n_dirs; ++i)
+    {
+        const float angle = 2.f * static_cast<float>(M_PI) * static_cast<float>(i) / static_cast<float>(n_dirs);
+        const Eigen::Vector2f dir(std::cos(angle), std::sin(angle));
+        const Eigen::Vector2f candidate = source_point + probe_radius * dir;
+
+        if (!point_in_polygon_2d(candidate, room_polygon_) || inside_any_obstacle(candidate))
+            blocked_dirs++;
+    }
+    const float blocked_ratio = static_cast<float>(blocked_dirs) / static_cast<float>(n_dirs);
+
+    float min_clearance = point_to_polygon_boundary_distance(source_point, room_polygon_);
+    for (const auto& fp : furniture_polygons_)
+        min_clearance = std::min(min_clearance, point_to_polygon_boundary_distance(source_point, fp.vertices));
+    for (const auto& temp : temp_obstacles_)
+        min_clearance = std::min(min_clearance, point_to_polygon_boundary_distance(source_point, temp.vertices));
+
+    const float clearance_span = std::max(1e-3f, (probe_radius * 1.4f) - robot_radius);
+    const float clearance_norm = std::clamp((min_clearance - robot_radius) /
+                                            clearance_span,
+                                            0.f, 1.f);
+
+    const float free_ratio = 1.f - blocked_ratio;
+    const float openness = 0.55f * free_ratio + 0.45f * clearance_norm;
+    return std::clamp(1.f - openness, 0.f, 1.f);
 }
 
 void SpecificWorker::start_episode(const std::string &mission_type,
@@ -29,6 +131,11 @@ void SpecificWorker::start_episode(const std::string &mission_type,
     episode.start_ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     episode.status = "running";
+
+    const auto state = get_loc_state();
+    episode.source.source_x = static_cast<float>(state[2]);
+    episode.source.source_y = static_cast<float>(state[3]);
+    episode.source.obstacle_density = compute_source_obstacle_density(Eigen::Vector2f(state[2], state[3]));
 
     episode.mission.mission_type = mission_type;
     episode.mission.controller_version = "ainf_slamo_v2";
@@ -86,7 +193,6 @@ void SpecificWorker::start_episode(const std::string &mission_type,
     episode_accum_.has_last_metric_sample = true;
     if (target_point.has_value())
     {
-        const auto state = get_loc_state();
         episode_accum_.start_to_goal_dist_m = std::hypot(target_point->x() - static_cast<float>(state[2]),
                                                          target_point->y() - static_cast<float>(state[3]));
     }
