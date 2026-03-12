@@ -40,6 +40,9 @@
 #include "camera_viewer.h"
 #include "mesh_sdf_optimizer.h"
 #include "object_ownership_em.h"
+#include "furniture_types.h"
+#include "scene_graph_adapter.h"
+#include "scene_graph_model.h"
 #include <QSplitter>
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include "room_concept_ai.h"
@@ -179,13 +182,8 @@ class SpecificWorker : public GenericWorker
 	QGraphicsPolygonItem* polygon_item = nullptr;
 
 	// Furniture / obstacles (loaded from SVG "Furniture" layer)
-	struct FurniturePolygon
-	{
-		std::string id;                          // SVG id
-		std::string label;                       // inkscape:label
-		std::vector<Eigen::Vector2f> vertices;   // polygon vertices in room frame
-	};
-	std::vector<FurniturePolygon> furniture_polygons_;
+	std::vector<rc::FurniturePolygonData> furniture_polygons_;
+	rc::SceneGraphModel scene_graph_;
 	std::vector<QGraphicsPolygonItem*> furniture_draw_items_;
 	void draw_furniture();
 	void apply_ownership_em_visuals();
@@ -231,6 +229,14 @@ class SpecificWorker : public GenericWorker
 
 	/// Compute the q-th percentile of a vector (pass by value for in-place partial sort)
 	static float percentile_copy(std::vector<float> values, float q);
+	static bool extract_depth_buffer_meters(const RoboCompImageSegmentation::TDepth& depth,
+	                                       int& width,
+	                                       int& height,
+	                                       std::vector<float>& out);
+	static bool extract_depth_from_tdata(const RoboCompImageSegmentation::TData& tdata,
+	                                   int& width,
+	                                   int& height,
+	                                   std::vector<float>& out);
 
 	// Flip state tracking
 	bool flip_x_applied_ = false;
@@ -409,8 +415,8 @@ class SpecificWorker : public GenericWorker
     void load_layout_from_file(const std::string& filename);
     void load_polygon_from_file(const std::string& filename);
     void load_polygon_from_svg(const QString& svg_content);
-	void save_fitted_meshes_to_json();
-	void load_fitted_meshes_from_json();
+	void save_scene_graph_to_usd();
+	bool load_scene_graph_from_usd();
 
 	// Pose persistence (for fast restart)
 	void save_last_pose();
@@ -418,7 +424,7 @@ class SpecificWorker : public GenericWorker
 	bool load_last_pose();  // Returns true if pose was loaded successfully
 	void perform_grid_search(const std::vector<Eigen::Vector3f>& lidar_points);
 	static constexpr const char* LAST_POSE_FILE = "./last_pose.json";
-	static constexpr const char* FITTED_MESHES_FILE = "./fitted_meshes.json";
+	static constexpr const char* PERSISTED_SCENE_GRAPH_FILE = "./scene_graph.usda";
 
 	// GT calibration: offset from Webots frame to map frame
 	Eigen::Affine2f gt_offset_ = Eigen::Affine2f::Identity();

@@ -340,11 +340,16 @@ int ainf_slamo::run(int argc, char* argv[])
 
 		try
 		{
-			std::cout << "Unsubscribing topic: fullposeestimationpub " <<std::endl;
-			fullposeestimationpub_topic->unsubscribe(fullposeestimationpub);
-			std::cout << "Unsubscribing topic: joystickadapter " <<std::endl;
-			joystickadapter_topic->unsubscribe(joystickadapter);
-
+			if(fullposeestimationpub_topic && fullposeestimationpub)
+			{
+				std::cout << "Unsubscribing topic: fullposeestimationpub " <<std::endl;
+				fullposeestimationpub_topic->unsubscribe(fullposeestimationpub);
+			}
+			if(joystickadapter && joystickadapter_topic)
+			{
+				std::cout << "Unsubscribing topic: joystickadapter " <<std::endl;
+				joystickadapter_topic->unsubscribe(joystickadapter);
+			}
 		}
 		catch(const Ice::Exception& ex)
 		{

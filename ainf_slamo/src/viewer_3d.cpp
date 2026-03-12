@@ -498,6 +498,66 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         furniture_entities_.push_back(e);
     };
 
+    // Helper: analytic composed table (tabletop + 4 legs), matching SDF structure.
+    auto make_table_composed_entity = [&](const QColor& diffuse,
+                                          const QColor& ambient,
+                                          float shininess,
+                                          const Eigen::Vector2f& centroid,
+                                          float yaw_rad,
+                                          float width,
+                                          float depth,
+                                          float height,
+                                          const QString& pick_name) -> void
+    {
+        const float w = std::max(0.08f, width);
+        const float d = std::max(0.08f, depth);
+        const float h = std::max(0.20f, height);
+        const float top_thickness = std::max(0.03f, 0.08f * h);
+        const float leg_thickness = std::max(0.03f, 0.12f * std::min(w, d));
+        const float leg_height = std::max(0.05f, h - top_thickness);
+        const float leg_dx = std::max(0.f, 0.5f * w - 0.5f * leg_thickness);
+        const float leg_dy = std::max(0.f, 0.5f * d - 0.5f * leg_thickness);
+
+        const float c = std::cos(yaw_rad);
+        const float s = std::sin(yaw_rad);
+        const QQuaternion yaw_rot = QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, qRadiansToDegrees(yaw_rad));
+
+        auto make_part = [&](float local_x, float local_y, float size_x, float size_y, float size_h, float center_h)
+        {
+            const float wx = centroid.x() + c * local_x - s * local_y;
+            const float wy = centroid.y() + s * local_x + c * local_y;
+
+            auto* e = new Qt3DCore::QEntity(root_entity_);
+            auto* mesh = new Qt3DExtras::QCuboidMesh(e);
+            mesh->setXExtent(std::max(0.03f, size_x));
+            mesh->setYExtent(std::max(0.03f, size_h));
+            mesh->setZExtent(std::max(0.03f, size_y));
+
+            auto* mat = new Qt3DExtras::QPhongMaterial(e);
+            mat->setDiffuse(diffuse);
+            mat->setAmbient(ambient);
+            mat->setShininess(shininess);
+
+            auto* tf = new Qt3DCore::QTransform(e);
+            tf->setTranslation(QVector3D(-wx, center_h, wy));
+            tf->setRotation(yaw_rot);
+
+            e->addComponent(mesh);
+            e->addComponent(mat);
+            e->addComponent(tf);
+            attach_picker(e, pick_name);
+            furniture_entities_.push_back(e);
+        };
+
+        // Tabletop
+        make_part(0.f, 0.f, w, d, top_thickness, leg_height + 0.5f * top_thickness);
+        // Four legs
+        make_part( leg_dx,  leg_dy, leg_thickness, leg_thickness, leg_height, 0.5f * leg_height);
+        make_part( leg_dx, -leg_dy, leg_thickness, leg_thickness, leg_height, 0.5f * leg_height);
+        make_part(-leg_dx,  leg_dy, leg_thickness, leg_thickness, leg_height, 0.5f * leg_height);
+        make_part(-leg_dx, -leg_dy, leg_thickness, leg_thickness, leg_height, 0.5f * leg_height);
+    };
+
     for (const auto& item : items)
     {
         const QString ql = QString::fromStdString(item.label).toLower();
@@ -508,14 +568,12 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
 
         if (ql.contains("mesa") || ql.contains("table"))
         {
-            // Scale table mesh (native 1.2 m × 0.8 m in obj X × Y) to oriented footprint.
-            // After -90°X rotation: obj-X→local room-X, obj-Y→local room-Z.
-            const float sx = (size.x() > 0.1f) ? size.x() / 1.2f : 1.f;
-            const float sy = (size.y() > 0.1f) ? size.y() / 0.8f : 1.f;
-            make_entity(abs_mesh("meshes/table.obj"),
-                        QColor(160, 100, 55), QColor(70, 44, 24), 20.f,
-                        cen, axis_rot, QVector3D(sx, sy, 1.f),
-                        QString::fromStdString(item.label));
+            // Analytic table model: composed tabletop + 4 legs.
+            constexpr float table_height = 0.75f;
+            make_table_composed_entity(QColor(160, 100, 55), QColor(70, 44, 24), 20.f,
+                                       cen, item.yaw_rad,
+                                       size.x(), size.y(), table_height,
+                                       QString::fromStdString(item.label));
         }
         else if (ql.contains("banco") || ql.contains("bench"))
         {
