@@ -266,8 +266,22 @@ class SpecificWorker : public GenericWorker
 	bool ownership_em_enabled_ = true;
 	bool em_validator_overlay_lock_ = false;
 	bool em_overlay_persistent_active_ = false;
+	struct PendingEmAdjustment
+	{
+		int furniture_index = -1;
+		std::vector<Eigen::Vector2f> vertices;
+		float new_sdf = 0.f;
+		std::optional<float> prev_sdf;
+		std::string label;
+	};
+	std::vector<PendingEmAdjustment> pending_em_adjustments_;
+	bool em_decision_pending_ = false;
 	int ownership_em_log_counter_ = 0;
 	BufferSync<InOut<rc::VelocityCommand, rc::VelocityCommand>> velocity_buffer_{20};
+	std::optional<Eigen::Vector2f> nav_target_object_center_;
+	std::string nav_target_object_name_;
+	int object_align_cycles_ = 0;
+	bool object_final_align_active_ = false;
 
 	// Measured odometry readings from FullPoseEstimationPub (thread-safe via BufferSync)
 	BufferSync<InOut<rc::OdometryReading, rc::OdometryReading>> odometry_buffer_{20};
@@ -384,6 +398,7 @@ class SpecificWorker : public GenericWorker
 	void run_ownership_em_step(const std::vector<Eigen::Vector3f>& points_robot,
 	                           const Eigen::Affine2f& robot_pose);
 	void run_camera_em_validator();
+	void apply_pending_em_adjustments(bool accept);
 	void update_camera_wireframe_overlay(const Eigen::Affine2f &robot_pose);
 	int find_furniture_index_by_name(const QString& name) const;
 	float model_height_from_label(const std::string& label) const;

@@ -196,13 +196,14 @@ void SpecificWorker::initialize()
         grounding_score_label_->setWordWrap(false);
         grounding_sdf_label_->setWordWrap(false);
 
-        grounding_layout->addWidget(grounding_title);
-        grounding_layout->addWidget(grounding_status_label_);
-        grounding_layout->addWidget(grounding_cam_label_);
-        grounding_layout->addWidget(grounding_world_label_);
-        grounding_layout->addWidget(grounding_score_label_);
-        grounding_layout->addWidget(grounding_sdf_label_);
-        grounding_layout->addWidget(grounding_fit_mesh_button_);
+        grounding_title->setVisible(false);
+        grounding_status_label_->setVisible(false);
+        grounding_cam_label_->setVisible(false);
+        grounding_world_label_->setVisible(false);
+        grounding_score_label_->setVisible(false);
+        grounding_sdf_label_->setVisible(false);
+        grounding_fit_mesh_button_->setVisible(false);
+
         grounding_layout->addWidget(grounding_reload_svg_button_);
         grounding_layout->addStretch();
         right_splitter->addWidget(grounding_panel_);
@@ -392,6 +393,9 @@ void SpecificWorker::initialize()
             {
                 em_overlay_persistent_active_ = false;
                 em_validator_overlay_lock_ = false;
+                em_decision_pending_ = false;
+                pending_em_adjustments_.clear();
+                camera_viewer_->set_em_decision_buttons_visible(false);
                 camera_viewer_->clear_wireframe_overlay();
                 camera_viewer_->clear_em_points_overlay();
                 if (grounding_status_label_)
@@ -401,6 +405,12 @@ void SpecificWorker::initialize()
             }
             else
                 run_camera_em_validator();
+        });
+        connect(camera_viewer_.get(), &CameraViewer::emAcceptRequested, this, [this]() {
+            apply_pending_em_adjustments(true);
+        });
+        connect(camera_viewer_.get(), &CameraViewer::emRejectRequested, this, [this]() {
+            apply_pending_em_adjustments(false);
         });
         connect(camera_viewer_.get(), &QDialog::finished, this, [this](int) {
             if (pushButton_camera) pushButton_camera->setChecked(false);
@@ -767,6 +777,31 @@ void SpecificWorker::compute()
 
         if (ctrl.goal_reached)
         {
+            const bool goto_object = active_episode_.has_value()
+                                  && active_episode_->mission.mission_type == "goto_object"
+                                  && nav_target_object_center_.has_value();
+
+            if (goto_object)
+            {
+                // Switch to dedicated final heading alignment mode.
+                trajectory_controller_.stop();
+                current_path_.clear();
+                object_final_align_active_ = true;
+                object_align_cycles_ = 0;
+                send_velocity_command(0.f, 0.f, 0.f);
+                auto cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
+                velocity_buffer_.put<0>(std::move(cmd), timestamp);
+                if (label_episodeStatus != nullptr)
+                {
+                    label_episodeStatus->setText("EP: ALIGNING OBJECT");
+                    label_episodeStatus->setStyleSheet("background-color: #BBDEFB; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+                }
+                return;
+            }
+
+            object_align_cycles_ = 0;
+            nav_target_object_center_.reset();
+            nav_target_object_name_.clear();
             finish_episode("success");
             send_velocity_command(0.f, 0.f, 0.f);
             auto cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
@@ -879,6 +914,82 @@ void SpecificWorker::compute()
             if (do_draw && draw_trajectories_) draw_trajectory_debug(ctrl, res.robot_pose);
         }
         viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
+    }
+
+    // Dedicated final object-facing alignment phase (decoupled from trajectory controller).
+    if (object_final_align_active_ && nav_target_object_center_.has_value())
+    {
+        // Recompute object center in world each cycle when available.
+        Eigen::Vector2f object_world = nav_target_object_center_.value();
+        if (!nav_target_object_name_.empty())
+        {
+            const QString target_name = QString::fromStdString(nav_target_object_name_).trimmed();
+            for (const auto& fp : furniture_polygons_)
+            {
+                const QString flabel = QString::fromStdString(fp.label).trimmed();
+                const QString fid = QString::fromStdString(fp.id).trimmed();
+                if ((flabel.compare(target_name, Qt::CaseInsensitive) == 0 ||
+                        fid.compare(target_name, Qt::CaseInsensitive) == 0) &&
+                    !fp.vertices.empty())
+                {
+                    Eigen::Vector2f c = Eigen::Vector2f::Zero();
+                    for (const auto& v : fp.vertices) c += v;
+                    c /= static_cast<float>(fp.vertices.size());
+                    object_world = c;
+                    nav_target_object_center_ = c;
+                    break;
+                }
+            }
+        }
+
+        const auto loc_state = get_loc_state();
+        const float rx = loc_state[2];
+        const float ry = loc_state[3];
+        const float rth = loc_state[4];
+        const float cr = std::cos(rth);
+        const float sr = std::sin(rth);
+        const Eigen::Vector2f d_world = object_world - Eigen::Vector2f(rx, ry);
+        const Eigen::Vector2f object_robot(cr * d_world.x() + sr * d_world.y(),
+                                           -sr * d_world.x() + cr * d_world.y());
+
+        constexpr float kYawTol = 0.08f;
+        constexpr int kMaxAlignCycles = 70;
+        static float prev_angle_err = 0.f;
+        const float angle_err = std::atan2(object_robot.x(), object_robot.y());
+
+        const bool done = (std::abs(angle_err) <= kYawTol)
+                       || (object_robot.norm() <= 0.05f)
+                       || (object_align_cycles_ >= kMaxAlignCycles)
+                       || (object_align_cycles_ > 3 && std::signbit(angle_err) != std::signbit(prev_angle_err)
+                           && std::abs(angle_err) < 0.18f);
+
+        if (done)
+        {
+            object_final_align_active_ = false;
+            object_align_cycles_ = 0;
+            nav_target_object_center_.reset();
+            nav_target_object_name_.clear();
+            send_velocity_command(0.f, 0.f, 0.f);
+            auto stop_cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
+            velocity_buffer_.put<0>(std::move(stop_cmd), timestamp);
+            finish_episode("success");
+            clear_path();
+            qInfo() << "[TrajectoryCtrl] Navigation complete after final object alignment.";
+        }
+        else
+        {
+            const float kP = 1.2f;
+            float rot_cmd = std::clamp(kP * angle_err, -0.45f, 0.45f);
+            if (std::abs(rot_cmd) < 0.06f)
+                rot_cmd = (angle_err > 0.f) ? 0.06f : -0.06f;
+
+            send_velocity_command(0.f, 0.f, rot_cmd);
+            auto cmd = rc::VelocityCommand(0.f, 0.f, rot_cmd);
+            velocity_buffer_.put<0>(std::move(cmd), timestamp);
+            prev_angle_err = angle_err;
+            object_align_cycles_++;
+            return;
+        }
     }
 
     // Per-subsystem timing (every ~2 seconds at 20Hz)
@@ -1044,6 +1155,10 @@ void SpecificWorker::run_camera_em_validator()
 {
     if (!camera_viewer_)
         return;
+
+    em_decision_pending_ = false;
+    pending_em_adjustments_.clear();
+    camera_viewer_->set_em_decision_buttons_visible(false);
 
     em_validator_overlay_lock_ = true;
     bool keep_overlay_lock = false;
@@ -1244,6 +1359,7 @@ void SpecificWorker::run_camera_em_validator()
             float height = 0.8f;
             std::vector<Eigen::Vector2f> vertices;
             float last_sdf = 0.f;
+            std::optional<float> prev_sdf;
         };
 
         std::vector<EMClass> classes;
@@ -1256,6 +1372,7 @@ void SpecificWorker::run_camera_em_validator()
             c.label = fp.label.empty() ? fp.id : fp.label;
             c.height = model_height_from_label(c.label);
             c.vertices = fp.vertices;
+            c.prev_sdf = 1.0f;  // temporary debug baseline requested by user
             classes.emplace_back(std::move(c));
         }
 
@@ -1277,11 +1394,12 @@ void SpecificWorker::run_camera_em_validator()
             visible_model_names << class_labels.back();
         }
         class_labels.emplace_back("background");
-        class_colors.emplace_back(QColor(0, 0, 0, 255));
+        class_colors.emplace_back(QColor(96, 96, 96, 255));
 
         const QString visible_names_text = visible_model_names.isEmpty()
             ? QString("Visible models: -")
             : QString("Visible models: %1").arg(visible_model_names.join(", "));
+        const QColor em_wireframe_color(255, 255, 255, 255);
 
         auto point_seg_distance = [](const Eigen::Vector2f& p,
                                      const Eigen::Vector2f& a,
@@ -1308,6 +1426,99 @@ void SpecificWorker::run_camera_em_validator()
             }
             return best;
         };
+
+        // If no previous fit exists, estimate it on-the-fly from current class-selected points using table SDF.
+        for (auto& c : classes)
+        {
+            if (c.prev_sdf.has_value() && std::isfinite(c.prev_sdf.value()) && c.prev_sdf.value() > 0.f)
+                continue;
+
+            const QString label_lc = QString::fromStdString(c.label).toLower();
+            if (!(label_lc.contains("mesa") || label_lc.contains("table")))
+                continue;
+            if (c.vertices.size() < 3)
+                continue;
+
+            Eigen::Vector2f cen = Eigen::Vector2f::Zero();
+            for (const auto& v : c.vertices) cen += v;
+            cen /= static_cast<float>(c.vertices.size());
+
+            Eigen::Matrix2f cov = Eigen::Matrix2f::Zero();
+            for (const auto& v : c.vertices)
+            {
+                const Eigen::Vector2f d = v - cen;
+                cov += d * d.transpose();
+            }
+            cov /= static_cast<float>(std::max<std::size_t>(1, c.vertices.size()));
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig(cov);
+            Eigen::Vector2f axis_x(1.f, 0.f);
+            if (eig.info() == Eigen::Success)
+                axis_x = eig.eigenvectors().col(1).normalized();
+            const float yaw = std::atan2(axis_x.y(), axis_x.x());
+
+            Eigen::Vector2f axis_z(-axis_x.y(), axis_x.x());
+            float min_u = std::numeric_limits<float>::max();
+            float max_u = -std::numeric_limits<float>::max();
+            float min_v = std::numeric_limits<float>::max();
+            float max_v = -std::numeric_limits<float>::max();
+            for (const auto& p : c.vertices)
+            {
+                const Eigen::Vector2f d = p - cen;
+                const float u = d.dot(axis_x);
+                const float v = d.dot(axis_z);
+                min_u = std::min(min_u, u); max_u = std::max(max_u, u);
+                min_v = std::min(min_v, v); max_v = std::max(max_v, v);
+            }
+            const float w = std::max(0.08f, max_u - min_u);
+            const float d = std::max(0.08f, max_v - min_v);
+            const float h = std::max(0.20f, c.height);
+
+            std::vector<float> xyz;
+            xyz.reserve(points_world.size() * 3);
+            // Conservative baseline set: intentionally broader than the EM update set.
+            // This avoids over-optimistic "prev" scores when the initial pose is poor.
+            const float select_dist = std::max(0.35f, 0.60f * std::max(w, d));
+            const float radial_gate = std::max(0.80f, 1.40f * std::max(w, d));
+            for (const auto& pw : points_world)
+            {
+                const float dist = point_polygon_distance(pw.head<2>(), c.vertices);
+                const float radial = (pw.head<2>() - cen).norm();
+                if (dist > select_dist && radial > radial_gate)
+                    continue;
+                if (pw.z() < -0.10f || pw.z() > h + 0.60f)
+                    continue;
+                xyz.push_back(pw.x());
+                xyz.push_back(pw.y());
+                xyz.push_back(pw.z());
+            }
+
+            if (xyz.size() < 15 * 3)
+                continue;
+
+            auto pts = torch::from_blob(xyz.data(),
+                                        {static_cast<long>(xyz.size() / 3), 3},
+                                        torch::TensorOptions().dtype(torch::kFloat32)).clone();
+            auto params = torch::tensor({cen.x(), cen.y(), yaw, w, d, h},
+                                        torch::TensorOptions().dtype(torch::kFloat32));
+            auto sdf = rc::object_models::TableAnalyticModel::forward_sdf(pts, params);
+            const float mse = torch::mean(torch::square(sdf)).item<float>();
+            const float mae = torch::mean(torch::abs(sdf)).item<float>();
+            const float prev_est = 0.5f * mae + 0.5f * mse;
+            if (std::isfinite(prev_est) && prev_est > 0.f)
+                c.prev_sdf = std::max(0.01f, prev_est);
+        }
+
+        float prev_sdf_sum = 0.f;
+        int prev_sdf_count = 0;
+        for (const auto& c : classes)
+        {
+            if (c.prev_sdf.has_value() && std::isfinite(c.prev_sdf.value()) && c.prev_sdf.value() > 0.f)
+            {
+                prev_sdf_sum += c.prev_sdf.value();
+                ++prev_sdf_count;
+            }
+        }
+        const float prev_mean_sdf = (prev_sdf_count > 0) ? (prev_sdf_sum / static_cast<float>(prev_sdf_count)) : 0.f;
 
         // Draw initial visible wireframes immediately (even before EM iterations)
         {
@@ -1502,13 +1713,17 @@ void SpecificWorker::run_camera_em_validator()
                 for (const auto& v : c.vertices) center += v;
                 center /= static_cast<float>(std::max<std::size_t>(1, c.vertices.size()));
                 init_ann_points.emplace_back(to_camera(world_to_robot * center, c.height + 0.05f));
-                init_ann_texts.emplace_back(QString::fromStdString(c.label) + " | L=--");
+                const QString prev_txt = c.prev_sdf.has_value()
+                    ? QString::number(c.prev_sdf.value(), 'f', 4)
+                    : QString("--");
+                init_ann_texts.emplace_back(QString::fromStdString(c.label) + QString(" | prev=%1 cur=--").arg(prev_txt));
                 init_ann_colors.emplace_back(QColor(255, 255, 255, 255));
-                QColor wf_color = class_colors[static_cast<std::size_t>(k)];
-                wf_color.setAlpha(255);
-                append_mesh_like_wireframe(c.vertices, c.label, c.height, init_segments, init_segment_colors, wf_color);
+                append_mesh_like_wireframe(c.vertices, c.label, c.height, init_segments, init_segment_colors, em_wireframe_color);
             }
-            camera_viewer_->set_wireframe_segments_camera_colored(init_segments, init_segment_colors, visible_names_text);
+            const QString start_banner = (prev_sdf_count > 0)
+                ? QString("EM start | prev=%1 cur=--").arg(prev_mean_sdf, 0, 'f', 4)
+                : QString("EM start | prev=-- cur=--");
+            camera_viewer_->set_wireframe_segments_camera_colored(init_segments, init_segment_colors, start_banner);
             camera_viewer_->set_wireframe_annotations_camera(init_ann_points, init_ann_texts, init_ann_colors);
             QCoreApplication::processEvents(QEventLoop::AllEvents, 15);
         }
@@ -2070,22 +2285,43 @@ void SpecificWorker::run_camera_em_validator()
                 annotation_points.emplace_back(to_camera(center_robot, c.height + 0.05f));
                 const float lk = (class_idx >= 0 && class_idx < static_cast<int>(class_likelihood.size()))
                     ? class_likelihood[static_cast<std::size_t>(class_idx)] : 0.f;
-                annotation_texts.emplace_back(QString::fromStdString(c.label) + QString(" | L=%1").arg(lk, 0, 'f', 2));
+                const QString prev_txt = c.prev_sdf.has_value()
+                    ? QString::number(c.prev_sdf.value(), 'f', 4)
+                    : QString("--");
+                const QString cur_txt = (std::isfinite(c.last_sdf) && c.last_sdf > 0.f)
+                    ? QString::number(c.last_sdf, 'f', 4)
+                    : QString("--");
+                annotation_texts.emplace_back(QString::fromStdString(c.label)
+                                              + QString(" | prev=%1 cur=%2 L=%3")
+                                                    .arg(prev_txt)
+                                                    .arg(cur_txt)
+                                                    .arg(lk, 0, 'f', 2));
                 annotation_colors.emplace_back(QColor(255, 255, 255, 255));
-                QColor wf_color = class_colors[static_cast<std::size_t>(std::max(0, class_idx))];
-                wf_color.setAlpha(255);
-                append_mesh_like_wireframe_iter(c.vertices, c.label, c.height, segments, segment_colors, wf_color);
+                append_mesh_like_wireframe_iter(c.vertices, c.label, c.height, segments, segment_colors, em_wireframe_color);
             }
-            camera_viewer_->set_wireframe_segments_camera_colored(segments, segment_colors, visible_names_text);
+            const QString em_banner = (prev_sdf_count > 0)
+                ? QString("EM iter %1/%2 | prev=%3 cur=%4")
+                    .arg(iter + 1)
+                    .arg(max_iters)
+                    .arg(prev_mean_sdf, 0, 'f', 4)
+                    .arg(last_mean_sdf, 0, 'f', 4)
+                : QString("EM iter %1/%2 | prev=-- cur=%3")
+                    .arg(iter + 1)
+                    .arg(max_iters)
+                    .arg(last_mean_sdf, 0, 'f', 4);
+            camera_viewer_->set_wireframe_segments_camera_colored(segments, segment_colors, em_banner);
             camera_viewer_->set_wireframe_annotations_camera(annotation_points, annotation_texts, annotation_colors);
 
-            const float bg_ratio = static_cast<float>(std::count(point_classes.begin(), point_classes.end(), K))
-                                 / static_cast<float>(std::max(1, N));
-            const QString title = QString("EM iter %1/%2 | obj=%3 bg=%4")
-                                      .arg(iter + 1)
-                                      .arg(max_iters)
-                                      .arg(objective, 0, 'f', 3)
-                                      .arg(bg_ratio, 0, 'f', 2);
+            const QString title = (prev_sdf_count > 0)
+                ? QString("EM iter %1/%2 | prev=%3 cur=%4")
+                    .arg(iter + 1)
+                    .arg(max_iters)
+                    .arg(prev_mean_sdf, 0, 'f', 4)
+                    .arg(last_mean_sdf, 0, 'f', 4)
+                : QString("EM iter %1/%2 | prev=-- cur=%3")
+                    .arg(iter + 1)
+                    .arg(max_iters)
+                    .arg(last_mean_sdf, 0, 'f', 4);
             camera_viewer_->set_em_points_overlay(points_cam, point_classes, class_colors, class_labels, title);
 
             if (grounding_status_label_)
@@ -2253,6 +2489,62 @@ void SpecificWorker::run_camera_em_validator()
 
         if (grounding_status_label_)
             grounding_status_label_->setText("Status: EM validator finished");
+
+        int valid_candidates = 0;
+        int improved_candidates = 0;
+        int non_improved = 0;
+        pending_em_adjustments_.clear();
+        for (const auto& c : classes)
+        {
+            if (c.furniture_index < 0 || c.furniture_index >= static_cast<int>(furniture_polygons_.size()))
+                continue;
+            if (c.vertices.size() < 3)
+                continue;
+            if (!std::isfinite(c.last_sdf) || c.last_sdf <= 0.f)
+                continue;
+
+            const auto prev = c.prev_sdf;
+            const bool improved = !prev.has_value() || (c.last_sdf + 1e-4f < prev.value());
+            if (improved) ++improved_candidates;
+            else ++non_improved;
+
+            PendingEmAdjustment cand;
+            cand.furniture_index = c.furniture_index;
+            cand.vertices = c.vertices;
+            cand.new_sdf = c.last_sdf;
+            cand.prev_sdf = prev;
+            cand.label = c.label;
+            pending_em_adjustments_.push_back(std::move(cand));
+            ++valid_candidates;
+        }
+
+        if (valid_candidates > 0)
+        {
+            em_decision_pending_ = true;
+            camera_viewer_->set_em_decision_buttons_visible(true);
+            if (grounding_status_label_)
+                grounding_status_label_->setText(QString("Status: EM finished (%1 candidates, %2 improved). Accept/Reject pending")
+                                                     .arg(valid_candidates)
+                                                     .arg(improved_candidates));
+        }
+        else
+        {
+            em_decision_pending_ = false;
+            camera_viewer_->set_em_decision_buttons_visible(false);
+            if (grounding_status_label_)
+                grounding_status_label_->setText("Status: EM validator finished (no valid fitted candidates)");
+        }
+
+        if (!points_cam.empty() && points_cam.size() == point_classes.size())
+        {
+            const QString final_title = (prev_sdf_count > 0)
+                ? QString("EM done | prev=%1 cur=%2")
+                      .arg(prev_mean_sdf, 0, 'f', 4)
+                      .arg(last_mean_sdf, 0, 'f', 4)
+                : QString("EM done | prev=-- cur=%1").arg(last_mean_sdf, 0, 'f', 4);
+            camera_viewer_->set_em_points_overlay(points_cam, point_classes, class_colors, class_labels, final_title);
+        }
+
         keep_overlay_lock = true;
         em_overlay_persistent_active_ = true;
     }
@@ -2262,6 +2554,82 @@ void SpecificWorker::run_camera_em_validator()
             grounding_status_label_->setText("Status: EM validator failed (segmentation unavailable)");
         em_overlay_persistent_active_ = false;
     }
+}
+
+void SpecificWorker::apply_pending_em_adjustments(bool accept)
+{
+    if (!camera_viewer_)
+        return;
+
+    if (!em_decision_pending_)
+    {
+        camera_viewer_->set_em_decision_buttons_visible(false);
+        return;
+    }
+
+    int applied = 0;
+    if (accept)
+    {
+        for (const auto& cand : pending_em_adjustments_)
+        {
+            if (cand.furniture_index < 0 || cand.furniture_index >= static_cast<int>(furniture_polygons_.size()))
+                continue;
+
+            if (rc::SceneGraphAdapter::accept_fit_if_improved(scene_graph_,
+                                                               furniture_polygons_[static_cast<std::size_t>(cand.furniture_index)],
+                                                               cand.vertices,
+                                                               cand.new_sdf))
+            {
+                ++applied;
+            }
+            else
+            {
+                // Temporary fallback path for manual validation: force apply on explicit user Accept.
+                auto& fp = furniture_polygons_[static_cast<std::size_t>(cand.furniture_index)];
+                fp.vertices = cand.vertices;
+                fp.last_fit_sdf = cand.new_sdf;
+                fp.height = std::max(0.2f, model_height_from_label(fp.label.empty() ? fp.id : fp.label));
+
+                rc::SceneGraphObject obj;
+                obj.id = fp.id;
+                obj.label = fp.label;
+                obj.vertices = fp.vertices;
+                obj.last_fit_sdf = fp.last_fit_sdf;
+                obj.frame_yaw_inward_rad = fp.frame_yaw_inward_rad;
+                obj.height = fp.height;
+                if (scene_graph_.upsert_object(obj))
+                    ++applied;
+            }
+        }
+
+        if (applied > 0)
+        {
+            draw_furniture();
+            save_scene_graph_to_usd();
+            if (grounding_status_label_)
+                grounding_status_label_->setText(QString("Status: EM adjustments accepted (%1 applied)").arg(applied));
+            if (grounding_sdf_label_)
+                grounding_sdf_label_->setText(QString("SDF fit: accepted %1").arg(applied));
+        }
+        else
+        {
+            if (grounding_status_label_)
+                grounding_status_label_->setText("Status: EM adjustments accepted (no applicable updates)");
+        }
+    }
+    else
+    {
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Status: EM adjustments rejected");
+    }
+
+    em_decision_pending_ = false;
+    pending_em_adjustments_.clear();
+    camera_viewer_->set_em_decision_buttons_visible(false);
+    em_overlay_persistent_active_ = false;
+    em_validator_overlay_lock_ = false;
+    camera_viewer_->clear_em_points_overlay();
+    camera_viewer_->clear_wireframe_overlay();
 }
 
 float SpecificWorker::get_cpu_usage()
@@ -2292,6 +2660,11 @@ float SpecificWorker::get_cpu_usage()
 
 void SpecificWorker::clear_path(bool stop_controller, bool clear_stored_path)
 {
+    object_final_align_active_ = false;
+    object_align_cycles_ = 0;
+    nav_target_object_center_.reset();
+    nav_target_object_name_.clear();
+
     if (stop_controller && active_episode_.has_value())
         finish_episode("aborted");
 
@@ -2909,6 +3282,11 @@ RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoObject(std::string objec
     if (selected == nullptr || selected->vertices.empty())
         return {};
 
+    Eigen::Vector2f object_center = Eigen::Vector2f::Zero();
+    for (const auto &v : selected->vertices)
+        object_center += v;
+    object_center /= static_cast<float>(selected->vertices.size());
+
     const auto state = get_loc_state();
     const Eigen::Vector2f robot_pos_m(state[2], state[3]);
 
@@ -2972,7 +3350,22 @@ RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoObject(std::string objec
         const auto res = Navigator_getPath(source, target, path_planner_.params.robot_radius);
         if (res.valid && res.path.size() >= 2)
         {
-            Navigator_gotoPoint(target);
+            std::vector<Eigen::Vector2f> path_m;
+            path_m.reserve(res.path.size());
+            for (const auto &p : res.path)
+                path_m.emplace_back(p.x, p.y);
+
+            current_path_ = path_m;
+            trajectory_controller_.set_path(current_path_);
+            draw_path_threadsafe(trajectory_controller_.get_path());
+
+            nav_target_object_center_ = object_center;
+            nav_target_object_name_ = selected->label.empty() ? selected->id : selected->label;
+            object_align_cycles_ = 0;
+            start_episode("goto_object", Eigen::Vector2f(target.x, target.y), nav_target_object_name_);
+
+            qInfo() << "Navigator_gotoObject: path with" << current_path_.size() << "waypoints activated for"
+                    << QString::fromStdString(nav_target_object_name_);
             return target;
         }
     }
@@ -2991,6 +3384,10 @@ void SpecificWorker::Navigator_resume()
 
 RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoPoint(RoboCompNavigator::TPoint target)
 {
+    nav_target_object_center_.reset();
+    nav_target_object_name_.clear();
+    object_align_cycles_ = 0;
+
     auto state = get_loc_state();
     RoboCompNavigator::TPoint source;
     source.x = state[2];
@@ -3023,6 +3420,10 @@ RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoPoint(RoboCompNavigator:
 
 void SpecificWorker::Navigator_stop()
 {
+    nav_target_object_center_.reset();
+    nav_target_object_name_.clear();
+    object_align_cycles_ = 0;
+
     finish_episode("stopped");
     trajectory_controller_.stop();
     current_path_.clear();

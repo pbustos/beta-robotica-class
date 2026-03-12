@@ -192,6 +192,16 @@ CameraViewer::CameraViewer(RoboCompImageSegmentation::ImageSegmentationPrxPtr pr
     em_button_->setToolTip("Start EM reassignment on visible model objects");
     ctrl_layout->addWidget(em_button_);
 
+    em_accept_button_ = new QPushButton("Accept Fit", ctrl_bar);
+    em_accept_button_->setToolTip("Accept the fitted geometry and update the model");
+    em_accept_button_->setEnabled(false);
+    ctrl_layout->addWidget(em_accept_button_);
+
+    em_reject_button_ = new QPushButton("Reject Fit", ctrl_bar);
+    em_reject_button_->setToolTip("Reject the fitted geometry and keep current model");
+    em_reject_button_->setEnabled(false);
+    ctrl_layout->addWidget(em_reject_button_);
+
     ctrl_layout->addStretch();
 
     status_label_ = new QLabel("Idle", ctrl_bar);
@@ -213,6 +223,8 @@ CameraViewer::CameraViewer(RoboCompImageSegmentation::ImageSegmentationPrxPtr pr
         if (timer_->isActive()) timer_->setInterval(1000 / std::max(1, fps));
     });
     connect(em_button_, &QPushButton::clicked, this, &CameraViewer::emRequested);
+    connect(em_accept_button_, &QPushButton::clicked, this, &CameraViewer::emAcceptRequested);
+    connect(em_reject_button_, &QPushButton::clicked, this, &CameraViewer::emRejectRequested);
 }
 
 void CameraViewer::set_period_ms(int ms)
@@ -302,6 +314,20 @@ void CameraViewer::set_infrastructure_context(const Eigen::Affine2f& robot_pose,
     infrastructure_camera_ty_ = camera_ty;
     infrastructure_camera_tz_ = camera_tz;
     infrastructure_wall_height_ = wall_height;
+}
+
+void CameraViewer::set_em_decision_buttons_visible(bool visible)
+{
+    if (em_accept_button_)
+    {
+        em_accept_button_->setVisible(true);
+        em_accept_button_->setEnabled(visible);
+    }
+    if (em_reject_button_)
+    {
+        em_reject_button_->setVisible(true);
+        em_reject_button_->setEnabled(visible);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,17 +1045,6 @@ void CameraViewer::grab_frame()
                 painter.drawText(QPoint(12, 42), em_title);
 
             const int legend_count = std::min(static_cast<int>(em_labels.size()), 6);
-            if (legend_count > 0)
-            {
-                const int panel_x = 8;
-                const int panel_y = 50;
-                const int panel_w = 260;
-                const int panel_h = 8 + legend_count * 20;
-                painter.fillRect(QRect(panel_x, panel_y, panel_w, panel_h), QColor(0, 0, 0, 210));
-                painter.setPen(QPen(QColor(255, 255, 255, 230), 1));
-                painter.drawRect(QRect(panel_x, panel_y, panel_w, panel_h));
-            }
-
             for (int k = 0; k < legend_count; ++k)
             {
                 const int y = 62 + k * 18;

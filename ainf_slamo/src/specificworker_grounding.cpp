@@ -411,7 +411,15 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
     }
 
     const QString wire_label = QString::fromStdString(fp.label.empty() ? fp.id : fp.label);
-    camera_viewer_->set_wireframe_segments_camera(segments, wire_label);
+    std::vector<Eigen::Vector3f> ann_points;
+    std::vector<QString> ann_texts;
+    std::vector<QColor> ann_colors;
+    ann_points.emplace_back(to_camera(world_to_robot * cen, model_height_from_label(fp.label.empty() ? fp.id : fp.label) + 0.05f));
+    ann_texts.emplace_back(wire_label);
+    ann_colors.emplace_back(QColor(255, 255, 255, 255));
+
+    camera_viewer_->set_wireframe_segments_camera(segments, "");
+    camera_viewer_->set_wireframe_annotations_camera(ann_points, ann_texts, ann_colors);
 }
 
 void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pose)

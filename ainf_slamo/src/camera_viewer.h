@@ -78,8 +78,13 @@ class CameraViewer : public QDialog
                         float camera_tz,
                         float wall_height = 2.5f);
 
+        /// Show or hide EM decision buttons (accept/reject) after fitting.
+        void set_em_decision_buttons_visible(bool visible);
+
     signals:
         void emRequested();
+        void emAcceptRequested();
+        void emRejectRequested();
 
     protected:
         void showEvent(QShowEvent* e) override;
@@ -98,6 +103,8 @@ class CameraViewer : public QDialog
         QLabel*     status_label_ = nullptr;
         QSpinBox*   fps_spin_     = nullptr;
         QPushButton* em_button_   = nullptr;
+        QPushButton* em_accept_button_ = nullptr;
+        QPushButton* em_reject_button_ = nullptr;
         QCheckBox*  depth_check_  = nullptr;
 
         QTimer* timer_            = nullptr;
