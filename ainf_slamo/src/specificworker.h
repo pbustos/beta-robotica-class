@@ -359,6 +359,7 @@ class SpecificWorker : public GenericWorker
 	std::chrono::steady_clock::time_point low_speed_block_start_;
 	static constexpr float BLOCKED_SPEED_THRESHOLD = 0.03f;     // m/s
 	static constexpr float BLOCKED_TIME_THRESHOLD_SEC = 2.5f;   // s
+	static constexpr float SOURCE_OBSTACLE_DENSITY_PROBE_EXTRA_RADIUS = 3.0f; 
 	bool safeguard_recovery_active_ = false;
 	bool safeguard_replan_pending_ = false;
 	int safeguard_recovery_cycles_ = 0;
@@ -412,6 +413,7 @@ class SpecificWorker : public GenericWorker
 	float yawFromQuaternion(const RoboCompWebots2Robocomp::Quaternion &quat);
 	float estimate_orientation_from_points(const std::vector<Eigen::Vector3f> &pts) const;
 	void update_ui(const rc::RoomConceptAI::UpdateResult &res, const rc::VelocityCommand &current_velocity, int fps_val);
+	float compute_source_obstacle_density(const Eigen::Vector2f& source_point) const;
 	void start_episode(const std::string &mission_type,
 	                   const std::optional<Eigen::Vector2f> &target_point = std::nullopt,
 	                   const std::string &target_object = "");

@@ -129,7 +129,7 @@ private:
 	//Graphics
 	AbstractGraphicViewer *viewer;
 
-	RoboCompGridder::Map map;
+	RoboCompNavigator::LayoutData map;
 
 	// Grid (Sparse ESDF - VoxBlox-style)
 	GridESDF grid_esdf;

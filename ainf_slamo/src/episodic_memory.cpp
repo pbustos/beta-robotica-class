@@ -201,6 +201,24 @@ EpisodicMemory::MissionTarget json_to_mission_target(const QJsonObject& object)
     return target;
 }
 
+QJsonObject mission_source_to_json(const EpisodicMemory::MissionSource& source)
+{
+    QJsonObject object;
+    if (source.source_x.has_value()) object["x"] = source.source_x.value();
+    if (source.source_y.has_value()) object["y"] = source.source_y.value();
+    if (source.obstacle_density.has_value()) object["obstacle_density"] = source.obstacle_density.value();
+    return object;
+}
+
+EpisodicMemory::MissionSource json_to_mission_source(const QJsonObject& object)
+{
+    EpisodicMemory::MissionSource source;
+    if (object.contains("x")) source.source_x = static_cast<float>(object.value("x").toDouble());
+    if (object.contains("y")) source.source_y = static_cast<float>(object.value("y").toDouble());
+    if (object.contains("obstacle_density")) source.obstacle_density = static_cast<float>(object.value("obstacle_density").toDouble());
+    return source;
+}
+
 QJsonObject episode_to_json(const EpisodicMemory::EpisodeRecord& episode)
 {
     return QJsonObject{
@@ -210,6 +228,7 @@ QJsonObject episode_to_json(const EpisodicMemory::EpisodeRecord& episode)
         {"duration_s", episode.duration_s},
         {"status", QString::fromStdString(episode.status)},
         {"mission", mission_context_to_json(episode.mission)},
+        {"source", mission_source_to_json(episode.source)},
         {"target", mission_target_to_json(episode.target)},
         {"params_snapshot", map_to_json(episode.params_snapshot)},
         {"mood_snapshot", map_to_json(episode.mood_snapshot)},
@@ -233,6 +252,7 @@ std::optional<EpisodicMemory::EpisodeRecord> json_to_episode(const QJsonObject& 
     episode.status = object.value("status").toString().toStdString();
 
     episode.mission = json_to_mission_context(object.value("mission").toObject());
+    episode.source = json_to_mission_source(object.value("source").toObject());
     episode.target = json_to_mission_target(object.value("target").toObject());
 
     episode.params_snapshot = json_to_map(object.value("params_snapshot").toObject());

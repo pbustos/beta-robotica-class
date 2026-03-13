@@ -116,17 +116,26 @@ class SpecificWorker(GenericWorker):
         super(SpecificWorker, self).closeEvent(event)
 
     def _shutdown(self):
+        # Check if _state_lock was initialized (handles case where __init__ failed early)
+        if not hasattr(self, '_state_lock'):
+            return
+        
         with self._state_lock:
             if self._shutting_down:
                 return
             self._shutting_down = True
 
-        if self.timer.isActive():
+        if hasattr(self, 'timer') and self.timer.isActive():
             self.timer.stop()
-        self._stop_proxy_thread()
+        if hasattr(self, '_proxy_thread'):
+            self._stop_proxy_thread()
 
     @QtCore.Slot()
     def compute(self):
+        # Return early if initialization failed or we're shutting down
+        if not hasattr(self, '_state_lock'):
+            return
+        
         with self._state_lock:
             if self._shutting_down:
                 return

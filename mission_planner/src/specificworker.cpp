@@ -19,6 +19,7 @@
 #include "specificworker.h"
 
 #include <Ice/Exception.h>
+#include <limits>
 
 SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, bool startup_check) : GenericWorker(configLoader, tprx)
 {
@@ -61,7 +62,7 @@ void SpecificWorker::initialize()
 
 	// Request map and initialize grid
 	try
-	{ const auto pose = gridder_proxy->getPose();
+	{ const auto pose = navigator_proxy->getRobotPose();
 	  const QRectF initial_view(pose.x - 3000, pose.y - 3000, 6000, 6000);  // 6m x 6m area centered on robot pose
 	  viewer->fitToScene(initial_view);
 	}
@@ -75,15 +76,16 @@ void SpecificWorker::initialize()
 
 void SpecificWorker::compute()
 {
+  
 	// get robot_pose from gridder
 	try
 	{
-		const auto robot_pose = gridder_proxy->getPose();
+		const auto robot_pose = navigator_proxy->getRobotPose();
 
 		// Update robot position variables
 		robot_x = robot_pose.x;
 		robot_y = robot_pose.y;
-		robot_theta = robot_pose.theta;
+		robot_theta = robot_pose.r;
 
 
 		// Update UI labels
@@ -97,89 +99,189 @@ void SpecificWorker::compute()
 /////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::update_ui()
 {
-	viewer->robot_poly()->setPos(robot_x, robot_y);
-	viewer->robot_poly()->setRotation(qRadiansToDegrees(robot_theta));
-	labelX->setText(QString::asprintf("X: %.2f", robot_x));
-	labelY->setText(QString::asprintf("Y: %.2f", robot_y));
-	labelTheta->setText(QString::asprintf("Theta: %.2f", robot_theta));
+    if (viewer == nullptr)
+    {
+        qWarning() << "[update_ui] Viewer is null. Skipping UI update.";
+        return;
+    }
+
+    if (auto *robot_item = viewer->robot_poly(); robot_item != nullptr)
+    {
+        robot_item->setPos(robot_x, robot_y);
+        robot_item->setRotation(qRadiansToDegrees(robot_theta));
+    }
+    else
+    {
+        qWarning() << "[update_ui] Robot graphics item is null. Skipping robot pose draw.";
+    }
+
+    if (labelX != nullptr)
+        labelX->setText(QString::asprintf("X: %.2f", robot_x));
+    if (labelY != nullptr)
+        labelY->setText(QString::asprintf("Y: %.2f", robot_y));
+    if (labelTheta != nullptr)
+        labelTheta->setText(QString::asprintf("Theta: %.2f", robot_theta));
 }
 
 void SpecificWorker::initialize_grid()
 {
-	// get map from gridder
-	try
-	{
-		map = gridder_proxy->getMap();
-		std::cout << "Received map from gridder with " << map.cells.size() << " cells " << map.tileSize << " tilesize" << std::endl;
-		std::string map_file = "mapa_webots.gridmap";
-		params.TILE_SIZE = static_cast<float>(map.tileSize);
-		grid_esdf.initialize(map.tileSize, &viewer->scene);
+    try
+    {
+        map = navigator_proxy->getLayout();
+    }
+    catch (const Ice::Exception& ex)
+    {
+        std::cout << "Error getting layout from navigator: " << ex.what() << std::endl;
+        return;
+    }
 
-	}
-	catch (const Ice::Exception& ex){std::cout << "Error getting map from gridder: " << ex.what() << std::endl; return;}
+    // Keep handles to map drawings so a refresh deletes previous map items.
+    static std::vector<QGraphicsItem *> map_items;
+    for (auto *item : map_items)
+    {
+        viewer->scene.removeItem(item);
+        delete item;
+    }
+    map_items.clear();
 
-	// Convert MRPT cells to sparse grid format
-    // Apply rotation and offset to align MRPT map with Webots world coordinates
-    const float offset_x = params.MRPT_MAP_OFFSET_X;
-    const float offset_y = params.MRPT_MAP_OFFSET_Y;
+    if (map.layout.empty() && map.objects.empty())
+    {
+        qWarning() << "[initialize_grid] Empty LayoutData received.";
+        return;
+    }
+
+    // Detect coordinate scale from incoming layout: if values are small, assume meters and convert to mm.
+    float max_abs_input = 0.f;
+    size_t finite_input_points = 0;
+    auto collect_input_stats = [&](float x, float y)
+    {
+        if (not std::isfinite(x) || not std::isfinite(y))
+            return;
+        max_abs_input = std::max(max_abs_input, std::max(std::abs(x), std::abs(y)));
+        finite_input_points++;
+    };
+    for (const auto &p : map.layout)
+        collect_input_stats(p.x, p.y);
+    for (const auto &obj : map.objects)
+        for (const auto &v : obj.layout)
+            collect_input_stats(v.x, v.y);
+
+    if (finite_input_points == 0)
+    {
+        qWarning() << "[initialize_grid] LayoutData has no finite points.";
+        return;
+    }
+
+    const float input_scale = (max_abs_input < 200.f) ? 1000.f : 1.f;
     const float rotation = params.MRPT_MAP_ROTATION;
     const float cos_r = std::cos(rotation);
     const float sin_r = std::sin(rotation);
     const bool mirror_x = params.MRPT_MAP_MIRROR_X;
+    const float offset_x = params.MRPT_MAP_OFFSET_X;
+    const float offset_y = params.MRPT_MAP_OFFSET_Y;
 
-    if (offset_x != 0.f || offset_y != 0.f || rotation != 0.f || mirror_x)
-        qInfo() << "[MRPT Loader] Applying transform: rotation=" << rotation << "rad, offset=(" << offset_x << "," << offset_y << ")mm, mirror_x=" << mirror_x;
-
-    // Track unique keys to detect collisions (multiple MRPT cells mapping to same grid cell)
-    std::unordered_set<GridESDF::Key, boost::hash<GridESDF::Key>> unique_keys;
-    size_t cells_processed = 0;
-    size_t cells_added = 0;
-    size_t cells_collided = 0;
-
-    for (const auto &mrpt_cell : map.cells)
+    auto to_scene = [&](float x, float y)
     {
-        // All cells from loader already have occupancy > 0.78 (filtered by cell_value > 200)
-        cells_processed++;
-
-        // Apply mirror if needed (negate X before rotation)
-        float orig_x = static_cast<float>(mrpt_cell.x);
-        const float orig_y = static_cast<float>(mrpt_cell.y);
+        float sx = x * input_scale;
+        const float sy = y * input_scale;
         if (mirror_x)
-            orig_x = -orig_x;
+            sx = -sx;
+        const float rx = sx * cos_r - sy * sin_r + offset_x;
+        const float ry = sx * sin_r + sy * cos_r + offset_y;
+        return QPointF(rx, ry);
+    };
 
-        // First rotate around origin, then apply offset
-        const float cell_x = orig_x * cos_r - orig_y * sin_r + offset_x;
-        const float cell_y = orig_x * sin_r + orig_y * cos_r + offset_y;
-        const auto key = grid_esdf.point_to_key(Eigen::Vector2f(cell_x, cell_y));
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float max_y = std::numeric_limits<float>::lowest();
 
-        // Check if this key already exists (collision detection)
-        if (unique_keys.find(key) == unique_keys.end())
-        {
-            unique_keys.insert(key);
-            grid_esdf.add_confirmed_obstacle(key);
-            cells_added++;
-        }
-        else
-        {
-            cells_collided++;  // Multiple MRPT cells map to same grid cell
-        }
-    }
-
-    // Mark dirty once after loading all obstacles, then update visualization
-    grid_esdf.mark_visualization_dirty();
-    grid_esdf.update_visualization(true);
-
-    // Report statistics
-    qInfo() << "[MRPT Loader] SPARSE_ESDF Statistics:";
-    qInfo() << "  - MRPT cells processed:" << cells_processed;
-    qInfo() << "  - Grid cells added:" << cells_added;
-    qInfo() << "  - Collisions (MRPT->same grid cell):" << cells_collided;
-    qInfo() << "  - Final grid obstacles:" << grid_esdf.num_obstacles();
-    if (cells_collided > 0)
+    auto update_bounds = [&](float x, float y)
     {
-        float collision_pct = 100.f * cells_collided / cells_processed;
-        qWarning() << "[MRPT Loader] WARNING:" << collision_pct << "% cells lost due to resolution mismatch!";
+        min_x = std::min(min_x, x);
+        min_y = std::min(min_y, y);
+        max_x = std::max(max_x, x);
+        max_y = std::max(max_y, y);
+    };
+
+    size_t layout_points_drawn = 0;
+    size_t object_polygons_drawn = 0;
+
+    // 1) Draw global layout as polyline + points.
+    QPolygonF global_layout_poly;
+    global_layout_poly.reserve(static_cast<int>(map.layout.size()));
+
+    const float point_size = std::max(20.f, params.TILE_SIZE * 0.2f);
+    const QPen point_pen(QColor("DarkCyan"), 30);
+    const QBrush point_brush(QColor(0, 180, 180, 180));
+    for (const auto &p : map.layout)
+    {
+        if (not std::isfinite(p.x) || not std::isfinite(p.y))
+            continue;
+
+        const QPointF sp = to_scene(p.x, p.y);
+        global_layout_poly << sp;
+
+        auto *dot = viewer->scene.addEllipse(-point_size / 2.f, -point_size / 2.f,
+                                                     point_size, point_size,
+                                                     point_pen, point_brush);
+        dot->setPos(sp);
+        dot->setZValue(2);
+        map_items.push_back(dot);
+        update_bounds(static_cast<float>(sp.x()), static_cast<float>(sp.y()));
+        layout_points_drawn++;
     }
+
+    if (global_layout_poly.size() >= 2)
+    {
+        QPen layout_pen(QColor("SteelBlue"), 65);
+        layout_pen.setJoinStyle(Qt::RoundJoin);
+        layout_pen.setCapStyle(Qt::RoundCap);
+        auto *layout_path = viewer->scene.addPolygon(global_layout_poly, layout_pen, QBrush(Qt::NoBrush));
+        layout_path->setZValue(1);
+        map_items.push_back(layout_path);
+    }
+
+    // 2) Draw each object as a filled polygon.
+    for (size_t i = 0; i < map.objects.size(); ++i)
+    {
+        const auto &obj = map.objects[i];
+        if (obj.layout.empty())
+            continue;
+
+        QPolygonF polygon;
+        polygon.reserve(static_cast<int>(obj.layout.size()));
+        for (const auto &v : obj.layout)
+        {
+            if (not std::isfinite(v.x) || not std::isfinite(v.y))
+                continue;
+            const QPointF sv = to_scene(v.x, v.y);
+            polygon << sv;
+            update_bounds(static_cast<float>(sv.x()), static_cast<float>(sv.y()));
+        }
+
+        if (polygon.size() < 3)
+            continue;
+
+        const QColor color = QColor::fromHsv(static_cast<int>((i * 47) % 360), 170, 220, 90);
+        auto *poly_item = viewer->scene.addPolygon(polygon, QPen(color.darker(150), 35), QBrush(color));
+        poly_item->setZValue(3);
+        map_items.push_back(poly_item);
+        object_polygons_drawn++;
+    }
+
+    viewer->scene.update();
+    if (min_x <= max_x && min_y <= max_y)
+    {
+        const float margin = std::max(500.f, params.TILE_SIZE * 3.f);
+        viewer->fitToScene(QRectF(min_x - margin, min_y - margin,
+                              (max_x - min_x) + 2.f * margin,
+                              (max_y - min_y) + 2.f * margin));
+    }
+
+        qInfo() << "[initialize_grid] scale=" << input_scale
+            << "layout points drawn=" << layout_points_drawn
+            << "object polygons drawn=" << object_polygons_drawn;
 }
 
 ////////////////  MOUSE EVENTS  ////////////////////////////////
