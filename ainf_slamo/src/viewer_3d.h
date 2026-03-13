@@ -188,6 +188,8 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
             void clear_selected_object_for_gizmo();
             /// Apply an incremental translation to one furniture object.
             bool translate_furniture_object(const QString& name, float dx_room, float dy_room);
+            /// Move one furniture object to an absolute room-space centre (metres).
+            bool set_furniture_absolute_center(const QString& name, float room_x, float room_y);
             /// Apply an incremental rotation around a given axis to one furniture object.
             bool rotate_furniture_object(const QString& name, float angle_rad, const QVector3D& axis);
 

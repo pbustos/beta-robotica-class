@@ -622,17 +622,9 @@ void SpecificWorker::draw_furniture()
 
     if (scene_tree_)
     {
-        std::vector<SceneTreePanel::FurnitureEntry> entries;
-        entries.reserve(furniture_polygons_.size());
-        for (const auto& fp : furniture_polygons_)
-        {
-            SceneTreePanel::FurnitureEntry e;
-            e.id       = fp.id;
-            e.label    = fp.label;
-            e.vertices = fp.vertices;
-            entries.push_back(std::move(e));
-        }
-        scene_tree_->refresh(room_polygon_, entries);
+        // Model signals drive incremental updates; rebuild here keeps the tree
+        // consistent when furniture is added/removed in bulk (e.g. after room load).
+        scene_tree_->rebuild_from_model();
     }
 
     if (viewer_3d_)
@@ -732,4 +724,8 @@ void SpecificWorker::update_furniture_draw_item(std::size_t idx)
     furniture_draw_items_[idx] = item;
 
     apply_ownership_em_visuals();
+
+    // Force the QGraphicsView to repaint immediately; without this the view
+    // can lag during rapid drag updates.
+    viewer->scene.update();
 }

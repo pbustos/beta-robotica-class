@@ -441,7 +441,46 @@ void SpecificWorker::initialize()
                     viewer_3d_->clear_selected_object_for_gizmo();
             }
         });
+
+        // ---- New MVC wiring ----
+        // Route tree property edits through set_object_property.
+        connect(scene_tree_.get(), &SceneTreePanel::objectPropertyEdited,
+                this, [this](const QString& label, const QString& prop, float val)
+        {
+            set_object_property(label, prop, val);
+        });
+
+        // Attach model — the panel will now auto-rebuild when the model emits modelRebuilt.
+        scene_tree_->set_model(&scene_graph_);
     }
+
+    // When the model changes an object (via set_object_pose / set_object_extents),
+    // sync furniture_polygons_ and do a full redraw (2D + 3D + scene graph).
+    // draw_furniture() is called because:
+    //  - Pose changes (yaw) need the 3D mesh to be re-oriented.
+    //  - Extents changes need the 3D mesh to be fully rebuilt with new dimensions.
+    //  - set_furniture_absolute_center() only translates; it cannot resize or re-orient.
+    connect(&scene_graph_, &rc::SceneGraphModel::objectChanged,
+            this, [this](const QString& label)
+    {
+        auto node_opt = scene_graph_.get_object_node(label.toStdString());
+        if (!node_opt) return;
+        const auto& node = *node_opt;
+
+        // Update furniture_polygons_ from the authoritative model state.
+        const int idx = find_furniture_index_by_name(label);
+        if (idx >= 0 && idx < static_cast<int>(furniture_polygons_.size()))
+        {
+            auto& fp = furniture_polygons_[static_cast<std::size_t>(idx)];
+            fp.height    = node.extents.z();
+            fp.vertices  = rc::SceneGraphModel::make_world_rect_polygon(
+                node.translation.x(), node.translation.y(), node.yaw_rad,
+                node.extents.x(), node.extents.y());
+        }
+
+        // Full rebuild so the 3D mesh reflects new dimensions/orientation.
+        draw_furniture();
+    });
 
     // PD / MPPI mode toggle
     connect(pushButton_pdMode, &QPushButton::toggled, this, [this](bool checked)

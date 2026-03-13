@@ -30,6 +30,10 @@ Eigen::Vector3f json_to_vec3(const QJsonArray& a)
 
 } // namespace
 
+SceneGraphModel::SceneGraphModel(QObject* parent)
+    : QObject(parent)
+{}
+
 bool SceneGraphModel::is_finite_positive(float v)
 {
     return std::isfinite(v) && v > 0.f;
@@ -73,6 +77,31 @@ SceneGraphModel::Node* SceneGraphModel::find_object(Node& floor, const std::stri
             return &child;
     }
     return nullptr;
+}
+
+SceneGraphModel::Node* SceneGraphModel::find_object_by_label(Node& floor, const std::string& label)
+{
+    if (label.empty()) return nullptr;
+    for (auto& child : floor.children)
+        if (child.type == "object" && child.label == label)
+            return &child;
+    return nullptr;
+}
+
+std::string SceneGraphModel::infer_object_type(const std::string& label)
+{
+    const QString q = QString::fromStdString(label).toLower();
+    if (q.contains("table")  || q.contains("mesa"))   return "table";
+    if (q.contains("chair")  || q.contains("silla"))  return "chair";
+    if (q.contains("bench")  || q.contains("banco"))  return "bench";
+    if (q.contains("pot")    || q.contains("maceta") || q.contains("plant")) return "pot";
+    return "object";
+}
+
+std::vector<Eigen::Vector3f> SceneGraphModel::make_rect_local(float w, float d)
+{
+    const float hw = w * 0.5f, hd = d * 0.5f;
+    return {{-hw, -hd, 0.f}, {hw, -hd, 0.f}, {hw, hd, 0.f}, {-hw, hd, 0.f}};
 }
 
 void SceneGraphModel::world_to_local_polygon(const std::vector<Eigen::Vector2f>& world_poly,
@@ -126,6 +155,7 @@ std::vector<Eigen::Vector2f> SceneGraphModel::local_to_world_polygon(const std::
 void SceneGraphModel::clear()
 {
     root_ = Node{};
+    emit modelRebuilt();
 }
 
 void SceneGraphModel::rebuild(const std::vector<Eigen::Vector2f>& room_polygon,
@@ -189,6 +219,7 @@ void SceneGraphModel::rebuild(const std::vector<Eigen::Vector2f>& room_polygon,
         obj.id = obj_src.id;
         obj.label = obj_src.label;
         obj.type = "object";
+        obj.object_type = infer_object_type(obj_src.label);
         obj.translation = Eigen::Vector3f(c.x(), c.y(), 0.f);
         obj.yaw_rad = y_yaw;
         obj.last_fit_sdf = obj_src.last_fit_sdf;
@@ -200,6 +231,7 @@ void SceneGraphModel::rebuild(const std::vector<Eigen::Vector2f>& room_polygon,
     }
 
     root_.children.emplace_back(std::move(floor));
+    emit modelRebuilt();
 }
 
 bool SceneGraphModel::upsert_object(const SceneGraphObject& object)
@@ -236,8 +268,10 @@ bool SceneGraphModel::upsert_object(const SceneGraphObject& object)
     obj->translation = Eigen::Vector3f(c.x(), c.y(), 0.f);
     obj->yaw_rad = y_yaw;
     obj->last_fit_sdf = object.last_fit_sdf;
+    obj->object_type = infer_object_type(object.label);
     world_to_local_polygon(object.vertices, c, y_yaw, obj->local_vertices, obj->extents);
     obj->extents.z() = std::max(0.2f, object.height);
+    emit objectChanged(QString::fromStdString(object.label));
     return true;
 }
 
@@ -566,6 +600,116 @@ bool SceneGraphModel::from_usda(const std::string& usda_text)
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject())
         return false;
     return from_json(doc.object());
+}
+
+// ---------------------------------------------------------------------------
+// New accessor / mutation methods
+// ---------------------------------------------------------------------------
+
+void SceneGraphModel::sync_object_silent(const std::string& label,
+                                         const std::vector<Eigen::Vector2f>& world_vertices,
+                                         float height,
+                                         std::optional<float> yaw_override)
+{
+    Node* floor = find_floor(root_);
+    if (!floor) return;
+    Node* obj = find_object_by_label(*floor, label);
+    if (!obj || world_vertices.size() < 3) return;
+
+    const Eigen::Vector2f c   = compute_polygon_centroid(world_vertices);
+    const float           yaw = yaw_override.value_or(obj->yaw_rad);
+
+    obj->translation.x() = c.x();
+    obj->translation.y() = c.y();
+    obj->yaw_rad          = yaw;
+    world_to_local_polygon(world_vertices, c, yaw, obj->local_vertices, obj->extents);
+    obj->extents.z() = std::max(0.2f, height);
+    // No signal — caller already updated views.
+}
+
+bool SceneGraphModel::set_object_pose(const std::string& label,
+                                      float tx, float ty, float yaw_rad_new)
+{
+    Node* floor = find_floor(root_);
+    if (!floor) return false;
+    Node* obj = find_object_by_label(*floor, label);
+    if (!obj) return false;
+
+    obj->translation.x() = tx;
+    obj->translation.y() = ty;
+    obj->yaw_rad          = yaw_rad_new;
+    // Rebuild the footprint polygon as a W×D rectangle in local coords.
+    if (obj->extents.x() > 1e-4f && obj->extents.y() > 1e-4f)
+        obj->local_vertices = make_rect_local(obj->extents.x(), obj->extents.y());
+
+    emit objectChanged(QString::fromStdString(label));
+    return true;
+}
+
+bool SceneGraphModel::set_object_extents(const std::string& label,
+                                          float width, float depth, float height)
+{
+    Node* floor = find_floor(root_);
+    if (!floor) return false;
+    Node* obj = find_object_by_label(*floor, label);
+    if (!obj) return false;
+
+    obj->extents = Eigen::Vector3f(std::max(0.05f, width),
+                                   std::max(0.05f, depth),
+                                   std::max(0.05f, height));
+    // Rebuild footprint polygon to match new W×D.
+    obj->local_vertices = make_rect_local(obj->extents.x(), obj->extents.y());
+
+    emit objectChanged(QString::fromStdString(label));
+    return true;
+}
+
+std::optional<SceneGraphModel::Node> SceneGraphModel::get_object_node(const std::string& label) const
+{
+    const Node* floor = find_floor_const(root_);
+    if (!floor) return std::nullopt;
+    for (const auto& c : floor->children)
+        if (c.type == "object" && c.label == label)
+            return c;
+    return std::nullopt;
+}
+
+std::optional<Eigen::Vector3f> SceneGraphModel::get_object_translation(const std::string& label) const
+{
+    const Node* floor = find_floor_const(root_);
+    if (!floor) return std::nullopt;
+    for (const auto& c : floor->children)
+        if (c.type == "object" && c.label == label)
+            return c.translation;
+    return std::nullopt;
+}
+
+std::optional<float> SceneGraphModel::get_object_yaw(const std::string& label) const
+{
+    const Node* floor = find_floor_const(root_);
+    if (!floor) return std::nullopt;
+    for (const auto& c : floor->children)
+        if (c.type == "object" && c.label == label)
+            return c.yaw_rad;
+    return std::nullopt;
+}
+
+std::optional<Eigen::Vector3f> SceneGraphModel::get_object_extents(const std::string& label) const
+{
+    const Node* floor = find_floor_const(root_);
+    if (!floor) return std::nullopt;
+    for (const auto& c : floor->children)
+        if (c.type == "object" && c.label == label)
+            return c.extents;
+    return std::nullopt;
+}
+
+std::vector<Eigen::Vector2f> SceneGraphModel::make_world_rect_polygon(
+    float tx, float ty, float yaw_rad, float width, float depth)
+{
+    const auto local = make_rect_local(width, depth);
+    const Eigen::Vector3f trans(tx, ty, 0.f);
+    return local_to_world_polygon(local, trans, yaw_rad);
 }
 
 } // namespace rc

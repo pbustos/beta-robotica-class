@@ -110,6 +110,9 @@ LIST(APPEND SOURCES
   ../src/scene_graph_adapter.cpp
   ../src/scene_graph_model.cpp
   ../src/object_models/table_analytic_model.cpp
+  ../src/object_models/chair_analytic_model.cpp
+  ../src/object_models/bench_analytic_model.cpp
+  ../src/object_models/pot_analytic_model.cpp
 )
 
 # Headers set
@@ -128,6 +131,9 @@ LIST(APPEND HEADERS
   ../src/scene_graph_adapter.h
   ../src/scene_graph_model.h
   ../src/object_models/table_analytic_model.h
+  ../src/object_models/chair_analytic_model.h
+  ../src/object_models/bench_analytic_model.h
+  ../src/object_models/pot_analytic_model.h
 )
 
 

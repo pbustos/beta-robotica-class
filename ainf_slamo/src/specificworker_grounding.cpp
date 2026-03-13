@@ -96,6 +96,11 @@ void SpecificWorker::translate_furniture_by_name(const QString& name, float dx_r
     update_furniture_draw_item(static_cast<std::size_t>(idx));
     if (viewer_3d_)
         viewer_3d_->translate_furniture_object(QString::fromStdString(fp.label), dx_room, dy_room);
+
+    // Keep model in sync without triggering objectChanged signal (drag path).
+    scene_graph_.sync_object_silent(fp.label, fp.vertices, fp.height, std::nullopt);
+    if (scene_tree_)
+        scene_tree_->update_object_display(QString::fromStdString(fp.label));
 }
 
 void SpecificWorker::rotate_furniture_by_name(const QString& name, float angle_rad, const QVector3D& axis)
@@ -126,6 +131,41 @@ void SpecificWorker::rotate_furniture_by_name(const QString& name, float angle_r
 
     if (viewer_3d_)
         viewer_3d_->rotate_furniture_object(QString::fromStdString(fp.label), angle_rad, axis);
+
+    // Keep model in sync without triggering objectChanged signal (drag path).
+    scene_graph_.sync_object_silent(fp.label, fp.vertices, fp.height, std::nullopt);
+    if (scene_tree_)
+        scene_tree_->update_object_display(QString::fromStdString(fp.label));
+}
+
+void SpecificWorker::set_object_property(const QString& label, const QString& property, float value)
+{
+    const std::string key = label.toStdString();
+    auto node_opt = scene_graph_.get_object_node(key);
+    if (!node_opt) return;
+    const auto& node = *node_opt;
+
+    if (property == "tx" || property == "ty")
+    {
+        const float tx = (property == "tx") ? value : node.translation.x();
+        const float ty = (property == "ty") ? value : node.translation.y();
+        scene_graph_.set_object_pose(label.toStdString(), tx, ty, node.yaw_rad);
+    }
+    else if (property == "yaw_deg")
+    {
+        const float yaw_rad = static_cast<float>(value * M_PI / 180.0f);
+        scene_graph_.set_object_pose(label.toStdString(),
+            node.translation.x(), node.translation.y(), yaw_rad);
+    }
+    else if (property == "width" || property == "depth" || property == "height")
+    {
+        const float w = (property == "width")  ? value : node.extents.x();
+        const float d = (property == "depth")  ? value : node.extents.y();
+        const float h = (property == "height") ? value : node.extents.z();
+        scene_graph_.set_object_extents(label.toStdString(), w, d, h);
+    }
+    // objectChanged signal from scene_graph_ will update furniture_polygons_,
+    // viewer_3d_, and viewer2d_ via the connection added in specificworker.cpp.
 }
 
 float SpecificWorker::model_height_from_label(const std::string& label) const

@@ -405,6 +405,7 @@ class SpecificWorker : public GenericWorker
 	int find_furniture_index_by_name(const QString& name) const;
 	void translate_furniture_by_name(const QString& name, float dx_room, float dy_room);
 	void rotate_furniture_by_name(const QString& name, float angle_rad, const QVector3D& axis);
+	void set_object_property(const QString& label, const QString& property, float value);
 	float model_height_from_label(const std::string& label) const;
 	void update_segmented_points_3d(const Eigen::Affine2f &robot_pose);
 	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);

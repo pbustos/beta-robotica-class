@@ -19,6 +19,7 @@
 #include <Qt3DRender/QTechnique>
 #include <Qt3DRender/QRenderPass>
 #include <Qt3DRender/QDepthTest>
+#include <Qt3DRender/QLineWidth>
 #include <QSizePolicy>
 #include <QLabel>
 #include <QTimer>
@@ -943,6 +944,35 @@ bool Viewer3D::translate_furniture_object(const QString& name, float dx_room, fl
     return true;
 }
 
+bool Viewer3D::set_furniture_absolute_center(const QString& name, float room_x, float room_y)
+{
+    // Find the group first to read the current world position.
+    auto normalize = [](QString s)
+    {
+        s = s.trimmed();
+        const int idx = s.indexOf(" (");
+        if (idx > 0)
+            s = s.left(idx);
+        return s.toLower();
+    };
+
+    const QString target = normalize(name);
+    for (auto& [key_s, g] : furniture_groups_)
+    {
+        if (normalize(QString::fromStdString(key_s)) != target &&
+            !normalize(QString::fromStdString(key_s)).contains(target) &&
+            !target.contains(normalize(QString::fromStdString(key_s))))
+            continue;
+
+        // room_x → scene -x,  room_y → scene +z
+        // current: g.center_world.x() == -current_room_x,  g.center_world.z() == current_room_y
+        const float dx_room = -room_x - g.center_world.x();   // target_scene_x - current_scene_x, in room units (sign already handles flip)
+        const float dy_room =  room_y - g.center_world.z();
+        return translate_furniture_object(name, dx_room, dy_room);
+    }
+    return false;
+}
+
 bool Viewer3D::rotate_furniture_object(const QString& name, float angle_rad, const QVector3D& axis)
 {
     if (name.trimmed().isEmpty() || furniture_groups_.empty() || std::abs(angle_rad) < 1e-7f)
@@ -1150,33 +1180,26 @@ void Viewer3D::apply_gizmo_drag_delta(const QPoint& delta_px)
     {
         case GizmoMode::MoveX:
         {
+            // Emit the translation; translate_furniture_object updates
+            // furniture_centers_world_, and show_gizmo_for_object (below) snaps
+            // the gizmo to the authoritative furniture position.
             const float dx_world = dpx_x * move_gain;
-            QVector3D p = gizmo_tf_->translation();
-            p.setX(p.x() + dx_world);
-            gizmo_tf_->setTranslation(p);
             emit objectTranslateRequested(selected_object_name_, -dx_world, 0.f);
             break;
         }
         case GizmoMode::MoveY:
         {
-            // Horizontal axis in room plane (mapped to green Y handle).
-            // Inverted sign as requested for the previously blue axis behavior.
             const float dy_world = dpx_y * move_gain;
-            QVector3D p = gizmo_tf_->translation();
-            p.setZ(p.z() + dy_world);
-            gizmo_tf_->setTranslation(p);
             emit objectTranslateRequested(selected_object_name_, 0.f, dy_world);
             break;
         }
         case GizmoMode::MoveZ:
         {
-            // Vertical axis (blue Z handle).
+            // Vertical (height) axis: move the furniture group in world Y.
             const float dz_world = -dpx_y * move_gain;
-            QVector3D p = gizmo_tf_->translation();
-            const float old_y = p.y();
-            p.setY(std::max(0.05f, p.y() + dz_world));
-            gizmo_tf_->setTranslation(p);
-            const float actual_dy = p.y() - old_y;
+            const float old_y = gizmo_tf_->translation().y();
+            const float new_y = std::max(0.05f, old_y + dz_world);
+            const float actual_dy = new_y - old_y;
             if (std::abs(actual_dy) > 1e-6f)
                 vertical_move_furniture_object(selected_object_name_, actual_dy);
             break;
@@ -1202,6 +1225,10 @@ void Viewer3D::apply_gizmo_drag_delta(const QPoint& delta_px)
         default:
             break;
     }
+
+    // Always snap the gizmo to the authoritative furniture position so it
+    // cannot visually drift away from the object it belongs to.
+    show_gizmo_for_object(selected_object_name_);
 }
 
 bool Viewer3D::eventFilter(QObject* watched, QEvent* event)
@@ -1449,11 +1476,13 @@ void Viewer3D::attach_picker(Qt3DCore::QEntity* e, const QString& name)
             if (name.startsWith("__GIZMO_"))
                 return;
 
-            if (name != "Floor")
+            if (name != "Floor" && !name.startsWith("Wall ") && name != "Robot")
             {
                 show_gizmo_for_object(name);
                 emit objectLeftClicked(name);
             }
+            // Floor / Wall / Robot clicks are ignored for selection purposes;
+            // the gizmo stays on the previously selected furniture.
 
             // Keep plain left-drag orbit stable (no implicit translation on press).
             // Optional explicit recenter: Alt+Left click.
@@ -1718,9 +1747,26 @@ void Viewer3D::init_path_entity()
     path_entity_ = new Qt3DCore::QEntity(root_entity_);
 
     auto* material = new Qt3DExtras::QPhongMaterial(path_entity_);
-    material->setAmbient(QColor(255, 100, 0)); // Bright orange path
-    material->setDiffuse(QColor(255, 130, 0));
+    material->setAmbient(QColor(0, 210, 60));   // Green path
+    material->setDiffuse(QColor(0, 255, 80));
     material->setShininess(0.0f);
+
+    // Add a QLineWidth render state so the path stays visible at any zoom level.
+    if (material->effect())
+    {
+        for (Qt3DRender::QTechnique* tech : material->effect()->techniques())
+        {
+            if (!tech) continue;
+            for (Qt3DRender::QRenderPass* pass : tech->renderPasses())
+            {
+                if (!pass) continue;
+                auto* lw = new Qt3DRender::QLineWidth(pass);
+                lw->setValue(3.0f);          // 3 px – visible at all zoom levels
+                lw->setSmooth(true);
+                pass->addRenderState(lw);
+            }
+        }
+    }
 
     path_geo_ = new Qt3DCore::QGeometry(path_entity_);
     path_buf_ = new Qt3DCore::QBuffer(path_geo_);
@@ -1736,7 +1782,10 @@ void Viewer3D::init_path_entity()
 
     path_renderer_ = new Qt3DRender::QGeometryRenderer(path_entity_);
     path_renderer_->setGeometry(path_geo_);
-    path_renderer_->setPrimitiveType(Qt3DRender::QGeometryRenderer::TriangleStrip);
+    // LineStrip instead of TriangleStrip: every vertex is a point on the centre
+    // line; no need to compute per-vertex offsets, and the line is always
+    // at least 1 pixel wide due to the QLineWidth state above.
+    path_renderer_->setPrimitiveType(Qt3DRender::QGeometryRenderer::LineStrip);
 
     path_entity_->addComponent(path_renderer_);
     path_entity_->addComponent(material);
@@ -1745,49 +1794,28 @@ void Viewer3D::init_path_entity()
 void Viewer3D::update_path(const std::vector<Eigen::Vector2f>& path)
 {
     if (!path_entity_) init_path_entity();
-    
+
     if (path.size() < 2) {
         path_renderer_->setVertexCount(0);
         return;
     }
 
-    const float half_width = 0.05f; //  Total width 10cm
-
+    // Store one 3D point per path waypoint on the centreline slightly above floor.
+    const float H = 0.04f;   // 4 cm above floor to avoid Z-fighting
     QByteArray data;
-    data.resize(static_cast<int>(path.size()) * 2 * 3 * static_cast<int>(sizeof(float)));
+    data.resize(static_cast<int>(path.size()) * 3 * static_cast<int>(sizeof(float)));
     auto* raw = reinterpret_cast<float*>(data.data());
 
-    for (size_t i = 0; i < path.size(); ++i) {
-        Eigen::Vector2f p = path[i];
-        Eigen::Vector2f dir(1.f, 0.f);
-        if (i < path.size() - 1) {
-            dir = (path[i+1] - p).normalized();
-        } else if (i > 0) {
-            dir = (p - path[i-1]).normalized();
-        }
-        
-        Eigen::Vector2f left(-dir.y(), dir.x());
-        
-        Eigen::Vector2f P1 = p + left * half_width;
-        Eigen::Vector2f P2 = p - left * half_width;
-
-        // Note: X is negated, Y maps to Z. Height is slightly above floor (1cm) to avoid Z-fighting.
-        const float H = 0.02f;
-        
-        // V1 (Left)
-        raw[i*6 + 0] = -P1.x();
-        raw[i*6 + 1] = H;
-        raw[i*6 + 2] = P1.y();
-        
-        // V2 (Right)
-        raw[i*6 + 3] = -P2.x();
-        raw[i*6 + 4] = H;
-        raw[i*6 + 5] = P2.y();
+    for (std::size_t i = 0; i < path.size(); ++i)
+    {
+        raw[i * 3 + 0] = -path[i].x();   // room X → scene -X
+        raw[i * 3 + 1] = H;
+        raw[i * 3 + 2] =  path[i].y();   // room Y → scene +Z
     }
-    
+
     path_buf_->setData(data);
-    path_attr_->setCount(static_cast<int>(path.size()) * 2);
-    path_renderer_->setVertexCount(static_cast<int>(path.size()) * 2);
+    path_attr_->setCount(static_cast<uint>(path.size()));
+    path_renderer_->setVertexCount(static_cast<int>(path.size()));
 }
 
 } // namespace rc

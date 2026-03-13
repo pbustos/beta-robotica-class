@@ -1,10 +1,19 @@
 #include "scene_tree_panel.h"
+#include "scene_graph_model.h"
 
 #include <QHeaderView>
 #include <QFont>
 #include <QVBoxLayout>
-#include <limits>
-#include <cmath>
+#include <QtMath>
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+namespace
+{
+constexpr int kLabelRole = Qt::UserRole;
+constexpr int kPropRole  = Qt::UserRole + 1;
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Constructor
@@ -26,11 +35,12 @@ SceneTreePanel::SceneTreePanel(QWidget* parent)
     tree_->setIndentation(14);
     tree_->setSelectionMode(QAbstractItemView::SingleSelection);
     tree_->setFont(QFont("Monospace", 8));
-    tree_->setMinimumWidth(120);
+    tree_->setMinimumWidth(140);
 
+    // ---- Object-selection via click ----
     connect(tree_, &QTreeWidget::itemPressed, this, [this](QTreeWidgetItem* item, int)
     {
-        if (item != nullptr && is_furniture_top_item(item) && item->isSelected())
+        if (item && is_object_item(item) && item->isSelected())
             pressed_selected_item_ = item;
         else
             pressed_selected_item_ = nullptr;
@@ -38,12 +48,11 @@ SceneTreePanel::SceneTreePanel(QWidget* parent)
 
     connect(tree_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int)
     {
-        if (item == nullptr || !is_furniture_top_item(item))
+        if (!item || !is_object_item(item))
         {
             pressed_selected_item_ = nullptr;
             return;
         }
-
         if (item == pressed_selected_item_)
         {
             tree_->clearSelection();
@@ -53,233 +62,331 @@ SceneTreePanel::SceneTreePanel(QWidget* parent)
             pressed_selected_item_ = nullptr;
             return;
         }
-
         emit furnitureClicked(item->text(0), true);
         pressed_selected_item_ = nullptr;
+    });
+
+    // ---- Editable property cells ----
+    connect(tree_, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int col)
+    {
+        if (updating_ || col != 1) return;
+
+        const QString label = item->data(0, kLabelRole).toString();
+        const QString prop  = item->data(1, kPropRole).toString();
+        if (label.isEmpty() || prop.isEmpty()) return;
+
+        // Strip units suffix, then parse.
+        QString raw = item->text(1).trimmed();
+        raw.remove(QRegularExpression(R"(\s*(m|°)\s*$)"));
+        bool ok = false;
+        const float value = raw.toFloat(&ok);
+        if (!ok)
+        {
+            if (model_) update_object_display(label);
+            return;
+        }
+        emit objectPropertyEdited(label, prop, value);
     });
 
     layout->addWidget(tree_);
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// set_model
 // ---------------------------------------------------------------------------
-QTreeWidgetItem* SceneTreePanel::make_kv(const QString& key, const QString& value)
+void SceneTreePanel::set_model(rc::SceneGraphModel* model)
 {
-    auto* it = new QTreeWidgetItem();
-    it->setText(0, key);
-    it->setText(1, value);
-    return it;
+    if (model_ == model) return;
+    if (model_) model_->disconnect(this);
+    model_ = model;
+    if (model_)
+    {
+        connect(model_, &rc::SceneGraphModel::modelRebuilt,
+                this, &SceneTreePanel::rebuild_from_model, Qt::UniqueConnection);
+        connect(model_, &rc::SceneGraphModel::objectChanged,
+                this, &SceneTreePanel::update_object_display, Qt::UniqueConnection);
+        rebuild_from_model();
+    }
 }
 
+// ---------------------------------------------------------------------------
+// Static helpers
+// ---------------------------------------------------------------------------
 QString SceneTreePanel::fmt(float v, int decimals)
 {
     return QString::number(static_cast<double>(v), 'f', decimals);
 }
 
-void SceneTreePanel::add_bbox_items(QTreeWidgetItem* parent,
-                                    const std::vector<Eigen::Vector2f>& pts)
+QTreeWidgetItem* SceneTreePanel::make_kv(const QString& key, const QString& value,
+                                          bool editable,
+                                          const QString& owner_label,
+                                          const QString& prop_name)
 {
-    if (pts.empty()) return;
-    float min_x =  std::numeric_limits<float>::max();
-    float max_x = -std::numeric_limits<float>::max();
-    float min_y =  std::numeric_limits<float>::max();
-    float max_y = -std::numeric_limits<float>::max();
-    for (const auto& v : pts)
+    auto* it = new QTreeWidgetItem();
+    it->setText(0, key);
+    it->setText(1, value);
+    if (editable)
     {
-        min_x = std::min(min_x, v.x()); max_x = std::max(max_x, v.x());
-        min_y = std::min(min_y, v.y()); max_y = std::max(max_y, v.y());
+        it->setFlags(it->flags() | Qt::ItemIsEditable);
+        it->setData(0, kLabelRole, owner_label);
+        it->setData(1, kPropRole,  prop_name);
     }
-    parent->addChild(make_kv("Bbox X",
-        fmt(min_x) + " → " + fmt(max_x) + " m"));
-    parent->addChild(make_kv("Bbox Y",
-        fmt(min_y) + " → " + fmt(max_y) + " m"));
-    parent->addChild(make_kv("Size",
-        fmt(max_x - min_x) + " × " + fmt(max_y - min_y) + " m"));
+    return it;
 }
 
-void SceneTreePanel::add_vertex_items(QTreeWidgetItem* parent,
-                                      const std::vector<Eigen::Vector2f>& pts)
+bool SceneTreePanel::is_object_item(QTreeWidgetItem* item)
 {
-    auto* vnode = make_kv("Vertices", QString::number(pts.size()));
-    for (std::size_t i = 0; i < pts.size(); ++i)
-    {
-        vnode->addChild(make_kv(
-            QString("[%1]").arg(i),
-            "(" + fmt(pts[i].x()) + ", " + fmt(pts[i].y()) + ")"));
-    }
-    parent->addChild(vnode);
-}
-
-bool SceneTreePanel::is_furniture_top_item(QTreeWidgetItem* item)
-{
-    if (item == nullptr || item->parent() == nullptr)
-        return false;
-    if (item->parent()->text(0) != "Layout")
-        return false;
-
-    const QString n = item->text(0).trimmed().toLower();
-    return n != "room";
+    if (!item || !item->parent()) return false;
+    return item->parent()->text(0) == "Floor";
 }
 
 // ---------------------------------------------------------------------------
-// refresh — rebuilds tree from current data
+// make_object_item
 // ---------------------------------------------------------------------------
-void SceneTreePanel::refresh(const std::vector<Eigen::Vector2f>& room_polygon,
-                              const std::vector<FurnitureEntry>&  furniture)
+QTreeWidgetItem* SceneTreePanel::make_object_item(
+    const rc::SceneGraphModel* /*m*/,
+    const QString& label, const QString& type_str,
+    float tx, float ty, float yaw_rad,
+    float width, float depth, float height) const
 {
-    pressed_selected_item_ = nullptr;
+    auto* item = new QTreeWidgetItem();
+    item->setText(0, label);
+    item->setText(1, type_str);
+    item->setData(0, kLabelRole, label);
+    QFont bold = item->font(0);
+    bold.setBold(true);
+    item->setFont(0, bold);
 
-    // Remember which top-level items were expanded so we can restore them
-    QSet<QString> expanded_labels;
+    const float yd = static_cast<float>(qRadiansToDegrees(static_cast<double>(yaw_rad)));
+    item->addChild(make_kv("tx",     fmt(tx)     + " m", true, label, "tx"));
+    item->addChild(make_kv("ty",     fmt(ty)     + " m", true, label, "ty"));
+    item->addChild(make_kv("yaw",    fmt(yd)     + " °", true, label, "yaw_deg"));
+    item->addChild(make_kv("width",  fmt(width)  + " m", true, label, "width"));
+    item->addChild(make_kv("depth",  fmt(depth)  + " m", true, label, "depth"));
+    item->addChild(make_kv("height", fmt(height) + " m", true, label, "height"));
+    return item;
+}
+
+// ---------------------------------------------------------------------------
+// make_wall_item
+// ---------------------------------------------------------------------------
+QTreeWidgetItem* SceneTreePanel::make_wall_item(const QString& label,
+                                                 float pos_x, float pos_y,
+                                                 float length_m, float angle_deg) const
+{
+    auto* item = new QTreeWidgetItem();
+    item->setText(0, label);
+    item->setText(1, fmt(length_m, 2) + " m");
+    item->addChild(make_kv("pos_x",  fmt(pos_x)        + " m"));
+    item->addChild(make_kv("pos_y",  fmt(pos_y)        + " m"));
+    item->addChild(make_kv("length", fmt(length_m, 2)  + " m"));
+    item->addChild(make_kv("angle",  fmt(angle_deg, 1) + " °"));
+    return item;
+}
+
+// ---------------------------------------------------------------------------
+// find_object_item
+// ---------------------------------------------------------------------------
+QTreeWidgetItem* SceneTreePanel::find_object_item(const QString& label) const
+{
+    const QString target = label.trimmed().toLower();
     for (int i = 0; i < tree_->topLevelItemCount(); ++i)
     {
-        auto* top = tree_->topLevelItem(i);
-        for (int j = 0; j < top->childCount(); ++j)
+        auto* room = tree_->topLevelItem(i);
+        for (int j = 0; j < room->childCount(); ++j)
         {
-            auto* child = top->child(j);
-            if (child->isExpanded())
-                expanded_labels.insert(child->text(0));
+            auto* mid = room->child(j);
+            if (!mid || mid->text(0) != "Floor") continue;
+            for (int k = 0; k < mid->childCount(); ++k)
+            {
+                auto* obj = mid->child(k);
+                if (!obj) continue;
+                const QString cur = obj->data(0, kLabelRole).toString().trimmed().toLower();
+                if (cur == target || cur.contains(target) || target.contains(cur))
+                    return obj;
+            }
+        }
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// rebuild_from_model
+// ---------------------------------------------------------------------------
+void SceneTreePanel::rebuild_from_model()
+{
+    if (!model_) return;
+
+    // Preserve expansion and selection.
+    QSet<QString> expanded_set;
+    QString       selected_label;
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i)
+    {
+        auto* room = tree_->topLevelItem(i);
+        if (!room) continue;
+        for (int j = 0; j < room->childCount(); ++j)
+        {
+            auto* mid = room->child(j);
+            if (!mid) continue;
+            if (mid->isExpanded()) expanded_set.insert(mid->text(0));
+            for (int k = 0; k < mid->childCount(); ++k)
+            {
+                auto* obj = mid->child(k);
+                if (!obj) continue;
+                if (obj->isExpanded()) expanded_set.insert(obj->text(0));
+                if (obj->isSelected())
+                    selected_label = obj->data(0, kLabelRole).toString();
+            }
         }
     }
 
+    updating_ = true;
+    pressed_selected_item_ = nullptr;
     tree_->clear();
 
-    // ---- Root: Layout -------------------------------------------------------
-    auto* root = new QTreeWidgetItem(tree_);
-    root->setText(0, "Layout");
-    root->setText(1, QString("%1 element(s)").arg(furniture.size()));
-    QFont bold_font = root->font(0);
-    bold_font.setBold(true);
-    root->setFont(0, bold_font);
-    root->setExpanded(true);
+    const auto& root = model_->root();
 
-    // ---- Room polygon node --------------------------------------------------
+    // ---- Room ----
+    auto* room_item = new QTreeWidgetItem(tree_);
+    QFont bold = room_item->font(0);
+    bold.setBold(true);
+    room_item->setFont(0, bold);
+    room_item->setText(0, "Room");
+    room_item->setExpanded(true);
+
+    // ---- Floor ----
+    const rc::SceneGraphModel::Node* floor_node = nullptr;
+    for (const auto& c : root.children)
+        if (c.type == "floor") { floor_node = &c; break; }
+
+    if (floor_node)
     {
-        auto* room_node = make_kv("Room",
-            QString("%1 vertices").arg(room_polygon.size()));
-        room_node->setFont(0, bold_font);
-        add_bbox_items(room_node, room_polygon);
-        add_vertex_items(room_node, room_polygon);
-        if (expanded_labels.contains("Room"))
-            room_node->setExpanded(true);
-        root->addChild(room_node);
+        const int obj_count = static_cast<int>(
+            std::count_if(floor_node->children.begin(), floor_node->children.end(),
+                          [](const rc::SceneGraphModel::Node& n){ return n.type == "object"; }));
+        auto* floor_item = new QTreeWidgetItem();
+        floor_item->setFont(0, bold);
+        floor_item->setText(0, "Floor");
+        floor_item->setText(1, QString::number(obj_count) + " objects");
+        room_item->addChild(floor_item);
+        floor_item->setExpanded(expanded_set.contains("Floor") || true);
+
+        for (const auto& obj : floor_node->children)
+        {
+            if (obj.type != "object") continue;
+            const QString qlabel = QString::fromStdString(obj.label);
+            auto* oi = make_object_item(model_,
+                qlabel,
+                QString::fromStdString(obj.object_type),
+                obj.translation.x(), obj.translation.y(), obj.yaw_rad,
+                obj.extents.x(), obj.extents.y(), obj.extents.z());
+            floor_item->addChild(oi);
+            if (expanded_set.contains(qlabel)) oi->setExpanded(true);
+        }
     }
 
-    // ---- Furniture nodes ----------------------------------------------------
-    for (const auto& fi : furniture)
+    // ---- Wall Perimeter ----
+    int wall_count = 0;
+    for (const auto& c : root.children)
+        if (c.type == "wall") ++wall_count;
+
+    if (wall_count > 0)
     {
-        const QString name = fi.label.empty()
-            ? QString::fromStdString(fi.id)
-            : QString::fromStdString(fi.label);
+        auto* walls_item = new QTreeWidgetItem();
+        walls_item->setFont(0, bold);
+        walls_item->setText(0, "Wall Perimeter");
+        walls_item->setText(1, QString::number(wall_count) + " walls");
+        room_item->addChild(walls_item);
+        if (expanded_set.contains("Wall Perimeter")) walls_item->setExpanded(true);
 
-        auto* node = make_kv(name,
-            QString("%1 vertices").arg(fi.vertices.size()));
-        node->setFont(0, bold_font);
-
-        node->addChild(make_kv("Label", QString::fromStdString(fi.label)));
-        node->addChild(make_kv("ID",    QString::fromStdString(fi.id)));
-
-        // Centroid
-        if (!fi.vertices.empty())
+        for (const auto& c : root.children)
         {
-            Eigen::Vector2f cen = Eigen::Vector2f::Zero();
-            for (const auto& v : fi.vertices) cen += v;
-            cen /= static_cast<float>(fi.vertices.size());
-            node->addChild(make_kv("Centroid",
-                "(" + fmt(cen.x()) + ", " + fmt(cen.y()) + ") m"));
+            if (c.type != "wall") continue;
+            const float angle_deg = static_cast<float>(
+                qRadiansToDegrees(static_cast<double>(c.yaw_rad)));
+            walls_item->addChild(make_wall_item(
+                QString::fromStdString(c.label),
+                c.translation.x(), c.translation.y(),
+                c.extents.x(), angle_deg));
         }
-
-        add_bbox_items(node, fi.vertices);
-        add_vertex_items(node, fi.vertices);
-
-        if (expanded_labels.contains(name))
-            node->setExpanded(true);
-
-        root->addChild(node);
     }
 
     tree_->resizeColumnToContents(0);
+    updating_ = false;
+    if (!selected_label.isEmpty())
+        select_item_by_name(selected_label);
 }
 
+// ---------------------------------------------------------------------------
+// update_object_display — in-place refresh of one object's value cells
+// ---------------------------------------------------------------------------
+void SceneTreePanel::update_object_display(const QString& label)
+{
+    if (!model_ || updating_) return;
+    auto maybe_node = model_->get_object_node(label.toStdString());
+    if (!maybe_node) return;
+    const auto& node = *maybe_node;
+
+    QTreeWidgetItem* oi = find_object_item(label);
+    if (!oi) return;
+
+    const float yd = static_cast<float>(
+        qRadiansToDegrees(static_cast<double>(node.yaw_rad)));
+
+    updating_ = true;
+    for (int i = 0; i < oi->childCount(); ++i)
+    {
+        auto* child = oi->child(i);
+        const QString prop = child->data(1, kPropRole).toString();
+        if      (prop == "tx")      child->setText(1, fmt(node.translation.x()) + " m");
+        else if (prop == "ty")      child->setText(1, fmt(node.translation.y()) + " m");
+        else if (prop == "yaw_deg") child->setText(1, fmt(yd)                   + " °");
+        else if (prop == "width")   child->setText(1, fmt(node.extents.x())     + " m");
+        else if (prop == "depth")   child->setText(1, fmt(node.extents.y())     + " m");
+        else if (prop == "height")  child->setText(1, fmt(node.extents.z())     + " m");
+    }
+    updating_ = false;
+}
+
+// ---------------------------------------------------------------------------
+// refresh — legacy API: delegates to model if available
+// ---------------------------------------------------------------------------
+void SceneTreePanel::refresh(const std::vector<Eigen::Vector2f>& /*room_polygon*/,
+                              const std::vector<FurnitureEntry>&  /*furniture*/)
+{
+    if (model_) rebuild_from_model();
+}
+
+// ---------------------------------------------------------------------------
+// select_item_by_name
+// ---------------------------------------------------------------------------
 bool SceneTreePanel::select_item_by_name(const QString& name)
 {
-    if (!tree_ || tree_->topLevelItemCount() == 0)
-        return false;
-
+    if (!tree_ || tree_->topLevelItemCount() == 0) return false;
     tree_->clearSelection();
     tree_->setCurrentItem(nullptr);
-
-    auto normalize = [](QString s)
-    {
-        s = s.trimmed();
-        const int idx = s.indexOf(" (");
-        if (idx > 0)
-            s = s.left(idx);
-        return s.toLower();
-    };
-
-    const QString target = normalize(name);
-    if (target.isEmpty())
-        return false;
-
-    QTreeWidgetItem* best = nullptr;
-    QTreeWidgetItem* contains_match = nullptr;
-
-    for (int i = 0; i < tree_->topLevelItemCount(); ++i)
-    {
-        auto* root = tree_->topLevelItem(i);
-        for (int j = 0; j < root->childCount(); ++j)
-        {
-            auto* child = root->child(j);
-            const QString cur = normalize(child->text(0));
-            if (cur == target)
-            {
-                best = child;
-                break;
-            }
-            if (cur.contains(target) || target.contains(cur))
-                contains_match = child;
-        }
-        if (best) break;
-    }
-
-    if (!best)
-        best = contains_match;
-    if (!best)
-        return false;
-
+    QTreeWidgetItem* best = find_object_item(name);
+    if (!best) return false;
     best->setSelected(true);
     tree_->setCurrentItem(best);
-    if (best->parent())
-        best->parent()->setExpanded(true);
+    if (best->parent()) best->parent()->setExpanded(true);
     best->setExpanded(true);
     tree_->scrollToItem(best, QAbstractItemView::PositionAtCenter);
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// toggle_item_by_name
+// ---------------------------------------------------------------------------
 bool SceneTreePanel::toggle_item_by_name(const QString& name)
 {
-    if (!tree_ || tree_->topLevelItemCount() == 0)
-        return false;
-
-    auto normalize = [](QString s)
+    if (!tree_ || tree_->topLevelItemCount() == 0) return false;
+    const QString target = name.trimmed().toLower();
+    for (auto* item : tree_->selectedItems())
     {
-        s = s.trimmed();
-        const int idx = s.indexOf(" (");
-        if (idx > 0)
-            s = s.left(idx);
-        return s.toLower();
-    };
-
-    const QString target = normalize(name);
-    if (target.isEmpty())
-        return false;
-
-    const auto selected = tree_->selectedItems();
-    for (auto* item : selected)
-    {
-        if (item != nullptr && normalize(item->text(0)) == target)
+        if (!item) continue;
+        const QString cur = item->data(0, kLabelRole).toString().trimmed().toLower();
+        if (cur == target || cur.contains(target) || target.contains(cur))
         {
             tree_->clearSelection();
             tree_->setCurrentItem(nullptr);
@@ -287,6 +394,7 @@ bool SceneTreePanel::toggle_item_by_name(const QString& name)
             return true;
         }
     }
-
     return select_item_by_name(name);
 }
+
+
