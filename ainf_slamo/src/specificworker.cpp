@@ -102,11 +102,11 @@ SpecificWorker::~SpecificWorker()
 	settings.setValue("window/geometry", this->saveGeometry());
 
 	// Save 2D viewer zoom
-	if (viewer)
+	if (viewer_2d_)
 	{
 		QByteArray ba;
 		QDataStream ds(&ba, QIODevice::WriteOnly);
-		ds << viewer->transform();
+		ds << viewer_2d_->transform();
 		settings.setValue("viewer2d/transform", ba);
 	}
 	// Save splitter proportions
@@ -143,19 +143,19 @@ void SpecificWorker::initialize()
     last_user_cpu_time_ = usage.ru_utime.tv_sec * 1000000 + usage.ru_utime.tv_usec;
     last_sys_cpu_time_ = usage.ru_stime.tv_sec * 1000000 + usage.ru_stime.tv_usec;
 
-    // Viewer
-    viewer = new AbstractGraphicViewer(this->frame, params.GRID_MAX_DIM, true);
-    viewer->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0.0, 0.2, QColor("Blue"));
-    viewer->show();
+    // 2D Viewer
+    viewer_2d_ = std::make_unique<rc::Viewer2D>(this->frame, params.GRID_MAX_DIM, true);
+    viewer_2d_->add_robot(params.ROBOT_WIDTH, params.ROBOT_LENGTH, 0.0, 0.2, QColor("Blue"));
+    viewer_2d_->show();
 
     // Add 3D viewer alongside the 2D viewer in a horizontal splitter.
     // AbstractGraphicViewer already created a QVBoxLayout on this->frame;
-    // we grab 'viewer' back from it, insert a QSplitter, and add Viewer3D.
+    // we grab viewer_2d_ back from it, insert a QSplitter, and add Viewer3D.
     {
         QLayout* frame_layout = this->frame->layout();  // QVBoxLayout from AGV ctor
-        frame_layout->removeWidget(viewer);
+        frame_layout->removeWidget(viewer_2d_->get_widget());
         auto* splitter = new QSplitter(Qt::Horizontal, this->frame);
-        splitter->addWidget(viewer);
+        splitter->addWidget(viewer_2d_->get_widget());
 
         viewer_3d_ = std::make_unique<rc::Viewer3D>(splitter, 2.5f);
         splitter->addWidget(viewer_3d_->container_widget());
@@ -327,12 +327,12 @@ void SpecificWorker::initialize()
         QDataStream ds(&ba, QIODevice::ReadOnly);
         QTransform t;
         ds >> t;
-        viewer->setTransform(t);
+        viewer_2d_->set_transform(t);
     }
     else
     {
         // First run: ~8 px/m so the full room fits; Y stays flipped (negative scale)
-        viewer->setTransform(QTransform().scale(8.0, -8.0));
+        viewer_2d_->set_transform(QTransform().scale(8.0, -8.0));
     }
     // Restore splitter proportions; fall back to defaults if any pane is collapsed
     if (splitter_ && settings.contains("splitter/state"))
@@ -365,12 +365,12 @@ void SpecificWorker::initialize()
     connect(pushButton_captureRoom, &QPushButton::toggled, this, &SpecificWorker::slot_capture_room_toggled);
 
     // Connect Ctrl+Left click on the scene for polygon capture (uses robot_rotate signal)
-    connect(viewer, &AbstractGraphicViewer::robot_rotate, this, &SpecificWorker::on_scene_clicked);
+    connect(viewer_2d_.get(), &rc::Viewer2D::robot_rotate, this, &SpecificWorker::on_scene_clicked);
 
     // Connect robot drag and rotate signals
-    connect(viewer, &AbstractGraphicViewer::robot_dragging, this, &SpecificWorker::slot_robot_dragging);
-    connect(viewer, &AbstractGraphicViewer::robot_drag_end, this, &SpecificWorker::slot_robot_drag_end);
-    connect(viewer, &AbstractGraphicViewer::robot_rotate, this, &SpecificWorker::slot_robot_rotate);
+    connect(viewer_2d_.get(), &rc::Viewer2D::robot_dragging, this, &SpecificWorker::slot_robot_dragging);
+    connect(viewer_2d_.get(), &rc::Viewer2D::robot_drag_end, this, &SpecificWorker::slot_robot_drag_end);
+    connect(viewer_2d_.get(), &rc::Viewer2D::robot_rotate, this, &SpecificWorker::slot_robot_rotate);
 
     // Connect save/load layout buttons
     connect(pushButton_saveLayout, &QPushButton::clicked, this, &SpecificWorker::slot_save_layout);
@@ -530,10 +530,10 @@ void SpecificWorker::initialize()
     }
 
     // Connect Shift+Right click on the scene for navigation target
-    connect(viewer, &AbstractGraphicViewer::new_mouse_coordinates, this, &SpecificWorker::slot_new_target);
+    connect(viewer_2d_.get(), &rc::Viewer2D::new_mouse_coordinates, this, &SpecificWorker::slot_new_target);
 
     // Ctrl+Right click on scene: cancel current navigation mission
-    connect(viewer, &AbstractGraphicViewer::right_click, this, [this](QPointF)
+    connect(viewer_2d_.get(), &rc::Viewer2D::right_click, this, [this](QPointF)
     {
         if (!trajectory_controller_.is_active() && current_path_.empty()) return;
         qInfo() << "Navigation cancelled by Ctrl+Right click";
@@ -692,8 +692,8 @@ void SpecificWorker::initialize()
     const float view_side_m = 6.f;
     const float robot_cx = init_xy.x();
     const float robot_cy = init_xy.y();
-    viewer->fitToScene(QRectF(robot_cx - view_side_m/2.f, robot_cy - view_side_m/2.f, view_side_m, view_side_m));
-    viewer->centerOn(robot_cx, robot_cy);
+    viewer_2d_->fit_to_scene(QRectF(robot_cx - view_side_m/2.f, robot_cy - view_side_m/2.f, view_side_m, view_side_m));
+    viewer_2d_->center_on(robot_cx, robot_cy);
 
     // Start localization thread (room_ai runs independently from compute loop)
     localization_th_ = std::thread(&SpecificWorker::run_localization, this);
@@ -2729,32 +2729,12 @@ void SpecificWorker::clear_path(bool stop_controller, bool clear_stored_path)
         try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
     }
 
-    for (auto* item : path_draw_items_)
-    {
-        viewer->scene.removeItem(item);
-        delete item;
-    }
-    path_draw_items_.clear();
+    viewer_2d_->clear_path_items();
     if (clear_stored_path)
         current_path_.clear();
 
-    // Clear expanded obstacle boundaries
-    for (auto* item : obstacle_expanded_items_)
-    {
-        viewer->scene.removeItem(item);
-        delete item;
-    }
-    obstacle_expanded_items_.clear();
-
-    if (target_marker_)
-        target_marker_->setVisible(false);
-
     // Hide trajectory controller debug items
-    for (auto& segs : traj_draw_items_)
-        for (auto* item : segs)
-            item->setVisible(false);
-    if (traj_carrot_marker_) traj_carrot_marker_->setVisible(false);
-    if (traj_robot_to_carrot_) traj_robot_to_carrot_->setVisible(false);
+    viewer_2d_->hide_trajectory_debug();
 
     if (viewer_3d_ && clear_stored_path)
         viewer_3d_->update_path({});

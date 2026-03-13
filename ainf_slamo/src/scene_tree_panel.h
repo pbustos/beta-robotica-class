@@ -35,14 +35,6 @@ class SceneTreePanel : public QWidget
 {
     Q_OBJECT
 public:
-    /// Legacy entry used by the old refresh() API; kept for backward compat.
-    struct FurnitureEntry
-    {
-        std::string id;
-        std::string label;
-        std::vector<Eigen::Vector2f> vertices;
-    };
-
     explicit SceneTreePanel(QWidget* parent = nullptr);
 
     /**
@@ -61,10 +53,6 @@ public:
      * rebuilding the whole tree.  Call after silent (no-signal) mutations.
      */
     void update_object_display(const QString& label);
-
-    // ---- Legacy API (kept for backward compatibility) ----
-    void refresh(const std::vector<Eigen::Vector2f>& room_polygon,
-                 const std::vector<FurnitureEntry>&  furniture);
 
     bool select_item_by_name(const QString& name);
     bool toggle_item_by_name(const QString& name);

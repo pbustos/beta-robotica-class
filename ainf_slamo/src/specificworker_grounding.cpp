@@ -14,7 +14,7 @@
 
 void SpecificWorker::apply_ownership_em_visuals()
 {
-    if (!ownership_em_enabled_ || furniture_polygons_.empty() || furniture_draw_items_.empty())
+    if (!ownership_em_enabled_ || furniture_polygons_.empty() || viewer_2d_->furniture_count() == 0)
         return;
 
     std::unordered_map<std::string, float> confidence_by_id;
@@ -27,12 +27,8 @@ void SpecificWorker::apply_ownership_em_visuals()
     }
 
     const QColor base(50, 100, 255);
-    for (std::size_t i = 0; i < furniture_polygons_.size() && i < furniture_draw_items_.size(); ++i)
+    for (std::size_t i = 0; i < furniture_polygons_.size() && i < viewer_2d_->furniture_count(); ++i)
     {
-        auto* item = furniture_draw_items_[i];
-        if (item == nullptr)
-            continue;
-
         const auto& fp = furniture_polygons_[i];
         float conf = 0.35f;
         if (const auto it = confidence_by_id.find(fp.label); it != confidence_by_id.end())
@@ -42,8 +38,10 @@ void SpecificWorker::apply_ownership_em_visuals()
 
         const qreal width = 0.04 + 0.10 * static_cast<qreal>(conf);
         const int alpha = static_cast<int>(35.f + 165.f * conf);
-        item->setPen(QPen(base, width));
-        item->setBrush(QBrush(QColor(base.red(), base.green(), base.blue(), alpha)));
+        viewer_2d_->set_furniture_item_style(
+            i,
+            QPen(base, width),
+            QBrush(QColor(base.red(), base.green(), base.blue(), alpha)));
     }
 }
 

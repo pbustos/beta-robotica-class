@@ -135,15 +135,14 @@ void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eige
     const float display_x = robot_pose.translation().x();
     const float display_y = robot_pose.translation().y();
     const float display_angle = std::atan2(robot_pose.linear()(1,0), robot_pose.linear()(0,0));
-    viewer->robot_poly()->setPos(display_x, display_y);
-    viewer->robot_poly()->setRotation(qRadiansToDegrees(display_angle));
+    viewer_2d_->update_robot(display_x, display_y, display_angle);
 
     if (viewer_3d_)
         viewer_3d_->update_robot_pose(display_x, display_y, display_angle);
 
     if (auto_center_ || !initial_center_done_)
     {
-        viewer->centerOn(display_x, display_y);
+        viewer_2d_->center_on(display_x, display_y);
         initial_center_done_ = true;
     }
 
@@ -163,76 +162,25 @@ void SpecificWorker::display_robot(const Eigen::Affine2f &robot_pose, const Eige
 
     const float ellipse_angle = std::atan2(eigenvectors(1,0), eigenvectors(0,0));
 
-    if (cov_ellipse_item_ == nullptr)
-    {
-        cov_ellipse_item_ = viewer->scene.addEllipse(
-            -radius_x, -radius_y, 2*radius_x, 2*radius_y,
-            QPen(QColor(255, 50, 50), 0.03),
-            QBrush(QColor(255, 100, 100, 80)));
-        cov_ellipse_item_->setZValue(100);
-    }
-    else
-    {
-        cov_ellipse_item_->setRect(-radius_x, -radius_y, 2*radius_x, 2*radius_y);
-    }
-
-    cov_ellipse_item_->setPos(display_x, display_y);
-    cov_ellipse_item_->setRotation(qRadiansToDegrees(ellipse_angle));
+    viewer_2d_->update_covariance_ellipse(display_x, display_y,
+                                          radius_x, radius_y,
+                                          qRadiansToDegrees(ellipse_angle));
 }
 
 void SpecificWorker::draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state)
 {
-    static QGraphicsRectItem* estimated_room_item = nullptr;
-
-    if (!room_polygon_.empty())
-    {
-        if (estimated_room_item != nullptr)
-        {
-            viewer->scene.removeItem(estimated_room_item);
-            delete estimated_room_item;
-            estimated_room_item = nullptr;
-        }
-        return;
-    }
-
-    const float width = state[0];
+    const float width  = state[0];
     const float length = state[1];
-
-    QRectF room_rect(-width/2, -length/2, width, length);
-
-    if (estimated_room_item == nullptr)
-    {
-        estimated_room_item = viewer->scene.addRect(room_rect, QPen(Qt::magenta, 0.05), QBrush(Qt::NoBrush));
-        estimated_room_item->setZValue(2);
-    }
-    else
-    {
-        estimated_room_item->setRect(room_rect);
-    }
+    viewer_2d_->update_estimated_room_rect(width, length, !room_polygon_.empty());
 }
 
 void SpecificWorker::draw_temp_obstacles()
 {
-    for (auto* item : temp_obstacle_draw_items_)
-    {
-        viewer->scene.removeItem(item);
-        delete item;
-    }
-    temp_obstacle_draw_items_.clear();
-
+    std::vector<std::vector<Eigen::Vector2f>> polys;
+    polys.reserve(temp_obstacles_.size());
     for (const auto& obs : temp_obstacles_)
-    {
-        QPolygonF poly;
-        for (const auto& v : obs.vertices)
-            poly << QPointF(v.x(), v.y());
-        poly << QPointF(obs.vertices.front().x(), obs.vertices.front().y());
-
-        auto* item = viewer->scene.addPolygon(poly,
-            QPen(QColor(255, 100, 0), 0.06),
-            QBrush(QColor(255, 100, 0, 60)));
-        item->setZValue(5);
-        temp_obstacle_draw_items_.push_back(item);
-    }
+        polys.push_back(obs.vertices);
+    viewer_2d_->draw_temp_obstacles(polys);
 
     if (viewer_3d_)
     {
@@ -250,74 +198,13 @@ void SpecificWorker::draw_trajectory_debug(const rc::TrajectoryController::Contr
     const float rx = robot_pose.translation().x();
     const float ry = robot_pose.translation().y();
 
-    const int num_traj = static_cast<int>(ctrl.trajectories_room.size());
-
-    while (static_cast<int>(traj_draw_items_.size()) < num_traj)
-        traj_draw_items_.emplace_back();
-
-    for (int t = 0; t < static_cast<int>(traj_draw_items_.size()); ++t)
-    {
-        if (t >= num_traj)
-        {
-            for (auto* seg : traj_draw_items_[t])
-                seg->setVisible(false);
-            continue;
-        }
-
-        const auto& traj = ctrl.trajectories_room[t];
-        const bool is_best = (t == ctrl.best_trajectory_idx);
-        const QColor color = is_best ? QColor(0, 220, 0) : QColor(150, 150, 150, 100);
-        const float width = is_best ? 0.06f : 0.02f;
-        const int z = is_best ? 32 : 28;
-
-        auto& segments = traj_draw_items_[t];
-
-        while (segments.size() < traj.size())
-        {
-            auto* item = viewer->scene.addLine(0, 0, 0, 0, QPen(color, width));
-            item->setZValue(z);
-            segments.push_back(item);
-        }
-
-        for (size_t s = 0; s + 1 < traj.size(); ++s)
-        {
-            segments[s]->setLine(traj[s].x(), traj[s].y(), traj[s+1].x(), traj[s+1].y());
-            segments[s]->setPen(QPen(color, width));
-            segments[s]->setZValue(z);
-            segments[s]->setVisible(true);
-        }
-        for (size_t s = (traj.empty() ? 0 : traj.size() - 1); s < segments.size(); ++s)
-            segments[s]->setVisible(false);
-    }
-
-    {
-        constexpr float cr = 0.15f;
-        if (!traj_carrot_marker_)
-        {
-            traj_carrot_marker_ = viewer->scene.addEllipse(
-                -cr, -cr, 2*cr, 2*cr,
-                QPen(QColor(255, 140, 0), 0.03f),
-                QBrush(QColor(255, 140, 0, 180)));
-            traj_carrot_marker_->setZValue(33);
-        }
-        traj_carrot_marker_->setPos(ctrl.carrot_room.x(), ctrl.carrot_room.y());
-        traj_carrot_marker_->setVisible(true);
-    }
-
-    {
-        if (!traj_robot_to_carrot_)
-        {
-            traj_robot_to_carrot_ = viewer->scene.addLine(
-                rx, ry, ctrl.carrot_room.x(), ctrl.carrot_room.y(),
-                QPen(QColor(255, 165, 0, 200), 0.02f, Qt::DashLine));
-            traj_robot_to_carrot_->setZValue(29);
-        }
-        else
-        {
-            traj_robot_to_carrot_->setLine(rx, ry, ctrl.carrot_room.x(), ctrl.carrot_room.y());
-            traj_robot_to_carrot_->setVisible(true);
-        }
-    }
+    rc::Viewer2D::TrajDrawData data;
+    data.trajectories = ctrl.trajectories_room;
+    data.best_idx     = ctrl.best_trajectory_idx;
+    data.carrot       = ctrl.carrot_room;
+    data.robot_x      = rx;
+    data.robot_y      = ry;
+    viewer_2d_->draw_trajectory_debug(data);
 }
 
 void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
@@ -326,98 +213,13 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
 
     if (path.size() < 2) return;
 
-    const auto& orig_poly = path_planner_.get_original_polygon();
-    for (const auto& v : orig_poly)
-    {
-        constexpr float r = 0.1f;
-        auto* dot = viewer->scene.addEllipse(-r, -r, 2*r, 2*r,
-            QPen(QColor(0, 200, 0), 0.02), QBrush(QColor(0, 200, 0, 80)));
-        dot->setPos(v.x(), v.y());
-        dot->setZValue(17);
-        path_draw_items_.push_back(dot);
-    }
-
-    if (navigable_poly_item_)
-    {
-        viewer->scene.removeItem(navigable_poly_item_);
-        delete navigable_poly_item_;
-        navigable_poly_item_ = nullptr;
-    }
-    const auto& inner_poly = path_planner_.get_inner_polygon();
-    if (inner_poly.size() >= 3)
-    {
-        QPolygonF qpoly;
-        for (const auto& v : inner_poly)
-            qpoly << QPointF(v.x(), v.y());
-        qpoly << QPointF(inner_poly.front().x(), inner_poly.front().y());
-        QPen inner_pen(QColor(255, 140, 0, 200), 0.03, Qt::DashLine);
-        navigable_poly_item_ = viewer->scene.addPolygon(qpoly, inner_pen, Qt::NoBrush);
-        navigable_poly_item_->setZValue(19);
-    }
-
-    for (auto* item : obstacle_expanded_items_)
-    {
-        viewer->scene.removeItem(item);
-        delete item;
-    }
-    obstacle_expanded_items_.clear();
-    const auto& exp_obstacles = path_planner_.get_expanded_obstacles();
-    for (const auto& obs : exp_obstacles)
-    {
-        if (obs.size() < 3) continue;
-        QPolygonF qpoly_obs;
-        for (const auto& v : obs)
-            qpoly_obs << QPointF(v.x(), v.y());
-        qpoly_obs << QPointF(obs.front().x(), obs.front().y());
-        QPen obs_pen(QColor(255, 140, 0, 200), 0.03, Qt::DashLine);
-        auto* obs_item = viewer->scene.addPolygon(qpoly_obs, obs_pen, Qt::NoBrush);
-        obs_item->setZValue(19);
-        obstacle_expanded_items_.push_back(obs_item);
-    }
-
-    const auto& nav_poly = path_planner_.get_navigable_polygon();
-    for (const auto& v : nav_poly)
-    {
-        constexpr float r = 0.08f;
-        auto* dot = viewer->scene.addEllipse(-r, -r, 2*r, 2*r,
-            QPen(QColor(255, 255, 0, 200), 0.01), QBrush(QColor(255, 255, 0, 120)));
-        dot->setPos(v.x(), v.y());
-        dot->setZValue(18);
-        path_draw_items_.push_back(dot);
-    }
-
-    const QPen path_pen(QColor(100, 255, 100), 0.04);
-    for (size_t i = 0; i + 1 < path.size(); ++i)
-    {
-        auto* line = viewer->scene.addLine(
-            path[i].x(), path[i].y(),
-            path[i + 1].x(), path[i + 1].y(),
-            path_pen);
-        line->setZValue(20);
-        path_draw_items_.push_back(line);
-    }
-
-    const QPen wp_pen(Qt::NoPen);
-    const QBrush wp_brush(QColor(0, 220, 220));
-    for (size_t i = 1; i + 1 < path.size(); ++i)
-    {
-        constexpr float r = 0.06f;
-        auto* dot = viewer->scene.addEllipse(-r, -r, 2*r, 2*r, wp_pen, wp_brush);
-        dot->setPos(path[i].x(), path[i].y());
-        dot->setZValue(21);
-        path_draw_items_.push_back(dot);
-    }
-
-    const auto& goal = path.back();
-    if (target_marker_ == nullptr)
-    {
-        constexpr float tr = 0.12f;
-        target_marker_ = viewer->scene.addEllipse(-tr, -tr, 2*tr, 2*tr,
-            QPen(QColor(255, 50, 50), 0.03), QBrush(QColor(255, 50, 50, 120)));
-        target_marker_->setZValue(22);
-    }
-    target_marker_->setPos(goal.x(), goal.y());
-    target_marker_->setVisible(true);
+    rc::Viewer2D::PathDrawData data;
+    data.path              = path;
+    data.orig_poly_verts   = path_planner_.get_original_polygon();
+    data.inner_poly        = path_planner_.get_inner_polygon();
+    data.nav_poly          = path_planner_.get_navigable_polygon();
+    data.expanded_obstacles = path_planner_.get_expanded_obstacles();
+    viewer_2d_->draw_path(data);
 
     if (viewer_3d_)
         viewer_3d_->update_path(path);
@@ -441,22 +243,15 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
 
     if (checked)
     {
-        // Start capturing - backup existing polygon (don't remove it yet)
+        // Start capturing — backup existing polygon (don't remove it yet)
         room_polygon_backup_ = room_polygon_;
         room_polygon_.clear();
 
-        // Clear previous vertex markers (these are only for capture mode)
-        for (auto* item : polygon_vertex_items)
-        {
-            viewer->scene.removeItem(item);
-            delete item;
-        }
-        polygon_vertex_items.clear();
+        // Clear previous vertex markers
+        viewer_2d_->clear_capture_vertices();
 
-        // Keep the existing polygon visible but store reference for later removal
-        // Move current polygon_item to backup (will be removed when new capture succeeds)
-        polygon_item_backup_ = polygon_item;
-        polygon_item = nullptr;
+        // Move current polygon item into backup so the old outline stays visible
+        viewer_2d_->save_polygon_to_backup();
 
         pushButton_captureRoom->setText("Ctrl+Click vertices...");
         qInfo() << "Room capture started. Use Ctrl+Left click on the scene to add vertices. Ctrl+Click near the first point to close.";
@@ -470,15 +265,8 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
         {
             qInfo() << "Room polygon captured with" << room_polygon_.size() << "vertices";
 
-            // Keep old polygon visible until user saves the new one
-
             // Clear vertex markers (yellow circles)
-            for (auto* item : polygon_vertex_items)
-            {
-                viewer->scene.removeItem(item);
-                delete item;
-            }
-            polygon_vertex_items.clear();
+            viewer_2d_->clear_capture_vertices();
 
             // Vertices are already in room frame (where user clicked)
             // Pass them to room_ai via thread-safe command queue
@@ -496,25 +284,11 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
             room_polygon_ = room_polygon_backup_;
             room_polygon_backup_.clear();
 
-            // Remove any partial new polygon drawing
-            if (polygon_item)
-            {
-                viewer->scene.removeItem(polygon_item);
-                delete polygon_item;
-                polygon_item = nullptr;
-            }
-
-            // Restore backup polygon graphic as the active one
-            polygon_item = polygon_item_backup_;
-            polygon_item_backup_ = nullptr;
+            // Discard any partially-drawn new polygon and restore the backup outline
+            viewer_2d_->restore_polygon_from_backup();
 
             // Clear vertex markers from failed capture
-            for (auto* item : polygon_vertex_items)
-            {
-                viewer->scene.removeItem(item);
-                delete item;
-            }
-            polygon_vertex_items.clear();
+            viewer_2d_->clear_capture_vertices();
         }
     }
 }
@@ -526,9 +300,6 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
     if (!capturing_room_polygon)
         return;
 
-    // Capture mode: add polygon vertices
-    // The scene shows points in room frame (transformed by robot_pose)
-    // We need to store vertices in room frame (where they appear on screen)
     const Eigen::Vector2f click_pos(pos.x(), pos.y());
 
     // Check if clicking near the first point to close the polygon
@@ -539,7 +310,7 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
         if (dist_to_first < close_threshold)
         {
             // Close the polygon
-            pushButton_captureRoom->setChecked(false);  // This triggers slot_capture_room_toggled(false)
+            pushButton_captureRoom->setChecked(false);  // triggers slot_capture_room_toggled(false)
             return;
         }
     }
@@ -547,14 +318,8 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
     // Add new vertex in room frame coordinates
     room_polygon_.push_back(click_pos);
 
-    // Draw vertex marker
-    const float radius = 0.15f;
-    auto* vertex_item = viewer->scene.addEllipse(
-        -radius, -radius, 2*radius, 2*radius,
-        QPen(Qt::yellow, 0.05), QBrush(Qt::yellow));
-    vertex_item->setPos(pos.x(), pos.y());
-    vertex_item->setZValue(10);
-    polygon_vertex_items.push_back(vertex_item);
+    // Draw vertex marker via Viewer2D
+    viewer_2d_->add_capture_vertex(pos);
 
     // Draw temporary polygon outline
     draw_room_polygon();
@@ -564,26 +329,7 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
 
 void SpecificWorker::draw_room_polygon()
 {
-    if (room_polygon_.size() < 2)
-        return;
-
-    if (polygon_item)
-    {
-        viewer->scene.removeItem(polygon_item);
-        delete polygon_item;
-        polygon_item = nullptr;
-    }
-
-    QPolygonF poly;
-    for (const auto& v : room_polygon_)
-        poly << QPointF(v.x(), v.y());
-
-    if (!capturing_room_polygon && room_polygon_.size() >= 3)
-        poly << QPointF(room_polygon_.front().x(), room_polygon_.front().y());
-
-    QPen pen(capturing_room_polygon ? Qt::yellow : Qt::magenta, capturing_room_polygon ? 0.08 : 0.15);
-    polygon_item = viewer->scene.addPolygon(poly, pen, QBrush(Qt::NoBrush));
-    polygon_item->setZValue(8);
+    viewer_2d_->draw_room_polygon(room_polygon_, capturing_room_polygon);
 
     if (viewer_3d_ && !capturing_room_polygon && room_polygon_.size() >= 3)
         viewer_3d_->rebuild_walls(room_polygon_);
@@ -591,29 +337,8 @@ void SpecificWorker::draw_room_polygon()
 
 void SpecificWorker::draw_furniture()
 {
-    for (auto* item : furniture_draw_items_)
-    {
-        viewer->scene.removeItem(item);
-        delete item;
-    }
-    furniture_draw_items_.clear();
-
-    const QPen furniture_pen(QColor(50, 100, 255), 0.06);
-    const QBrush furniture_brush(QColor(50, 100, 255, 40));
-
-    for (const auto& fp : furniture_polygons_)
-    {
-        if (fp.vertices.size() < 3) continue;
-
-        QPolygonF qpoly;
-        for (const auto& v : fp.vertices)
-            qpoly << QPointF(v.x(), v.y());
-        qpoly << QPointF(fp.vertices.front().x(), fp.vertices.front().y());
-
-        auto* item = viewer->scene.addPolygon(qpoly, furniture_pen, furniture_brush);
-        item->setZValue(7);
-        furniture_draw_items_.push_back(item);
-    }
+    // 2D: delegate all polygon drawing to Viewer2D
+    viewer_2d_->draw_furniture(furniture_polygons_);
 
     apply_ownership_em_visuals();
 
@@ -696,36 +421,7 @@ void SpecificWorker::update_furniture_draw_item(std::size_t idx)
     if (idx >= furniture_polygons_.size())
         return;
 
-    if (idx < furniture_draw_items_.size() && furniture_draw_items_[idx] != nullptr)
-    {
-        viewer->scene.removeItem(furniture_draw_items_[idx]);
-        delete furniture_draw_items_[idx];
-        furniture_draw_items_[idx] = nullptr;
-    }
-    else if (idx >= furniture_draw_items_.size())
-    {
-        furniture_draw_items_.resize(furniture_polygons_.size(), nullptr);
-    }
-
-    const auto& fp = furniture_polygons_[idx];
-    if (fp.vertices.size() < 3)
-        return;
-
-    const QPen furniture_pen(QColor(50, 100, 255), 0.06);
-    const QBrush furniture_brush(QColor(50, 100, 255, 40));
-
-    QPolygonF qpoly;
-    for (const auto& v : fp.vertices)
-        qpoly << QPointF(v.x(), v.y());
-    qpoly << QPointF(fp.vertices.front().x(), fp.vertices.front().y());
-
-    auto* item = viewer->scene.addPolygon(qpoly, furniture_pen, furniture_brush);
-    item->setZValue(7);
-    furniture_draw_items_[idx] = item;
+    viewer_2d_->update_furniture_item(idx, furniture_polygons_[idx]);
 
     apply_ownership_em_visuals();
-
-    // Force the QGraphicsView to repaint immediately; without this the view
-    // can lag during rapid drag updates.
-    viewer->scene.update();
 }

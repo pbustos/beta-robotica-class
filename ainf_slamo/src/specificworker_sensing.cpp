@@ -227,7 +227,7 @@ auto SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector3f> &point
         while (pool.size() > num_draw)
         {
             auto *p = pool.back();
-            viewer->scene.removeItem(p);
+            viewer_2d_->scene().removeItem(p);
             delete p;
             pool.pop_back();
         }
@@ -244,7 +244,7 @@ auto SpecificWorker::draw_lidar_points(const std::vector<Eigen::Vector3f> &point
             }
             else
             {
-                auto *item = viewer->scene.addEllipse(ellipse_rect, pen, brush);
+                auto *item = viewer_2d_->scene().addEllipse(ellipse_rect, pen, brush);
                 item->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
                 item->setPos(pw.x(), pw.y());
                 item->setZValue(5);

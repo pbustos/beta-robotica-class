@@ -38,12 +38,7 @@ void SpecificWorker::slot_save_layout()
     save_layout_to_svg(filename.toStdString());
 
     // Remove the old polygon from the UI now that the new one is saved
-    if (polygon_item_backup_)
-    {
-        viewer->scene.removeItem(polygon_item_backup_);
-        delete polygon_item_backup_;
-        polygon_item_backup_ = nullptr;
-    }
+    viewer_2d_->discard_polygon_backup();
     room_polygon_backup_.clear();
 }
 
@@ -340,12 +335,7 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
 
     // Clear previous polygon
     room_polygon_.clear();
-    for (auto* item : polygon_vertex_items)
-    {
-        viewer->scene.removeItem(item);
-        delete item;
-    }
-    polygon_vertex_items.clear();
+    viewer_2d_->clear_capture_vertices();
 
     // Parse SVG file
     QString content = QString::fromUtf8(data);

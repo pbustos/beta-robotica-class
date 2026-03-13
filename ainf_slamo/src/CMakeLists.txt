@@ -97,6 +97,7 @@ LIST(APPEND SOURCES
   ../src/specificworker_visualization.cpp
   ../src/specificworker_navigation.cpp
   ../src/specificworker_sensing.cpp
+  ../src/viewer_2d.cpp
   ../src/room_concept_ai.cpp
   ../src/room_model.cpp
   ../src/episodic_memory.cpp
@@ -118,6 +119,7 @@ LIST(APPEND SOURCES
 # Headers set
 LIST(APPEND HEADERS
   ../src/specificworker.h
+  ../src/viewer_2d.h
   ../src/room_concept_ai.h
   ../src/room_model.h
   ../src/episodic_memory.h

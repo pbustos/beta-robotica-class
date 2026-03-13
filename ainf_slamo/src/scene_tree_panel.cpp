@@ -349,15 +349,7 @@ void SceneTreePanel::update_object_display(const QString& label)
 }
 
 // ---------------------------------------------------------------------------
-// refresh — legacy API: delegates to model if available
-// ---------------------------------------------------------------------------
-void SceneTreePanel::refresh(const std::vector<Eigen::Vector2f>& /*room_polygon*/,
-                              const std::vector<FurnitureEntry>&  /*furniture*/)
-{
-    if (model_) rebuild_from_model();
-}
 
-// ---------------------------------------------------------------------------
 // select_item_by_name
 // ---------------------------------------------------------------------------
 bool SceneTreePanel::select_item_by_name(const QString& name)

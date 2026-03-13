@@ -34,7 +34,7 @@
 #include <fps/fps.h>
 #include <timer/timer.h>
 #include <sys/resource.h>  // For CPU usage
-#include <abstract_graphic_viewer/abstract_graphic_viewer.h>
+#include "viewer_2d.h"
 #include "viewer_3d.h"
 #include "scene_tree_panel.h"
 #include "camera_viewer.h"
@@ -122,8 +122,8 @@ class SpecificWorker : public GenericWorker
 	    bool startup_check_flag;
 
 	// Graphics
-	AbstractGraphicViewer *viewer;
-	std::unique_ptr<rc::Viewer3D> viewer_3d_;            // 3D viewer (owned by us)
+	std::unique_ptr<rc::Viewer2D> viewer_2d_;            // 2D scene viewer (owned by us)
+	std::unique_ptr<rc::Viewer3D> viewer_3d_;            // 3D scene viewer (owned by us)
 	std::unique_ptr<SceneTreePanel> scene_tree_;          // 3rd pane: scene element tree
 	std::unique_ptr<CameraViewer>  camera_viewer_;        // Camera popup dialog
 
@@ -176,15 +176,11 @@ class SpecificWorker : public GenericWorker
 	// Room model
 	std::vector<Eigen::Vector2f> room_polygon_;  // Room model polygon vertices (loaded from SVG or captured)
 	std::vector<Eigen::Vector2f> room_polygon_backup_;  // Backup of polygon during capture
-	QGraphicsPolygonItem* polygon_item_backup_ = nullptr;  // Backup of polygon graphic item
 	bool capturing_room_polygon = false;
-	std::vector<QGraphicsEllipseItem*> polygon_vertex_items;
-	QGraphicsPolygonItem* polygon_item = nullptr;
 
 	// Furniture / obstacles (loaded from SVG "Furniture" layer)
 	std::vector<rc::FurniturePolygonData> furniture_polygons_;
 	rc::SceneGraphModel scene_graph_;
-	std::vector<QGraphicsPolygonItem*> furniture_draw_items_;
 	void draw_furniture();
 	void update_furniture_draw_item(std::size_t idx);
 	void apply_ownership_em_visuals();
@@ -199,7 +195,6 @@ class SpecificWorker : public GenericWorker
 		float height = 0.f;                          // estimated height from LiDAR Z range (metres; 0 = unknown)
 	};
 	std::vector<TempObstacle> temp_obstacles_;
-	std::vector<QGraphicsPolygonItem*> temp_obstacle_draw_items_;
 	static constexpr float TEMP_OBSTACLE_TIMEOUT_SEC = 30.f;    // remove after this many seconds
 	static constexpr float TEMP_OBSTACLE_MERGE_DIST = 0.8f;     // merge if centers closer than this
 	static constexpr float TEMP_OBSTACLE_MARGIN = 0.05f;        // extra margin around OBB (planner adds robot_radius)
@@ -323,10 +318,6 @@ class SpecificWorker : public GenericWorker
 	// Path planner
 	rc::PolygonPathPlanner path_planner_;
 	std::vector<Eigen::Vector2f> current_path_;
-	std::vector<QGraphicsItem*> path_draw_items_;
-	QGraphicsEllipseItem* target_marker_ = nullptr;
-	QGraphicsPolygonItem* navigable_poly_item_ = nullptr;  // debug: shrunken polygon
-	std::vector<QGraphicsPolygonItem*> obstacle_expanded_items_;  // debug: expanded obstacle boundaries
 	void draw_path_threadsafe(const std::vector<Eigen::Vector2f>& path);
 	void draw_path(const std::vector<Eigen::Vector2f>& path);
 	void clear_path(bool stop_controller = true, bool clear_stored_path = true);
@@ -378,19 +369,11 @@ class SpecificWorker : public GenericWorker
 	void send_velocity_command(float adv, float side, float rot);
 	void draw_trajectory_debug(const rc::TrajectoryController::ControlOutput &ctrl,
 	                           const Eigen::Affine2f &robot_pose);
-	// Trajectory debug graphic items
-	std::vector<std::vector<QGraphicsLineItem*>> traj_draw_items_;  // [traj_idx][segment]
-	QGraphicsEllipseItem* traj_carrot_marker_ = nullptr;
-	QGraphicsLineItem* traj_robot_to_carrot_ = nullptr;
-
 	// CPU usage tracking
 	float get_cpu_usage();
 	clock_t last_sys_cpu_time_ = 0;
 	clock_t last_user_cpu_time_ = 0;
 	int num_processors_ = 1;
-
-	// Covariance ellipse visualization
-	QGraphicsEllipseItem* cov_ellipse_item_ = nullptr;
 
 	// Draw
 	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points_high,
