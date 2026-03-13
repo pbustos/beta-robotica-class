@@ -8,15 +8,23 @@
 #include <Qt3DExtras/QForwardRenderer>
 #include <Qt3DExtras/QSphereMesh>
 #include <Qt3DExtras/QExtrudedTextMesh>
+#include <Qt3DExtras/QTorusMesh>
+#include <Qt3DExtras/QConeMesh>
 #include <Qt3DRender/QMesh>
 #include <Qt3DRender/QObjectPicker>
 #include <Qt3DRender/QPickEvent>
 #include <Qt3DRender/QPickingSettings>
 #include <Qt3DRender/QRenderSettings>
+#include <Qt3DRender/QEffect>
+#include <Qt3DRender/QTechnique>
+#include <Qt3DRender/QRenderPass>
+#include <Qt3DRender/QDepthTest>
 #include <QSizePolicy>
 #include <QLabel>
 #include <QTimer>
 #include <QFont>
+#include <QMouseEvent>
+#include <QEvent>
 #include <QCoreApplication>
 #include <QDir>
 #include <cmath>
@@ -46,7 +54,8 @@ void WebotsStyleCameraController::moveCamera(
             return;
 
         const QVector3D dir = to_center / dist;
-        constexpr float min_dist = 0.35f;
+        // Prevent camera from getting too close to the pivot, which can clip the gizmo.
+        constexpr float min_dist = 1.10f;
         constexpr float max_dist = 250.f;
 
         const float new_dist = std::clamp(dist + signed_step, min_dist, max_dist);
@@ -120,18 +129,26 @@ Viewer3D::Viewer3D(QWidget* parent, float wall_height)
     // ---- Qt3D render window and host widget --------------------------------
     window_    = new Qt3DExtras::Qt3DWindow();
     window_->defaultFrameGraph()->setClearColor(QColor(28, 28, 38));
+    // Disable automatic frustum culling: gizmo sub-entities have small bounding
+    // volumes and get incorrectly culled when the camera orbits or zooms.
+    window_->defaultFrameGraph()->setFrustumCullingEnabled(false);
 
     // ---- Enable object picking --------------------------------------------
     // Without TrianglePicking the QObjectPicker pressed signal never fires.
     auto* pickSettings = window_->renderSettings()->pickingSettings();
     pickSettings->setPickMethod(Qt3DRender::QPickingSettings::TrianglePicking);
-    pickSettings->setPickResultMode(Qt3DRender::QPickingSettings::NearestPick);
+    pickSettings->setPickResultMode(Qt3DRender::QPickingSettings::NearestPriorityPick);
     pickSettings->setFaceOrientationPickingMode(Qt3DRender::QPickingSettings::FrontAndBackFace);
 
     container_ = QWidget::createWindowContainer(window_, parent);
     container_->setMinimumSize(350, 250);
     container_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     container_->setFocusPolicy(Qt::StrongFocus);   // allow keyboard input for camera
+    container_->setMouseTracking(true);
+    container_->installEventFilter(this);
+    // Also filter the window itself: QWidget::createWindowContainer delivers
+    // MouseButtonPress directly to the QWindow, not the container widget.
+    window_->installEventFilter(this);
 
     // ---- Pick-result overlay label ----------------------------------------
     pick_label_ = new QLabel(container_);
@@ -149,16 +166,23 @@ Viewer3D::Viewer3D(QWidget* parent, float wall_height)
 
     // ---- Camera ------------------------------------------------------------
     camera_ = window_->camera();
-    camera_->lens()->setPerspectiveProjection(45.f, 16.f / 9.f, 0.05f, 500.f);
+    // Lower near plane helps avoid gizmo clipping/disappearance when user zooms in.
+    camera_->lens()->setPerspectiveProjection(45.f, 16.f / 9.f, 0.001f, 500.f);
     camera_->setPosition(QVector3D(0.f, 15.f, 15.f));
     camera_->setViewCenter(QVector3D(0.f, 0.f, 0.f));
     camera_->setUpVector(QVector3D(0.f, 1.f, 0.f));
     Qt3DRender::QCamera* camera = camera_;  // kept for camCtrl below
 
-    auto* camCtrl = new WebotsStyleCameraController(root_entity_);
-    camCtrl->setCamera(camera);
-    camCtrl->setLinearSpeed(20.f);
-    camCtrl->setLookSpeed(180.f);
+    cam_controller_ = new WebotsStyleCameraController(root_entity_);
+    cam_controller_->setCamera(camera);
+    cam_controller_->setLinearSpeed(20.f);
+    cam_controller_->setLookSpeed(180.f);
+
+    // Keep gizmo screen-scale accurate on every camera position change,
+    // not only during mouse/wheel events (the camera controller can update
+    // the position asynchronously between GUI events).
+    connect(camera_, &Qt3DRender::QCamera::positionChanged, this,
+            &Viewer3D::update_gizmo_screen_scale);
 
     // ---- Directional light (sun from upper-left) ---------------------------
     auto* sunEntity = new Qt3DCore::QEntity(root_entity_);
@@ -210,6 +234,9 @@ Viewer3D::Viewer3D(QWidget* parent, float wall_height)
 
     // ---- Pre-allocate lidar point pool ------------------------------------
     init_lidar_pool();
+
+    // ---- Editing gizmo -----------------------------------------------------
+    init_gizmo();
 
     // ---- Commit root entity ------------------------------------------------
     window_->setRootEntity(root_entity_);
@@ -454,6 +481,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         delete e;
     }
     furniture_entities_.clear();
+    furniture_centers_world_.clear();
+    furniture_groups_.clear();
 
     // Base correction: Z-up meshes → Y-up.  -90° around X.
     const QQuaternion base_rot = QQuaternion::fromAxisAndAngle(1.f, 0.f, 0.f, -90.f);
@@ -462,6 +491,21 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
                                         + "/..").absolutePath();
     auto abs_mesh = [&](const QString& rel) -> QString {
         return component_root + "/" + rel;
+    };
+
+    auto register_group_part = [&](const std::string& group_key,
+                                   const Eigen::Vector2f& centroid,
+                                   float yaw_rad,
+                                   Qt3DCore::QTransform* tf) -> void
+    {
+        auto& g = furniture_groups_[group_key];
+        if (g.transforms.empty())
+        {
+            g.center_world = QVector3D(-centroid.x(), 0.f, centroid.y());
+            g.yaw_rad = yaw_rad;
+        }
+        g.transforms.push_back(tf);
+        g.local_offsets.push_back(tf->translation() - g.center_world);
     };
 
     // Helper: create and register one entity
@@ -473,6 +517,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
                            const QQuaternion&   rot,
                            const QVector3D&     scale3d,
                            const QString&       pick_name,
+                           const std::string&   group_key,
+                           float                yaw_rad,
                            float                y_offset = 0.f) -> void
     {
         auto* e = new Qt3DCore::QEntity(root_entity_);
@@ -496,6 +542,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         attach_picker(e, pick_name);
 
         furniture_entities_.push_back(e);
+        register_group_part(group_key, centroid, yaw_rad, tf);
     };
 
     // Helper: analytic composed table (tabletop + 4 legs), matching SDF structure.
@@ -507,7 +554,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
                                           float width,
                                           float depth,
                                           float height,
-                                          const QString& pick_name) -> void
+                                          const QString& pick_name,
+                                          const std::string& group_key) -> void
     {
         const float w = std::max(0.08f, width);
         const float d = std::max(0.08f, depth);
@@ -547,6 +595,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             e->addComponent(tf);
             attach_picker(e, pick_name);
             furniture_entities_.push_back(e);
+            register_group_part(group_key, centroid, yaw_rad, tf);
         };
 
         // Tabletop
@@ -573,7 +622,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             make_table_composed_entity(QColor(160, 100, 55), QColor(70, 44, 24), 20.f,
                                        cen, item.yaw_rad,
                                        size.x(), size.y(), table_height,
-                                       QString::fromStdString(item.label));
+                                       QString::fromStdString(item.label),
+                                       item.label);
         }
         else if (ql.contains("banco") || ql.contains("bench"))
         {
@@ -581,7 +631,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             make_entity(abs_mesh("meshes/bench.obj"),
                         QColor(130, 85, 45), QColor(55, 36, 19), 15.f,
                         cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
-                        QString::fromStdString(item.label));
+                        QString::fromStdString(item.label), item.label, item.yaw_rad);
         }
         else if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot"))
         {
@@ -589,12 +639,12 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             make_entity(abs_mesh("meshes/pot_only.obj"),
                         QColor(195, 155, 95), QColor(90, 70, 40), 10.f,
                         cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
-                        QString::fromStdString(item.label));
+                        QString::fromStdString(item.label), item.label, item.yaw_rad);
             // Crown scaled to 2/3 of original diameter
             make_entity(abs_mesh("meshes/tree_only.obj"),
                         QColor(55, 130, 45), QColor(25, 60, 20), 5.f,
                         cen, axis_rot, QVector3D(0.666f, 0.666f, 0.666f),
-                        QString::fromStdString(item.label) + " (tree)");
+                        QString::fromStdString(item.label) + " (tree)", item.label, item.yaw_rad);
         }
         else if (ql.contains("silla") || ql.contains("chair"))
         {
@@ -606,7 +656,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             make_entity(abs_mesh("meshes/chair.obj"),
                         QColor(110, 85, 60), QColor(50, 35, 20), 18.f,
                         cen, axis_rot, QVector3D(sx, sy, sz),
-                        QString::fromStdString(item.label));
+                        QString::fromStdString(item.label), item.label, item.yaw_rad);
         }
         else if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen") ||
                  ql.contains("ordenador") || ql.contains("computer"))
@@ -616,6 +666,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
                         QColor(20, 22, 30), QColor(10, 11, 15), 80.f,
                         cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
                         QString::fromStdString(item.label),
+                        item.label,
+                        item.yaw_rad,
                         0.45f);
         }
         else if (ql.contains("vitrina") || ql.contains("cabinet") || ql.contains("shelf"))
@@ -623,7 +675,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             make_entity(abs_mesh("meshes/bench.obj"),
                         QColor(180, 200, 220), QColor(70, 80, 90), 40.f,
                         cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
-                        QString::fromStdString(item.label));
+                        QString::fromStdString(item.label), item.label, item.yaw_rad);
         }
         else
         {
@@ -632,10 +684,694 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             continue;
         }
 
+        furniture_centers_world_[item.label] = QVector3D(-cen.x(), 0.f, cen.y());
+
         qInfo() << "[Viewer3D] Furniture:" << QString::fromStdString(item.label)
                 << "at (" << cen.x() << "," << cen.y() << ")"
                 << "size (" << size.x() << "x" << size.y() << ")";
     }
+
+    if (!selected_object_name_.isEmpty())
+        show_gizmo_for_object(selected_object_name_);
+}
+
+void Viewer3D::init_gizmo()
+{
+    gizmo_root_ = new Qt3DCore::QEntity(root_entity_);
+    gizmo_tf_ = new Qt3DCore::QTransform(gizmo_root_);
+    gizmo_root_->addComponent(gizmo_tf_);
+
+    auto force_gizmo_on_top = [](Qt3DExtras::QPhongMaterial* mat)
+    {
+        if (!mat || !mat->effect()) return;
+        auto* eff = mat->effect();
+        const auto techniques = eff->techniques();
+        for (Qt3DRender::QTechnique* tech : techniques)
+        {
+            if (!tech) continue;
+            const auto passes = tech->renderPasses();
+            for (Qt3DRender::QRenderPass* pass : passes)
+            {
+                if (!pass) continue;
+                auto* depth_test = new Qt3DRender::QDepthTest(pass);
+                depth_test->setDepthFunction(Qt3DRender::QDepthTest::Always);
+                pass->addRenderState(depth_test);
+            }
+        }
+    };
+
+    auto make_axis = [&](const QVector3D& axis_dir,
+                         const QColor& color,
+                         const QString& pick_name)
+    {
+        // Requested by user: make straight arrows 25% shorter.
+        const float axis_end = gizmo_axis_len_ * 0.69f;
+        const float shaft_len = std::max(0.20f, axis_end);
+        const float shaft_r = 0.022f;
+        const float cone_len = 0.15f;
+        const float cone_bottom_r = 0.062f;
+
+        auto* e = new Qt3DCore::QEntity(gizmo_root_);
+        auto* mesh = new Qt3DExtras::QCylinderMesh(e);
+        mesh->setRadius(shaft_r);
+        mesh->setLength(shaft_len);
+        mesh->setRings(18);
+        mesh->setSlices(36);
+
+        auto* mat = new Qt3DExtras::QPhongMaterial(e);
+        mat->setDiffuse(color.lighter(110));
+        mat->setAmbient(color.darker(115));
+        mat->setShininess(0.f);
+        force_gizmo_on_top(mat);
+
+        auto* tf = new Qt3DCore::QTransform(e);
+        const QVector3D dir_n = axis_dir.normalized();
+        // QCylinderMesh axis is Y; rotate Y to axis direction.
+        tf->setRotation(QQuaternion::rotationTo(QVector3D(0.f, 1.f, 0.f), dir_n));
+        tf->setTranslation(axis_dir * (shaft_len * 0.5f));
+
+        e->addComponent(mesh);
+        e->addComponent(mat);
+        e->addComponent(tf);
+        attach_picker(e, pick_name);
+
+        // Last 15% of the straight arrow: thicker segment to make grabbing easier.
+        {
+            const float grab_len = std::max(0.08f, axis_end * 0.15f);
+            auto* grab_e = new Qt3DCore::QEntity(gizmo_root_);
+            auto* grab_mesh = new Qt3DExtras::QCylinderMesh(grab_e);
+            grab_mesh->setRadius(shaft_r * 1.35f);
+            grab_mesh->setLength(grab_len);
+            grab_mesh->setRings(14);
+            grab_mesh->setSlices(28);
+
+            auto* grab_tf = new Qt3DCore::QTransform(grab_e);
+            grab_tf->setRotation(QQuaternion::rotationTo(QVector3D(0.f, 1.f, 0.f), dir_n));
+            grab_tf->setTranslation(axis_dir * (axis_end - 0.5f * grab_len));
+
+            grab_e->addComponent(grab_mesh);
+            grab_e->addComponent(mat);
+            grab_e->addComponent(grab_tf);
+            attach_picker(grab_e, pick_name);
+        }
+
+        // Conical tip at the end of the straight arrow.
+        auto* tip_e = new Qt3DCore::QEntity(gizmo_root_);
+        auto* cone = new Qt3DExtras::QConeMesh(tip_e);
+        cone->setLength(cone_len);
+        cone->setTopRadius(0.0f);
+        cone->setBottomRadius(cone_bottom_r);
+        cone->setRings(16);
+        cone->setSlices(20);
+
+        auto* tip_tf = new Qt3DCore::QTransform(tip_e);
+        // QConeMesh axis is Y; rotate Y to axis direction.
+        tip_tf->setRotation(QQuaternion::rotationTo(QVector3D(0.f, 1.f, 0.f), dir_n));
+        tip_tf->setTranslation(axis_dir * (axis_end + 0.5f * cone_len));
+
+        tip_e->addComponent(cone);
+        tip_e->addComponent(mat);
+        tip_e->addComponent(tip_tf);
+        attach_picker(tip_e, pick_name);
+    };
+
+    auto make_arc = [&](const QVector3D& euler_deg,
+                        const QVector3D& axis_tip,
+                        const QColor& color,
+                        const QString& pick_name)
+    {
+        auto* arc_root = new Qt3DCore::QEntity(gizmo_root_);
+
+        auto* mat = new Qt3DExtras::QPhongMaterial(arc_root);
+        mat->setDiffuse(color);
+        mat->setAmbient(color.darker(180));
+        mat->setShininess(6.f);
+        force_gizmo_on_top(mat);
+
+        auto* tf = new Qt3DCore::QTransform(arc_root);
+        const QQuaternion rot = QQuaternion::fromEulerAngles(euler_deg);
+        tf->setTranslation(axis_tip);
+        tf->setRotation(rot);
+        arc_root->addComponent(tf);
+
+        const float radius = gizmo_axis_len_ * 0.085f;
+        const float cyl_r = 0.020f;
+        constexpr int segments = 72;
+        constexpr float start_deg = -135.f;
+        constexpr float span_deg = 270.f;
+
+        for (int i = 0; i < segments; ++i)
+        {
+            const float a0 = qDegreesToRadians(start_deg + span_deg * (static_cast<float>(i) / static_cast<float>(segments)));
+            const float a1 = qDegreesToRadians(start_deg + span_deg * (static_cast<float>(i + 1) / static_cast<float>(segments)));
+
+            const QVector3D p0(radius * std::cos(a0), 0.f, radius * std::sin(a0));
+            const QVector3D p1(radius * std::cos(a1), 0.f, radius * std::sin(a1));
+            const QVector3D mid = 0.5f * (p0 + p1);
+            const QVector3D chord = p1 - p0;
+            // Slight overlap between consecutive segments removes visible seams.
+            const float chord_len = std::max(0.02f, chord.length() * 1.08f);
+
+            auto* seg_e = new Qt3DCore::QEntity(arc_root);
+            auto* seg_mesh = new Qt3DExtras::QCylinderMesh(seg_e);
+            seg_mesh->setRadius(cyl_r);
+            seg_mesh->setLength(chord_len);
+            seg_mesh->setRings(12);
+            seg_mesh->setSlices(24);
+
+            auto* seg_tf = new Qt3DCore::QTransform(seg_e);
+            seg_tf->setTranslation(mid);
+            // Cylinder local axis is Y. Rotate Y to chord direction.
+            seg_tf->setRotation(QQuaternion::rotationTo(QVector3D(0.f, 1.f, 0.f), chord.normalized()));
+
+            seg_e->addComponent(seg_mesh);
+            seg_e->addComponent(mat);
+            seg_e->addComponent(seg_tf);
+            attach_picker(seg_e, pick_name);
+        }
+
+        // Conical tip at the end of the curved arrow.
+        const float end_deg = start_deg + span_deg;
+        const float end_rad = qDegreesToRadians(end_deg);
+        const QVector3D end_p(radius * std::cos(end_rad), 0.f, radius * std::sin(end_rad));
+        const QVector3D tangent(-std::sin(end_rad), 0.f, std::cos(end_rad));
+
+        auto* tip_e = new Qt3DCore::QEntity(arc_root);
+        auto* cone = new Qt3DExtras::QConeMesh(tip_e);
+        cone->setLength(0.12f);
+        cone->setTopRadius(0.0f);
+        cone->setBottomRadius(0.050f);
+        cone->setRings(14);
+        cone->setSlices(18);
+
+        auto* tip_tf = new Qt3DCore::QTransform(tip_e);
+        tip_tf->setRotation(QQuaternion::rotationTo(QVector3D(0.f, 1.f, 0.f), tangent.normalized()));
+        tip_tf->setTranslation(end_p + tangent.normalized() * 0.06f);
+
+        tip_e->addComponent(cone);
+        tip_e->addComponent(mat);
+        tip_e->addComponent(tip_tf);
+        attach_picker(tip_e, pick_name);
+    };
+
+    // Requested mapping: X red, Y green, Z blue (vertical).
+    make_axis(QVector3D(1.f, 0.f, 0.f), QColor(225, 70, 70), "__GIZMO_MOVE_X");
+    make_axis(QVector3D(0.f, 0.f, 1.f), QColor(70, 220, 95), "__GIZMO_MOVE_Y");
+    make_axis(QVector3D(0.f, 1.f, 0.f), QColor(70, 120, 235), "__GIZMO_MOVE_Z");
+
+    // Small center marker like Webots-style gizmos.
+    {
+        auto* center_e = new Qt3DCore::QEntity(gizmo_root_);
+        auto* center_mesh = new Qt3DExtras::QSphereMesh(center_e);
+        center_mesh->setRadius(0.055f);
+        center_mesh->setRings(14);
+        center_mesh->setSlices(18);
+        auto* center_mat = new Qt3DExtras::QPhongMaterial(center_e);
+        center_mat->setDiffuse(QColor(220, 220, 230));
+        center_mat->setAmbient(QColor(110, 110, 120));
+        center_mat->setShininess(0.f);
+        force_gizmo_on_top(center_mat);
+        center_e->addComponent(center_mesh);
+        center_e->addComponent(center_mat);
+    }
+
+    // Requested by user: 270-degree curved handles placed near each axis tip.
+    const float arc_offset = gizmo_axis_len_ * 0.69f * 0.78f;
+    make_arc(QVector3D(0.f, 0.f, 90.f), QVector3D(arc_offset, 0.f, 0.f), QColor(225, 90, 90), "__GIZMO_ROT_X");
+    // Y is green horizontal (scene Z). Z is blue vertical (scene Y).
+    make_arc(QVector3D(90.f, 0.f, 0.f), QVector3D(0.f, 0.f, arc_offset), QColor(95, 230, 95), "__GIZMO_ROT_Y");
+    make_arc(QVector3D(0.f, 0.f, 0.f), QVector3D(0.f, arc_offset, 0.f), QColor(90, 140, 240), "__GIZMO_ROT_Z");
+
+    hide_gizmo();
+}
+
+bool Viewer3D::translate_furniture_object(const QString& name, float dx_room, float dy_room)
+{
+    if (name.trimmed().isEmpty() || furniture_groups_.empty())
+        return false;
+
+    auto normalize = [](QString s)
+    {
+        s = s.trimmed();
+        const int idx = s.indexOf(" (");
+        if (idx > 0)
+            s = s.left(idx);
+        return s.toLower();
+    };
+
+    const QString target = normalize(name);
+    auto it = furniture_groups_.end();
+    for (auto fit = furniture_groups_.begin(); fit != furniture_groups_.end(); ++fit)
+    {
+        const QString key = normalize(QString::fromStdString(fit->first));
+        if (key == target || key.contains(target) || target.contains(key))
+        {
+            it = fit;
+            break;
+        }
+    }
+    if (it == furniture_groups_.end())
+        return false;
+
+    QVector3D d(-dx_room, 0.f, dy_room);
+    auto& g = it->second;
+    g.center_world += d;
+    for (std::size_t i = 0; i < g.transforms.size() && i < g.local_offsets.size(); ++i)
+        g.transforms[i]->setTranslation(g.center_world + g.local_offsets[i]);
+
+    furniture_centers_world_[it->first] = g.center_world;
+    return true;
+}
+
+bool Viewer3D::rotate_furniture_object(const QString& name, float angle_rad, const QVector3D& axis)
+{
+    if (name.trimmed().isEmpty() || furniture_groups_.empty() || std::abs(angle_rad) < 1e-7f)
+        return false;
+
+    auto normalize = [](QString s)
+    {
+        s = s.trimmed();
+        const int idx = s.indexOf(" (");
+        if (idx > 0)
+            s = s.left(idx);
+        return s.toLower();
+    };
+
+    const QString target = normalize(name);
+    auto it = furniture_groups_.end();
+    for (auto fit = furniture_groups_.begin(); fit != furniture_groups_.end(); ++fit)
+    {
+        const QString key = normalize(QString::fromStdString(fit->first));
+        if (key == target || key.contains(target) || target.contains(key))
+        {
+            it = fit;
+            break;
+        }
+    }
+    if (it == furniture_groups_.end())
+        return false;
+
+    auto& g = it->second;
+    const QQuaternion d_rot = QQuaternion::fromAxisAndAngle(axis, qRadiansToDegrees(angle_rad));
+    for (std::size_t i = 0; i < g.transforms.size() && i < g.local_offsets.size(); ++i)
+    {
+        g.local_offsets[i] = d_rot.rotatedVector(g.local_offsets[i]);
+        g.transforms[i]->setTranslation(g.center_world + g.local_offsets[i]);
+        g.transforms[i]->setRotation(d_rot * g.transforms[i]->rotation());
+    }
+
+    // Track yaw only for vertical-axis rotations.
+    if (std::abs(axis.y()) > 0.5f)
+        g.yaw_rad += angle_rad;
+    return true;
+}
+
+bool Viewer3D::vertical_move_furniture_object(const QString& name, float dy_world)
+{
+    if (name.trimmed().isEmpty() || furniture_groups_.empty() || std::abs(dy_world) < 1e-7f)
+        return false;
+
+    auto normalize = [](QString s)
+    {
+        s = s.trimmed();
+        const int idx = s.indexOf(" (");
+        if (idx > 0)
+            s = s.left(idx);
+        return s.toLower();
+    };
+
+    const QString target = normalize(name);
+    auto it = furniture_groups_.end();
+    for (auto fit = furniture_groups_.begin(); fit != furniture_groups_.end(); ++fit)
+    {
+        const QString key = normalize(QString::fromStdString(fit->first));
+        if (key == target || key.contains(target) || target.contains(key))
+        {
+            it = fit;
+            break;
+        }
+    }
+    if (it == furniture_groups_.end())
+        return false;
+
+    const QVector3D d(0.f, dy_world, 0.f);
+    auto& g = it->second;
+    g.center_world += d;
+    for (std::size_t i = 0; i < g.transforms.size() && i < g.local_offsets.size(); ++i)
+        g.transforms[i]->setTranslation(g.center_world + g.local_offsets[i]);
+
+    furniture_centers_world_[it->first] = g.center_world;
+    return true;
+}
+
+void Viewer3D::update_gizmo_screen_scale()
+{
+    if (!gizmo_root_ || !gizmo_tf_ || !camera_ || !gizmo_root_->isEnabled())
+        return;
+
+    const float dist = (camera_->position() - gizmo_tf_->translation()).length();
+    // Keep stable on-screen size without exploding while moving the gizmo.
+    const float scale = std::clamp(dist / 13.0f, 1.15f, 2.40f);
+    gizmo_tf_->setScale(scale);
+}
+
+void Viewer3D::show_gizmo_for_object(const QString& name)
+{
+    if (name.isEmpty() || !gizmo_root_ || !gizmo_tf_)
+    {
+        // Do not auto-hide during transient invalid requests if a valid selection exists.
+        if (selected_object_name_.isEmpty())
+            hide_gizmo();
+        return;
+    }
+
+    auto normalize = [](const QString& raw) -> QString
+    {
+        QString s = raw.trimmed();
+        const int idx = s.indexOf(" (");
+        if (idx > 0)
+            s = s.left(idx);
+        return s;
+    };
+
+    const QString qname = name.trimmed();
+    const QString qbase = normalize(qname);
+    // Store requested name first so stale previous selection is not reused.
+    selected_object_name_ = qbase;
+
+    auto it = furniture_centers_world_.find(qname.toStdString());
+    if (it == furniture_centers_world_.end())
+        it = furniture_centers_world_.find(qbase.toStdString());
+
+    if (it == furniture_centers_world_.end())
+    {
+        // Case-insensitive fallback and relaxed matching for picked aliases.
+        const QString target = qbase.toLower();
+        for (auto fit = furniture_centers_world_.begin(); fit != furniture_centers_world_.end(); ++fit)
+        {
+            const QString key = QString::fromStdString(fit->first);
+            const QString key_base = normalize(key).toLower();
+            if (key_base == target || key.toLower().contains(target) || target.contains(key_base))
+            {
+                it = fit;
+                break;
+            }
+        }
+    }
+
+    if (it == furniture_centers_world_.end())
+    {
+        // Keep current gizmo if lookup misses transiently (e.g. asynchronous refresh).
+        if (gizmo_root_ && gizmo_root_->isEnabled() && !selected_object_name_.isEmpty())
+            return;
+        hide_gizmo();
+        return;
+    }
+
+    gizmo_tf_->setTranslation(it->second + QVector3D(0.f, 0.85f, 0.f));
+    // Match the default selection size to the effective interaction size.
+    gizmo_tf_->setScale(1.15f);
+    gizmo_root_->setEnabled(true);
+}
+
+void Viewer3D::set_selected_object_for_gizmo(const QString& name)
+{
+    show_gizmo_for_object(name);
+}
+
+void Viewer3D::clear_selected_object_for_gizmo()
+{
+    selected_object_name_.clear();
+    hide_gizmo();
+}
+
+void Viewer3D::hide_gizmo()
+{
+    // Guard against unintended hide calls during camera navigation/refresh.
+    // Explicit deselection clears selected_object_name_ first and will still hide.
+    if (!selected_object_name_.isEmpty())
+        return;
+    if (gizmo_root_) gizmo_root_->setEnabled(false);
+    end_gizmo_drag();
+}
+
+void Viewer3D::begin_gizmo_drag(GizmoMode mode)
+{
+    gizmo_mode_ = mode;
+    gizmo_drag_active_ = (mode != GizmoMode::None);
+    if (cam_controller_ && gizmo_drag_active_)
+        cam_controller_->setEnabled(false);
+    if (container_ && gizmo_drag_active_)
+        container_->grabMouse();
+}
+
+void Viewer3D::end_gizmo_drag()
+{
+    gizmo_drag_active_ = false;
+    gizmo_mode_ = GizmoMode::None;
+    if (cam_controller_)
+        cam_controller_->setEnabled(true);
+    if (container_)
+        container_->releaseMouse();
+}
+
+void Viewer3D::apply_gizmo_drag_delta(const QPoint& delta_px)
+{
+    if (!gizmo_drag_active_ || selected_object_name_.isEmpty() || !camera_ || !gizmo_tf_)
+        return;
+
+    const float cam_dist = (camera_->position() - camera_->viewCenter()).length();
+    const float move_gain = std::max(0.0008f, cam_dist * 0.0014f);   // meters per pixel
+    const float rot_gain = 0.006f;                                    // rad per pixel
+    const float dpx_x = -static_cast<float>(delta_px.x());
+    const float dpx_y = -static_cast<float>(delta_px.y());
+
+    switch (gizmo_mode_)
+    {
+        case GizmoMode::MoveX:
+        {
+            const float dx_world = dpx_x * move_gain;
+            QVector3D p = gizmo_tf_->translation();
+            p.setX(p.x() + dx_world);
+            gizmo_tf_->setTranslation(p);
+            emit objectTranslateRequested(selected_object_name_, -dx_world, 0.f);
+            break;
+        }
+        case GizmoMode::MoveY:
+        {
+            // Horizontal axis in room plane (mapped to green Y handle).
+            // Inverted sign as requested for the previously blue axis behavior.
+            const float dy_world = dpx_y * move_gain;
+            QVector3D p = gizmo_tf_->translation();
+            p.setZ(p.z() + dy_world);
+            gizmo_tf_->setTranslation(p);
+            emit objectTranslateRequested(selected_object_name_, 0.f, dy_world);
+            break;
+        }
+        case GizmoMode::MoveZ:
+        {
+            // Vertical axis (blue Z handle).
+            const float dz_world = -dpx_y * move_gain;
+            QVector3D p = gizmo_tf_->translation();
+            const float old_y = p.y();
+            p.setY(std::max(0.05f, p.y() + dz_world));
+            gizmo_tf_->setTranslation(p);
+            const float actual_dy = p.y() - old_y;
+            if (std::abs(actual_dy) > 1e-6f)
+                vertical_move_furniture_object(selected_object_name_, actual_dy);
+            break;
+        }
+        case GizmoMode::RotX:
+        {
+            const float da = (dpx_x - 0.60f * dpx_y) * rot_gain;
+            emit objectRotateRequested(selected_object_name_, da, QVector3D(1.f, 0.f, 0.f));
+            break;
+        }
+        case GizmoMode::RotY:
+        {
+            const float da = (dpx_x - 0.60f * dpx_y) * rot_gain;
+            emit objectRotateRequested(selected_object_name_, da, QVector3D(0.f, 0.f, 1.f));
+            break;
+        }
+        case GizmoMode::RotZ:
+        {
+            const float da = (dpx_x - 0.60f * dpx_y) * rot_gain;
+            emit objectRotateRequested(selected_object_name_, da, QVector3D(0.f, 1.f, 0.f));
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+bool Viewer3D::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched != container_ && watched != window_)
+        return QObject::eventFilter(watched, event);
+
+    if (event->type() == QEvent::MouseMove)
+    {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (gizmo_drag_active_)
+        {
+            const QPoint delta = me->pos() - gizmo_last_mouse_pos_;
+            gizmo_last_mouse_pos_ = me->pos();
+            apply_gizmo_drag_delta(delta);
+            return true;
+        }
+        // Keep camera orbit pivot aligned to the selected gizmo during left-drag
+        // (orbit).  Restrict to left button only — right-drag is pan and must not
+        // have its viewCenter snapped back, otherwise pan fights the gizmo lock and
+        // the camera ends up in erratic positions.
+        if (gizmo_root_ && gizmo_root_->isEnabled() && gizmo_tf_ && camera_
+            && (me->buttons() & Qt::LeftButton)
+            && !(me->buttons() & Qt::RightButton))
+        {
+            camera_->setViewCenter(gizmo_tf_->translation());
+        }
+        update_gizmo_screen_scale();
+    }
+    else if (event->type() == QEvent::Wheel || event->type() == QEvent::Resize)
+    {
+        if (event->type() == QEvent::Wheel
+            && gizmo_root_ && gizmo_root_->isEnabled() && gizmo_tf_ && camera_)
+        {
+            camera_->setViewCenter(gizmo_tf_->translation());
+        }
+        update_gizmo_screen_scale();
+    }
+    else if (event->type() == QEvent::MouseButtonPress)
+    {
+        // ---- Screen-space proximity picking for gizmo handles ----------------
+        // Qt3D TrianglePicking is unreliable for the thin gizmo cylinders / arcs.
+        // Instead, project each handle to screen coordinates and check pixel
+        // distance from the click.  If a handle is close, start the drag here
+        // and consume the event so Qt3D doesn't orbit the camera or pick furniture.
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton
+            && gizmo_root_ && gizmo_root_->isEnabled()
+            && gizmo_tf_ && camera_ && !selected_object_name_.isEmpty()
+            && container_->width() > 0 && container_->height() > 0)
+        {
+            const QPointF click(me->pos());
+            const int vw = container_->width();
+            const int vh = container_->height();
+            const QMatrix4x4 view = camera_->viewMatrix();
+            const QMatrix4x4 proj = camera_->projectionMatrix();
+            const QRect vp(0, 0, vw, vh);
+
+            // World → screen (Y-down widget coords).
+            auto to_screen = [&](const QVector3D& w) -> QPointF
+            {
+                const QVector3D s = w.project(view, proj, vp);
+                return QPointF(static_cast<double>(s.x()),
+                               static_cast<double>(vh) - static_cast<double>(s.y()));
+            };
+
+            // Point-to-line-segment distance in 2D.
+            auto dist_to_seg = [](QPointF p, QPointF a, QPointF b) -> double
+            {
+                const double abx = b.x() - a.x(), aby = b.y() - a.y();
+                const double len2 = abx * abx + aby * aby;
+                if (len2 < 1.0)
+                {
+                    const double dx = p.x() - a.x(), dy = p.y() - a.y();
+                    return std::sqrt(dx * dx + dy * dy);
+                }
+                double t = ((p.x() - a.x()) * abx + (p.y() - a.y()) * aby) / len2;
+                t = std::clamp(t, 0.0, 1.0);
+                const double cx = a.x() + t * abx - p.x();
+                const double cy = a.y() + t * aby - p.y();
+                return std::sqrt(cx * cx + cy * cy);
+            };
+
+            const QVector3D gc = gizmo_tf_->translation();
+            const float sc = gizmo_tf_->scale();
+            const float axis_end_u = gizmo_axis_len_ * 0.69f;  // unscaled
+            const float arc_off_u  = axis_end_u * 0.78f;
+            const float arc_rad_u  = gizmo_axis_len_ * 0.085f;
+
+            const QPointF pc = to_screen(gc);
+
+            struct Hit { GizmoMode mode; double dist; };
+            std::vector<Hit> hits;
+
+            constexpr double move_thr = 18.0;  // pixels
+            constexpr double rot_thr  = 22.0;  // pixels
+
+            // ---- Translation axes (line segments from center to tip) ----
+            // X red  → world X  → MoveX
+            // Z blue → world Y  → MoveZ
+            // Y green→ world Z  → MoveY
+            {
+                double d;
+                d = dist_to_seg(click, pc,
+                        to_screen(gc + QVector3D(axis_end_u * sc, 0.f, 0.f)));
+                if (d < move_thr) hits.push_back({GizmoMode::MoveX, d});
+
+                d = dist_to_seg(click, pc,
+                        to_screen(gc + QVector3D(0.f, axis_end_u * sc, 0.f)));
+                if (d < move_thr) hits.push_back({GizmoMode::MoveZ, d});
+
+                d = dist_to_seg(click, pc,
+                        to_screen(gc + QVector3D(0.f, 0.f, axis_end_u * sc)));
+                if (d < move_thr) hits.push_back({GizmoMode::MoveY, d});
+            }
+
+            // ---- Rotation arcs (sample points along each 270° arc) ----
+            // From init_gizmo:
+            //   RotX → euler(0,0,90)  at (arc_off, 0, 0)
+            //   RotY → euler(90,0,0)  at (0, 0, arc_off)
+            //   RotZ → euler(0,0,0)   at (0, arc_off, 0)
+            auto check_arc = [&](const QVector3D& arc_trans_u,
+                                 const QVector3D& euler_deg,
+                                 GizmoMode mode)
+            {
+                const QQuaternion arc_rot = QQuaternion::fromEulerAngles(euler_deg);
+                constexpr int samples = 24;
+                constexpr float start_a = -135.f;
+                constexpr float span_a  = 270.f;
+                double min_d = 1e6;
+
+                for (int i = 0; i <= samples; ++i)
+                {
+                    const float a = qDegreesToRadians(
+                        start_a + span_a * (static_cast<float>(i) / static_cast<float>(samples)));
+                    const QVector3D local(arc_rad_u * std::cos(a), 0.f, arc_rad_u * std::sin(a));
+                    const QVector3D world = gc + sc * (arc_trans_u + arc_rot.rotatedVector(local));
+                    const QPointF sp = to_screen(world);
+                    const double dx = click.x() - sp.x();
+                    const double dy = click.y() - sp.y();
+                    min_d = std::min(min_d, std::sqrt(dx * dx + dy * dy));
+                }
+                if (min_d < rot_thr) hits.push_back({mode, min_d});
+            };
+
+            check_arc(QVector3D(arc_off_u, 0.f, 0.f),  QVector3D(0.f, 0.f, 90.f), GizmoMode::RotX);
+            check_arc(QVector3D(0.f, 0.f, arc_off_u),   QVector3D(90.f, 0.f, 0.f), GizmoMode::RotY);
+            check_arc(QVector3D(0.f, arc_off_u, 0.f),   QVector3D(0.f, 0.f, 0.f),  GizmoMode::RotZ);
+
+            if (!hits.empty())
+            {
+                auto best = std::min_element(hits.begin(), hits.end(),
+                    [](const Hit& a, const Hit& b) { return a.dist < b.dist; });
+                gizmo_last_mouse_pos_ = me->pos();
+                begin_gizmo_drag(best->mode);
+                return true;  // consume event: no camera orbit, no Qt3D pick
+            }
+        }
+    }
+    else if (event->type() == QEvent::MouseButtonRelease)
+    {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton && gizmo_drag_active_)
+        {
+            end_gizmo_drag();
+            return true;
+        }
+    }
+
+    return QObject::eventFilter(watched, event);
 }
 
 
@@ -648,15 +1384,76 @@ void Viewer3D::attach_picker(Qt3DCore::QEntity* e, const QString& name)
     auto* picker = new Qt3DRender::QObjectPicker(e);
     picker->setHoverEnabled(false);
     picker->setDragEnabled(false);
+    if (name == "__GIZMO_MOVE_Z")
+        // Highest priority for vertical handle: it is visually close to ROT_Z arc.
+        picker->setPriority(280);
+    else if (name.startsWith("__GIZMO_ROT_"))
+        // Rotation arcs should win over horizontal move handles.
+        picker->setPriority(260);
+    else if (name.startsWith("__GIZMO_MOVE_"))
+        picker->setPriority(230);
+    else if (name == "Floor")
+        picker->setPriority(-20);
+    else
+        picker->setPriority(10);
     e->addComponent(picker);
 
     connect(picker, &Qt3DRender::QObjectPicker::pressed,
             this, [this, name](Qt3DRender::QPickEvent* ev)
     {
+        auto gizmo_mode_from_name = [&](const QString& n) -> GizmoMode
+        {
+            if (n == "__GIZMO_MOVE_X") return GizmoMode::MoveX;
+            if (n == "__GIZMO_MOVE_Y") return GizmoMode::MoveY;
+            if (n == "__GIZMO_MOVE_Z") return GizmoMode::MoveZ;
+            if (n == "__GIZMO_ROT_X")  return GizmoMode::RotX;
+            if (n == "__GIZMO_ROT_Y")  return GizmoMode::RotY;
+            if (n == "__GIZMO_ROT_Z")  return GizmoMode::RotZ;
+            return GizmoMode::None;
+        };
+
+        auto resolve_gizmo_mode = [&](const QString& picked_name,
+                                      const QVector3D& hit_world) -> GizmoMode
+        {
+            GizmoMode mode = gizmo_mode_from_name(picked_name);
+            if (!picked_name.startsWith("__GIZMO_MOVE_") || !gizmo_tf_)
+                return mode;
+
+            // Resolve translation handle from hit direction to avoid ambiguous picks
+            // between overlapping move handles when viewed at steep camera angles.
+            const QVector3D d = hit_world - gizmo_tf_->translation();
+            const float ax = std::abs(d.x());
+            const float ay = std::abs(d.y());
+            const float az = std::abs(d.z());
+
+            if (ay >= ax && ay >= az) return GizmoMode::MoveZ;
+            if (az >= ax && az >= ay) return GizmoMode::MoveY;
+            return GizmoMode::MoveX;
+        };
+
+        const GizmoMode gizmo_mode = resolve_gizmo_mode(name, ev->worldIntersection());
+        // Allow both plain Left and Shift+Left on gizmo handles to start drag.
+        if (gizmo_mode != GizmoMode::None
+            && ev->button() == Qt3DRender::QPickEvent::LeftButton
+            && gizmo_root_ && gizmo_root_->isEnabled())
+        {
+            gizmo_last_mouse_pos_ = QPoint(static_cast<int>(ev->position().x()),
+                                           static_cast<int>(ev->position().y()));
+            begin_gizmo_drag(gizmo_mode);
+            return;
+        }
+
         if (ev->button() == Qt3DRender::QPickEvent::LeftButton)
         {
+            // Ignore plain left clicks on gizmo parts so camera orbit does not hide it.
+            if (name.startsWith("__GIZMO_"))
+                return;
+
             if (name != "Floor")
+            {
+                show_gizmo_for_object(name);
                 emit objectLeftClicked(name);
+            }
 
             // Keep plain left-drag orbit stable (no implicit translation on press).
             // Optional explicit recenter: Alt+Left click.

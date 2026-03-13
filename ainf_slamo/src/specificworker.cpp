@@ -240,15 +240,22 @@ void SpecificWorker::initialize()
 
             const int picked_idx = find_furniture_index_by_name(picked);
             if (picked_idx >= 0)
-            {
-                if (focused_model_index_ == picked_idx)
-                    focused_model_index_ = -1;
-                else
-                    focused_model_index_ = picked_idx;
-            }
+                focused_model_index_ = picked_idx;
 
             if (scene_tree_)
-                scene_tree_->toggle_item_by_name(picked);
+                scene_tree_->select_item_by_name(picked);
+        });
+
+        connect(viewer_3d_.get(), &rc::Viewer3D::objectTranslateRequested,
+                this, [this](const QString& n, float dx_room, float dy_room)
+        {
+            translate_furniture_by_name(n, dx_room, dy_room);
+        });
+
+        connect(viewer_3d_.get(), &rc::Viewer3D::objectRotateRequested,
+                this, [this](const QString& n, float angle_rad, const QVector3D& axis)
+        {
+            rotate_furniture_by_name(n, angle_rad, axis);
         });
 
         // Connect floor picking to navigation
@@ -422,9 +429,17 @@ void SpecificWorker::initialize()
         connect(scene_tree_.get(), &SceneTreePanel::furnitureClicked, this, [this](const QString& name, bool selected)
         {
             if (selected)
+            {
                 focused_model_index_ = find_furniture_index_by_name(name);
+                if (viewer_3d_)
+                    viewer_3d_->set_selected_object_for_gizmo(name);
+            }
             else if (focused_model_index_ == find_furniture_index_by_name(name))
+            {
                 focused_model_index_ = -1;
+                if (viewer_3d_)
+                    viewer_3d_->clear_selected_object_for_gizmo();
+            }
         });
     }
 

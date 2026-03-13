@@ -79,6 +79,55 @@ int SpecificWorker::find_furniture_index_by_name(const QString& name) const
     return contains_match;
 }
 
+void SpecificWorker::translate_furniture_by_name(const QString& name, float dx_room, float dy_room)
+{
+    const int idx = find_furniture_index_by_name(name);
+    if (idx < 0 || (std::abs(dx_room) < 1e-6f && std::abs(dy_room) < 1e-6f))
+        return;
+
+    auto& fp = furniture_polygons_[static_cast<std::size_t>(idx)];
+    if (fp.vertices.empty())
+        return;
+
+    const Eigen::Vector2f d(dx_room, dy_room);
+    for (auto& v : fp.vertices)
+        v += d;
+
+    update_furniture_draw_item(static_cast<std::size_t>(idx));
+    if (viewer_3d_)
+        viewer_3d_->translate_furniture_object(QString::fromStdString(fp.label), dx_room, dy_room);
+}
+
+void SpecificWorker::rotate_furniture_by_name(const QString& name, float angle_rad, const QVector3D& axis)
+{
+    const int idx = find_furniture_index_by_name(name);
+    if (idx < 0 || std::abs(angle_rad) < 1e-6f)
+        return;
+
+    auto& fp = furniture_polygons_[static_cast<std::size_t>(idx)];
+
+    // Only update the 2D polygon for vertical-axis (yaw) rotations.
+    if (std::abs(axis.y()) > 0.5f && fp.vertices.size() >= 3)
+    {
+        Eigen::Vector2f cen = Eigen::Vector2f::Zero();
+        for (const auto& v : fp.vertices)
+            cen += v;
+        cen /= static_cast<float>(fp.vertices.size());
+
+        const float c = std::cos(angle_rad);
+        const float s = std::sin(angle_rad);
+        for (auto& v : fp.vertices)
+        {
+            const Eigen::Vector2f d = v - cen;
+            v = cen + Eigen::Vector2f(c * d.x() - s * d.y(), s * d.x() + c * d.y());
+        }
+        update_furniture_draw_item(static_cast<std::size_t>(idx));
+    }
+
+    if (viewer_3d_)
+        viewer_3d_->rotate_furniture_object(QString::fromStdString(fp.label), angle_rad, axis);
+}
+
 float SpecificWorker::model_height_from_label(const std::string& label) const
 {
     const QString ql = QString::fromStdString(label).toLower();

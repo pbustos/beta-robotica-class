@@ -186,6 +186,7 @@ class SpecificWorker : public GenericWorker
 	rc::SceneGraphModel scene_graph_;
 	std::vector<QGraphicsPolygonItem*> furniture_draw_items_;
 	void draw_furniture();
+	void update_furniture_draw_item(std::size_t idx);
 	void apply_ownership_em_visuals();
 
 	// ===== Temporary obstacle management (unforeseen obstacle avoidance) =====
@@ -401,6 +402,8 @@ class SpecificWorker : public GenericWorker
 	void apply_pending_em_adjustments(bool accept);
 	void update_camera_wireframe_overlay(const Eigen::Affine2f &robot_pose);
 	int find_furniture_index_by_name(const QString& name) const;
+	void translate_furniture_by_name(const QString& name, float dx_room, float dy_room);
+	void rotate_furniture_by_name(const QString& name, float angle_rad, const QVector3D& axis);
 	float model_height_from_label(const std::string& label) const;
 	void update_segmented_points_3d(const Eigen::Affine2f &robot_pose);
 	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);

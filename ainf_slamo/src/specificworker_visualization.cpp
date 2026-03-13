@@ -698,3 +698,38 @@ void SpecificWorker::draw_furniture()
 
     rebuild_ownership_em_models();
 }
+
+void SpecificWorker::update_furniture_draw_item(std::size_t idx)
+{
+    if (idx >= furniture_polygons_.size())
+        return;
+
+    if (idx < furniture_draw_items_.size() && furniture_draw_items_[idx] != nullptr)
+    {
+        viewer->scene.removeItem(furniture_draw_items_[idx]);
+        delete furniture_draw_items_[idx];
+        furniture_draw_items_[idx] = nullptr;
+    }
+    else if (idx >= furniture_draw_items_.size())
+    {
+        furniture_draw_items_.resize(furniture_polygons_.size(), nullptr);
+    }
+
+    const auto& fp = furniture_polygons_[idx];
+    if (fp.vertices.size() < 3)
+        return;
+
+    const QPen furniture_pen(QColor(50, 100, 255), 0.06);
+    const QBrush furniture_brush(QColor(50, 100, 255, 40));
+
+    QPolygonF qpoly;
+    for (const auto& v : fp.vertices)
+        qpoly << QPointF(v.x(), v.y());
+    qpoly << QPointF(fp.vertices.front().x(), fp.vertices.front().y());
+
+    auto* item = viewer->scene.addPolygon(qpoly, furniture_pen, furniture_brush);
+    item->setZValue(7);
+    furniture_draw_items_[idx] = item;
+
+    apply_ownership_em_visuals();
+}
