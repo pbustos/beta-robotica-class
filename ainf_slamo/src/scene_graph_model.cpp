@@ -278,6 +278,8 @@ bool SceneGraphModel::upsert_object(const SceneGraphObject& object)
     obj->object_type = infer_object_type(object.label);
     world_to_local_polygon(object.vertices, c, y_yaw, obj->local_vertices, obj->extents);
     obj->extents.z() = std::max(0.2f, object.height);
+    // Normalize to a clean rectangle derived from extents
+    obj->local_vertices = make_rect_local(obj->extents.x(), obj->extents.y());
     emit objectChanged(QString::fromStdString(object.label));
     return true;
 }
@@ -436,10 +438,15 @@ QJsonObject SceneGraphModel::to_json() const
         if (n.last_fit_sdf.has_value())
             obj["last_fit_sdf"] = static_cast<double>(n.last_fit_sdf.value());
 
-        QJsonArray verts;
-        for (const auto& v : n.local_vertices)
-            verts.append(vec3_to_json(v));
-        obj["local_vertices"] = verts;
+        // Only serialize local_vertices for non-object nodes (room/floor have arbitrary polygons);
+        // object nodes recompute theirs from extents on load.
+        if (n.type != "object")
+        {
+            QJsonArray verts;
+            for (const auto& v : n.local_vertices)
+                verts.append(vec3_to_json(v));
+            obj["local_vertices"] = verts;
+        }
 
         QJsonArray children;
         for (const auto& c : n.children)
@@ -467,9 +474,16 @@ bool SceneGraphModel::from_json(const QJsonObject& json)
             n.last_fit_sdf = static_cast<float>(obj.value("last_fit_sdf").toDouble());
 
         const auto verts = obj.value("local_vertices").toArray();
-        n.local_vertices.reserve(verts.size());
-        for (const auto& vv : verts)
-            n.local_vertices.emplace_back(json_to_vec3(vv.toArray()));
+        if (!verts.isEmpty())
+        {
+            n.local_vertices.reserve(verts.size());
+            for (const auto& vv : verts)
+                n.local_vertices.emplace_back(json_to_vec3(vv.toArray()));
+        }
+        // For object nodes with missing/empty local_vertices, recompute from extents
+        if (n.type == "object" && n.local_vertices.empty()
+            && n.extents.x() > 1e-4f && n.extents.y() > 1e-4f)
+            n.local_vertices = make_rect_local(n.extents.x(), n.extents.y());
 
         const auto children = obj.value("children").toArray();
         n.children.reserve(children.size());
@@ -631,6 +645,8 @@ void SceneGraphModel::sync_object_silent(const std::string& label,
     obj->yaw_rad          = yaw;
     world_to_local_polygon(world_vertices, c, yaw, obj->local_vertices, obj->extents);
     obj->extents.z() = std::max(0.2f, height);
+    // Normalize to a clean rectangle derived from extents
+    obj->local_vertices = make_rect_local(obj->extents.x(), obj->extents.y());
     // No signal — caller already updated views.
 }
 

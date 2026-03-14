@@ -642,16 +642,68 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
                         float w, float d, float h,
                         const QString& pn, const std::string& gk)
     {
-        const float pot_h = 0.40f * h;
-        const float crown_h = h - pot_h;
-        // Pot body
-        make_cuboid_part(QColor(195, 155, 95), QColor(90, 70, 40), 10.f,
-                         cen, yaw, 0.f, 0.f, w * 0.85f, d * 0.85f, pot_h,
-                         0.5f * pot_h, pn, gk);
-        // Crown
-        make_cuboid_part(QColor(55, 130, 45), QColor(25, 60, 20), 5.f,
-                         cen, yaw, 0.f, 0.f, w, d, crown_h,
-                         pot_h + 0.5f * crown_h, pn, gk);
+        // Truncated cone: smaller radius at base, larger at top.
+        const float top_r    = std::max(w, d) * 0.5f;
+        const float bottom_r = top_r * 0.65f;   // base is ~65% of top
+        const float pot_h    = 0.45f * h;
+        const float crown_h  = h - pot_h;
+
+        // World position: Qt3D uses X-right, Y-up, Z-toward-camera.
+        const float wx = -cen.x();
+        const float wz =  cen.y();
+
+        // ---- Pot body: truncated cone (QConeMesh with topRadius > bottomRadius) ----
+        {
+            auto* e    = new Qt3DCore::QEntity(root_entity_);
+            auto* cone  = new Qt3DExtras::QConeMesh(e);
+            cone->setLength(pot_h);
+            cone->setBottomRadius(bottom_r);  // narrow base
+            cone->setTopRadius(top_r);        // wider top opening
+            cone->setRings(1);
+            cone->setSlices(24);
+
+            auto* mat = new Qt3DExtras::QPhongMaterial(e);
+            mat->setDiffuse(QColor(195, 155, 95));
+            mat->setAmbient(QColor(90, 70, 40));
+            mat->setShininess(10.f);
+
+            auto* tf = new Qt3DCore::QTransform(e);
+            tf->setTranslation(QVector3D(wx, 0.5f * pot_h, wz));
+
+            e->addComponent(cone);
+            e->addComponent(mat);
+            e->addComponent(tf);
+            attach_picker(e, pn);
+            furniture_entities_.push_back(e);
+            register_group_part(gk, cen, yaw, tf);
+        }
+        // ---- Crown: green sphere on top ----
+        {
+            auto* e    = new Qt3DCore::QEntity(root_entity_);
+            auto* mesh = new Qt3DExtras::QSphereMesh(e);
+            const float crown_r = top_r * 1.10f;
+            mesh->setRadius(crown_r);
+            mesh->setRings(12);
+            mesh->setSlices(16);
+            // Squash vertically: scale Y so it becomes an oblate sphere.
+            const float sy = crown_h / (2.0f * crown_r);
+
+            auto* mat = new Qt3DExtras::QPhongMaterial(e);
+            mat->setDiffuse(QColor(55, 130, 45));
+            mat->setAmbient(QColor(25, 60, 20));
+            mat->setShininess(5.f);
+
+            auto* tf = new Qt3DCore::QTransform(e);
+            tf->setTranslation(QVector3D(wx, pot_h + 0.5f * crown_h, wz));
+            tf->setScale3D(QVector3D(1.f, sy, 1.f));
+
+            e->addComponent(mesh);
+            e->addComponent(mat);
+            e->addComponent(tf);
+            attach_picker(e, pn);
+            furniture_entities_.push_back(e);
+            register_group_part(gk, cen, yaw, tf);
+        }
     };
 
     // Monitor / screen : thin panel on a stand
