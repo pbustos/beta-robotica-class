@@ -1,4 +1,5 @@
 #include "table_analytic_model.h"
+#include "../object_geometry.h"
 
 #include <algorithm>
 
@@ -86,9 +87,10 @@ torch::Tensor TableAnalyticModel::forward_sdf(const torch::Tensor& points_xyz,
     // Composed table SDF: tabletop cuboid + 4 leg cuboids (union via min).
     // All parts share the same (tx,ty,yaw) and sit on z=0 floor.
 
-    const auto top_thickness = torch::clamp_min(0.08f * height, 0.03f);
-    const auto leg_thickness = torch::clamp_min(0.12f * torch::minimum(width, depth), 0.03f);
-    const auto leg_height = torch::clamp_min(height - top_thickness, 0.05f);
+    namespace G = rc::geometry::table;
+    const auto top_thickness = torch::clamp_min(G::top_thickness_ratio * height, G::top_thickness_min);
+    const auto leg_thickness = torch::clamp_min(G::leg_thickness_ratio * torch::minimum(width, depth), G::leg_thickness_min);
+    const auto leg_height = torch::clamp_min(height - top_thickness, G::leg_height_min);
 
     // Tabletop center and half extents.
     const auto top_cz = height - 0.5f * top_thickness;

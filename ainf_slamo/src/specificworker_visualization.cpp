@@ -363,7 +363,7 @@ void SpecificWorker::draw_furniture()
     // 2D: draw the freshly computed polygons
     viewer_2d_->draw_furniture(furniture_polygons_);
 
-    apply_ownership_em_visuals();
+    em_manager_.apply_visuals();
 
     if (!furniture_polygons_.empty())
         qInfo() << "[draw_furniture] Drew" << furniture_polygons_.size() << "furniture polygons";
@@ -396,7 +396,7 @@ void SpecificWorker::draw_furniture()
         viewer_3d_->update_furniture(items);
     }
 
-    rebuild_ownership_em_models();
+    em_manager_.rebuild_models();
 }
 
 void SpecificWorker::update_furniture_draw_item(std::size_t idx)
@@ -406,5 +406,5 @@ void SpecificWorker::update_furniture_draw_item(std::size_t idx)
 
     viewer_2d_->update_furniture_item(idx, furniture_polygons_[idx]);
 
-    apply_ownership_em_visuals();
+    em_manager_.apply_visuals();
 }

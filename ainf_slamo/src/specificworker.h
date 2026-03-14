@@ -39,12 +39,11 @@
 #include "scene_tree_panel.h"
 #include "object_palette_panel.h"
 #include "camera_viewer.h"
-#include "mesh_sdf_optimizer.h"
-#include "object_ownership_em.h"
 #include "furniture_types.h"
 #include "object_footprints.h"
 #include "scene_graph_adapter.h"
 #include "scene_graph_model.h"
+#include "em_manager.h"
 #include <QSplitter>
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include "room_concept_ai.h"
@@ -185,7 +184,6 @@ class SpecificWorker : public GenericWorker
 	rc::SceneGraphModel scene_graph_;
 	void draw_furniture();
 	void update_furniture_draw_item(std::size_t idx);
-	void apply_ownership_em_visuals();
 
 	// ===== Temporary obstacle management (unforeseen obstacle avoidance) =====
 	struct TempObstacle
@@ -227,14 +225,6 @@ class SpecificWorker : public GenericWorker
 
 	/// Compute the q-th percentile of a vector (pass by value for in-place partial sort)
 	static float percentile_copy(std::vector<float> values, float q);
-	static bool extract_depth_buffer_meters(const RoboCompImageSegmentation::TDepth& depth,
-	                                       int& width,
-	                                       int& height,
-	                                       std::vector<float>& out);
-	static bool extract_depth_from_tdata(const RoboCompImageSegmentation::TData& tdata,
-	                                   int& width,
-	                                   int& height,
-	                                   std::vector<float>& out);
 
 	// Flip state tracking
 	bool flip_x_applied_ = false;
@@ -260,22 +250,7 @@ class SpecificWorker : public GenericWorker
 	int grounding_world_index_ = -1;
 	int focused_model_index_ = -1;
 	std::string current_layout_file_;
-	rc::MeshSDFOptimizer mesh_sdf_optimizer_;
-	rc::ObjectOwnershipEM ownership_em_;
-	bool ownership_em_enabled_ = true;
-	bool em_validator_overlay_lock_ = false;
-	bool em_overlay_persistent_active_ = false;
-	struct PendingEmAdjustment
-	{
-		int furniture_index = -1;
-		std::vector<Eigen::Vector2f> vertices;
-		float new_sdf = 0.f;
-		std::optional<float> prev_sdf;
-		std::string label;
-	};
-	std::vector<PendingEmAdjustment> pending_em_adjustments_;
-	bool em_decision_pending_ = false;
-	int ownership_em_log_counter_ = 0;
+	EMManager em_manager_;
 	BufferSync<InOut<rc::VelocityCommand, rc::VelocityCommand>> velocity_buffer_{20};
 	std::optional<Eigen::Vector2f> nav_target_object_center_;
 	std::string nav_target_object_name_;
@@ -382,17 +357,11 @@ class SpecificWorker : public GenericWorker
 	void draw_lidar_points(const std::vector<Eigen::Vector3f> &points_high,
 	                       const std::vector<Eigen::Vector3f> &points_low,
 	                       const Eigen::Affine2f &robot_pose);
-	void rebuild_ownership_em_models();
-	void run_ownership_em_step(const std::vector<Eigen::Vector3f>& points_robot,
-	                           const Eigen::Affine2f& robot_pose);
-	void run_camera_em_validator();
-	void apply_pending_em_adjustments(bool accept);
 	void update_camera_wireframe_overlay(const Eigen::Affine2f &robot_pose);
 	int find_furniture_index_by_name(const QString& name) const;
 	void translate_furniture_by_name(const QString& name, float dx_room, float dy_room);
 	void rotate_furniture_by_name(const QString& name, float angle_rad, const QVector3D& axis);
 	void set_object_property(const QString& label, const QString& property, float value);
-	float model_height_from_label(const std::string& label) const;
 	void update_segmented_points_3d(const Eigen::Affine2f &robot_pose);
 	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);
 	void display_robot(const Eigen::Affine2f &robot_pose, const Eigen::Matrix3f &covariance);

@@ -340,7 +340,7 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
     // then persist.  This is only reached when no USD file exists yet.
     rc::SceneGraphAdapter::rebuild_graph(
         scene_graph_, room_polygon_, furniture_polygons_,
-        [this](const std::string& l) { return model_height_from_label(l); }, 2.6f);
+        [](const std::string& l) { return EMManager::model_height_from_label(l); }, 2.6f);
     save_scene_graph_to_usd();
 
     qInfo() << "Polygon loaded from" << QString::fromStdString(filename)

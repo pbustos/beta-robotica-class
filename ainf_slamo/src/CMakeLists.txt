@@ -90,8 +90,8 @@ find_package(Boost REQUIRED COMPONENTS system filesystem)
 # Sources set
 LIST(APPEND SOURCES
   ../src/specificworker.cpp
-  ../src/specificworker_depth.cpp
   ../src/specificworker_episode_metrics.cpp
+  ../src/em_manager.cpp
   ../src/specificworker_grounding.cpp
   ../src/specificworker_layout_io.cpp
   ../src/specificworker_visualization.cpp
@@ -120,6 +120,7 @@ LIST(APPEND SOURCES
 # Headers set
 LIST(APPEND HEADERS
   ../src/specificworker.h
+  ../src/em_manager.h
   ../src/viewer_2d.h
   ../src/room_concept_ai.h
   ../src/room_model.h

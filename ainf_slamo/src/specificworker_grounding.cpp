@@ -12,39 +12,6 @@
 #include <set>
 #include <unordered_map>
 
-void SpecificWorker::apply_ownership_em_visuals()
-{
-    if (!ownership_em_enabled_ || furniture_polygons_.empty() || viewer_2d_->furniture_count() == 0)
-        return;
-
-    std::unordered_map<std::string, float> confidence_by_id;
-    confidence_by_id.reserve(ownership_em_.get_states().size() * 2);
-    for (const auto& st : ownership_em_.get_states())
-    {
-        if (!st.active)
-            continue;
-        confidence_by_id[st.class_id] = std::clamp(st.confidence, 0.f, 1.f);
-    }
-
-    const QColor base(50, 100, 255);
-    for (std::size_t i = 0; i < furniture_polygons_.size() && i < viewer_2d_->furniture_count(); ++i)
-    {
-        const auto& fp = furniture_polygons_[i];
-        float conf = 0.35f;
-        if (const auto it = confidence_by_id.find(fp.label); it != confidence_by_id.end())
-            conf = it->second;
-        else if (const auto it2 = confidence_by_id.find(fp.id); it2 != confidence_by_id.end())
-            conf = it2->second;
-
-        const qreal width = 0.04 + 0.10 * static_cast<qreal>(conf);
-        const int alpha = static_cast<int>(35.f + 165.f * conf);
-        viewer_2d_->set_furniture_item_style(
-            i,
-            QPen(base, width),
-            QBrush(QColor(base.red(), base.green(), base.blue(), alpha)));
-    }
-}
-
 int SpecificWorker::find_furniture_index_by_name(const QString& name) const
 {
     auto normalize = [](QString s)
@@ -200,18 +167,6 @@ void SpecificWorker::set_object_property(const QString& label, const QString& pr
     // viewer_3d_, and viewer2d_ via the connection added in specificworker.cpp.
 }
 
-float SpecificWorker::model_height_from_label(const std::string& label) const
-{
-    const QString ql = QString::fromStdString(label).toLower();
-    if (ql.contains("silla") || ql.contains("chair")) return 0.95f;
-    if (ql.contains("mesa") || ql.contains("table")) return 0.75f;
-    if (ql.contains("banco") || ql.contains("bench")) return 0.48f;
-    if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen")) return 1.10f;
-    if (ql.contains("vitrina") || ql.contains("cabinet") || ql.contains("shelf")) return 1.60f;
-    if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot")) return 0.60f;
-    return 0.85f;
-}
-
 void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robot_pose)
 {
     if (!camera_viewer_)
@@ -284,7 +239,7 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
             return -1.f;
 
         const std::string base_name = fp.label.empty() ? fp.id : fp.label;
-        const float h = model_height_from_label(base_name);
+        const float h = EMManager::model_height_from_label(base_name);
 
         int projected_hits = 0;
         for (const auto& v_world : fp.vertices)
@@ -535,7 +490,7 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
     std::vector<Eigen::Vector3f> ann_points;
     std::vector<QString> ann_texts;
     std::vector<QColor> ann_colors;
-    ann_points.emplace_back(to_camera(world_to_robot * cen, model_height_from_label(fp.label.empty() ? fp.id : fp.label) + 0.05f));
+    ann_points.emplace_back(to_camera(world_to_robot * cen, EMManager::model_height_from_label(fp.label.empty() ? fp.id : fp.label) + 0.05f));
     ann_texts.emplace_back(wire_label);
     ann_colors.emplace_back(QColor(255, 255, 255, 255));
 
