@@ -81,6 +81,9 @@ class CameraViewer : public QDialog
         /// Show or hide EM decision buttons (accept/reject) after fitting.
         void set_em_decision_buttons_visible(bool visible);
 
+        /// True when the viewer is in raw-image mode (no overlays/masking).
+        bool is_raw_mode() const { return raw_mode_; }
+
     signals:
         void emRequested();
         void emAcceptRequested();
@@ -106,6 +109,7 @@ class CameraViewer : public QDialog
         QPushButton* em_accept_button_ = nullptr;
         QPushButton* em_reject_button_ = nullptr;
         QCheckBox*  depth_check_  = nullptr;
+        bool        raw_mode_     = false;
 
         QTimer* timer_            = nullptr;
         int     frame_count_      = 0;

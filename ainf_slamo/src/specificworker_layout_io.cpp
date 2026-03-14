@@ -41,21 +41,6 @@ void SpecificWorker::slot_save_layout()
     viewer_2d_->discard_polygon_backup();
 }
 
-void SpecificWorker::slot_load_layout()
-{
-    QString filename = QFileDialog::getOpenFileName(this,
-        "Load Room Layout",
-        "./",
-        "SVG Files (*.svg)",
-        nullptr,
-        QFileDialog::DontUseNativeDialog);
-
-    if (filename.isEmpty())
-        return;
-
-    load_layout_from_file(filename.toStdString());
-}
-
 void SpecificWorker::slot_flip_x()
 {
     if (layout_manager_.room_polygon().empty())
@@ -77,7 +62,7 @@ void SpecificWorker::slot_flip_x()
 
     // Update the room model with flipped polygon (thread-safe)
     push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
-    path_planner_.set_polygon(layout_manager_.room_polygon());
+    nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
 
     // Redraw the polygon
     draw_room_polygon();
@@ -106,7 +91,7 @@ void SpecificWorker::slot_flip_y()
 
     // Update the room model with flipped polygon (thread-safe)
     push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
-    path_planner_.set_polygon(layout_manager_.room_polygon());
+    nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
 
     // Redraw the polygon
     draw_room_polygon();
@@ -242,13 +227,13 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
     if (layout_manager_.room_polygon().size() >= 3)
     {
         push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
-        path_planner_.set_polygon(layout_manager_.room_polygon());
-        trajectory_controller_.set_room_boundary(layout_manager_.room_polygon());
+        nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
+        nav_manager_.trajectory_controller().set_room_boundary(layout_manager_.room_polygon());
         if (!layout_manager_.furniture().empty())
         {
             const auto obs = layout_manager_.obstacle_polygons();
-            path_planner_.set_obstacles(obs);
-            trajectory_controller_.set_static_obstacles(obs);
+            nav_manager_.path_planner().set_obstacles(obs);
+            nav_manager_.trajectory_controller().set_static_obstacles(obs);
         }
         draw_room_polygon();
         draw_furniture();
@@ -312,9 +297,6 @@ bool SpecificWorker::load_scene_graph_from_usd()
 
 void SpecificWorker::load_polygon_from_file(const std::string& filename)
 {
-    if (!filename.empty())
-        current_layout_file_ = filename;
-
     // USD-first: once persisted, this is authoritative world state.
     if (load_scene_graph_from_usd())
     {

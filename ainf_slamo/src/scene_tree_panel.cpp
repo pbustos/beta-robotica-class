@@ -3,6 +3,7 @@
 
 #include <QHeaderView>
 #include <QFont>
+#include <QBrush>
 #include <QVBoxLayout>
 #include <QMenu>
 #include <QAction>
@@ -161,7 +162,8 @@ QTreeWidgetItem* SceneTreePanel::make_object_item(
     const rc::SceneGraphModel* /*m*/,
     const QString& label, const QString& type_str,
     float tx, float ty, float yaw_rad,
-    float width, float depth, float height) const
+    float width, float depth, float height,
+    std::optional<float> last_fit_sdf) const
 {
     auto* item = new QTreeWidgetItem();
     item->setText(0, label);
@@ -178,6 +180,13 @@ QTreeWidgetItem* SceneTreePanel::make_object_item(
     item->addChild(make_kv("width",  fmt(width)  + " m", true, label, "width"));
     item->addChild(make_kv("depth",  fmt(depth)  + " m", true, label, "depth"));
     item->addChild(make_kv("height", fmt(height) + " m", true, label, "height"));
+
+    const QString sdf_text = last_fit_sdf.has_value()
+        ? fmt(last_fit_sdf.value(), 4) : QStringLiteral("—");
+    auto* sdf_item = make_kv("sdf", sdf_text);
+    sdf_item->setForeground(1, last_fit_sdf.has_value()
+        ? QBrush(QColor("#1B5E20")) : QBrush(QColor("#9E9E9E")));
+    item->addChild(sdf_item);
     return item;
 }
 
@@ -293,7 +302,8 @@ void SceneTreePanel::rebuild_from_model()
                 qlabel,
                 QString::fromStdString(obj.object_type),
                 obj.translation.x(), obj.translation.y(), obj.yaw_rad,
-                obj.extents.x(), obj.extents.y(), obj.extents.z());
+                obj.extents.x(), obj.extents.y(), obj.extents.z(),
+                obj.last_fit_sdf);
             floor_item->addChild(oi);
             if (expanded_set.contains(qlabel)) oi->setExpanded(true);
         }
@@ -358,6 +368,14 @@ void SceneTreePanel::update_object_display(const QString& label)
         else if (prop == "width")   child->setText(1, fmt(node.extents.x())     + " m");
         else if (prop == "depth")   child->setText(1, fmt(node.extents.y())     + " m");
         else if (prop == "height")  child->setText(1, fmt(node.extents.z())     + " m");
+        else if (child->text(0) == "sdf")
+        {
+            const QString sdf_text = node.last_fit_sdf.has_value()
+                ? fmt(node.last_fit_sdf.value(), 4) : QStringLiteral("—");
+            child->setText(1, sdf_text);
+            child->setForeground(1, node.last_fit_sdf.has_value()
+                ? QBrush(QColor("#1B5E20")) : QBrush(QColor("#9E9E9E")));
+        }
     }
     updating_ = false;
 }

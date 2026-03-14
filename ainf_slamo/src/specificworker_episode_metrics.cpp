@@ -77,7 +77,7 @@ float SpecificWorker::compute_source_obstacle_density(const Eigen::Vector2f& sou
         for (const auto& fp : layout_manager_.furniture())
             if (point_in_polygon_2d(p, fp.vertices))
                 return true;
-        for (const auto& temp : temp_obstacles_)
+        for (const auto& temp : nav_manager_.temp_obstacles())
             if (point_in_polygon_2d(p, temp.vertices))
                 return true;
         return false;
@@ -87,8 +87,8 @@ float SpecificWorker::compute_source_obstacle_density(const Eigen::Vector2f& sou
     if (!inside_room || inside_any_obstacle(source_point))
         return 1.f;
 
-    const float robot_radius = std::max(0.05f, path_planner_.params.robot_radius);
-    const float probe_radius = robot_radius + SOURCE_OBSTACLE_DENSITY_PROBE_EXTRA_RADIUS;
+    const float robot_radius = std::max(0.05f, nav_manager_.path_planner().params.robot_radius);
+    const float probe_radius = robot_radius + NavigationManager::SOURCE_OBSTACLE_DENSITY_PROBE_EXTRA_RADIUS;
 
     constexpr int n_dirs = 72;
     int blocked_dirs = 0;
@@ -106,7 +106,7 @@ float SpecificWorker::compute_source_obstacle_density(const Eigen::Vector2f& sou
     float min_clearance = point_to_polygon_boundary_distance(source_point, layout_manager_.room_polygon());
     for (const auto& fp : layout_manager_.furniture())
         min_clearance = std::min(min_clearance, point_to_polygon_boundary_distance(source_point, fp.vertices));
-    for (const auto& temp : temp_obstacles_)
+    for (const auto& temp : nav_manager_.temp_obstacles())
         min_clearance = std::min(min_clearance, point_to_polygon_boundary_distance(source_point, temp.vertices));
 
     const float clearance_span = std::max(1e-3f, (probe_radius * 1.4f) - robot_radius);
@@ -147,7 +147,7 @@ void SpecificWorker::start_episode(const std::string &mission_type,
     }
     episode.target.target_object_id = target_object;
 
-    const auto &p = trajectory_controller_.params;
+    const auto &p = nav_manager_.trajectory_controller().params;
     auto add_param = [&episode](const std::string &key, float value)
     {
         episode.params_snapshot[key] = value;
@@ -229,7 +229,7 @@ void SpecificWorker::update_episode_metrics(const rc::RoomConceptAI::UpdateResul
     if (episode_accum_.has_prev_pose)
     {
         const float raw_delta = (pos - episode_accum_.prev_pos).norm();
-        const float max_cmd_delta = std::max(trajectory_controller_.params.max_adv, 0.01f) * dt_s;
+        const float max_cmd_delta = std::max(nav_manager_.trajectory_controller().params.max_adv, 0.01f) * dt_s;
         const float max_allowed_delta = 1.35f * max_cmd_delta + 0.01f;
         const float jitter_deadband = 0.002f;
         const float bounded_delta = std::clamp(raw_delta - jitter_deadband, 0.f, max_allowed_delta);
@@ -304,7 +304,7 @@ void SpecificWorker::finish_episode(const std::string &status)
 
     episode.safety.min_esdf_m = std::isfinite(episode_accum_.min_esdf_m) ? episode_accum_.min_esdf_m : 0.f;
     episode.safety.n_near_collision = 0;
-    episode.safety.n_collision = (episode.safety.min_esdf_m < trajectory_controller_.params.robot_radius) ? 1 : 0;
+    episode.safety.n_collision = (episode.safety.min_esdf_m < nav_manager_.trajectory_controller().params.robot_radius) ? 1 : 0;
     episode.safety.n_blocked_events = episode_accum_.n_blocked_events;
     episode.safety.blocked_time_s = episode_accum_.blocked_time_s;
     episode.safety.n_replans = 0;

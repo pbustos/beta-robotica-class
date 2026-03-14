@@ -123,10 +123,9 @@ SpecificWorker::~SpecificWorker()
     save_camera_state_to_settings();
 
 	// Stop trajectory controller
-	if (trajectory_controller_.is_active())
+	if (nav_manager_.is_active())
 	{
-		trajectory_controller_.stop();
-		try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+		nav_manager_.stop();
 	}
 
 	// Save the last known pose for fast restart
@@ -268,7 +267,7 @@ void SpecificWorker::initialize()
         
         // Connect mission cancellation
         connect(viewer_3d_.get(), &rc::Viewer3D::cancelMissionRequested, this, [this]() {
-            if (!trajectory_controller_.is_active() && current_path_.empty()) return;
+            if (!nav_manager_.is_active() && !nav_manager_.has_path()) return;
             qInfo() << "Navigation cancelled by Ctrl+Right click (3D View)";
             active_episode_.reset();
             episode_accum_ = EpisodeAccum{};
@@ -277,10 +276,8 @@ void SpecificWorker::initialize()
                 label_episodeStatus->setText("EP: CANCELLED");
                 label_episodeStatus->setStyleSheet("background-color: #FFE0B2; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
             }
-            trajectory_controller_.stop();
-            current_path_.clear();
+            nav_manager_.stop();
             clear_path();
-            try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
         });
 
         connect(grounding_fit_mesh_button_, &QPushButton::clicked, this, [this]()
@@ -308,32 +305,6 @@ void SpecificWorker::initialize()
             }
         });
 
-        // "Reload SVG" now lives on the toolbar (pushButton_reloadSVG in mainUI.ui)
-        connect(pushButton_reloadSVG, &QPushButton::clicked, this, [this]()
-        {
-            if (current_layout_file_.empty())
-            {
-                if (grounding_status_label_)
-                    grounding_status_label_->setText("Status: no layout file to reload from");
-                return;
-            }
-
-            if (QFile::exists(PERSISTED_SCENE_GRAPH_FILE))
-            {
-                if (!QFile::remove(PERSISTED_SCENE_GRAPH_FILE))
-                {
-                    if (grounding_status_label_)
-                        grounding_status_label_->setText("Status: cannot remove scene_graph.usda");
-                    return;
-                }
-            }
-
-            load_layout_from_file(current_layout_file_);
-            if (grounding_status_label_)
-                grounding_status_label_->setText("Status: meshes reloaded from SVG (fitted overrides cleared)");
-            if (grounding_sdf_label_)
-                grounding_sdf_label_->setText("SDF fit: -");
-        });
         // Object palette: add a new furniture object to all views on request
         connect(object_palette_, &ObjectPalettePanel::addObjectRequested,
                 this, [this](const QString& type_label,
@@ -364,8 +335,8 @@ void SpecificWorker::initialize()
             // Sync planner obstacles
             {
                 const auto obs = layout_manager_.obstacle_polygons();
-                path_planner_.set_obstacles(obs);
-                trajectory_controller_.set_static_obstacles(obs);
+                nav_manager_.path_planner().set_obstacles(obs);
+                nav_manager_.trajectory_controller().set_static_obstacles(obs);
             }
 
             // Rebuild the scene graph model to include the new object, then draw and save.
@@ -439,7 +410,6 @@ void SpecificWorker::initialize()
 
     // Connect save/load layout buttons
     connect(pushButton_saveLayout, &QPushButton::clicked, this, &SpecificWorker::slot_save_layout);
-    connect(pushButton_loadLayout, &QPushButton::clicked, this, &SpecificWorker::slot_load_layout);
     connect(pushButton_flipX, &QPushButton::clicked, this, &SpecificWorker::slot_flip_x);
     connect(pushButton_flipY, &QPushButton::clicked, this, &SpecificWorker::slot_flip_y);
     connect(pushButton_calibrateGT, &QPushButton::clicked, this, &SpecificWorker::slot_calibrate_gt);
@@ -541,8 +511,8 @@ void SpecificWorker::initialize()
             // Update planner obstacles
             {
                 const auto obs = layout_manager_.obstacle_polygons();
-                path_planner_.set_obstacles(obs);
-                trajectory_controller_.set_static_obstacles(obs);
+                nav_manager_.path_planner().set_obstacles(obs);
+                nav_manager_.trajectory_controller().set_static_obstacles(obs);
             }
             // Remove from model, then rebuild graph from updated furniture list.
             scene_graph_.remove_object("", lbl);
@@ -617,13 +587,13 @@ void SpecificWorker::initialize()
     {
         if (checked)
         {
-            trajectory_controller_.set_control_mode(rc::TrajectoryController::ControlMode::PD);
+            nav_manager_.trajectory_controller().set_control_mode(rc::TrajectoryController::ControlMode::PD);
             pushButton_pdMode->setStyleSheet("background-color: #FFF176; font-weight: bold;");
             qInfo() << "Controller mode: PD carrot-follower";
         }
         else
         {
-            trajectory_controller_.set_control_mode(rc::TrajectoryController::ControlMode::MPPI);
+            nav_manager_.trajectory_controller().set_control_mode(rc::TrajectoryController::ControlMode::MPPI);
             pushButton_pdMode->setStyleSheet("");
             qInfo() << "Controller mode: MPPI";
         }
@@ -639,14 +609,14 @@ void SpecificWorker::initialize()
         connect(horizontalSlider_mood, &QSlider::valueChanged, this, [this](int value)
         {
             const float mood = static_cast<float>(value) / 100.f;
-            trajectory_controller_.params.mood = mood;
+            nav_manager_.trajectory_controller().params.mood = mood;
             if (label_moodValue != nullptr)
                 label_moodValue->setText(QString::number(mood, 'f', 2));
         });
 
         horizontalSlider_mood->setValue(50);  // init value = 0.50
     }
-    trajectory_controller_.params.mood = 0.5f;
+    nav_manager_.trajectory_controller().params.mood = 0.5f;
 
     if (label_episodeStatus != nullptr)
     {
@@ -665,7 +635,7 @@ void SpecificWorker::initialize()
     // Ctrl+Right click on scene: cancel current navigation mission
     connect(viewer_2d_.get(), &rc::Viewer2D::right_click, this, [this](QPointF)
     {
-        if (!trajectory_controller_.is_active() && current_path_.empty()) return;
+        if (!nav_manager_.is_active() && !nav_manager_.has_path()) return;
         qInfo() << "Navigation cancelled by Ctrl+Right click";
         active_episode_.reset();
         episode_accum_ = EpisodeAccum{};
@@ -674,17 +644,15 @@ void SpecificWorker::initialize()
             label_episodeStatus->setText("EP: CANCELLED");
             label_episodeStatus->setStyleSheet("background-color: #FFE0B2; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
         }
-        trajectory_controller_.stop();
-        current_path_.clear();
+        nav_manager_.stop();
         clear_path();
-        try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
     });
 
     // Ctrl+Shift+Right keyboard: cancel current navigation mission without saving episode
     auto *cancel_shortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Right), this);
     connect(cancel_shortcut, &QShortcut::activated, this, [this]()
     {
-        if (!trajectory_controller_.is_active() && current_path_.empty()) return;
+        if (!nav_manager_.is_active() && !nav_manager_.has_path()) return;
         qInfo() << "Navigation cancelled by Ctrl+Shift+Right";
         // Discard episode without saving
         active_episode_.reset();
@@ -694,10 +662,7 @@ void SpecificWorker::initialize()
             label_episodeStatus->setText("EP: CANCELLED");
             label_episodeStatus->setStyleSheet("background-color: #FFE0B2; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
         }
-        // Stop controller and clear path
-        trajectory_controller_.stop();
-        current_path_.clear();
-        try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
+        nav_manager_.stop();
     });
 
     // Try to load default layout on startup (only loads vertices, doesn't init room_ai yet)
@@ -792,13 +757,13 @@ void SpecificWorker::initialize()
     {
         // Use pre-loaded polygon from file
         room_ai.set_polygon_room(layout_manager_.room_polygon());
-        path_planner_.set_polygon(layout_manager_.room_polygon());
-        trajectory_controller_.set_room_boundary(layout_manager_.room_polygon());
+        nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
+        nav_manager_.trajectory_controller().set_room_boundary(layout_manager_.room_polygon());
         if (!layout_manager_.furniture().empty())
         {
             const auto obs = layout_manager_.obstacle_polygons();
-            path_planner_.set_obstacles(obs);
-            trajectory_controller_.set_static_obstacles(obs);
+            nav_manager_.path_planner().set_obstacles(obs);
+            nav_manager_.trajectory_controller().set_static_obstacles(obs);
         }
         draw_room_polygon();
         draw_furniture();
@@ -845,6 +810,22 @@ void SpecificWorker::initialize()
         em_manager_.set_context(em_ctx);
     }
 
+    // Navigation manager context setup
+    {
+        NavigationManager::Context nav_ctx;
+        nav_ctx.layout_manager = &layout_manager_;
+        nav_ctx.get_loc_state = [this]() { return get_loc_state(); };
+        nav_ctx.send_velocity = [this](float adv, float side, float rot) { send_velocity_command(adv, side, rot); };
+        nav_ctx.draw_path = [this](const std::vector<Eigen::Vector2f>& path) { draw_path_threadsafe(path); };
+        nav_ctx.draw_temp_obstacles = [this]() { draw_temp_obstacles(); };
+        nav_ctx.clear_path_visual = [this]() {
+            viewer_2d_->clear_path_items();
+            viewer_2d_->hide_trajectory_debug();
+            if (viewer_3d_) viewer_3d_->update_path({});
+        };
+        nav_manager_.set_context(nav_ctx);
+    }
+
 	setPeriod("Compute", 50);
 }
 
@@ -879,7 +860,7 @@ void SpecificWorker::compute()
     if (em_manager_.is_enabled() && lidar_low_high_.has_value())
         em_manager_.run_ownership_step(lidar_low_high_->first, res.robot_pose);
 
-    if (camera_viewer_)
+    if (camera_viewer_ && !camera_viewer_->is_raw_mode())
     {
         camera_viewer_->set_infrastructure_context(res.robot_pose,
                                                    layout_manager_.room_polygon(),
@@ -955,240 +936,43 @@ void SpecificWorker::compute()
     if (++temp_obs_cleanup_counter >= 100)
     {
         temp_obs_cleanup_counter = 0;
-        if (!temp_obstacles_.empty())
-            cleanup_temp_obstacles();
+        if (!nav_manager_.temp_obstacles().empty())
+            nav_manager_.cleanup_temp_obstacles();
     }
 
-    // ===== LOCAL TRAJECTORY CONTROLLER =====
-    // Run if a path is active and joystick is not overriding
+    // ===== LOCAL TRAJECTORY CONTROLLER (delegated to NavigationManager) =====
     float mppi_ms = 0.f, viz2_ms = 0.f;
-    if (trajectory_controller_.is_active())
+    if (nav_manager_.is_active() || nav_manager_.is_aligning())
     {
-        auto t2 = std::chrono::steady_clock::now();
-        const auto ctrl = trajectory_controller_.compute(lidar_low_high_->first, res.robot_pose);
-        auto t3 = std::chrono::steady_clock::now();
-        mppi_ms = std::chrono::duration<float, std::milli>(t3 - t2).count();
+        const auto step = nav_manager_.compute_step(lidar_low_high_->first, res.robot_pose);
+        mppi_ms = step.mppi_ms;
 
-        // Store ESS for UI
-        last_ess_ = ctrl.ess;
-        last_ess_K_ = ctrl.ess_K;
-        if (ctrl.safety_guard_triggered)
-            last_safety_guard_trigger_time_ = std::chrono::steady_clock::now();
+        // Put velocity into buffer for UI/status display
+        auto cmd = rc::VelocityCommand(step.side, step.adv, step.rot);
+        velocity_buffer_.put<0>(std::move(cmd), timestamp);
 
-        if (ctrl.goal_reached)
+        if (step.object_align_started && label_episodeStatus != nullptr)
         {
-            const bool goto_object = active_episode_.has_value()
-                                  && active_episode_->mission.mission_type == "goto_object"
-                                  && nav_target_object_center_.has_value();
+            label_episodeStatus->setText("EP: ALIGNING OBJECT");
+            label_episodeStatus->setStyleSheet("background-color: #BBDEFB; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
+            return; // alignment just started, skip rest of cycle
+        }
 
-            if (goto_object)
-            {
-                // Switch to dedicated final heading alignment mode.
-                trajectory_controller_.stop();
-                current_path_.clear();
-                object_final_align_active_ = true;
-                object_align_cycles_ = 0;
-                send_velocity_command(0.f, 0.f, 0.f);
-                auto cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
-                velocity_buffer_.put<0>(std::move(cmd), timestamp);
-                if (label_episodeStatus != nullptr)
-                {
-                    label_episodeStatus->setText("EP: ALIGNING OBJECT");
-                    label_episodeStatus->setStyleSheet("background-color: #BBDEFB; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
-                }
-                return;
-            }
-
-            object_align_cycles_ = 0;
-            nav_target_object_center_.reset();
-            nav_target_object_name_.clear();
+        if (step.goal_reached || step.object_align_done)
+        {
             finish_episode("success");
-            send_velocity_command(0.f, 0.f, 0.f);
-            auto cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
-            velocity_buffer_.put<0>(std::move(cmd), timestamp);
             clear_path();
             qInfo() << "[TrajectoryCtrl] Navigation complete.";
         }
-        else
+        else if (step.has_ctrl_output && step.navigating)
         {
-            const float speed = std::hypot(ctrl.adv, ctrl.side);
-            const float rot = std::fabs(ctrl.rot);
             const float cpu_usage = get_cpu_usage();
-            const bool blocked_like = (ctrl.dist_to_goal > trajectory_controller_.params.goal_threshold)
-                                   && (speed < BLOCKED_SPEED_THRESHOLD);
+            update_episode_metrics(res, &step.ctrl, step.speed, step.rot_speed, cpu_usage, step.mppi_ms, step.blocked_like);
 
-            if (ctrl.path_blocked)
-            {
-                safeguard_blockage_center_ = ctrl.blockage_center_room;
-                safeguard_blockage_radius_ = std::max(0.20f, ctrl.blockage_radius);
-            }
-
-            if (!safeguard_recovery_active_ && ctrl.safety_guard_triggered && blocked_like)
-            {
-                safeguard_recovery_active_ = true;
-                safeguard_replan_pending_ = true;
-                safeguard_recovery_cycles_ = 0;
-                safeguard_clear_counter_ = 0;
-                qWarning() << "[SafeguardRecovery] Triggered: starting backward recovery";
-            }
-
-            bool recovering_now = false;
-            if (safeguard_recovery_active_)
-            {
-                recovering_now = true;
-                safeguard_recovery_cycles_++;
-                if (ctrl.safety_guard_triggered)
-                    safeguard_clear_counter_ = 0;
-                else
-                    safeguard_clear_counter_++;
-
-                const bool recovered = (safeguard_clear_counter_ >= SAFEGUARD_CLEAR_CONFIRM_CYCLES);
-                const bool timeout = (safeguard_recovery_cycles_ >= SAFEGUARD_RECOVERY_MAX_CYCLES);
-
-                if (!recovered && !timeout)
-                {
-                    send_velocity_command(SAFEGUARD_BACKWARD_SPEED, 0.f, 0.f);
-                    auto cmd = rc::VelocityCommand(0.f, SAFEGUARD_BACKWARD_SPEED, 0.f);
-                    velocity_buffer_.put<0>(std::move(cmd), timestamp);
-                }
-                else
-                {
-                    safeguard_recovery_active_ = false;
-                    safeguard_recovery_cycles_ = 0;
-                    safeguard_clear_counter_ = 0;
-
-                    send_velocity_command(0.f, 0.f, 0.f);
-                    auto stop_cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
-                    velocity_buffer_.put<0>(std::move(stop_cmd), timestamp);
-
-                    if (safeguard_replan_pending_ && lidar_low_high_.has_value())
-                    {
-                        float obs_height = 0.f;
-                        const auto polygon = cluster_lidar_to_polygon(
-                            lidar_low_high_->first,
-                            safeguard_blockage_center_,
-                            std::min(safeguard_blockage_radius_ + 0.15f, 1.1f),
-                            res.robot_pose,
-                            obs_height);
-
-                        if (!polygon.empty())
-                            replan_around_obstacle(polygon, obs_height, safeguard_blockage_center_, res.robot_pose);
-                        else
-                            qWarning() << "[SafeguardRecovery] Recovery ended but obstacle cluster too sparse for replan";
-                    }
-                    safeguard_replan_pending_ = false;
-                    recovering_now = false;
-                }
-            }
-
-            if (!recovering_now)
-            {
-                send_velocity_command(ctrl.adv, ctrl.side, ctrl.rot);
-                auto cmd = rc::VelocityCommand(ctrl.side, ctrl.adv, ctrl.rot);
-                velocity_buffer_.put<0>(std::move(cmd), timestamp);
-
-                // ── Obstacle avoidance: detect blockage → cluster → replan ──
-                if (ctrl.path_blocked && lidar_low_high_.has_value())
-                {
-                    float obs_height = 0.f;
-                    const auto polygon = cluster_lidar_to_polygon(
-                        lidar_low_high_->first,
-                        ctrl.blockage_center_room,
-                        std::min(ctrl.blockage_radius + 0.1f, 1.0f),  // tight search, capped at 1m
-                        res.robot_pose,
-                        obs_height);
-
-                    if (!polygon.empty())
-                    {
-                        replan_around_obstacle(polygon, obs_height, ctrl.blockage_center_room, res.robot_pose);
-                    }
-                    else
-                    {
-                        qWarning() << "[ObstacleAvoid] Blockage detected but LiDAR cluster too sparse to model";
-                    }
-                }
-            }
-
-            update_episode_metrics(res, &ctrl, speed, rot, cpu_usage, mppi_ms, blocked_like || recovering_now);
-
-            if (do_draw && draw_trajectories_) draw_trajectory_debug(ctrl, res.robot_pose);
-        }
-        viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t3).count();
-    }
-
-    // Dedicated final object-facing alignment phase (decoupled from trajectory controller).
-    if (object_final_align_active_ && nav_target_object_center_.has_value())
-    {
-        // Recompute object center in world each cycle when available.
-        Eigen::Vector2f object_world = nav_target_object_center_.value();
-        if (!nav_target_object_name_.empty())
-        {
-            const QString target_name = QString::fromStdString(nav_target_object_name_).trimmed();
-            for (const auto& fp : layout_manager_.furniture())
-            {
-                const QString flabel = QString::fromStdString(fp.label).trimmed();
-                const QString fid = QString::fromStdString(fp.id).trimmed();
-                if ((flabel.compare(target_name, Qt::CaseInsensitive) == 0 ||
-                        fid.compare(target_name, Qt::CaseInsensitive) == 0) &&
-                    !fp.vertices.empty())
-                {
-                    Eigen::Vector2f c = Eigen::Vector2f::Zero();
-                    for (const auto& v : fp.vertices) c += v;
-                    c /= static_cast<float>(fp.vertices.size());
-                    object_world = c;
-                    nav_target_object_center_ = c;
-                    break;
-                }
-            }
-        }
-
-        const auto loc_state = get_loc_state();
-        const float rx = loc_state[2];
-        const float ry = loc_state[3];
-        const float rth = loc_state[4];
-        const float cr = std::cos(rth);
-        const float sr = std::sin(rth);
-        const Eigen::Vector2f d_world = object_world - Eigen::Vector2f(rx, ry);
-        const Eigen::Vector2f object_robot(cr * d_world.x() + sr * d_world.y(),
-                                           -sr * d_world.x() + cr * d_world.y());
-
-        constexpr float kYawTol = 0.08f;
-        constexpr int kMaxAlignCycles = 70;
-        static float prev_angle_err = 0.f;
-        const float angle_err = std::atan2(object_robot.x(), object_robot.y());
-
-        const bool done = (std::abs(angle_err) <= kYawTol)
-                       || (object_robot.norm() <= 0.05f)
-                       || (object_align_cycles_ >= kMaxAlignCycles)
-                       || (object_align_cycles_ > 3 && std::signbit(angle_err) != std::signbit(prev_angle_err)
-                           && std::abs(angle_err) < 0.18f);
-
-        if (done)
-        {
-            object_final_align_active_ = false;
-            object_align_cycles_ = 0;
-            nav_target_object_center_.reset();
-            nav_target_object_name_.clear();
-            send_velocity_command(0.f, 0.f, 0.f);
-            auto stop_cmd = rc::VelocityCommand(0.f, 0.f, 0.f);
-            velocity_buffer_.put<0>(std::move(stop_cmd), timestamp);
-            finish_episode("success");
-            clear_path();
-            qInfo() << "[TrajectoryCtrl] Navigation complete after final object alignment.";
-        }
-        else
-        {
-            const float kP = 1.2f;
-            float rot_cmd = std::clamp(kP * angle_err, -0.45f, 0.45f);
-            if (std::abs(rot_cmd) < 0.06f)
-                rot_cmd = (angle_err > 0.f) ? 0.06f : -0.06f;
-
-            send_velocity_command(0.f, 0.f, rot_cmd);
-            auto cmd = rc::VelocityCommand(0.f, 0.f, rot_cmd);
-            velocity_buffer_.put<0>(std::move(cmd), timestamp);
-            prev_angle_err = angle_err;
-            object_align_cycles_++;
-            return;
+            auto t_viz2_start = std::chrono::steady_clock::now();
+            if (do_draw && draw_trajectories_)
+                draw_trajectory_debug(step.ctrl, res.robot_pose);
+            viz2_ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t_viz2_start).count();
         }
     }
 
@@ -1254,24 +1038,12 @@ float SpecificWorker::get_cpu_usage()
 
 void SpecificWorker::clear_path(bool stop_controller, bool clear_stored_path)
 {
-    object_final_align_active_ = false;
-    object_align_cycles_ = 0;
-    nav_target_object_center_.reset();
-    nav_target_object_name_.clear();
-
     if (stop_controller && active_episode_.has_value())
         finish_episode("aborted");
 
-    // Stop the trajectory controller if active
-    if (stop_controller && trajectory_controller_.is_active())
-    {
-        trajectory_controller_.stop();
-        try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
-    }
+    nav_manager_.clear(stop_controller, clear_stored_path);
 
     viewer_2d_->clear_path_items();
-    if (clear_stored_path)
-        current_path_.clear();
 
     // Hide trajectory controller debug items
     viewer_2d_->hide_trajectory_debug();
@@ -1418,7 +1190,7 @@ bool SpecificWorker::load_last_pose()
         flip_x_applied_ = true;
 
         room_ai.set_polygon_room(layout_manager_.room_polygon());
-        path_planner_.set_polygon(layout_manager_.room_polygon());
+        nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
         draw_room_polygon();
         qInfo() << "Applied saved flip_x";
     }
@@ -1431,7 +1203,7 @@ bool SpecificWorker::load_last_pose()
         flip_y_applied_ = true;
 
         room_ai.set_polygon_room(layout_manager_.room_polygon());
-        path_planner_.set_polygon(layout_manager_.room_polygon());
+        nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
         draw_room_polygon();
         qInfo() << "Applied saved flip_y";
     }
@@ -1586,9 +1358,9 @@ void SpecificWorker::JoystickAdapter_sendData(RoboCompJoystickAdapter::TData dat
 	if (std::abs(cmd.adv_y) > 0.01f || std::abs(cmd.rot) > 0.01f)
 	{
 		last_joystick_time_ = std::chrono::steady_clock::now();
-		if (trajectory_controller_.is_active())
+		if (nav_manager_.is_active())
 		{
-			trajectory_controller_.stop();
+			nav_manager_.stop();
 			clear_path();
 			try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
 			qInfo() << "Trajectory controller stopped: joystick override";
@@ -1657,63 +1429,8 @@ RoboCompNavigator::LayoutData SpecificWorker::Navigator_getLayout()
 
 RoboCompNavigator::Result SpecificWorker::Navigator_getPath(RoboCompNavigator::TPoint source, RoboCompNavigator::TPoint target, float safety)
 {
-    RoboCompNavigator::Result ret;
-    ret.timestamp = static_cast<long>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
-    ret.valid = false;
-
-    if (!path_planner_.is_ready())
-    {
-        ret.errorMsg = "Planner not ready (layout not initialized)";
-        return ret;
-    }
-
-    // IDSL points are in meters; internal planner works in meters
-    const Eigen::Vector2f start_m(source.x, source.y);
-    const Eigen::Vector2f goal_m(target.x, target.y);
-
-    if (!path_planner_.is_inside(start_m) || !path_planner_.is_inside(goal_m))
-    {
-        ret.errorMsg = "Source or target is outside navigable area";
-        return ret;
-    }
-
-    // Optional safety override (meters). Rebuild visibility graph if changed.
-    if (safety > 0.f && std::fabs(path_planner_.params.robot_radius - safety) > 1e-4f)
-    {
-        path_planner_.params.robot_radius = safety;
-        if (!layout_manager_.room_polygon().empty())
-            path_planner_.set_polygon(layout_manager_.room_polygon());
-        if (!layout_manager_.furniture().empty())
-        {
-            const auto obstacles = layout_manager_.obstacle_polygons();
-            path_planner_.set_obstacles(obstacles);
-        }
-    }
-
-    const auto path = path_planner_.plan(start_m, goal_m);
-    if (path.empty())
-    {
-        ret.errorMsg = "No path found";
-        return ret;
-    }
-
-    ret.path.reserve(path.size());
-    for (const auto &p : path)
-    {
-        RoboCompNavigator::TPoint pt;
-        pt.x = p.x();
-        pt.y = p.y();
-        ret.path.push_back(pt);
-    }
-
-    // Draw requested path in local UI (without changing active controller state)
-    draw_path_threadsafe(path);
-
-    ret.valid = true;
-    ret.errorMsg = "ok";
-    return ret;
+    return nav_manager_.compute_path(Eigen::Vector2f(source.x, source.y),
+                                     Eigen::Vector2f(target.x, target.y), safety);
 }
 
 RoboCompNavigator::TPose SpecificWorker::Navigator_getRobotPose()
@@ -1729,280 +1446,51 @@ RoboCompNavigator::TPose SpecificWorker::Navigator_getRobotPose()
 
 RoboCompNavigator::NavigationStatus SpecificWorker::Navigator_getStatus()
 {
-    RoboCompNavigator::NavigationStatus status;
-    const auto now = std::chrono::steady_clock::now();
-
-    const auto state = get_loc_state();
-    status.currentPosition.x = state[2];
-    status.currentPosition.y = state[3];
-    status.currentOrientation = state[4];
-
-    status.currentTarget.x = 0.f;
-    status.currentTarget.y = 0.f;
-    status.distanceToTarget = 0.f;
-    status.estimatedTime = 0.f;
-    status.pathWaypointsRemaining = 0;
-
     const auto vel_tuple = velocity_buffer_.read_last<0>();
     const auto &vel_opt = std::get<0>(vel_tuple);
     float speed = 0.f;
     if (vel_opt.has_value())
         speed = std::hypot(vel_opt->adv_x, vel_opt->adv_y);
-    status.currentSpeed = speed;
 
-    if (!loc_initialized_.load())
-    {
-        low_speed_block_timer_active_ = false;
-        status.state = RoboCompNavigator::NavigationState::ERROR;
-        status.statusMessage = "Localization not initialized";
-        return status;
-    }
-
-    if (!current_path_.empty())
-    {
-        const auto &goal = current_path_.back();
-        status.currentTarget.x = goal.x();
-        status.currentTarget.y = goal.y();
-        status.distanceToTarget = (goal - Eigen::Vector2f(status.currentPosition.x, status.currentPosition.y)).norm();
-        status.pathWaypointsRemaining = static_cast<int>(current_path_.size());
-        if (speed > 1e-3f)
-            status.estimatedTime = status.distanceToTarget / speed;
-        else
-            status.estimatedTime = -1.f;
-    }
-
-    if (trajectory_controller_.is_active())
-    {
-        const bool far_from_goal = status.distanceToTarget > trajectory_controller_.params.goal_threshold;
-        const bool low_speed = speed < BLOCKED_SPEED_THRESHOLD;
-
-        if (far_from_goal && low_speed)
-        {
-            if (!low_speed_block_timer_active_)
-            {
-                low_speed_block_timer_active_ = true;
-                low_speed_block_start_ = now;
-            }
-
-            const float blocked_elapsed_s = std::chrono::duration<float>(now - low_speed_block_start_).count();
-            if (blocked_elapsed_s >= BLOCKED_TIME_THRESHOLD_SEC)
-            {
-                status.state = RoboCompNavigator::NavigationState::BLOCKED;
-                status.statusMessage = "Blocked: low speed while far from target";
-                return status;
-            }
-        }
-        else
-        {
-            low_speed_block_timer_active_ = false;
-        }
-
-        status.state = RoboCompNavigator::NavigationState::NAVIGATING;
-        status.statusMessage = "Navigating";
-    }
-    else if (!current_path_.empty())
-    {
-        low_speed_block_timer_active_ = false;
-        status.state = RoboCompNavigator::NavigationState::PAUSED;
-        status.statusMessage = "Path available but controller paused";
-    }
-    else
-    {
-        low_speed_block_timer_active_ = false;
-        status.state = RoboCompNavigator::NavigationState::IDLE;
-        status.statusMessage = "Idle";
-    }
-
-    return status;
+    return nav_manager_.get_status(speed);
 }
 
 RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoObject(std::string object)
 {
-    if (object.empty() || layout_manager_.furniture().empty())
+    if (!nav_manager_.goto_object(object))
         return {};
 
-    const QString query = QString::fromStdString(object).trimmed();
-    if (query.isEmpty())
-        return {};
+    // Start episode with the computed target (last waypoint)
+    const auto& path = nav_manager_.current_path();
+    const Eigen::Vector2f target_m = path.empty() ? Eigen::Vector2f::Zero() : path.back();
+    start_episode("goto_object", target_m, nav_manager_.nav_target_object_name());
 
-    const rc::FurniturePolygonData *selected = nullptr;
-
-    // 1) exact match against label or id
-    for (const auto &fp : layout_manager_.furniture())
-    {
-        const QString label = QString::fromStdString(fp.label);
-        const QString id = QString::fromStdString(fp.id);
-        if (label.compare(query, Qt::CaseInsensitive) == 0 || id.compare(query, Qt::CaseInsensitive) == 0)
-        {
-            selected = &fp;
-            break;
-        }
-    }
-
-    // 2) substring match if exact not found
-    if (selected == nullptr)
-    {
-        for (const auto &fp : layout_manager_.furniture())
-        {
-            const QString label = QString::fromStdString(fp.label);
-            const QString id = QString::fromStdString(fp.id);
-            if (label.contains(query, Qt::CaseInsensitive) || id.contains(query, Qt::CaseInsensitive))
-            {
-                selected = &fp;
-                break;
-            }
-        }
-    }
-
-    if (selected == nullptr || selected->vertices.empty())
-        return {};
-
-    Eigen::Vector2f object_center = Eigen::Vector2f::Zero();
-    for (const auto &v : selected->vertices)
-        object_center += v;
-    object_center /= static_cast<float>(selected->vertices.size());
-
-    const auto state = get_loc_state();
-    const Eigen::Vector2f robot_pos_m(state[2], state[3]);
-
-    // Compute closest point on selected object's boundary to current robot position.
-    Eigen::Vector2f closest = selected->vertices.front();
-    float best_d2 = std::numeric_limits<float>::max();
-    const size_t n = selected->vertices.size();
-    for (size_t i = 0; i < n; ++i)
-    {
-        const Eigen::Vector2f a = selected->vertices[i];
-        const Eigen::Vector2f b = selected->vertices[(i + 1) % n];
-        const Eigen::Vector2f ab = b - a;
-        const float denom = ab.squaredNorm();
-
-        float t = 0.f;
-        if (denom > 1e-8f)
-            t = (robot_pos_m - a).dot(ab) / denom;
-        if (t < 0.f) t = 0.f;
-        if (t > 1.f) t = 1.f;
-
-        const Eigen::Vector2f proj = a + t * ab;
-        const float d2 = (robot_pos_m - proj).squaredNorm();
-        if (d2 < best_d2)
-        {
-            best_d2 = d2;
-            closest = proj;
-        }
-    }
-
-    // Outward direction: from object boundary toward robot. If degenerate, use centroid heuristic.
-    Eigen::Vector2f outward = robot_pos_m - closest;
-    if (outward.squaredNorm() < 1e-8f)
-    {
-        Eigen::Vector2f centroid = Eigen::Vector2f::Zero();
-        for (const auto &v : selected->vertices)
-            centroid += v;
-        centroid /= static_cast<float>(selected->vertices.size());
-        outward = closest - centroid;
-    }
-    if (outward.squaredNorm() < 1e-8f)
-        outward = Eigen::Vector2f(1.f, 0.f);
-    outward.normalize();
-
-    const float base_offset = std::max(0.25f, path_planner_.params.robot_radius + 0.15f);
-
-    RoboCompNavigator::TPoint source;
-    source.x = state[2];
-    source.y = state[3];
-
-    // Try several stand-off distances from object boundary until path becomes feasible.
-    for (const float scale : {1.f, 1.5f, 2.f, 2.5f})
-    {
-        const Eigen::Vector2f target_m = closest + outward * (base_offset * scale);
-        if (!path_planner_.is_inside(target_m))
-            continue;
-
-        RoboCompNavigator::TPoint target;
-        target.x = target_m.x();
-        target.y = target_m.y();
-
-        const auto res = Navigator_getPath(source, target, path_planner_.params.robot_radius);
-        if (res.valid && res.path.size() >= 2)
-        {
-            std::vector<Eigen::Vector2f> path_m;
-            path_m.reserve(res.path.size());
-            for (const auto &p : res.path)
-                path_m.emplace_back(p.x, p.y);
-
-            current_path_ = path_m;
-            trajectory_controller_.set_path(current_path_);
-            draw_path_threadsafe(trajectory_controller_.get_path());
-
-            nav_target_object_center_ = object_center;
-            nav_target_object_name_ = selected->label.empty() ? selected->id : selected->label;
-            object_align_cycles_ = 0;
-            start_episode("goto_object", Eigen::Vector2f(target.x, target.y), nav_target_object_name_);
-
-            qInfo() << "Navigator_gotoObject: path with" << current_path_.size() << "waypoints activated for"
-                    << QString::fromStdString(nav_target_object_name_);
-            return target;
-        }
-    }
-
-    qWarning() << "Navigator_gotoObject: no reachable stand-off point for object"
-               << QString::fromStdString(selected->label);
-    return {};
+    RoboCompNavigator::TPoint tp;
+    tp.x = target_m.x();
+    tp.y = target_m.y();
+    return tp;
 }
 
 void SpecificWorker::Navigator_resume()
 {
-    if (!current_path_.empty())
-        trajectory_controller_.set_path(current_path_);
-
+    nav_manager_.resume();
 }
 
 RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoPoint(RoboCompNavigator::TPoint target)
 {
-    nav_target_object_center_.reset();
-    nav_target_object_name_.clear();
-    object_align_cycles_ = 0;
-
-    auto state = get_loc_state();
-    RoboCompNavigator::TPoint source;
-    source.x = state[2];
-    source.y = state[3];
-
-    const auto res = Navigator_getPath(source, target, path_planner_.params.robot_radius);
-    if (!res.valid || res.path.size() < 2)
-    {
-        qWarning() << "Navigator_setTarget failed:" << QString::fromStdString(res.errorMsg);
+    const Eigen::Vector2f tgt(target.x, target.y);
+    if (!nav_manager_.goto_point(tgt))
         return {};
-    }
 
-    std::vector<Eigen::Vector2f> path_m;
-    path_m.reserve(res.path.size());
-    for (const auto &p : res.path)
-        path_m.emplace_back(p.x, p.y);
-
-    current_path_ = path_m;
-    trajectory_controller_.set_path(current_path_);
-
-    // Redraw with the relaxed path so the viewer shows what the controller actually follows
-    draw_path_threadsafe(trajectory_controller_.get_path());
-
-    start_episode("goto_point", Eigen::Vector2f(target.x, target.y));
-
-    qInfo() << "Navigator_setTarget: path with" << current_path_.size() << "waypoints activated";
+    start_episode("goto_point", tgt);
     return target;
 }
 
 void SpecificWorker::Navigator_stop()
 {
-    nav_target_object_center_.reset();
-    nav_target_object_name_.clear();
-    object_align_cycles_ = 0;
-
     finish_episode("stopped");
-    trajectory_controller_.stop();
-    current_path_.clear();
+    nav_manager_.stop();
     try { omnirobot_proxy->setSpeedBase(0, 0, 0); } catch (...) {}
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////

@@ -202,6 +202,12 @@ CameraViewer::CameraViewer(RoboCompImageSegmentation::ImageSegmentationPrxPtr pr
     em_reject_button_->setEnabled(false);
     ctrl_layout->addWidget(em_reject_button_);
 
+    auto* raw_button = new QPushButton("Raw Image", ctrl_bar);
+    raw_button->setCheckable(true);
+    raw_button->setToolTip("Show raw camera image without infrastructure masking or overlays");
+    ctrl_layout->addWidget(raw_button);
+    connect(raw_button, &QPushButton::toggled, this, [this](bool on){ raw_mode_ = on; });
+
     ctrl_layout->addStretch();
 
     status_label_ = new QLabel("Idle", ctrl_bar);
@@ -395,6 +401,8 @@ void CameraViewer::grab_frame()
             return;
         }
 
+        if (!raw_mode_)
+        {
         {
             std::lock_guard<std::mutex> lock(wireframe_mutex_);
             if (infrastructure_ctx_valid_ && !infrastructure_room_polygon_.empty())
@@ -1058,6 +1066,7 @@ void CameraViewer::grab_frame()
             }
         }
         painter.end();
+        } // !raw_mode_
 
         rgb_label_->setPixmap(
             px.scaled(rgb_label_->size(), Qt::KeepAspectRatio,

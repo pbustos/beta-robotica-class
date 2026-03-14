@@ -45,6 +45,7 @@
 #include "scene_graph_model.h"
 #include "layout_manager.h"
 #include "em_manager.h"
+#include "navigation_manager.h"
 #include <QSplitter>
 #include "doublebuffer_sync/doublebuffer_sync.h"
 #include "room_concept_ai.h"
@@ -184,40 +185,8 @@ class SpecificWorker : public GenericWorker
 	void draw_furniture();
 	void update_furniture_draw_item(std::size_t idx);
 
-	// ===== Temporary obstacle management (unforeseen obstacle avoidance) =====
-	struct TempObstacle
-	{
-		std::vector<Eigen::Vector2f> vertices;      // polygon in room frame
-		Eigen::Vector2f center;                      // center of obstacle
-		std::chrono::steady_clock::time_point created;
-		int replan_count = 0;                        // how many times this obstacle triggered replan
-		float height = 0.f;                          // estimated height from LiDAR Z range (metres; 0 = unknown)
-	};
-	std::vector<TempObstacle> temp_obstacles_;
-	static constexpr float TEMP_OBSTACLE_TIMEOUT_SEC = 30.f;    // remove after this many seconds
-	static constexpr float TEMP_OBSTACLE_MERGE_DIST = 0.8f;     // merge if centers closer than this
-	static constexpr float TEMP_OBSTACLE_MARGIN = 0.05f;        // extra margin around OBB (planner adds robot_radius)
-
-	/// Cluster LiDAR points near a blockage center and compute an OBB polygon.
-	/// Returns empty vector if too few points found.
-	/// height_out receives the Z range (max_z - min_z) of the clustered points,
-	/// or 0 if the cluster contains fewer than 3 points.
-	std::vector<Eigen::Vector2f> cluster_lidar_to_polygon(
-		const std::vector<Eigen::Vector3f>& lidar_points,
-		const Eigen::Vector2f& blockage_center_room,
-		float search_radius,
-		const Eigen::Affine2f& robot_pose,
-		float& height_out) const;
-
-	/// Add a temporary obstacle and replan the current path.
-	/// Returns true if replan succeeded.
-	bool replan_around_obstacle(const std::vector<Eigen::Vector2f>& obstacle_polygon,
-	                            float obstacle_height,
-	                            const Eigen::Vector2f& center,
-	                            const Eigen::Affine2f& robot_pose);
-
-	/// Remove expired temporary obstacles and rebuild planner if any removed.
-	void cleanup_temp_obstacles();
+	// Navigation manager: owns path planner, trajectory controller, navigation state
+	NavigationManager nav_manager_;
 
 	/// Draw temporary obstacles in the viewer
 	void draw_temp_obstacles();
@@ -248,13 +217,8 @@ class SpecificWorker : public GenericWorker
 	std::string grounding_focus_label_;
 	int grounding_world_index_ = -1;
 	int focused_model_index_ = -1;
-	std::string current_layout_file_;
 	EMManager em_manager_;
 	BufferSync<InOut<rc::VelocityCommand, rc::VelocityCommand>> velocity_buffer_{20};
-	std::optional<Eigen::Vector2f> nav_target_object_center_;
-	std::string nav_target_object_name_;
-	int object_align_cycles_ = 0;
-	bool object_final_align_active_ = false;
 
 	// Measured odometry readings from FullPoseEstimationPub (thread-safe via BufferSync)
 	BufferSync<InOut<rc::OdometryReading, rc::OdometryReading>> odometry_buffer_{20};
@@ -292,15 +256,9 @@ class SpecificWorker : public GenericWorker
 	// Active inference room concept (owned by localization thread after init)
 	rc::RoomConceptAI room_ai;
 
-	// Path planner
-	rc::PolygonPathPlanner path_planner_;
-	std::vector<Eigen::Vector2f> current_path_;
 	void draw_path_threadsafe(const std::vector<Eigen::Vector2f>& path);
 	void draw_path(const std::vector<Eigen::Vector2f>& path);
 	void clear_path(bool stop_controller = true, bool clear_stored_path = true);
-
-	// Trajectory controller (ESDF-based sampling local control)
-	rc::TrajectoryController trajectory_controller_;
 	rc::EpisodicMemory episodic_memory_;
 	std::optional<rc::EpisodicMemory::EpisodeRecord> active_episode_;
 	struct EpisodeAccum
@@ -323,24 +281,7 @@ class SpecificWorker : public GenericWorker
 		bool has_last_metric_sample = false;
 		bool was_blocked = false;
 	} episode_accum_;
-	bool low_speed_block_timer_active_ = false;
-	std::chrono::steady_clock::time_point low_speed_block_start_;
-	static constexpr float BLOCKED_SPEED_THRESHOLD = 0.03f;     // m/s
-	static constexpr float BLOCKED_TIME_THRESHOLD_SEC = 2.5f;   // s
-	static constexpr float SOURCE_OBSTACLE_DENSITY_PROBE_EXTRA_RADIUS = 3.0f; 
-	bool safeguard_recovery_active_ = false;
-	bool safeguard_replan_pending_ = false;
-	int safeguard_recovery_cycles_ = 0;
-	int safeguard_clear_counter_ = 0;
-	Eigen::Vector2f safeguard_blockage_center_ = Eigen::Vector2f::Zero();
-	float safeguard_blockage_radius_ = 0.35f;
-	static constexpr int SAFEGUARD_RECOVERY_MAX_CYCLES = 30; // ~1.5s at 20Hz
-	static constexpr int SAFEGUARD_CLEAR_CONFIRM_CYCLES = 4;
-	static constexpr float SAFEGUARD_BACKWARD_SPEED = -0.12f;
-	float last_ess_ = 0.f;   // Latest ESS value for UI
-	int   last_ess_K_ = 1;   // Latest K for ESS ratio
-	std::chrono::steady_clock::time_point last_safety_guard_trigger_time_{};
-	static constexpr float SAFETY_GUARD_UI_HOLD_SEC = 0.8f;
+
 	std::chrono::steady_clock::time_point last_joystick_time_;
 	static constexpr float JOYSTICK_TIMEOUT_SEC = 0.5f;
 	void send_velocity_command(float adv, float side, float rot);
@@ -409,7 +350,6 @@ class SpecificWorker : public GenericWorker
 private slots:
 	void slot_capture_room_toggled(bool checked);
 	void slot_save_layout();
-	void slot_load_layout();
 	void slot_flip_x();
 	void slot_flip_y();
 	void slot_robot_dragging(QPointF pos);

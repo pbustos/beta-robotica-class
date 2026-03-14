@@ -330,11 +330,6 @@
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton_loadLayout">
-         <property name="text"><string>Load Layout</string></property>
-        </widget>
-       </item>
-       <item>
         <widget class="QPushButton" name="pushButton_flipX">
          <property name="text"><string>Flip X</string></property>
          <property name="toolTip"><string>Mirror robot position on X axis (fixes symmetry issues)</string></property>
@@ -424,12 +419,6 @@
          <property name="text"><string>Camera</string></property>
          <property name="checkable"><bool>true</bool></property>
          <property name="toolTip"><string>Open live camera view</string></property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="pushButton_reloadSVG">
-         <property name="text"><string>Reload SVG</string></property>
-         <property name="toolTip"><string>Reload all meshes from SVG file (clears fitted overrides)</string></property>
         </widget>
        </item>
        <item>

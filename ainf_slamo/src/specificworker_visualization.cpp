@@ -69,8 +69,9 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
     if (label_safetyGuard != nullptr)
     {
         const auto now = std::chrono::steady_clock::now();
-        const bool guard_recent = (last_safety_guard_trigger_time_.time_since_epoch().count() > 0)
-                               && (std::chrono::duration<float>(now - last_safety_guard_trigger_time_).count() <= SAFETY_GUARD_UI_HOLD_SEC);
+        const auto sg_time = nav_manager_.last_safety_guard_trigger_time();
+        const bool guard_recent = (sg_time.time_since_epoch().count() > 0)
+                               && (std::chrono::duration<float>(now - sg_time).count() <= NavigationManager::SAFETY_GUARD_UI_HOLD_SEC);
         label_safetyGuard->setText(guard_recent ? "SG: ON" : "SG: OFF");
         label_safetyGuard->setStyleSheet(guard_recent
             ? "background-color: #FF8A80; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;"
@@ -88,7 +89,7 @@ void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
     lcdNumber_velocity->display(std::abs(current_velocity.adv_y));
     lcdNumber_innov->display(innovation_cm);
 
-    const float ess_ratio_pct = (last_ess_K_ > 0) ? (last_ess_ / static_cast<float>(last_ess_K_)) * 100.f : 0.f;
+    const float ess_ratio_pct = (nav_manager_.last_ess_K() > 0) ? (nav_manager_.last_ess() / static_cast<float>(nav_manager_.last_ess_K())) * 100.f : 0.f;
     lcdNumber_ess->display(static_cast<int>(ess_ratio_pct));
 
     static int ui_slow_counter = 0;
@@ -179,16 +180,17 @@ void SpecificWorker::draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state
 void SpecificWorker::draw_temp_obstacles()
 {
     std::vector<std::vector<Eigen::Vector2f>> polys;
-    polys.reserve(temp_obstacles_.size());
-    for (const auto& obs : temp_obstacles_)
+    const auto& temp_obs = nav_manager_.temp_obstacles();
+    polys.reserve(temp_obs.size());
+    for (const auto& obs : temp_obs)
         polys.push_back(obs.vertices);
     viewer_2d_->draw_temp_obstacles(polys);
 
     if (viewer_3d_)
     {
         std::vector<rc::Viewer3D::ObstacleItem> obs_items;
-        obs_items.reserve(temp_obstacles_.size());
-        for (const auto& obs : temp_obstacles_)
+        obs_items.reserve(temp_obs.size());
+        for (const auto& obs : temp_obs)
             obs_items.push_back({obs.vertices, obs.height});
         viewer_3d_->update_obstacles(obs_items);
     }
@@ -217,10 +219,10 @@ void SpecificWorker::draw_path(const std::vector<Eigen::Vector2f>& path)
 
     rc::Viewer2D::PathDrawData data;
     data.path              = path;
-    data.orig_poly_verts   = path_planner_.get_original_polygon();
-    data.inner_poly        = path_planner_.get_inner_polygon();
-    data.nav_poly          = path_planner_.get_navigable_polygon();
-    data.expanded_obstacles = path_planner_.get_expanded_obstacles();
+    data.orig_poly_verts   = nav_manager_.path_planner().get_original_polygon();
+    data.inner_poly        = nav_manager_.path_planner().get_inner_polygon();
+    data.nav_poly          = nav_manager_.path_planner().get_navigable_polygon();
+    data.expanded_obstacles = nav_manager_.path_planner().get_expanded_obstacles();
     viewer_2d_->draw_path(data);
 
     if (viewer_3d_)
@@ -273,7 +275,7 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
             // Vertices are already in room frame (where user clicked)
             // Pass them to room_ai via thread-safe command queue
             push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
-            path_planner_.set_polygon(layout_manager_.room_polygon());
+            nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
 
             // Draw final polygon (fixed in room frame)
             draw_room_polygon();

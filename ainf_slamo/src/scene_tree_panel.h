@@ -5,6 +5,7 @@
 #include <Eigen/Core>
 #include <vector>
 #include <string>
+#include <optional>
 
 // Forward declaration — full include not needed in header.
 namespace rc { class SceneGraphModel; }
@@ -83,7 +84,8 @@ private:
                                       const QString& label,
                                       const QString& type_str,
                                       float tx, float ty, float yaw_rad,
-                                      float width, float depth, float height) const;
+                                      float width, float depth, float height,
+                                      std::optional<float> last_fit_sdf = std::nullopt) const;
 
     QTreeWidgetItem* make_wall_item(const QString& label,
                                     float pos_x, float pos_y,
