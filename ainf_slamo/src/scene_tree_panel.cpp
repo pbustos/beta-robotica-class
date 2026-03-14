@@ -58,32 +58,26 @@ SceneTreePanel::SceneTreePanel(QWidget* parent)
     });
 
     // ---- Object-selection via click ----
-    connect(tree_, &QTreeWidget::itemPressed, this, [this](QTreeWidgetItem* item, int)
-    {
-        if (item && is_object_item(item) && item->isSelected())
-            pressed_selected_item_ = item;
-        else
-            pressed_selected_item_ = nullptr;
-    });
-
+    // NOTE: We track the selected item ourselves (active_selected_item_) because
+    // Qt6 updates the selection model BEFORE emitting itemPressed, so checking
+    // isSelected() there always sees the post-change state.
     connect(tree_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int)
     {
         if (!item || !is_object_item(item))
-        {
-            pressed_selected_item_ = nullptr;
             return;
-        }
-        if (item == pressed_selected_item_)
+
+        if (item == active_selected_item_)
         {
+            // Re-click on the already-selected item → deselect (toggle off)
             tree_->clearSelection();
             tree_->setCurrentItem(nullptr);
             item->setExpanded(false);
+            active_selected_item_ = nullptr;
             emit furnitureClicked(item->text(0), false);
-            pressed_selected_item_ = nullptr;
             return;
         }
+        active_selected_item_ = item;
         emit furnitureClicked(item->text(0), true);
-        pressed_selected_item_ = nullptr;
     });
 
     // ---- Editable property cells ----
@@ -261,7 +255,7 @@ void SceneTreePanel::rebuild_from_model()
     }
 
     updating_ = true;
-    pressed_selected_item_ = nullptr;
+    active_selected_item_ = nullptr;
     tree_->clear();
 
     const auto& root = model_->root();
@@ -384,6 +378,7 @@ bool SceneTreePanel::select_item_by_name(const QString& name)
     if (best->parent()) best->parent()->setExpanded(true);
     best->setExpanded(true);
     tree_->scrollToItem(best, QAbstractItemView::PositionAtCenter);
+    active_selected_item_ = best;
     return true;
 }
 

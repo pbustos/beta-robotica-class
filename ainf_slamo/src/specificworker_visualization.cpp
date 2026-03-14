@@ -396,13 +396,6 @@ void SpecificWorker::draw_furniture()
         viewer_3d_->update_furniture(items);
     }
 
-    rc::SceneGraphAdapter::rebuild_graph(
-        scene_graph_,
-        room_polygon_,
-        furniture_polygons_,
-        [this](const std::string& label) { return model_height_from_label(label); },
-        2.6f);
-
     rebuild_ownership_em_models();
 }
 

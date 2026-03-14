@@ -76,7 +76,7 @@ private:
     QTreeWidget*         tree_      = nullptr;
     rc::SceneGraphModel* model_     = nullptr;
     bool                 updating_  = false;          // guard re-entrant itemChanged
-    QTreeWidgetItem*     pressed_selected_item_ = nullptr;
+    QTreeWidgetItem*     active_selected_item_ = nullptr;  // our own selection tracking
 
     // ---- Tree-build helpers ----
     QTreeWidgetItem* make_object_item(const rc::SceneGraphModel* m,

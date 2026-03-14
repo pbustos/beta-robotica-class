@@ -104,14 +104,18 @@ std::vector<Eigen::Vector3f> SceneGraphModel::make_rect_local(float w, float d)
     return {{-hw, -hd, 0.f}, {hw, -hd, 0.f}, {hw, hd, 0.f}, {-hw, hd, 0.f}};
 }
 
+// Standard 2D rotation convention: width = local X, depth = local Y.
+//   xdir_world = R(yaw) * (1,0) = ( cos yaw,  sin yaw)   local X axis in world
+//   ydir_world = R(yaw) * (0,1) = (-sin yaw,  cos yaw)   local Y axis in world
+// This matches object_footprints.h and viewer_3d.cpp so extents.x == width, extents.y == depth.
 void SceneGraphModel::world_to_local_polygon(const std::vector<Eigen::Vector2f>& world_poly,
                                              const Eigen::Vector2f& center,
                                              float y_yaw,
                                              std::vector<Eigen::Vector3f>& local_poly,
                                              Eigen::Vector3f& extents)
 {
-    const Eigen::Vector2f ydir(std::cos(y_yaw), std::sin(y_yaw));
-    const Eigen::Vector2f xdir(ydir.y(), -ydir.x());
+    const Eigen::Vector2f xdir( std::cos(y_yaw),  std::sin(y_yaw));  // local X in world
+    const Eigen::Vector2f ydir(-std::sin(y_yaw),  std::cos(y_yaw));  // local Y in world
 
     float min_x = std::numeric_limits<float>::max();
     float max_x = -std::numeric_limits<float>::max();
@@ -123,8 +127,8 @@ void SceneGraphModel::world_to_local_polygon(const std::vector<Eigen::Vector2f>&
     for (const auto& vw : world_poly)
     {
         const Eigen::Vector2f d = vw - center;
-        const float lx = d.dot(xdir);
-        const float ly = d.dot(ydir);
+        const float lx = d.dot(xdir);  // width component
+        const float ly = d.dot(ydir);  // depth component
         local_poly.emplace_back(lx, ly, 0.f);
         min_x = std::min(min_x, lx);
         max_x = std::max(max_x, lx);
@@ -132,8 +136,8 @@ void SceneGraphModel::world_to_local_polygon(const std::vector<Eigen::Vector2f>&
         max_y = std::max(max_y, ly);
     }
 
-    extents = Eigen::Vector3f(std::max(0.08f, max_x - min_x),
-                              std::max(0.08f, max_y - min_y),
+    extents = Eigen::Vector3f(std::max(0.08f, max_x - min_x),   // width  (X)
+                              std::max(0.08f, max_y - min_y),   // depth  (Y)
                               0.8f);
 }
 
@@ -142,8 +146,8 @@ std::vector<Eigen::Vector2f> SceneGraphModel::local_to_world_polygon(const std::
                                                                      float y_yaw)
 {
     const Eigen::Vector2f center(translation.x(), translation.y());
-    const Eigen::Vector2f ydir(std::cos(y_yaw), std::sin(y_yaw));
-    const Eigen::Vector2f xdir(ydir.y(), -ydir.x());
+    const Eigen::Vector2f xdir( std::cos(y_yaw),  std::sin(y_yaw));  // local X in world
+    const Eigen::Vector2f ydir(-std::sin(y_yaw),  std::cos(y_yaw));  // local Y in world
 
     std::vector<Eigen::Vector2f> world_poly;
     world_poly.reserve(local_poly.size());
@@ -166,8 +170,6 @@ void SceneGraphModel::rebuild(const std::vector<Eigen::Vector2f>& room_polygon,
     root_.id = "room";
     root_.label = "room";
     root_.type = "room";
-
-    Eigen::Vector2f room_center = compute_polygon_centroid(room_polygon);
 
     root_.local_vertices.reserve(room_polygon.size());
     for (const auto& p : room_polygon)
@@ -210,21 +212,10 @@ void SceneGraphModel::rebuild(const std::vector<Eigen::Vector2f>& room_polygon,
 
         const Eigen::Vector2f c = compute_polygon_centroid(obj_src.vertices);
 
-        // Use the stored frame yaw when available; fall back to
-        // room-centre direction only for legacy objects with no yaw set.
-        float y_yaw;
-        if (std::abs(obj_src.frame_yaw_inward_rad) > 1e-6f)
-        {
-            y_yaw = obj_src.frame_yaw_inward_rad;
-        }
-        else
-        {
-            Eigen::Vector2f ydir = room_center - c;
-            if (ydir.norm() < 1e-4f)
-                ydir = Eigen::Vector2f(0.f, 1.f);
-            ydir.normalize();
-            y_yaw = std::atan2(ydir.y(), ydir.x());
-        }
+        // Always use the stored yaw from the furniture data (the old
+        // room-centre fallback is no longer needed — every object now
+        // carries an explicit yaw_rad, including the valid value 0).
+        const float y_yaw = obj_src.frame_yaw_inward_rad;
 
         Node obj;
         obj.id = obj_src.id;

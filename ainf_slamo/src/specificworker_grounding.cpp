@@ -187,6 +187,7 @@ void SpecificWorker::set_object_property(const QString& label, const QString& pr
         scene_graph_.sync_object_silent(fp.label, fp.vertices, fp.height, new_yaw_rad);
         if (scene_tree_)
             scene_tree_->update_object_display(label);
+        save_scene_graph_to_usd();
     }
     else if (property == "width" || property == "depth" || property == "height")
     {

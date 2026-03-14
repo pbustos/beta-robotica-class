@@ -433,6 +433,14 @@
         </widget>
        </item>
        <item>
+        <widget class="QPushButton" name="pushButton_toggleTree">
+         <property name="text"><string>◀ Tree</string></property>
+         <property name="checkable"><bool>true</bool></property>
+         <property name="checked"><bool>true</bool></property>
+         <property name="toolTip"><string>Show/hide the scene tree panel</string></property>
+        </widget>
+       </item>
+       <item>
         <spacer name="horizontalSpacer_buttons">
          <property name="orientation"><enum>Qt::Horizontal</enum></property>
          <property name="sizeHint" stdset="0">

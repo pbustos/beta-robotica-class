@@ -184,9 +184,30 @@ void SpecificWorker::initialize()
 
         splitter->addWidget(right_splitter);
         splitter->setSizes({450, 450, 220});
+        splitter->setCollapsible(2, true);  // right panel can be collapsed
         splitter_ = splitter;   // store for state save/restore
         frame_layout->addWidget(splitter);
-        
+
+        // Toggle tree panel button
+        connect(pushButton_toggleTree, &QPushButton::toggled, this, [this](bool checked) {
+            if (checked) {
+                // Show: restore saved width
+                auto sizes = splitter_->sizes();
+                sizes[2] = tree_panel_saved_width_ > 0 ? tree_panel_saved_width_ : 220;
+                splitter_->setSizes(sizes);
+                pushButton_toggleTree->setText("◀ Tree");
+            } else {
+                // Hide: save current width then collapse
+                const auto sizes = splitter_->sizes();
+                if (sizes.size() > 2 && sizes[2] > 0)
+                    tree_panel_saved_width_ = sizes[2];
+                auto new_sizes = sizes;
+                new_sizes[2] = 0;
+                splitter_->setSizes(new_sizes);
+                pushButton_toggleTree->setText("▶ Tree");
+            }
+        });
+
         // Connect object picking to navigation
         connect(viewer_3d_.get(), &rc::Viewer3D::objectPicked, this, [this](const QString& n) {
             QString picked = n.trimmed();
@@ -329,7 +350,10 @@ void SpecificWorker::initialize()
                 trajectory_controller_.set_static_obstacles(obs);
             }
 
-            // Redraw 2D + 3D + tree (rebuild_graph inside draw_furniture fires modelRebuilt)
+            // Rebuild the scene graph model to include the new object, then draw and save.
+            rc::SceneGraphAdapter::rebuild_graph(
+                scene_graph_, room_polygon_, furniture_polygons_,
+                [this](const std::string& l) { return model_height_from_label(l); }, 2.6f);
             draw_furniture();
             save_scene_graph_to_usd();
 
@@ -490,6 +514,8 @@ void SpecificWorker::initialize()
                 path_planner_.set_obstacles(obs);
                 trajectory_controller_.set_static_obstacles(obs);
             }
+            // Remove from model, then rebuild graph from updated furniture list.
+            scene_graph_.remove_object("", lbl);
             draw_furniture();
             save_scene_graph_to_usd();
             qInfo() << "[Tree] Removed" << label;
@@ -499,12 +525,8 @@ void SpecificWorker::initialize()
         scene_tree_->set_model(&scene_graph_);
     }
 
-    // When the model changes an object (via set_object_pose / set_object_extents),
-    // sync furniture_polygons_ and do a full redraw (2D + 3D + scene graph).
-    // draw_furniture() is called because:
-    //  - Pose changes (yaw) need the 3D mesh to be re-oriented.
-    //  - Extents changes need the 3D mesh to be fully rebuilt with new dimensions.
-    //  - set_furniture_absolute_center() only translates; it cannot resize or re-orient.
+    // When the model changes a single object (via set_object_pose / set_object_extents),
+    // update ONLY that object's visuals — never rebuild the entire scene graph.
     connect(&scene_graph_, &rc::SceneGraphModel::objectChanged,
             this, [this](const QString& label)
     {
@@ -512,22 +534,52 @@ void SpecificWorker::initialize()
         if (!node_opt) return;
         const auto& node = *node_opt;
 
-        // Update furniture_polygons_ from the authoritative model state.
+        // Update the single affected entry in furniture_polygons_.
         const int idx = find_furniture_index_by_name(label);
-        if (idx >= 0 && idx < static_cast<int>(furniture_polygons_.size()))
+        if (idx < 0 || idx >= static_cast<int>(furniture_polygons_.size()))
+            return;
+
+        const auto uidx = static_cast<std::size_t>(idx);
+        auto& fp = furniture_polygons_[uidx];
+        fp.height               = std::max(0.2f, node.extents.z());
+        fp.frame_yaw_inward_rad = node.yaw_rad;
+        fp.vertices             = rc::footprints::make(
+            node.object_type,
+            node.translation.x(), node.translation.y(), node.yaw_rad,
+            std::max(0.08f, node.extents.x()),
+            std::max(0.08f, node.extents.y()));
+
+        // Redraw only this object in 2D.
+        update_furniture_draw_item(uidx);
+
+        // Rebuild the 3D mesh for this object (needs full list but only this item changed).
+        if (viewer_3d_)
         {
-            auto& fp = furniture_polygons_[static_cast<std::size_t>(idx)];
-            fp.height    = node.extents.z();
-            fp.frame_yaw_inward_rad = node.yaw_rad;
-            fp.vertices  = rc::footprints::make(
-                node.object_type,
-                node.translation.x(), node.translation.y(), node.yaw_rad,
-                std::max(0.08f, node.extents.x()),
-                std::max(0.08f, node.extents.y()));
+            std::vector<rc::Viewer3D::FurnitureItem> items;
+            items.reserve(furniture_polygons_.size());
+            for (const auto& f : furniture_polygons_)
+            {
+                if (f.vertices.empty()) continue;
+                auto nd = scene_graph_.get_object_node(f.label);
+                if (!nd) continue;
+                rc::Viewer3D::FurnitureItem fi;
+                fi.label    = f.label;
+                fi.centroid = Eigen::Vector2f(nd->translation.x(), nd->translation.y());
+                fi.size     = Eigen::Vector2f(std::max(0.08f, nd->extents.x()),
+                                              std::max(0.08f, nd->extents.y()));
+                fi.yaw_rad  = nd->yaw_rad;
+                fi.height   = std::max(0.2f, nd->extents.z());
+                items.push_back(fi);
+            }
+            viewer_3d_->update_furniture(items);
         }
 
-        // Full rebuild so the 3D mesh reflects new dimensions/orientation.
-        draw_furniture();
+        // Update tree display for this object.
+        if (scene_tree_)
+            scene_tree_->update_object_display(label);
+
+        // Persist to disk (this is a model-only serialization, no rebuild).
+        save_scene_graph_to_usd();
     });
 
     // PD / MPPI mode toggle

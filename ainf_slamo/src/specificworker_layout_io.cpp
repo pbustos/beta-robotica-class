@@ -255,13 +255,9 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
 
 void SpecificWorker::save_scene_graph_to_usd()
 {
-    rc::SceneGraphAdapter::rebuild_graph(
-        scene_graph_,
-        room_polygon_,
-        furniture_polygons_,
-        [this](const std::string& label) { return model_height_from_label(label); },
-        2.6f);
-
+    // The scene graph model is the source of truth — just serialize it.
+    // Do NOT call rebuild_graph() here: that would reconstruct every object
+    // from furniture_polygons_ vertices, overwriting model state.
     const std::string usda = scene_graph_.to_usda();
 
     QFile file(PERSISTED_SCENE_GRAPH_FILE);
@@ -340,7 +336,11 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
     // Parse SVG file
     QString content = QString::fromUtf8(data);
     load_polygon_from_svg(content);
-    // Bootstrap from SVG only when USD persistence is not present yet.
+    // Bootstrap from SVG: build the scene graph model from the parsed data,
+    // then persist.  This is only reached when no USD file exists yet.
+    rc::SceneGraphAdapter::rebuild_graph(
+        scene_graph_, room_polygon_, furniture_polygons_,
+        [this](const std::string& l) { return model_height_from_label(l); }, 2.6f);
     save_scene_graph_to_usd();
 
     qInfo() << "Polygon loaded from" << QString::fromStdString(filename)

@@ -245,6 +245,7 @@ class SpecificWorker : public GenericWorker
         bool initial_center_done_ = false; // Flag to center view once at start
 	QSplitter* splitter_ = nullptr;  // Horizontal splitter (2D | 3D views)
 	QSplitter* right_splitter_ = nullptr; // Vertical splitter in right pane (tree top | palette bottom)
+	int tree_panel_saved_width_ = 220;    // last known width of the right panel (for toggle restore)
 	QWidget* grounding_panel_ = nullptr;          // Hidden container for grounding status labels
 	QLabel* grounding_status_label_ = nullptr;
 	QLabel* grounding_cam_label_ = nullptr;
