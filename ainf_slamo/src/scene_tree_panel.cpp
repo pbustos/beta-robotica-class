@@ -1,6 +1,7 @@
 #include "scene_tree_panel.h"
 #include "scene_graph_model.h"
 
+#include <algorithm>
 #include <QHeaderView>
 #include <QFont>
 #include <QBrush>
@@ -294,16 +295,23 @@ void SceneTreePanel::rebuild_from_model()
         room_item->addChild(floor_item);
         floor_item->setExpanded(expanded_set.contains("Floor") || true);
 
+        // Collect object nodes sorted alphabetically by label
+        std::vector<const rc::SceneGraphModel::Node*> sorted_objs;
         for (const auto& obj : floor_node->children)
+            if (obj.type == "object") sorted_objs.push_back(&obj);
+        std::sort(sorted_objs.begin(), sorted_objs.end(),
+                  [](const rc::SceneGraphModel::Node* a, const rc::SceneGraphModel::Node* b)
+                  { return QString::fromStdString(a->label).toLower() < QString::fromStdString(b->label).toLower(); });
+
+        for (const auto* obj : sorted_objs)
         {
-            if (obj.type != "object") continue;
-            const QString qlabel = QString::fromStdString(obj.label);
+            const QString qlabel = QString::fromStdString(obj->label);
             auto* oi = make_object_item(model_,
                 qlabel,
-                QString::fromStdString(obj.object_type),
-                obj.translation.x(), obj.translation.y(), obj.yaw_rad,
-                obj.extents.x(), obj.extents.y(), obj.extents.z(),
-                obj.last_fit_sdf);
+                QString::fromStdString(obj->object_type),
+                obj->translation.x(), obj->translation.y(), obj->yaw_rad,
+                obj->extents.x(), obj->extents.y(), obj->extents.z(),
+                obj->last_fit_sdf);
             floor_item->addChild(oi);
             if (expanded_set.contains(qlabel)) oi->setExpanded(true);
         }

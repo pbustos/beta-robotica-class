@@ -626,17 +626,17 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         const float back_thick = std::max(0.04f, 0.08f * d);
         const float back_h     = std::max(0.08f, h - seat_h - seat_thick);
         // Seat plank (wider than deep, like a park bench)
-        make_cuboid_part(QColor(140, 95, 50), QColor(60, 40, 22), 15.f,
+        make_cuboid_part(QColor(230, 140, 30), QColor(180, 100, 15), 15.f,
                          cen, yaw, 0.f, 0.f, w, d, seat_thick,
                          seat_h + 0.5f * seat_thick, pn, gk);
         // Two pairs of stout legs (no rear legs separate — bench style)
         for (float sx : {1.f, -1.f})
-            make_cuboid_part(QColor(100, 68, 35), QColor(45, 28, 14), 12.f,
+            make_cuboid_part(QColor(190, 110, 20), QColor(140, 80, 10), 12.f,
                              cen, yaw, sx * leg_dx, 0.f,
                              leg_thick, d * 0.85f, seat_h,
                              0.5f * seat_h, pn, gk);
         // Backrest (tall thin board at rear edge, -Y local)
-        make_cuboid_part(QColor(140, 95, 50), QColor(60, 40, 22), 15.f,
+        make_cuboid_part(QColor(230, 140, 30), QColor(180, 100, 15), 15.f,
                          cen, yaw, 0.f, -(0.5f * d - 0.5f * back_thick),
                          w, back_thick, back_h,
                          seat_h + seat_thick + 0.5f * back_h, pn, gk);

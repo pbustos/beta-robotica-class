@@ -212,7 +212,7 @@ static QColor furniture_color_for(const std::string& label)
         (label[2] == 'n' || label[2] == 'N') &&
         (label[3] == 'c' || label[3] == 'C') &&
         (label[4] == 'h' || label[4] == 'H'))
-        return QColor(160, 82, 45);   // sienna brown
+        return QColor(230, 140, 30);  // warm orange
     return QColor(50, 100, 255);       // default blue
 }
 

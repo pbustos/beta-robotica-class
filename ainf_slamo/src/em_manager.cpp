@@ -429,6 +429,7 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
     // --- candidate selection (bounding-box overlap with camera image) ---
     std::vector<int> candidate_indices;
     candidate_indices.reserve(furniture_polygons.size());
+    const Eigen::Vector2f robot_xy = robot_pose.translation();
     for (std::size_t i = 0; i < furniture_polygons.size(); ++i)
     {
         const auto& fp = furniture_polygons[i];
@@ -437,10 +438,19 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
 
         const float h = std::max(0.2f, fp.height);
 
+        // Distance gate: skip objects whose centroid is far from the robot.
+        const Eigen::Vector2f c_world = centroid_of(fp);
+        const float dist = (c_world - robot_xy).norm();
+        constexpr float max_object_dist = 6.0f;   // metres
+        if (dist > max_object_dist)
+        {
+            qInfo() << "  [EM] distance-reject:" << QString::fromStdString(fp.label.empty() ? fp.id : fp.label)
+                     << "dist=" << dist;
+            continue;
+        }
+
         // Project all footprint corners at floor (z=0) and top (z=h), then
         // check whether the projected bounding-box overlaps the camera image.
-        // This correctly selects objects that are partially visible even when
-        // none of their individual corner projections land inside the frame.
         float min_u =  std::numeric_limits<float>::max();
         float max_u = -std::numeric_limits<float>::max();
         float min_v =  std::numeric_limits<float>::max();
@@ -479,8 +489,6 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
     // --- line-of-sight filter: discard objects behind walls ---
     if (!room_polygon.empty() && room_polygon.size() >= 3)
     {
-        const Eigen::Vector2f robot_xy = robot_pose.translation();
-
         // Proper segment–segment intersection test (same as PolygonPathPlanner::segments_intersect_proper)
         auto seg_cross = [](const Eigen::Vector2f& a1, const Eigen::Vector2f& a2,
                             const Eigen::Vector2f& b1, const Eigen::Vector2f& b2) -> bool
@@ -521,6 +529,15 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
                     return occluded;
                 }),
             candidate_indices.end());
+    }
+
+    // Log surviving candidates
+    {
+        QStringList names;
+        for (int idx : candidate_indices)
+            names << QString::fromStdString(furniture_polygons[idx].label.empty()
+                                            ? furniture_polygons[idx].id : furniture_polygons[idx].label);
+        qInfo() << "  [EM] candidates (" << candidate_indices.size() << "):" << names.join(", ");
     }
 
     if (candidate_indices.empty())
@@ -714,6 +731,15 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
             std::array<Eigen::Vector2f, 4> out{Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero()};
             if (poly.empty())
                 return out;
+
+            // Furniture vertices from the scene graph are already properly
+            // oriented 4-corner rectangles — use them directly to avoid
+            // PCA instability on square footprints (e.g. chairs).
+            if (poly.size() == 4)
+            {
+                for (int i = 0; i < 4; ++i) out[i] = poly[i];
+                return out;
+            }
 
             Eigen::Vector2f c = Eigen::Vector2f::Zero();
             for (const auto& p : poly) c += p;
@@ -1285,6 +1311,12 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
             std::array<Eigen::Vector2f, 4> out{Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero(), Eigen::Vector2f::Zero()};
             if (poly.empty())
                 return out;
+
+            if (poly.size() == 4)
+            {
+                for (int i = 0; i < 4; ++i) out[i] = poly[i];
+                return out;
+            }
 
             Eigen::Vector2f c = Eigen::Vector2f::Zero();
             for (const auto& p : poly) c += p;
