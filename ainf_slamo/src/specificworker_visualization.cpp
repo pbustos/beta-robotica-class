@@ -173,7 +173,7 @@ void SpecificWorker::draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state
 {
     const float width  = state[0];
     const float length = state[1];
-    viewer_2d_->update_estimated_room_rect(width, length, !room_polygon_.empty());
+    viewer_2d_->update_estimated_room_rect(width, length, !layout_manager_.room_polygon().empty());
 }
 
 void SpecificWorker::draw_temp_obstacles()
@@ -246,8 +246,8 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
     if (checked)
     {
         // Start capturing — backup existing polygon (don't remove it yet)
-        room_polygon_backup_ = room_polygon_;
-        room_polygon_.clear();
+        layout_manager_.backup_room_polygon();
+        layout_manager_.begin_capture();
 
         // Clear previous vertex markers
         viewer_2d_->clear_capture_vertices();
@@ -263,17 +263,17 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
     {
         pushButton_captureRoom->setText("Capture Room");
 
-        if (room_polygon_.size() >= 3)
+        if (layout_manager_.room_polygon().size() >= 3)
         {
-            qInfo() << "Room polygon captured with" << room_polygon_.size() << "vertices";
+            qInfo() << "Room polygon captured with" << layout_manager_.room_polygon().size() << "vertices";
 
             // Clear vertex markers (yellow circles)
             viewer_2d_->clear_capture_vertices();
 
             // Vertices are already in room frame (where user clicked)
             // Pass them to room_ai via thread-safe command queue
-            push_loc_command(LocCmdSetPolygon{room_polygon_});
-            path_planner_.set_polygon(room_polygon_);
+            push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
+            path_planner_.set_polygon(layout_manager_.room_polygon());
 
             // Draw final polygon (fixed in room frame)
             draw_room_polygon();
@@ -283,8 +283,7 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
             qWarning() << "Need at least 3 vertices for a valid polygon. Restoring previous polygon.";
 
             // Restore the backup polygon
-            room_polygon_ = room_polygon_backup_;
-            room_polygon_backup_.clear();
+            layout_manager_.restore_room_polygon();
 
             // Discard any partially-drawn new polygon and restore the backup outline
             viewer_2d_->restore_polygon_from_backup();
@@ -306,9 +305,9 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
 
     // Check if clicking near the first point to close the polygon
     constexpr float close_threshold = 0.3f;  // 30cm
-    if (room_polygon_.size() >= 3)
+    if (layout_manager_.room_polygon().size() >= 3)
     {
-        const float dist_to_first = (click_pos - room_polygon_.front()).norm();
+        const float dist_to_first = (click_pos - layout_manager_.room_polygon().front()).norm();
         if (dist_to_first < close_threshold)
         {
             // Close the polygon
@@ -318,7 +317,7 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
     }
 
     // Add new vertex in room frame coordinates
-    room_polygon_.push_back(click_pos);
+    layout_manager_.capture_vertex(click_pos);
 
     // Draw vertex marker via Viewer2D
     viewer_2d_->add_capture_vertex(pos);
@@ -326,47 +325,29 @@ void SpecificWorker::on_scene_clicked(QPointF pos)
     // Draw temporary polygon outline
     draw_room_polygon();
 
-    qInfo() << "Added vertex" << room_polygon_.size() << "at (" << pos.x() << "," << pos.y() << ")";
+    qInfo() << "Added vertex" << layout_manager_.room_polygon().size() << "at (" << pos.x() << "," << pos.y() << ")";
 }
 
 void SpecificWorker::draw_room_polygon()
 {
-    viewer_2d_->draw_room_polygon(room_polygon_, capturing_room_polygon);
+    viewer_2d_->draw_room_polygon(layout_manager_.room_polygon(), capturing_room_polygon);
 
-    if (viewer_3d_ && !capturing_room_polygon && room_polygon_.size() >= 3)
-        viewer_3d_->rebuild_walls(room_polygon_);
+    if (viewer_3d_ && !capturing_room_polygon && layout_manager_.room_polygon().size() >= 3)
+        viewer_3d_->rebuild_walls(layout_manager_.room_polygon());
 }
 
 void SpecificWorker::draw_furniture()
 {
-    // --- Compute 2D footprint vertices from the authoritative model ---
-    // Both the 2D and 3D views now read the same (tx, ty, yaw, w, d) from the
-    // model and compute their geometry using the standard rotation convention
-    // defined in object_footprints.h.  This guarantees visual consistency.
-    for (auto& fp : furniture_polygons_)
-    {
-        auto node_opt = scene_graph_.get_object_node(fp.label);
-        if (node_opt)
-        {
-            const auto& nd = *node_opt;
-            fp.vertices = rc::footprints::make(
-                nd.object_type,
-                nd.translation.x(), nd.translation.y(),
-                nd.yaw_rad,
-                std::max(0.08f, nd.extents.x()),
-                std::max(0.08f, nd.extents.y()));
-            fp.frame_yaw_inward_rad = nd.yaw_rad;
-            fp.height = std::max(0.2f, nd.extents.z());
-        }
-    }
+    // Recompute all footprint vertices from the authoritative model
+    layout_manager_.refresh_all_from_model();
 
     // 2D: draw the freshly computed polygons
-    viewer_2d_->draw_furniture(furniture_polygons_);
+    viewer_2d_->draw_furniture(layout_manager_.furniture());
 
     em_manager_.apply_visuals();
 
-    if (!furniture_polygons_.empty())
-        qInfo() << "[draw_furniture] Drew" << furniture_polygons_.size() << "furniture polygons";
+    if (!layout_manager_.furniture().empty())
+        qInfo() << "[draw_furniture] Drew" << layout_manager_.furniture().size() << "furniture polygons";
 
     if (scene_tree_)
         scene_tree_->rebuild_from_model();
@@ -374,8 +355,8 @@ void SpecificWorker::draw_furniture()
     if (viewer_3d_)
     {
         std::vector<rc::Viewer3D::FurnitureItem> items;
-        items.reserve(furniture_polygons_.size());
-        for (const auto& fp : furniture_polygons_)
+        items.reserve(layout_manager_.furniture().size());
+        for (const auto& fp : layout_manager_.furniture())
         {
             if (fp.vertices.empty()) continue;
 
@@ -401,10 +382,10 @@ void SpecificWorker::draw_furniture()
 
 void SpecificWorker::update_furniture_draw_item(std::size_t idx)
 {
-    if (idx >= furniture_polygons_.size())
+    if (idx >= layout_manager_.furniture().size())
         return;
 
-    viewer_2d_->update_furniture_item(idx, furniture_polygons_[idx]);
+    viewer_2d_->update_furniture_item(idx, layout_manager_.furniture()[idx]);
 
     em_manager_.apply_visuals();
 }

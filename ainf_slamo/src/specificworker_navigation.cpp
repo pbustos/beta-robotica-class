@@ -198,7 +198,7 @@ bool SpecificWorker::replan_around_obstacle(const std::vector<Eigen::Vector2f>& 
 
     // Rebuild obstacle list: static furniture + all temp obstacles
     std::vector<std::vector<Eigen::Vector2f>> all_obstacles;
-    for (const auto& fp : furniture_polygons_)
+    for (const auto& fp : layout_manager_.furniture())
         all_obstacles.push_back(fp.vertices);
     for (const auto& to : temp_obstacles_)
         all_obstacles.push_back(to.vertices);
@@ -254,7 +254,7 @@ void SpecificWorker::cleanup_temp_obstacles()
     {
         // Rebuild obstacle list with only furniture + remaining temp obstacles
         std::vector<std::vector<Eigen::Vector2f>> all_obstacles;
-        for (const auto& fp : furniture_polygons_)
+        for (const auto& fp : layout_manager_.furniture())
             all_obstacles.push_back(fp.vertices);
         for (const auto& to : temp_obstacles_)
             all_obstacles.push_back(to.vertices);

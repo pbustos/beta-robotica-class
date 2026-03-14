@@ -15,7 +15,7 @@
 
 void SpecificWorker::slot_save_layout()
 {
-    if (room_polygon_.empty())
+    if (layout_manager_.room_polygon().empty())
     {
         qWarning() << "No polygon to save - capture a room first";
         return;
@@ -39,7 +39,6 @@ void SpecificWorker::slot_save_layout()
 
     // Remove the old polygon from the UI now that the new one is saved
     viewer_2d_->discard_polygon_backup();
-    room_polygon_backup_.clear();
 }
 
 void SpecificWorker::slot_load_layout()
@@ -59,24 +58,26 @@ void SpecificWorker::slot_load_layout()
 
 void SpecificWorker::slot_flip_x()
 {
-    if (room_polygon_.empty())
+    if (layout_manager_.room_polygon().empty())
     {
         qWarning() << "Cannot flip: no room polygon defined";
         return;
     }
 
     // Flip all polygon vertices on X axis
-    for (auto& vertex : room_polygon_)
+    auto poly = layout_manager_.room_polygon();
+    for (auto& vertex : poly)
     {
         vertex.x() = -vertex.x();
     }
+    layout_manager_.set_room_polygon(std::move(poly));
 
     // Toggle flip state
     flip_x_applied_ = !flip_x_applied_;
 
     // Update the room model with flipped polygon (thread-safe)
-    push_loc_command(LocCmdSetPolygon{room_polygon_});
-    path_planner_.set_polygon(room_polygon_);
+    push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
+    path_planner_.set_polygon(layout_manager_.room_polygon());
 
     // Redraw the polygon
     draw_room_polygon();
@@ -86,24 +87,26 @@ void SpecificWorker::slot_flip_x()
 
 void SpecificWorker::slot_flip_y()
 {
-    if (room_polygon_.empty())
+    if (layout_manager_.room_polygon().empty())
     {
         qWarning() << "Cannot flip: no room polygon defined";
         return;
     }
 
     // Flip all polygon vertices on Y axis
-    for (auto& vertex : room_polygon_)
+    auto poly = layout_manager_.room_polygon();
+    for (auto& vertex : poly)
     {
         vertex.y() = -vertex.y();
     }
+    layout_manager_.set_room_polygon(std::move(poly));
 
     // Toggle flip state
     flip_y_applied_ = !flip_y_applied_;
 
     // Update the room model with flipped polygon (thread-safe)
-    push_loc_command(LocCmdSetPolygon{room_polygon_});
-    path_planner_.set_polygon(room_polygon_);
+    push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
+    path_planner_.set_polygon(layout_manager_.room_polygon());
 
     // Redraw the polygon
     draw_room_polygon();
@@ -113,7 +116,9 @@ void SpecificWorker::slot_flip_y()
 
 void SpecificWorker::save_layout_to_svg(const std::string& filename)
 {
-    if (room_polygon_.empty())
+    const auto& room_poly = layout_manager_.room_polygon();
+
+    if (room_poly.empty())
     {
         qWarning() << "No polygon to save";
         return;
@@ -125,7 +130,7 @@ void SpecificWorker::save_layout_to_svg(const std::string& filename)
     float max_x = std::numeric_limits<float>::lowest();
     float max_y = std::numeric_limits<float>::lowest();
 
-    for (const auto& v : room_polygon_)
+    for (const auto& v : room_poly)
     {
         min_x = std::min(min_x, v.x());
         min_y = std::min(min_y, v.y());
@@ -203,10 +208,10 @@ void SpecificWorker::save_layout_to_svg(const std::string& filename)
     out << "      points=\"";
 
     // Write polygon points (flip Y for SVG coordinate system)
-    for (size_t i = 0; i < room_polygon_.size(); ++i)
+    for (size_t i = 0; i < room_poly.size(); ++i)
     {
         if (i > 0) out << " ";
-        out << room_polygon_[i].x() << "," << -room_polygon_[i].y();
+        out << room_poly[i].x() << "," << -room_poly[i].y();
     }
 
     out << "\"\n";
@@ -214,9 +219,9 @@ void SpecificWorker::save_layout_to_svg(const std::string& filename)
 
     // Add vertex circles for easier editing
     out << "    <!-- Vertex markers -->\n";
-    for (size_t i = 0; i < room_polygon_.size(); ++i)
+    for (size_t i = 0; i < room_poly.size(); ++i)
     {
-        out << "    <circle cx=\"" << room_polygon_[i].x() << "\" cy=\"" << -room_polygon_[i].y()
+        out << "    <circle cx=\"" << room_poly[i].x() << "\" cy=\"" << -room_poly[i].y()
             << "\" r=\"0.08\" fill=\"#ffff00\" stroke=\"#000000\" stroke-width=\"0.01\""
             << " inkscape:label=\"Vertex " << i << "\"/>\n";
     }
@@ -226,7 +231,7 @@ void SpecificWorker::save_layout_to_svg(const std::string& filename)
 
     file.close();
     qInfo() << "SVG layout saved to" << QString::fromStdString(filename)
-            << "(" << room_polygon_.size() << " vertices)";
+            << "(" << room_poly.size() << " vertices)";
 }
 
 void SpecificWorker::load_layout_from_file(const std::string& filename)
@@ -234,22 +239,21 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
     load_polygon_from_file(filename);
 
     // If polygon was loaded, initialize room_ai
-    if (room_polygon_.size() >= 3)
+    if (layout_manager_.room_polygon().size() >= 3)
     {
-        push_loc_command(LocCmdSetPolygon{room_polygon_});
-        path_planner_.set_polygon(room_polygon_);
-        trajectory_controller_.set_room_boundary(room_polygon_);
-        if (!furniture_polygons_.empty())
+        push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
+        path_planner_.set_polygon(layout_manager_.room_polygon());
+        trajectory_controller_.set_room_boundary(layout_manager_.room_polygon());
+        if (!layout_manager_.furniture().empty())
         {
-            std::vector<std::vector<Eigen::Vector2f>> obs;
-            for (const auto& fp : furniture_polygons_) obs.push_back(fp.vertices);
+            const auto obs = layout_manager_.obstacle_polygons();
             path_planner_.set_obstacles(obs);
             trajectory_controller_.set_static_obstacles(obs);
         }
         draw_room_polygon();
         draw_furniture();
-        qInfo() << "Layout loaded and room_ai initialized with" << room_polygon_.size() << "vertices,"
-                << furniture_polygons_.size() << "furniture polygons";
+        qInfo() << "Layout loaded and room_ai initialized with" << layout_manager_.room_polygon().size() << "vertices,"
+                << layout_manager_.furniture().size() << "furniture polygons";
     }
 }
 
@@ -257,7 +261,7 @@ void SpecificWorker::save_scene_graph_to_usd()
 {
     // The scene graph model is the source of truth — just serialize it.
     // Do NOT call rebuild_graph() here: that would reconstruct every object
-    // from furniture_polygons_ vertices, overwriting model state.
+    // from layout_manager_ furniture vertices, overwriting model state.
     const std::string usda = scene_graph_.to_usda();
 
     QFile file(PERSISTED_SCENE_GRAPH_FILE);
@@ -268,7 +272,7 @@ void SpecificWorker::save_scene_graph_to_usd()
     }
     file.write(QByteArray::fromStdString(usda));
     file.close();
-    qInfo() << "Saved scene graph to" << PERSISTED_SCENE_GRAPH_FILE << "objects=" << furniture_polygons_.size();
+    qInfo() << "Saved scene graph to" << PERSISTED_SCENE_GRAPH_FILE << "objects=" << layout_manager_.furniture().size();
 }
 
 bool SpecificWorker::load_scene_graph_from_usd()
@@ -300,10 +304,10 @@ bool SpecificWorker::load_scene_graph_from_usd()
             scene_graph_.from_json(root_obj.value("scene_tree").toObject());
     }
 
-    room_polygon_ = scene_graph_.room_polygon_xy();
-    furniture_polygons_ = rc::SceneGraphAdapter::to_furniture(scene_graph_.objects());
-    qInfo() << "Loaded scene graph from" << PERSISTED_SCENE_GRAPH_FILE << "objects=" << furniture_polygons_.size();
-    return !room_polygon_.empty();
+    layout_manager_.set_room_polygon(scene_graph_.room_polygon_xy());
+    layout_manager_.replace_all(rc::SceneGraphAdapter::to_furniture(scene_graph_.objects()));
+    qInfo() << "Loaded scene graph from" << PERSISTED_SCENE_GRAPH_FILE << "objects=" << layout_manager_.furniture().size();
+    return !layout_manager_.room_polygon().empty();
 }
 
 void SpecificWorker::load_polygon_from_file(const std::string& filename)
@@ -330,7 +334,7 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
     file.close();
 
     // Clear previous polygon
-    room_polygon_.clear();
+    layout_manager_.set_room_polygon({});
     viewer_2d_->clear_capture_vertices();
 
     // Parse SVG file
@@ -339,12 +343,12 @@ void SpecificWorker::load_polygon_from_file(const std::string& filename)
     // Bootstrap from SVG: build the scene graph model from the parsed data,
     // then persist.  This is only reached when no USD file exists yet.
     rc::SceneGraphAdapter::rebuild_graph(
-        scene_graph_, room_polygon_, furniture_polygons_,
+        scene_graph_, layout_manager_.room_polygon(), layout_manager_.furniture(),
         [](const std::string& l) { return EMManager::model_height_from_label(l); }, 2.6f);
     save_scene_graph_to_usd();
 
     qInfo() << "Polygon loaded from" << QString::fromStdString(filename)
-            << "with" << room_polygon_.size() << "vertices";
+            << "with" << layout_manager_.room_polygon().size() << "vertices";
 }
 
 void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
@@ -598,7 +602,7 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
     //   - Paths in a layer whose label contains "Furniture" (case-insensitive) -> furniture obstacles
     //   - First path NOT in a "Furniture" layer -> room contour
     //   - Remaining non-furniture paths are ignored (or could be alternate room contours)
-    furniture_polygons_.clear();
+    std::vector<rc::FurniturePolygonData> parsed_furniture;
     bool room_found = false;
 
     for (const auto& pp : allPaths)
@@ -611,16 +615,16 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
             fp.id = pp.id.toStdString();
             fp.label = pp.label.isEmpty() ? pp.id.toStdString() : pp.label.toStdString();
             fp.vertices = pp.pts;
-            furniture_polygons_.push_back(std::move(fp));
-            qInfo() << "[SVG] Furniture:" << QString::fromStdString(furniture_polygons_.back().label)
-                    << "vertices=" << furniture_polygons_.back().vertices.size();
+            qInfo() << "[SVG] Furniture:" << QString::fromStdString(fp.label)
+                    << "vertices=" << fp.vertices.size();
+            parsed_furniture.push_back(std::move(fp));
         }
         else if (!room_found)
         {
-            room_polygon_ = pp.pts;
+            layout_manager_.set_room_polygon(pp.pts);
             room_found = true;
-            qInfo() << "[SVG] room_polygon_ set to path id='" << pp.id
-                    << "' (layer=" << pp.layer_label << ") with" << room_polygon_.size() << "vertices";
+            qInfo() << "[SVG] room_polygon set to path id='" << pp.id
+                    << "' (layer=" << pp.layer_label << ") with" << layout_manager_.room_polygon().size() << "vertices";
         }
         else
         {
@@ -632,11 +636,13 @@ void SpecificWorker::load_polygon_from_svg(const QString& svg_content)
     if (!room_found && !allPaths.empty())
     {
         // Fallback: no layer classification, use first path as room contour
-        room_polygon_ = allPaths[0].pts;
-        qInfo() << "[SVG] No layer classification found. Using first path as room_polygon_: id='" << allPaths[0].id
-                << "' with" << room_polygon_.size() << "vertices";
+        layout_manager_.set_room_polygon(allPaths[0].pts);
+        qInfo() << "[SVG] No layer classification found. Using first path as room_polygon: id='" << allPaths[0].id
+                << "' with" << layout_manager_.room_polygon().size() << "vertices";
     }
 
-    qInfo() << "[SVG] Room polygon:" << room_polygon_.size() << "vertices,"
-            << furniture_polygons_.size() << "furniture polygons";
+    layout_manager_.replace_all(std::move(parsed_furniture));
+
+    qInfo() << "[SVG] Room polygon:" << layout_manager_.room_polygon().size() << "vertices,"
+            << layout_manager_.furniture().size() << "furniture polygons";
 }

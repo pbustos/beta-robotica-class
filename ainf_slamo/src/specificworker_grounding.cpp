@@ -28,9 +28,9 @@ int SpecificWorker::find_furniture_index_by_name(const QString& name) const
         return -1;
 
     int contains_match = -1;
-    for (std::size_t i = 0; i < furniture_polygons_.size(); ++i)
+    for (std::size_t i = 0; i < layout_manager_.furniture().size(); ++i)
     {
-        const auto& fp = furniture_polygons_[i];
+        const auto& fp = layout_manager_.furniture()[i];
         const QString label = normalize(QString::fromStdString(fp.label));
         const QString id = normalize(QString::fromStdString(fp.id));
         if ((!label.isEmpty() && label == target) || (!id.isEmpty() && id == target))
@@ -50,7 +50,7 @@ void SpecificWorker::translate_furniture_by_name(const QString& name, float dx_r
     if (idx < 0 || (std::abs(dx_room) < 1e-6f && std::abs(dy_room) < 1e-6f))
         return;
 
-    auto& fp = furniture_polygons_[static_cast<std::size_t>(idx)];
+    auto& fp = layout_manager_.furniture_mutable()[static_cast<std::size_t>(idx)];
     if (fp.vertices.empty())
         return;
 
@@ -74,7 +74,7 @@ void SpecificWorker::rotate_furniture_by_name(const QString& name, float angle_r
     if (idx < 0 || std::abs(angle_rad) < 1e-6f)
         return;
 
-    auto& fp = furniture_polygons_[static_cast<std::size_t>(idx)];
+    auto& fp = layout_manager_.furniture_mutable()[static_cast<std::size_t>(idx)];
 
     // Only update the 2D polygon for vertical-axis (yaw) rotations.
     if (std::abs(axis.y()) > 0.5f && fp.vertices.size() >= 3)
@@ -123,7 +123,7 @@ void SpecificWorker::set_object_property(const QString& label, const QString& pr
     {
         const int idx = find_furniture_index_by_name(label);
         if (idx < 0) return;
-        auto& fp = furniture_polygons_[static_cast<std::size_t>(idx)];
+        auto& fp = layout_manager_.furniture_mutable()[static_cast<std::size_t>(idx)];
 
         // Rotate footprint vertices around their centroid by the delta angle.
         // We use vertex rotation (same as mouse-drag path) to avoid the
@@ -163,7 +163,7 @@ void SpecificWorker::set_object_property(const QString& label, const QString& pr
         const float h = (property == "height") ? value : node.extents.z();
         scene_graph_.set_object_extents(label.toStdString(), w, d, h);
     }
-    // objectChanged signal from scene_graph_ will update furniture_polygons_,
+    // objectChanged signal from scene_graph_ will update layout_manager_ furniture,
     // viewer_3d_, and viewer2d_ via the connection added in specificworker.cpp.
 }
 
@@ -172,7 +172,7 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
     if (!camera_viewer_)
         return;
 
-    if (furniture_polygons_.empty())
+    if (layout_manager_.furniture().empty())
     {
         camera_viewer_->clear_wireframe_overlay();
         return;
@@ -231,10 +231,10 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
 
     auto object_visibility_score = [&](int idx, float* out_abs_bearing = nullptr) -> float
     {
-        if (idx < 0 || idx >= static_cast<int>(furniture_polygons_.size()))
+        if (idx < 0 || idx >= static_cast<int>(layout_manager_.furniture().size()))
             return -1.f;
 
-        const auto& fp = furniture_polygons_[idx];
+        const auto& fp = layout_manager_.furniture()[idx];
         if (fp.vertices.size() < 3)
             return -1.f;
 
@@ -282,7 +282,7 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
 
     int best_idx = -1;
     float best_score = -1.f;
-    for (int i = 0; i < static_cast<int>(furniture_polygons_.size()); ++i)
+    for (int i = 0; i < static_cast<int>(layout_manager_.furniture().size()); ++i)
     {
         const float s = object_visibility_score(i, nullptr);
         if (s > best_score)
@@ -292,7 +292,7 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
         }
     }
 
-    if (selected_index < 0 || selected_index >= static_cast<int>(furniture_polygons_.size()))
+    if (selected_index < 0 || selected_index >= static_cast<int>(layout_manager_.furniture().size()))
     {
         selected_index = best_idx;
     }
@@ -307,13 +307,13 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
 
     focused_model_index_ = selected_index;
 
-    if (focused_model_index_ < 0 || focused_model_index_ >= static_cast<int>(furniture_polygons_.size()))
+    if (focused_model_index_ < 0 || focused_model_index_ >= static_cast<int>(layout_manager_.furniture().size()))
     {
         camera_viewer_->clear_wireframe_overlay();
         return;
     }
 
-    const auto& fp = furniture_polygons_[focused_model_index_];
+    const auto& fp = layout_manager_.furniture()[focused_model_index_];
     if (fp.vertices.size() < 3)
     {
         camera_viewer_->clear_wireframe_overlay();
@@ -793,9 +793,9 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
                     float local_best_bearing_deg = 0.f;
                     int local_best_world_index = -1;
 
-                    for (std::size_t world_idx = 0; world_idx < furniture_polygons_.size(); ++world_idx)
+                    for (std::size_t world_idx = 0; world_idx < layout_manager_.furniture().size(); ++world_idx)
                     {
-                        const auto &fp = furniture_polygons_[world_idx];
+                        const auto &fp = layout_manager_.furniture()[world_idx];
                         if (fp.vertices.size() < 3) continue;
 
                         Eigen::Vector2f cen = Eigen::Vector2f::Zero();

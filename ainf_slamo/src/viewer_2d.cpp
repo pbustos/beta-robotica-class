@@ -202,6 +202,20 @@ void Viewer2D::restore_polygon_from_backup()
 // ─────────────────────────────────────────────────────────────────────────────
 // Furniture polygons
 // ─────────────────────────────────────────────────────────────────────────────
+
+static QColor furniture_color_for(const std::string& label)
+{
+    // Bench → warm brown; everything else → blue
+    if (label.size() >= 5 &&
+        (label[0] == 'b' || label[0] == 'B') &&
+        (label[1] == 'e' || label[1] == 'E') &&
+        (label[2] == 'n' || label[2] == 'N') &&
+        (label[3] == 'c' || label[3] == 'C') &&
+        (label[4] == 'h' || label[4] == 'H'))
+        return QColor(160, 82, 45);   // sienna brown
+    return QColor(50, 100, 255);       // default blue
+}
+
 void Viewer2D::draw_furniture(const std::vector<rc::FurniturePolygonData>& fps)
 {
     for (auto* item : furniture_draw_items_)
@@ -211,13 +225,14 @@ void Viewer2D::draw_furniture(const std::vector<rc::FurniturePolygonData>& fps)
     }
     furniture_draw_items_.clear();
 
-    const QPen   pen  (QColor(50, 100, 255), 0.06);
-    const QBrush brush(QColor(50, 100, 255, 40));
-
     for (const auto& fp : fps)
     {
         if (fp.vertices.size() < 3)
             continue;
+
+        const QColor c = furniture_color_for(fp.label);
+        const QPen   pen  (c, 0.06);
+        const QBrush brush(QColor(c.red(), c.green(), c.blue(), 40));
 
         QPolygonF qpoly;
         for (const auto& v : fp.vertices)
@@ -246,8 +261,9 @@ void Viewer2D::update_furniture_item(std::size_t idx, const rc::FurniturePolygon
     if (fp.vertices.size() < 3)
         return;
 
-    const QPen   pen  (QColor(50, 100, 255), 0.06);
-    const QBrush brush(QColor(50, 100, 255, 40));
+    const QColor c = furniture_color_for(fp.label);
+    const QPen   pen  (c, 0.06);
+    const QBrush brush(QColor(c.red(), c.green(), c.blue(), 40));
 
     QPolygonF qpoly;
     for (const auto& v : fp.vertices)

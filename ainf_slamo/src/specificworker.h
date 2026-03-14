@@ -43,6 +43,7 @@
 #include "object_footprints.h"
 #include "scene_graph_adapter.h"
 #include "scene_graph_model.h"
+#include "layout_manager.h"
 #include "em_manager.h"
 #include <QSplitter>
 #include "doublebuffer_sync/doublebuffer_sync.h"
@@ -175,13 +176,11 @@ class SpecificWorker : public GenericWorker
 	void read_lidar();
 
 	// Room model
-	std::vector<Eigen::Vector2f> room_polygon_;  // Room model polygon vertices (loaded from SVG or captured)
-	std::vector<Eigen::Vector2f> room_polygon_backup_;  // Backup of polygon during capture
 	bool capturing_room_polygon = false;
 
-	// Furniture / obstacles (loaded from SVG "Furniture" layer)
-	std::vector<rc::FurniturePolygonData> furniture_polygons_;
+	// Layout manager: owns furniture polygons, room polygon, wraps scene graph
 	rc::SceneGraphModel scene_graph_;
+	LayoutManager layout_manager_{scene_graph_};
 	void draw_furniture();
 	void update_furniture_draw_item(std::size_t idx);
 

@@ -69,12 +69,12 @@ float SpecificWorker::percentile_copy(std::vector<float> values, float q)
 
 float SpecificWorker::compute_source_obstacle_density(const Eigen::Vector2f& source_point) const
 {
-    if (room_polygon_.size() < 3)
+    if (layout_manager_.room_polygon().size() < 3)
         return 0.f;
 
     auto inside_any_obstacle = [this](const Eigen::Vector2f& p)
     {
-        for (const auto& fp : furniture_polygons_)
+        for (const auto& fp : layout_manager_.furniture())
             if (point_in_polygon_2d(p, fp.vertices))
                 return true;
         for (const auto& temp : temp_obstacles_)
@@ -83,7 +83,7 @@ float SpecificWorker::compute_source_obstacle_density(const Eigen::Vector2f& sou
         return false;
     };
 
-    const bool inside_room = point_in_polygon_2d(source_point, room_polygon_);
+    const bool inside_room = point_in_polygon_2d(source_point, layout_manager_.room_polygon());
     if (!inside_room || inside_any_obstacle(source_point))
         return 1.f;
 
@@ -98,13 +98,13 @@ float SpecificWorker::compute_source_obstacle_density(const Eigen::Vector2f& sou
         const Eigen::Vector2f dir(std::cos(angle), std::sin(angle));
         const Eigen::Vector2f candidate = source_point + probe_radius * dir;
 
-        if (!point_in_polygon_2d(candidate, room_polygon_) || inside_any_obstacle(candidate))
+        if (!point_in_polygon_2d(candidate, layout_manager_.room_polygon()) || inside_any_obstacle(candidate))
             blocked_dirs++;
     }
     const float blocked_ratio = static_cast<float>(blocked_dirs) / static_cast<float>(n_dirs);
 
-    float min_clearance = point_to_polygon_boundary_distance(source_point, room_polygon_);
-    for (const auto& fp : furniture_polygons_)
+    float min_clearance = point_to_polygon_boundary_distance(source_point, layout_manager_.room_polygon());
+    for (const auto& fp : layout_manager_.furniture())
         min_clearance = std::min(min_clearance, point_to_polygon_boundary_distance(source_point, fp.vertices));
     for (const auto& temp : temp_obstacles_)
         min_clearance = std::min(min_clearance, point_to_polygon_boundary_distance(source_point, temp.vertices));

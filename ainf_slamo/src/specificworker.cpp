@@ -342,7 +342,7 @@ void SpecificWorker::initialize()
         {
             // Build a unique numbered label (e.g. "chair_2")
             int count = 1;
-            for (const auto& fp : furniture_polygons_)
+            for (const auto& fp : layout_manager_.furniture())
             {
                 const QString ql = QString::fromStdString(fp.label).toLower();
                 if (ql.startsWith(type_label.toLower()))
@@ -359,20 +359,18 @@ void SpecificWorker::initialize()
             fp.frame_yaw_inward_rad = yaw_rad;
             fp.vertices             = rc::SceneGraphModel::make_world_rect_polygon(
                                           tx, ty, yaw_rad, width_m, depth_m);
-            furniture_polygons_.push_back(std::move(fp));
+            layout_manager_.add_furniture(std::move(fp));
 
             // Sync planner obstacles
             {
-                std::vector<std::vector<Eigen::Vector2f>> obs;
-                obs.reserve(furniture_polygons_.size());
-                for (const auto& f : furniture_polygons_) obs.push_back(f.vertices);
+                const auto obs = layout_manager_.obstacle_polygons();
                 path_planner_.set_obstacles(obs);
                 trajectory_controller_.set_static_obstacles(obs);
             }
 
             // Rebuild the scene graph model to include the new object, then draw and save.
             rc::SceneGraphAdapter::rebuild_graph(
-                scene_graph_, room_polygon_, furniture_polygons_,
+                scene_graph_, layout_manager_.room_polygon(), layout_manager_.furniture(),
                 [](const std::string& l) { return EMManager::model_height_from_label(l); }, 2.6f);
             draw_furniture();
             save_scene_graph_to_usd();
@@ -539,15 +537,10 @@ void SpecificWorker::initialize()
                 this, [this](const QString& label)
         {
             const std::string lbl = label.toStdString();
-            auto it = std::find_if(furniture_polygons_.begin(), furniture_polygons_.end(),
-                                   [&lbl](const rc::FurniturePolygonData& fp){ return fp.label == lbl; });
-            if (it == furniture_polygons_.end()) return;
-            furniture_polygons_.erase(it);
+            layout_manager_.remove_furniture(lbl);
             // Update planner obstacles
             {
-                std::vector<std::vector<Eigen::Vector2f>> obs;
-                obs.reserve(furniture_polygons_.size());
-                for (const auto& f : furniture_polygons_) obs.push_back(f.vertices);
+                const auto obs = layout_manager_.obstacle_polygons();
                 path_planner_.set_obstacles(obs);
                 trajectory_controller_.set_static_obstacles(obs);
             }
@@ -571,13 +564,13 @@ void SpecificWorker::initialize()
         if (!node_opt) return;
         const auto& node = *node_opt;
 
-        // Update the single affected entry in furniture_polygons_.
+        // Update the single affected entry in layout_manager_ furniture.
         const int idx = find_furniture_index_by_name(label);
-        if (idx < 0 || idx >= static_cast<int>(furniture_polygons_.size()))
+        if (idx < 0 || idx >= static_cast<int>(layout_manager_.furniture().size()))
             return;
 
         const auto uidx = static_cast<std::size_t>(idx);
-        auto& fp = furniture_polygons_[uidx];
+        auto& fp = layout_manager_.furniture_mutable()[uidx];
         fp.height               = std::max(0.2f, node.extents.z());
         fp.frame_yaw_inward_rad = node.yaw_rad;
         fp.vertices             = rc::footprints::make(
@@ -593,8 +586,8 @@ void SpecificWorker::initialize()
         if (viewer_3d_)
         {
             std::vector<rc::Viewer3D::FurnitureItem> items;
-            items.reserve(furniture_polygons_.size());
-            for (const auto& f : furniture_polygons_)
+            items.reserve(layout_manager_.furniture().size());
+            for (const auto& f : layout_manager_.furniture())
             {
                 if (f.vertices.empty()) continue;
                 auto nd = scene_graph_.get_object_node(f.label);
@@ -795,23 +788,22 @@ void SpecificWorker::initialize()
     const Eigen::Vector2f init_xy = -(R * room_center_in_robot.cast<float>());
 
     // Initialize room_ai: use loaded polygon if available, otherwise use rectangle
-    if (!room_polygon_.empty())
+    if (!layout_manager_.room_polygon().empty())
     {
         // Use pre-loaded polygon from file
-        room_ai.set_polygon_room(room_polygon_);
-        path_planner_.set_polygon(room_polygon_);
-        trajectory_controller_.set_room_boundary(room_polygon_);
-        if (!furniture_polygons_.empty())
+        room_ai.set_polygon_room(layout_manager_.room_polygon());
+        path_planner_.set_polygon(layout_manager_.room_polygon());
+        trajectory_controller_.set_room_boundary(layout_manager_.room_polygon());
+        if (!layout_manager_.furniture().empty())
         {
-            std::vector<std::vector<Eigen::Vector2f>> obs;
-            for (const auto& fp : furniture_polygons_) obs.push_back(fp.vertices);
+            const auto obs = layout_manager_.obstacle_polygons();
             path_planner_.set_obstacles(obs);
             trajectory_controller_.set_static_obstacles(obs);
         }
         draw_room_polygon();
         draw_furniture();
-        qInfo() << "RoomConceptAI initialized with loaded polygon:" << room_polygon_.size() << "vertices"
-                << "furniture:" << furniture_polygons_.size();
+        qInfo() << "RoomConceptAI initialized with loaded polygon:" << layout_manager_.room_polygon().size() << "vertices"
+                << "furniture:" << layout_manager_.furniture().size();
 
         // Perform grid search or load saved pose to solve kidnapping problem
         perform_grid_search(pts);
@@ -841,8 +833,8 @@ void SpecificWorker::initialize()
         EMManager::Context em_ctx;
         em_ctx.camera_viewer = camera_viewer_.get();
         em_ctx.viewer_2d = viewer_2d_.get();
-        em_ctx.furniture_polygons = &furniture_polygons_;
-        em_ctx.room_polygon = &room_polygon_;
+        em_ctx.furniture_polygons = &layout_manager_.furniture_mutable();
+        em_ctx.room_polygon = &layout_manager_.room_polygon();
         em_ctx.scene_graph = &scene_graph_;
         em_ctx.status_label = grounding_status_label_;
         em_ctx.sdf_label = grounding_sdf_label_;
@@ -890,7 +882,7 @@ void SpecificWorker::compute()
     if (camera_viewer_)
     {
         camera_viewer_->set_infrastructure_context(res.robot_pose,
-                                                   room_polygon_,
+                                                   layout_manager_.room_polygon(),
                                                    params.CAMERA_TX,
                                                    params.CAMERA_TY,
                                                    params.CAMERA_TZ,
@@ -1132,7 +1124,7 @@ void SpecificWorker::compute()
         if (!nav_target_object_name_.empty())
         {
             const QString target_name = QString::fromStdString(nav_target_object_name_).trimmed();
-            for (const auto& fp : furniture_polygons_)
+            for (const auto& fp : layout_manager_.furniture())
             {
                 const QString flabel = QString::fromStdString(fp.label).trimmed();
                 const QString fid = QString::fromStdString(fp.id).trimmed();
@@ -1419,23 +1411,27 @@ bool SpecificWorker::load_last_pose()
     // NOTE: This is called from initialize() BEFORE localization thread starts, so direct access is safe.
     if (saved_flip_x)
     {
-        for (auto& vertex : room_polygon_)
+        auto poly = layout_manager_.room_polygon();
+        for (auto& vertex : poly)
             vertex.x() = -vertex.x();
+        layout_manager_.set_room_polygon(std::move(poly));
         flip_x_applied_ = true;
 
-        room_ai.set_polygon_room(room_polygon_);
-        path_planner_.set_polygon(room_polygon_);
+        room_ai.set_polygon_room(layout_manager_.room_polygon());
+        path_planner_.set_polygon(layout_manager_.room_polygon());
         draw_room_polygon();
         qInfo() << "Applied saved flip_x";
     }
     if (saved_flip_y)
     {
-        for (auto& vertex : room_polygon_)
+        auto poly = layout_manager_.room_polygon();
+        for (auto& vertex : poly)
             vertex.y() = -vertex.y();
+        layout_manager_.set_room_polygon(std::move(poly));
         flip_y_applied_ = true;
 
-        room_ai.set_polygon_room(room_polygon_);
-        path_planner_.set_polygon(room_polygon_);
+        room_ai.set_polygon_room(layout_manager_.room_polygon());
+        path_planner_.set_polygon(layout_manager_.room_polygon());
         draw_room_polygon();
         qInfo() << "Applied saved flip_y";
     }
@@ -1630,9 +1626,9 @@ void SpecificWorker::FullPoseEstimationPub_newFullPose(RoboCompFullPoseEstimatio
 RoboCompNavigator::LayoutData SpecificWorker::Navigator_getLayout()
 {
     RoboCompNavigator::LayoutData ret;
-    ret.layout.reserve(room_polygon_.size());
+    ret.layout.reserve(layout_manager_.room_polygon().size());
 
-    for (const auto &p : room_polygon_)
+    for (const auto &p : layout_manager_.room_polygon())
     {
         RoboCompNavigator::TPoint pt;
         pt.x = p.x();
@@ -1640,8 +1636,8 @@ RoboCompNavigator::LayoutData SpecificWorker::Navigator_getLayout()
         ret.layout.push_back(pt);
     }
 
-    ret.objects.reserve(furniture_polygons_.size());
-    for (const auto &fp : furniture_polygons_)
+    ret.objects.reserve(layout_manager_.furniture().size());
+    for (const auto &fp : layout_manager_.furniture())
     {
         RoboCompNavigator::TObject obj;
         obj.name = fp.label.empty() ? fp.id : fp.label;
@@ -1687,14 +1683,11 @@ RoboCompNavigator::Result SpecificWorker::Navigator_getPath(RoboCompNavigator::T
     if (safety > 0.f && std::fabs(path_planner_.params.robot_radius - safety) > 1e-4f)
     {
         path_planner_.params.robot_radius = safety;
-        if (!room_polygon_.empty())
-            path_planner_.set_polygon(room_polygon_);
-        if (!furniture_polygons_.empty())
+        if (!layout_manager_.room_polygon().empty())
+            path_planner_.set_polygon(layout_manager_.room_polygon());
+        if (!layout_manager_.furniture().empty())
         {
-            std::vector<std::vector<Eigen::Vector2f>> obstacles;
-            obstacles.reserve(furniture_polygons_.size());
-            for (const auto &fp : furniture_polygons_)
-                obstacles.push_back(fp.vertices);
+            const auto obstacles = layout_manager_.obstacle_polygons();
             path_planner_.set_obstacles(obstacles);
         }
     }
@@ -1825,7 +1818,7 @@ RoboCompNavigator::NavigationStatus SpecificWorker::Navigator_getStatus()
 
 RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoObject(std::string object)
 {
-    if (object.empty() || furniture_polygons_.empty())
+    if (object.empty() || layout_manager_.furniture().empty())
         return {};
 
     const QString query = QString::fromStdString(object).trimmed();
@@ -1835,7 +1828,7 @@ RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoObject(std::string objec
     const rc::FurniturePolygonData *selected = nullptr;
 
     // 1) exact match against label or id
-    for (const auto &fp : furniture_polygons_)
+    for (const auto &fp : layout_manager_.furniture())
     {
         const QString label = QString::fromStdString(fp.label);
         const QString id = QString::fromStdString(fp.id);
@@ -1849,7 +1842,7 @@ RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoObject(std::string objec
     // 2) substring match if exact not found
     if (selected == nullptr)
     {
-        for (const auto &fp : furniture_polygons_)
+        for (const auto &fp : layout_manager_.furniture())
         {
             const QString label = QString::fromStdString(fp.label);
             const QString id = QString::fromStdString(fp.id);
