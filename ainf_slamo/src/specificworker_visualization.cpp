@@ -7,6 +7,8 @@
 #include <cmath>
 #include <limits>
 
+#include "object_footprints.h"
+
 void SpecificWorker::update_ui(const rc::RoomConceptAI::UpdateResult &res,
                                const rc::VelocityCommand &current_velocity,
                                int fps_val)
@@ -337,7 +339,28 @@ void SpecificWorker::draw_room_polygon()
 
 void SpecificWorker::draw_furniture()
 {
-    // 2D: delegate all polygon drawing to Viewer2D
+    // --- Compute 2D footprint vertices from the authoritative model ---
+    // Both the 2D and 3D views now read the same (tx, ty, yaw, w, d) from the
+    // model and compute their geometry using the standard rotation convention
+    // defined in object_footprints.h.  This guarantees visual consistency.
+    for (auto& fp : furniture_polygons_)
+    {
+        auto node_opt = scene_graph_.get_object_node(fp.label);
+        if (node_opt)
+        {
+            const auto& nd = *node_opt;
+            fp.vertices = rc::footprints::make(
+                nd.object_type,
+                nd.translation.x(), nd.translation.y(),
+                nd.yaw_rad,
+                std::max(0.08f, nd.extents.x()),
+                std::max(0.08f, nd.extents.y()));
+            fp.frame_yaw_inward_rad = nd.yaw_rad;
+            fp.height = std::max(0.2f, nd.extents.z());
+        }
+    }
+
+    // 2D: draw the freshly computed polygons
     viewer_2d_->draw_furniture(furniture_polygons_);
 
     apply_ownership_em_visuals();
@@ -346,11 +369,7 @@ void SpecificWorker::draw_furniture()
         qInfo() << "[draw_furniture] Drew" << furniture_polygons_.size() << "furniture polygons";
 
     if (scene_tree_)
-    {
-        // Model signals drive incremental updates; rebuild here keeps the tree
-        // consistent when furniture is added/removed in bulk (e.g. after room load).
         scene_tree_->rebuild_from_model();
-    }
 
     if (viewer_3d_)
     {
@@ -359,49 +378,20 @@ void SpecificWorker::draw_furniture()
         for (const auto& fp : furniture_polygons_)
         {
             if (fp.vertices.empty()) continue;
-            Eigen::Vector2f cen = Eigen::Vector2f::Zero();
-            for (const auto& v : fp.vertices)
+
+            auto node_opt = scene_graph_.get_object_node(fp.label);
+            if (node_opt)
             {
-                cen += v;
+                const auto& nd = *node_opt;
+                rc::Viewer3D::FurnitureItem fi;
+                fi.label    = fp.label;
+                fi.centroid = Eigen::Vector2f(nd.translation.x(), nd.translation.y());
+                fi.size     = Eigen::Vector2f(std::max(0.08f, nd.extents.x()),
+                                              std::max(0.08f, nd.extents.y()));
+                fi.yaw_rad  = nd.yaw_rad;
+                fi.height   = std::max(0.2f, nd.extents.z());
+                items.push_back(fi);
             }
-            cen /= static_cast<float>(fp.vertices.size());
-
-            Eigen::Matrix2f cov = Eigen::Matrix2f::Zero();
-            for (const auto& v : fp.vertices)
-            {
-                const Eigen::Vector2f d = v - cen;
-                cov += d * d.transpose();
-            }
-            cov /= static_cast<float>(std::max<std::size_t>(1, fp.vertices.size()));
-            Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig(cov);
-            Eigen::Vector2f axis_x(1.f, 0.f);
-            if (eig.info() == Eigen::Success)
-                axis_x = eig.eigenvectors().col(1).normalized();
-            Eigen::Vector2f axis_z(-axis_x.y(), axis_x.x());
-
-            float min_u = std::numeric_limits<float>::max();
-            float max_u = -std::numeric_limits<float>::max();
-            float min_v = std::numeric_limits<float>::max();
-            float max_v = -std::numeric_limits<float>::max();
-            for (const auto& p : fp.vertices)
-            {
-                const Eigen::Vector2f d = p - cen;
-                const float u = d.dot(axis_x);
-                const float v = d.dot(axis_z);
-                min_u = std::min(min_u, u); max_u = std::max(max_u, u);
-                min_v = std::min(min_v, v); max_v = std::max(max_v, v);
-            }
-
-            const float c_u = 0.5f * (min_u + max_u);
-            const float c_v = 0.5f * (min_v + max_v);
-            const Eigen::Vector2f obb_center = cen + axis_x * c_u + axis_z * c_v;
-
-            rc::Viewer3D::FurnitureItem fi;
-            fi.label    = fp.label;
-            fi.centroid = obb_center;
-            fi.size     = Eigen::Vector2f(std::max(0.08f, max_u - min_u), std::max(0.08f, max_v - min_v));
-            fi.yaw_rad  = std::atan2(axis_x.y(), axis_x.x());
-            items.push_back(fi);
         }
         viewer_3d_->update_furniture(items);
     }

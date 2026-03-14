@@ -17,6 +17,7 @@
  *    along with RoboComp.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+
 #include "specificworker.h"
 #include "object_models/table_analytic_model.h"
 #include <QSplitter>
@@ -164,50 +165,21 @@ void SpecificWorker::initialize()
         scene_tree_ = std::make_unique<SceneTreePanel>(right_splitter);
         right_splitter->addWidget(scene_tree_.get());
 
-        grounding_panel_ = new QWidget(right_splitter);
-        auto* grounding_layout = new QVBoxLayout(grounding_panel_);
-        grounding_layout->setContentsMargins(8, 6, 8, 6);
-        grounding_layout->setSpacing(4);
-        auto* grounding_title = new QLabel("Grounding", grounding_panel_);
-        grounding_title->setStyleSheet("font-weight: bold; font-size: 10pt;");
-        grounding_status_label_ = new QLabel("Status: waiting camera detections", grounding_panel_);
-        grounding_cam_label_ = new QLabel("Camera object: -", grounding_panel_);
-        grounding_world_label_ = new QLabel("World object: -", grounding_panel_);
-        grounding_score_label_ = new QLabel("Score: -", grounding_panel_);
-        grounding_sdf_label_ = new QLabel("SDF fit: -", grounding_panel_);
+        // Hidden grounding-status container: labels still receive setText() calls
+        // from grounding algorithms but are never shown in the layout.
+        grounding_panel_ = new QWidget(this);
+        grounding_status_label_    = new QLabel("Status: waiting camera detections", grounding_panel_);
+        grounding_cam_label_       = new QLabel("Camera object: -",  grounding_panel_);
+        grounding_world_label_     = new QLabel("World object: -",   grounding_panel_);
+        grounding_score_label_     = new QLabel("Score: -",          grounding_panel_);
+        grounding_sdf_label_       = new QLabel("SDF fit: -",        grounding_panel_);
         grounding_fit_mesh_button_ = new QPushButton("Fit Grounded Mesh", grounding_panel_);
-        grounding_reload_svg_button_ = new QPushButton("Reload Meshes from SVG", grounding_panel_);
+        grounding_panel_->setVisible(false);
 
-        grounding_panel_->setMinimumWidth(0);
-        grounding_panel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        grounding_status_label_->setMinimumWidth(0);
-        grounding_cam_label_->setMinimumWidth(0);
-        grounding_world_label_->setMinimumWidth(0);
-        grounding_score_label_->setMinimumWidth(0);
-        grounding_sdf_label_->setMinimumWidth(0);
-        grounding_status_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        grounding_cam_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        grounding_world_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        grounding_score_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        grounding_sdf_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        grounding_status_label_->setWordWrap(false);
-        grounding_cam_label_->setWordWrap(false);
-        grounding_world_label_->setWordWrap(false);
-        grounding_score_label_->setWordWrap(false);
-        grounding_sdf_label_->setWordWrap(false);
-
-        grounding_title->setVisible(false);
-        grounding_status_label_->setVisible(false);
-        grounding_cam_label_->setVisible(false);
-        grounding_world_label_->setVisible(false);
-        grounding_score_label_->setVisible(false);
-        grounding_sdf_label_->setVisible(false);
-        grounding_fit_mesh_button_->setVisible(false);
-
-        grounding_layout->addWidget(grounding_reload_svg_button_);
-        grounding_layout->addStretch();
-        right_splitter->addWidget(grounding_panel_);
-        right_splitter->setSizes({300, 140});
+        // Object-palette panel (lower half of right column)
+        object_palette_ = new ObjectPalettePanel(right_splitter);
+        right_splitter->addWidget(object_palette_);
+        right_splitter->setSizes({300, 160});
         right_splitter_ = right_splitter;
 
         splitter->addWidget(right_splitter);
@@ -258,6 +230,13 @@ void SpecificWorker::initialize()
             rotate_furniture_by_name(n, angle_rad, axis);
         });
 
+        // Save scene to disk once the user releases the gizmo after dragging.
+        connect(viewer_3d_.get(), &rc::Viewer3D::objectDragFinished,
+                this, [this](const QString&)
+        {
+            save_scene_graph_to_usd();
+        });
+
         // Connect floor picking to navigation
         connect(viewer_3d_.get(), &rc::Viewer3D::floorPicked, this, [this](float x, float y) {
             RoboCompNavigator::TPoint p;
@@ -288,7 +267,8 @@ void SpecificWorker::initialize()
             run_camera_em_validator();
         });
 
-        connect(grounding_reload_svg_button_, &QPushButton::clicked, this, [this]()
+        // "Reload SVG" now lives on the toolbar (pushButton_reloadSVG in mainUI.ui)
+        connect(pushButton_reloadSVG, &QPushButton::clicked, this, [this]()
         {
             if (current_layout_file_.empty())
             {
@@ -312,6 +292,49 @@ void SpecificWorker::initialize()
                 grounding_status_label_->setText("Status: meshes reloaded from SVG (fitted overrides cleared)");
             if (grounding_sdf_label_)
                 grounding_sdf_label_->setText("SDF fit: -");
+        });
+        // Object palette: add a new furniture object to all views on request
+        connect(object_palette_, &ObjectPalettePanel::addObjectRequested,
+                this, [this](const QString& type_label,
+                             float tx, float ty, float yaw_deg,
+                             float width_m, float depth_m, float height_m)
+        {
+            // Build a unique numbered label (e.g. "chair_2")
+            int count = 1;
+            for (const auto& fp : furniture_polygons_)
+            {
+                const QString ql = QString::fromStdString(fp.label).toLower();
+                if (ql.startsWith(type_label.toLower()))
+                    ++count;
+            }
+            const std::string label_std = (type_label + "_" + QString::number(count)).toStdString();
+
+            const float yaw_rad = yaw_deg * static_cast<float>(M_PI) / 180.f;
+
+            rc::FurniturePolygonData fp;
+            fp.id                   = label_std;
+            fp.label                = label_std;
+            fp.height               = height_m;
+            fp.frame_yaw_inward_rad = yaw_rad;
+            fp.vertices             = rc::SceneGraphModel::make_world_rect_polygon(
+                                          tx, ty, yaw_rad, width_m, depth_m);
+            furniture_polygons_.push_back(std::move(fp));
+
+            // Sync planner obstacles
+            {
+                std::vector<std::vector<Eigen::Vector2f>> obs;
+                obs.reserve(furniture_polygons_.size());
+                for (const auto& f : furniture_polygons_) obs.push_back(f.vertices);
+                path_planner_.set_obstacles(obs);
+                trajectory_controller_.set_static_obstacles(obs);
+            }
+
+            // Redraw 2D + 3D + tree (rebuild_graph inside draw_furniture fires modelRebuilt)
+            draw_furniture();
+            save_scene_graph_to_usd();
+
+            qInfo() << "[Palette] Added" << QString::fromStdString(label_std)
+                    << "at (" << tx << "," << ty << ") yaw=" << yaw_deg << "°";
         });
     }
 
@@ -349,7 +372,7 @@ void SpecificWorker::initialize()
         const auto rsizes = right_splitter_->sizes();
         const bool any_zero = rsizes.size() < 2 || std::any_of(rsizes.begin(), rsizes.end(), [](int s){ return s == 0; });
         if (any_zero)
-            right_splitter_->setSizes({380, 140});
+            right_splitter_->setSizes({380, 160});
     }
     // Restore 3D camera pose
     if (viewer_3d_ && settings.contains("camera/position"))
@@ -450,6 +473,28 @@ void SpecificWorker::initialize()
             set_object_property(label, prop, val);
         });
 
+        // Remove a furniture object via right-click context menu in the tree.
+        connect(scene_tree_.get(), &SceneTreePanel::removeObjectRequested,
+                this, [this](const QString& label)
+        {
+            const std::string lbl = label.toStdString();
+            auto it = std::find_if(furniture_polygons_.begin(), furniture_polygons_.end(),
+                                   [&lbl](const rc::FurniturePolygonData& fp){ return fp.label == lbl; });
+            if (it == furniture_polygons_.end()) return;
+            furniture_polygons_.erase(it);
+            // Update planner obstacles
+            {
+                std::vector<std::vector<Eigen::Vector2f>> obs;
+                obs.reserve(furniture_polygons_.size());
+                for (const auto& f : furniture_polygons_) obs.push_back(f.vertices);
+                path_planner_.set_obstacles(obs);
+                trajectory_controller_.set_static_obstacles(obs);
+            }
+            draw_furniture();
+            save_scene_graph_to_usd();
+            qInfo() << "[Tree] Removed" << label;
+        });
+
         // Attach model — the panel will now auto-rebuild when the model emits modelRebuilt.
         scene_tree_->set_model(&scene_graph_);
     }
@@ -473,9 +518,12 @@ void SpecificWorker::initialize()
         {
             auto& fp = furniture_polygons_[static_cast<std::size_t>(idx)];
             fp.height    = node.extents.z();
-            fp.vertices  = rc::SceneGraphModel::make_world_rect_polygon(
+            fp.frame_yaw_inward_rad = node.yaw_rad;
+            fp.vertices  = rc::footprints::make(
+                node.object_type,
                 node.translation.x(), node.translation.y(), node.yaw_rad,
-                node.extents.x(), node.extents.y());
+                std::max(0.08f, node.extents.x()),
+                std::max(0.08f, node.extents.y()));
         }
 
         // Full rebuild so the 3D mesh reflects new dimensions/orientation.
@@ -1062,6 +1110,10 @@ void SpecificWorker::compute()
                      static_cast<int>(cpu_total - cycle_pct));
     }
 }
+
+/////////////////////////////////////////////////////////////////////
+///  INTERNAL METHODS
+////////////////////////////////////////////////////////////////////
 
 void SpecificWorker::save_camera_state_to_settings() const
 {
@@ -3449,7 +3501,6 @@ RoboCompNavigator::TPoint SpecificWorker::Navigator_gotoPoint(RoboCompNavigator:
 
     qInfo() << "Navigator_setTarget: path with" << current_path_.size() << "waypoints activated";
     return target;
-
 }
 
 void SpecificWorker::Navigator_stop()

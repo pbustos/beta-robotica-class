@@ -69,6 +69,9 @@ Q_SIGNALS:
      */
     void objectPropertyEdited(const QString& label, const QString& property, float value);
 
+    /// Emitted when the user selects "Remove" from the right-click context menu.
+    void removeObjectRequested(const QString& label);
+
 private:
     QTreeWidget*         tree_      = nullptr;
     rc::SceneGraphModel* model_     = nullptr;

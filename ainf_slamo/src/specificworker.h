@@ -37,10 +37,12 @@
 #include "viewer_2d.h"
 #include "viewer_3d.h"
 #include "scene_tree_panel.h"
+#include "object_palette_panel.h"
 #include "camera_viewer.h"
 #include "mesh_sdf_optimizer.h"
 #include "object_ownership_em.h"
 #include "furniture_types.h"
+#include "object_footprints.h"
 #include "scene_graph_adapter.h"
 #include "scene_graph_model.h"
 #include <QSplitter>
@@ -242,15 +244,15 @@ class SpecificWorker : public GenericWorker
 	bool draw_trajectories_ = false; // Toggle trajectory debug rendering
         bool initial_center_done_ = false; // Flag to center view once at start
 	QSplitter* splitter_ = nullptr;  // Horizontal splitter (2D | 3D views)
-	QSplitter* right_splitter_ = nullptr; // Vertical splitter in right pane (3D top | grounding bottom)
-	QWidget* grounding_panel_ = nullptr;
+	QSplitter* right_splitter_ = nullptr; // Vertical splitter in right pane (tree top | palette bottom)
+	QWidget* grounding_panel_ = nullptr;          // Hidden container for grounding status labels
 	QLabel* grounding_status_label_ = nullptr;
 	QLabel* grounding_cam_label_ = nullptr;
 	QLabel* grounding_world_label_ = nullptr;
 	QLabel* grounding_score_label_ = nullptr;
 	QLabel* grounding_sdf_label_ = nullptr;
 	QPushButton* grounding_fit_mesh_button_ = nullptr;
-	QPushButton* grounding_reload_svg_button_ = nullptr;
+	ObjectPalettePanel* object_palette_ = nullptr;
 	std::vector<Eigen::Vector3f> grounding_focus_points_;
 	Eigen::Vector2f grounding_focus_center_ = Eigen::Vector2f::Zero();
 	std::string grounding_focus_label_;

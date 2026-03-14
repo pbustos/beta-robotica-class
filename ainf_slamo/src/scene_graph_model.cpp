@@ -209,11 +209,22 @@ void SceneGraphModel::rebuild(const std::vector<Eigen::Vector2f>& room_polygon,
             continue;
 
         const Eigen::Vector2f c = compute_polygon_centroid(obj_src.vertices);
-        Eigen::Vector2f ydir = room_center - c;
-        if (ydir.norm() < 1e-4f)
-            ydir = Eigen::Vector2f(0.f, 1.f);
-        ydir.normalize();
-        const float y_yaw = std::atan2(ydir.y(), ydir.x());
+
+        // Use the stored frame yaw when available; fall back to
+        // room-centre direction only for legacy objects with no yaw set.
+        float y_yaw;
+        if (std::abs(obj_src.frame_yaw_inward_rad) > 1e-6f)
+        {
+            y_yaw = obj_src.frame_yaw_inward_rad;
+        }
+        else
+        {
+            Eigen::Vector2f ydir = room_center - c;
+            if (ydir.norm() < 1e-4f)
+                ydir = Eigen::Vector2f(0.f, 1.f);
+            ydir.normalize();
+            y_yaw = std::atan2(ydir.y(), ydir.x());
+        }
 
         Node obj;
         obj.id = obj_src.id;
@@ -226,6 +237,11 @@ void SceneGraphModel::rebuild(const std::vector<Eigen::Vector2f>& room_polygon,
 
         world_to_local_polygon(obj_src.vertices, c, y_yaw, obj.local_vertices, obj.extents);
         obj.extents.z() = std::max(0.2f, obj_src.height);
+
+        // Normalize to a clean rectangle so the 2D polygon drawn from
+        // local_to_world_polygon() always matches the extents+yaw used
+        // by the 3D viewer and the tree panel.
+        obj.local_vertices = make_rect_local(obj.extents.x(), obj.extents.y());
 
         floor.children.emplace_back(std::move(obj));
     }

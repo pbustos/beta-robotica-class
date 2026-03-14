@@ -427,6 +427,12 @@
         </widget>
        </item>
        <item>
+        <widget class="QPushButton" name="pushButton_reloadSVG">
+         <property name="text"><string>Reload SVG</string></property>
+         <property name="toolTip"><string>Reload all meshes from SVG file (clears fitted overrides)</string></property>
+        </widget>
+       </item>
+       <item>
         <spacer name="horizontalSpacer_buttons">
          <property name="orientation"><enum>Qt::Horizontal</enum></property>
          <property name="sizeHint" stdset="0">

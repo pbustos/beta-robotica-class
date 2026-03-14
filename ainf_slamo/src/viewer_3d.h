@@ -104,6 +104,8 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
             void floorPicked(float x, float y);
             /// Emitted when the user Ctrl+Right-clicks an object.
             void cancelMissionRequested();
+            /// Emitted once when a gizmo drag interaction ends (mouse release).
+            void objectDragFinished(const QString& name);
 
         public:
             /// 3D camera state (position, view-centre, up-vector).
@@ -137,8 +139,9 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
             struct FurnitureItem {
                 std::string label;
                 Eigen::Vector2f centroid;  // (x, z) in room coords
-                Eigen::Vector2f size;      // oriented footprint extents (local_x, local_z)
+                Eigen::Vector2f size;      // oriented footprint extents (width, depth)
                 float yaw_rad = 0.f;       // orientation around vertical axis
+                float height  = 0.8f;      // height in metres
             };
             void update_furniture(const std::vector<FurnitureItem>& items);
 

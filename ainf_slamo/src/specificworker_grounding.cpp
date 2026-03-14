@@ -130,8 +130,11 @@ void SpecificWorker::rotate_furniture_by_name(const QString& name, float angle_r
     if (viewer_3d_)
         viewer_3d_->rotate_furniture_object(QString::fromStdString(fp.label), angle_rad, axis);
 
-    // Keep model in sync without triggering objectChanged signal (drag path).
-    scene_graph_.sync_object_silent(fp.label, fp.vertices, fp.height, std::nullopt);
+    // Keep model in sync and update yaw so the tree reflects the rotation.
+    const float cur_yaw = scene_graph_.get_object_yaw(fp.label).value_or(fp.frame_yaw_inward_rad);
+    const float new_yaw = cur_yaw + (std::abs(axis.y()) > 0.5f ? angle_rad : 0.f);
+    fp.frame_yaw_inward_rad = new_yaw;
+    scene_graph_.sync_object_silent(fp.label, fp.vertices, fp.height, new_yaw);
     if (scene_tree_)
         scene_tree_->update_object_display(QString::fromStdString(fp.label));
 }
@@ -151,9 +154,39 @@ void SpecificWorker::set_object_property(const QString& label, const QString& pr
     }
     else if (property == "yaw_deg")
     {
-        const float yaw_rad = static_cast<float>(value * M_PI / 180.0f);
-        scene_graph_.set_object_pose(label.toStdString(),
-            node.translation.x(), node.translation.y(), yaw_rad);
+        const int idx = find_furniture_index_by_name(label);
+        if (idx < 0) return;
+        auto& fp = furniture_polygons_[static_cast<std::size_t>(idx)];
+
+        // Rotate footprint vertices around their centroid by the delta angle.
+        // We use vertex rotation (same as mouse-drag path) to avoid the
+        // set_object_pose extents issue: the model extents come from
+        // rebuild() which decomposes the polygon along the "towards-room-center"
+        // axis, inflating extents when the object is not aligned with that axis.
+        const float new_yaw_rad = static_cast<float>(value * M_PI / 180.0);
+        const float delta_rad   = new_yaw_rad - node.yaw_rad;
+        if (std::abs(delta_rad) < 1e-7f) return;
+
+        Eigen::Vector2f cen = Eigen::Vector2f::Zero();
+        for (const auto& v : fp.vertices) cen += v;
+        cen /= static_cast<float>(fp.vertices.size());
+
+        const float cosA = std::cos(delta_rad), sinA = std::sin(delta_rad);
+        for (auto& v : fp.vertices)
+        {
+            const Eigen::Vector2f d = v - cen;
+            v = cen + Eigen::Vector2f(cosA * d.x() - sinA * d.y(),
+                                       sinA * d.x() + cosA * d.y());
+        }
+        fp.frame_yaw_inward_rad = new_yaw_rad;
+
+        update_furniture_draw_item(static_cast<std::size_t>(idx));
+        if (viewer_3d_)
+            viewer_3d_->rotate_furniture_object(label, delta_rad, QVector3D(0, 1, 0));
+
+        scene_graph_.sync_object_silent(fp.label, fp.vertices, fp.height, new_yaw_rad);
+        if (scene_tree_)
+            scene_tree_->update_object_display(label);
     }
     else if (property == "width" || property == "depth" || property == "height")
     {

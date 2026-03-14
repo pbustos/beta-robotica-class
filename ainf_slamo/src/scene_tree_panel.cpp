@@ -4,6 +4,8 @@
 #include <QHeaderView>
 #include <QFont>
 #include <QVBoxLayout>
+#include <QMenu>
+#include <QAction>
 #include <QtMath>
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,24 @@ SceneTreePanel::SceneTreePanel(QWidget* parent)
     tree_->setSelectionMode(QAbstractItemView::SingleSelection);
     tree_->setFont(QFont("Monospace", 8));
     tree_->setMinimumWidth(140);
+    tree_->setContextMenuPolicy(Qt::CustomContextMenu);
+
+    // ---- Right-click context menu ----
+    connect(tree_, &QTreeWidget::customContextMenuRequested,
+            this, [this](const QPoint& pos)
+    {
+        QTreeWidgetItem* item = tree_->itemAt(pos);
+        // Walk up to the object-level item (top-level children of Floor)
+        while (item && !is_object_item(item))
+            item = item->parent();
+        if (!item)
+            return;
+        const QString label = item->text(0);
+        QMenu menu(tree_);
+        QAction* removeAct = menu.addAction(QIcon::fromTheme("edit-delete"), tr("Remove \"%1\"").arg(label));
+        if (menu.exec(tree_->viewport()->mapToGlobal(pos)) == removeAct)
+            emit removeObjectRequested(label);
+    });
 
     // ---- Object-selection via click ----
     connect(tree_, &QTreeWidget::itemPressed, this, [this](QTreeWidgetItem* item, int)

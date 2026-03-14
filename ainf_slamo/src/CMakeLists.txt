@@ -106,6 +106,7 @@ LIST(APPEND SOURCES
   ../src/trajectory_controller.cpp
   ../src/scene_tree_panel.cpp
   ../src/camera_viewer.cpp
+  ../src/object_palette_panel.cpp
   ../src/mesh_sdf_optimizer.cpp
   ../src/object_ownership_em.cpp
   ../src/scene_graph_adapter.cpp
@@ -127,6 +128,7 @@ LIST(APPEND HEADERS
   ../src/trajectory_controller.h
   ../src/scene_tree_panel.h
   ../src/camera_viewer.h
+  ../src/object_palette_panel.h
   ../src/mesh_sdf_optimizer.h
   ../src/object_ownership_em.h
   ../src/furniture_types.h

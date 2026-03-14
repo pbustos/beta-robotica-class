@@ -485,15 +485,6 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
     furniture_centers_world_.clear();
     furniture_groups_.clear();
 
-    // Base correction: Z-up meshes → Y-up.  -90° around X.
-    const QQuaternion base_rot = QQuaternion::fromAxisAndAngle(1.f, 0.f, 0.f, -90.f);
-
-    const QString component_root = QDir(QCoreApplication::applicationDirPath()
-                                        + "/..").absolutePath();
-    auto abs_mesh = [&](const QString& rel) -> QString {
-        return component_root + "/" + rel;
-    };
-
     auto register_group_part = [&](const std::string& group_key,
                                    const Eigen::Vector2f& centroid,
                                    float yaw_rad,
@@ -509,23 +500,45 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         g.local_offsets.push_back(tf->translation() - g.center_world);
     };
 
-    // Helper: create and register one entity
-    auto make_entity = [&](const QString&       mesh_file,
-                           const QColor&        diffuse,
-                           const QColor&        ambient,
-                           float                shininess,
-                           const Eigen::Vector2f& centroid,
-                           const QQuaternion&   rot,
-                           const QVector3D&     scale3d,
-                           const QString&       pick_name,
-                           const std::string&   group_key,
-                           float                yaw_rad,
-                           float                y_offset = 0.f) -> void
+    // ----------------------------------------------------------------
+    // Procedural cuboid part helper.  All objects are built from one or
+    // more cuboid parts positioned relative to the object centroid using
+    // the object's yaw.
+    // ----------------------------------------------------------------
+    auto make_cuboid_part = [&](const QColor&        diffuse,
+                                const QColor&        ambient,
+                                float                shininess,
+                                const Eigen::Vector2f& centroid,
+                                float                yaw_rad,
+                                float                local_x,     // local offset along width axis  (local X)
+                                float                local_y,     // local offset along depth axis   (local Y)
+                                float                size_x,      // cuboid width  (along local X)
+                                float                size_y,      // cuboid depth  (along local Y)
+                                float                size_h,      // cuboid height (world Y-up)
+                                float                center_h,    // vertical centre of this part
+                                const QString&       pick_name,
+                                const std::string&   group_key) -> void
     {
-        auto* e = new Qt3DCore::QEntity(root_entity_);
+        // Standard 2D rotation: world = center + R(yaw) * local
+        //   R(yaw) = [[cos, -sin], [sin, cos]]
+        // Same convention as object_footprints.h.
+        const float c = std::cos(yaw_rad);
+        const float s = std::sin(yaw_rad);
+        const float wx = centroid.x() + c * local_x - s * local_y;
+        const float wy = centroid.y() + s * local_x + c * local_y;
 
-        auto* mesh = new Qt3DRender::QMesh(e);
-        mesh->setSource(QUrl::fromLocalFile(mesh_file));
+        // Qt3D Y-rotation: width axis (local X) in Qt3D = (-cos θ, 0, sin θ).
+        // Ry(α) maps (1,0,0)→(cos α, 0, -sin α).
+        // cos α = -cos θ, sin α = -sin θ  →  α = π + θ.
+        const QQuaternion yaw_rot = QQuaternion::fromAxisAndAngle(
+            0.f, 1.f, 0.f,
+            qRadiansToDegrees(static_cast<float>(M_PI) + yaw_rad));
+
+        auto* e    = new Qt3DCore::QEntity(root_entity_);
+        auto* mesh = new Qt3DExtras::QCuboidMesh(e);
+        mesh->setXExtent(std::max(0.03f, size_x));
+        mesh->setYExtent(std::max(0.03f, size_h));
+        mesh->setZExtent(std::max(0.03f, size_y));
 
         auto* mat = new Qt3DExtras::QPhongMaterial(e);
         mat->setDiffuse(diffuse);
@@ -533,163 +546,184 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         mat->setShininess(shininess);
 
         auto* tf = new Qt3DCore::QTransform(e);
-        tf->setTranslation(QVector3D(-centroid.x(), y_offset, centroid.y()));
-        tf->setRotation(rot);
-        tf->setScale3D(scale3d);
+        tf->setTranslation(QVector3D(-wx, center_h, wy));
+        tf->setRotation(yaw_rot);
 
         e->addComponent(mesh);
         e->addComponent(mat);
         e->addComponent(tf);
         attach_picker(e, pick_name);
-
         furniture_entities_.push_back(e);
         register_group_part(group_key, centroid, yaw_rad, tf);
     };
 
-    // Helper: analytic composed table (tabletop + 4 legs), matching SDF structure.
-    auto make_table_composed_entity = [&](const QColor& diffuse,
-                                          const QColor& ambient,
-                                          float shininess,
-                                          const Eigen::Vector2f& centroid,
-                                          float yaw_rad,
-                                          float width,
-                                          float depth,
-                                          float height,
-                                          const QString& pick_name,
-                                          const std::string& group_key) -> void
+    // ----------------------------------------------------------------
+    // Procedural object builders
+    // ----------------------------------------------------------------
+
+    // Table: tabletop + 4 legs
+    auto make_table = [&](const Eigen::Vector2f& cen, float yaw,
+                          float w, float d, float h,
+                          const QString& pn, const std::string& gk)
     {
-        const float w = std::max(0.08f, width);
-        const float d = std::max(0.08f, depth);
-        const float h = std::max(0.20f, height);
-        const float top_thickness = std::max(0.03f, 0.08f * h);
-        const float leg_thickness = std::max(0.03f, 0.12f * std::min(w, d));
-        const float leg_height = std::max(0.05f, h - top_thickness);
-        const float leg_dx = std::max(0.f, 0.5f * w - 0.5f * leg_thickness);
-        const float leg_dy = std::max(0.f, 0.5f * d - 0.5f * leg_thickness);
-
-        const float c = std::cos(yaw_rad);
-        const float s = std::sin(yaw_rad);
-        const QQuaternion yaw_rot = QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, qRadiansToDegrees(yaw_rad));
-
-        auto make_part = [&](float local_x, float local_y, float size_x, float size_y, float size_h, float center_h)
-        {
-            const float wx = centroid.x() + c * local_x - s * local_y;
-            const float wy = centroid.y() + s * local_x + c * local_y;
-
-            auto* e = new Qt3DCore::QEntity(root_entity_);
-            auto* mesh = new Qt3DExtras::QCuboidMesh(e);
-            mesh->setXExtent(std::max(0.03f, size_x));
-            mesh->setYExtent(std::max(0.03f, size_h));
-            mesh->setZExtent(std::max(0.03f, size_y));
-
-            auto* mat = new Qt3DExtras::QPhongMaterial(e);
-            mat->setDiffuse(diffuse);
-            mat->setAmbient(ambient);
-            mat->setShininess(shininess);
-
-            auto* tf = new Qt3DCore::QTransform(e);
-            tf->setTranslation(QVector3D(-wx, center_h, wy));
-            tf->setRotation(yaw_rot);
-
-            e->addComponent(mesh);
-            e->addComponent(mat);
-            e->addComponent(tf);
-            attach_picker(e, pick_name);
-            furniture_entities_.push_back(e);
-            register_group_part(group_key, centroid, yaw_rad, tf);
-        };
-
+        const float top_thick = std::max(0.03f, 0.08f * h);
+        const float leg_thick = std::max(0.03f, 0.12f * std::min(w, d));
+        const float leg_h     = std::max(0.05f, h - top_thick);
+        const float leg_dx    = std::max(0.f, 0.5f * w - 0.5f * leg_thick);
+        const float leg_dy    = std::max(0.f, 0.5f * d - 0.5f * leg_thick);
         // Tabletop
-        make_part(0.f, 0.f, w, d, top_thickness, leg_height + 0.5f * top_thickness);
+        make_cuboid_part(QColor(160, 100, 55), QColor(70, 44, 24), 20.f,
+                         cen, yaw, 0.f, 0.f, w, d, top_thick,
+                         leg_h + 0.5f * top_thick, pn, gk);
         // Four legs
-        make_part( leg_dx,  leg_dy, leg_thickness, leg_thickness, leg_height, 0.5f * leg_height);
-        make_part( leg_dx, -leg_dy, leg_thickness, leg_thickness, leg_height, 0.5f * leg_height);
-        make_part(-leg_dx,  leg_dy, leg_thickness, leg_thickness, leg_height, 0.5f * leg_height);
-        make_part(-leg_dx, -leg_dy, leg_thickness, leg_thickness, leg_height, 0.5f * leg_height);
+        for (float sx : {1.f, -1.f})
+            for (float sy : {1.f, -1.f})
+                make_cuboid_part(QColor(140, 88, 48), QColor(60, 38, 18), 15.f,
+                                 cen, yaw, sx * leg_dx, sy * leg_dy,
+                                 leg_thick, leg_thick, leg_h,
+                                 0.5f * leg_h, pn, gk);
     };
 
+    // Chair: seat + backrest + 4 legs
+    auto make_chair = [&](const Eigen::Vector2f& cen, float yaw,
+                          float w, float d, float h,
+                          const QString& pn, const std::string& gk)
+    {
+        const float seat_thick = std::max(0.03f, 0.06f * h);
+        const float seat_h     = 0.48f * h;          // seat height fraction
+        const float leg_thick  = std::max(0.03f, 0.10f * std::min(w, d));
+        const float leg_dx     = std::max(0.f, 0.5f * w - 0.5f * leg_thick);
+        const float leg_dy     = std::max(0.f, 0.5f * d - 0.5f * leg_thick);
+        const float back_thick = std::max(0.03f, 0.06f * d);
+        const float back_h     = h - seat_h - seat_thick;
+        // Seat
+        make_cuboid_part(QColor(110, 85, 60), QColor(50, 35, 20), 18.f,
+                         cen, yaw, 0.f, 0.f, w, d, seat_thick,
+                         seat_h + 0.5f * seat_thick, pn, gk);
+        // Four legs
+        for (float sx : {1.f, -1.f})
+            for (float sy : {1.f, -1.f})
+                make_cuboid_part(QColor(100, 75, 50), QColor(45, 30, 18), 15.f,
+                                 cen, yaw, sx * leg_dx, sy * leg_dy,
+                                 leg_thick, leg_thick, seat_h,
+                                 0.5f * seat_h, pn, gk);
+        // Backrest (offset along local depth axis, behind the seat)
+        make_cuboid_part(QColor(120, 90, 62), QColor(55, 40, 25), 18.f,
+                         cen, yaw, 0.f, -(0.5f * d - 0.5f * back_thick),
+                         w, back_thick, back_h,
+                         seat_h + seat_thick + 0.5f * back_h, pn, gk);
+    };
+
+    // Bench: seat plank + 4 legs (no backrest)
+    auto make_bench = [&](const Eigen::Vector2f& cen, float yaw,
+                          float w, float d, float h,
+                          const QString& pn, const std::string& gk)
+    {
+        const float seat_thick = std::max(0.04f, 0.10f * h);
+        const float leg_thick  = std::max(0.03f, 0.10f * std::min(w, d));
+        const float leg_h      = std::max(0.05f, h - seat_thick);
+        const float leg_dx     = std::max(0.f, 0.5f * w - 0.5f * leg_thick - 0.02f);
+        const float leg_dy     = std::max(0.f, 0.5f * d - 0.5f * leg_thick);
+        // Seat plank
+        make_cuboid_part(QColor(130, 85, 45), QColor(55, 36, 19), 15.f,
+                         cen, yaw, 0.f, 0.f, w, d, seat_thick,
+                         leg_h + 0.5f * seat_thick, pn, gk);
+        // Four legs
+        for (float sx : {1.f, -1.f})
+            for (float sy : {1.f, -1.f})
+                make_cuboid_part(QColor(110, 72, 38), QColor(48, 30, 15), 12.f,
+                                 cen, yaw, sx * leg_dx, sy * leg_dy,
+                                 leg_thick, leg_thick, leg_h,
+                                 0.5f * leg_h, pn, gk);
+    };
+
+    // Pot / planter : lower box + upper crown
+    auto make_pot = [&](const Eigen::Vector2f& cen, float yaw,
+                        float w, float d, float h,
+                        const QString& pn, const std::string& gk)
+    {
+        const float pot_h = 0.40f * h;
+        const float crown_h = h - pot_h;
+        // Pot body
+        make_cuboid_part(QColor(195, 155, 95), QColor(90, 70, 40), 10.f,
+                         cen, yaw, 0.f, 0.f, w * 0.85f, d * 0.85f, pot_h,
+                         0.5f * pot_h, pn, gk);
+        // Crown
+        make_cuboid_part(QColor(55, 130, 45), QColor(25, 60, 20), 5.f,
+                         cen, yaw, 0.f, 0.f, w, d, crown_h,
+                         pot_h + 0.5f * crown_h, pn, gk);
+    };
+
+    // Monitor / screen : thin panel on a stand
+    auto make_monitor = [&](const Eigen::Vector2f& cen, float yaw,
+                            float w, float d, float h,
+                            const QString& pn, const std::string& gk)
+    {
+        const float stand_h = 0.45f * h;
+        const float panel_h = h - stand_h;
+        const float stand_thick = std::min(0.08f, 0.3f * d);
+        // Stand post
+        make_cuboid_part(QColor(60, 60, 65), QColor(30, 30, 32), 50.f,
+                         cen, yaw, 0.f, 0.f, stand_thick, stand_thick, stand_h,
+                         0.5f * stand_h, pn, gk);
+        // Screen panel
+        make_cuboid_part(QColor(20, 22, 30), QColor(10, 11, 15), 80.f,
+                         cen, yaw, 0.f, 0.f, w, 0.04f, panel_h,
+                         stand_h + 0.5f * panel_h, pn, gk);
+    };
+
+    // Cabinet / shelf : single box
+    auto make_cabinet = [&](const Eigen::Vector2f& cen, float yaw,
+                            float w, float d, float h,
+                            const QString& pn, const std::string& gk)
+    {
+        make_cuboid_part(QColor(180, 200, 220), QColor(70, 80, 90), 40.f,
+                         cen, yaw, 0.f, 0.f, w, d, h, 0.5f * h, pn, gk);
+    };
+
+    // Generic fallback : simple box
+    auto make_generic = [&](const Eigen::Vector2f& cen, float yaw,
+                            float w, float d, float h,
+                            const QString& pn, const std::string& gk)
+    {
+        make_cuboid_part(QColor(150, 150, 160), QColor(70, 70, 75), 20.f,
+                         cen, yaw, 0.f, 0.f, w, d, h, 0.5f * h, pn, gk);
+    };
+
+    // ----------------------------------------------------------------
+    // Dispatch each item to the appropriate procedural builder
+    // ----------------------------------------------------------------
     for (const auto& item : items)
     {
         const QString ql = QString::fromStdString(item.label).toLower();
         const Eigen::Vector2f& cen  = item.centroid;
-        const Eigen::Vector2f& size = item.size;
-        const QQuaternion yaw_rot = QQuaternion::fromAxisAndAngle(0.f, 1.f, 0.f, qRadiansToDegrees(item.yaw_rad));
-        const QQuaternion axis_rot = yaw_rot * base_rot;
+        const float w = std::max(0.08f, item.size.x());
+        const float d = std::max(0.08f, item.size.y());
+        const float h = std::max(0.20f, item.height);
+        const QString pn = QString::fromStdString(item.label);
+        const std::string& gk = item.label;
 
         if (ql.contains("mesa") || ql.contains("table"))
-        {
-            // Analytic table model: composed tabletop + 4 legs.
-            constexpr float table_height = 0.75f;
-            make_table_composed_entity(QColor(160, 100, 55), QColor(70, 44, 24), 20.f,
-                                       cen, item.yaw_rad,
-                                       size.x(), size.y(), table_height,
-                                       QString::fromStdString(item.label),
-                                       item.label);
-        }
-        else if (ql.contains("banco") || ql.contains("bench"))
-        {
-            // Keep bench aligned with inferred yaw (no extra ±90° correction).
-            make_entity(abs_mesh("meshes/bench.obj"),
-                        QColor(130, 85, 45), QColor(55, 36, 19), 15.f,
-                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
-                        QString::fromStdString(item.label), item.label, item.yaw_rad);
-        }
-        else if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot"))
-        {
-            // Two entities at same position: light-brown pot + green tree crown
-            make_entity(abs_mesh("meshes/pot_only.obj"),
-                        QColor(195, 155, 95), QColor(90, 70, 40), 10.f,
-                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
-                        QString::fromStdString(item.label), item.label, item.yaw_rad);
-            // Crown scaled to 2/3 of original diameter
-            make_entity(abs_mesh("meshes/tree_only.obj"),
-                        QColor(55, 130, 45), QColor(25, 60, 20), 5.f,
-                        cen, axis_rot, QVector3D(0.666f, 0.666f, 0.666f),
-                        QString::fromStdString(item.label) + " (tree)", item.label, item.yaw_rad);
-        }
+            make_table(cen, item.yaw_rad, w, d, h, pn, gk);
         else if (ql.contains("silla") || ql.contains("chair"))
-        {
-            // Chair native footprint is ~0.45 m × 0.45 m in obj X × Y.
-            // Scale it to fitted footprint to keep render aligned with optimized polygon.
-            const float sx = (size.x() > 0.1f) ? size.x() / 0.45f : 1.f;
-            const float sy = (size.y() > 0.1f) ? size.y() / 0.45f : 1.f;
-            const float sz = 1.20f;  // make chair model taller while keeping legs on floor
-            make_entity(abs_mesh("meshes/chair.obj"),
-                        QColor(110, 85, 60), QColor(50, 35, 20), 18.f,
-                        cen, axis_rot, QVector3D(sx, sy, sz),
-                        QString::fromStdString(item.label), item.label, item.yaw_rad);
-        }
+            make_chair(cen, item.yaw_rad, w, d, h, pn, gk);
+        else if (ql.contains("banco") || ql.contains("bench"))
+            make_bench(cen, item.yaw_rad, w, d, h, pn, gk);
+        else if (ql.contains("maceta") || ql.contains("plant") || ql.contains("pot"))
+            make_pot(cen, item.yaw_rad, w, d, h, pn, gk);
         else if (ql.contains("monitor") || ql.contains("pantalla") || ql.contains("screen") ||
                  ql.contains("ordenador") || ql.contains("computer"))
-        {
-            // Screen panel only
-            make_entity(abs_mesh("meshes/monitor_screen.obj"),
-                        QColor(20, 22, 30), QColor(10, 11, 15), 80.f,
-                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
-                        QString::fromStdString(item.label),
-                        item.label,
-                        item.yaw_rad,
-                        0.45f);
-        }
+            make_monitor(cen, item.yaw_rad, w, d, h, pn, gk);
         else if (ql.contains("vitrina") || ql.contains("cabinet") || ql.contains("shelf"))
-        {
-            make_entity(abs_mesh("meshes/bench.obj"),
-                        QColor(180, 200, 220), QColor(70, 80, 90), 40.f,
-                        cen, axis_rot, QVector3D(1.f, 1.f, 1.f),
-                        QString::fromStdString(item.label), item.label, item.yaw_rad);
-        }
+            make_cabinet(cen, item.yaw_rad, w, d, h, pn, gk);
         else
-        {
-            qWarning() << "[Viewer3D] No mesh mapping for furniture label:"
-                       << QString::fromStdString(item.label);
-            continue;
-        }
+            make_generic(cen, item.yaw_rad, w, d, h, pn, gk);
 
         furniture_centers_world_[item.label] = QVector3D(-cen.x(), 0.f, cen.y());
 
-        qInfo() << "[Viewer3D] Furniture:" << QString::fromStdString(item.label)
+        qInfo() << "[Viewer3D] Furniture:" << pn
                 << "at (" << cen.x() << "," << cen.y() << ")"
-                << "size (" << size.x() << "x" << size.y() << ")";
+                << "size (" << w << "x" << d << "x" << h << ")";
     }
 
     if (!selected_object_name_.isEmpty())
@@ -1157,12 +1191,16 @@ void Viewer3D::begin_gizmo_drag(GizmoMode mode)
 
 void Viewer3D::end_gizmo_drag()
 {
+    const bool was_active = gizmo_drag_active_;
+    const QString finished_name = selected_object_name_;
     gizmo_drag_active_ = false;
     gizmo_mode_ = GizmoMode::None;
     if (cam_controller_)
         cam_controller_->setEnabled(true);
     if (container_)
         container_->releaseMouse();
+    if (was_active && !finished_name.isEmpty())
+        emit objectDragFinished(finished_name);
 }
 
 void Viewer3D::apply_gizmo_drag_delta(const QPoint& delta_px)
