@@ -614,27 +614,32 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
                          seat_h + seat_thick + 0.5f * back_h, pn, gk);
     };
 
-    // Bench: seat plank + 4 legs (no backrest)
+    // Bench (park bench): seat plank + backrest + stout legs
     auto make_bench = [&](const Eigen::Vector2f& cen, float yaw,
                           float w, float d, float h,
                           const QString& pn, const std::string& gk)
     {
-        const float seat_thick = std::max(0.04f, 0.10f * h);
-        const float leg_thick  = std::max(0.03f, 0.10f * std::min(w, d));
-        const float leg_h      = std::max(0.05f, h - seat_thick);
-        const float leg_dx     = std::max(0.f, 0.5f * w - 0.5f * leg_thick - 0.02f);
-        const float leg_dy     = std::max(0.f, 0.5f * d - 0.5f * leg_thick);
-        // Seat plank
-        make_cuboid_part(QColor(130, 85, 45), QColor(55, 36, 19), 15.f,
+        const float seat_thick = std::max(0.04f, 0.08f * h);
+        const float seat_h     = 0.45f * h;           // seat height
+        const float leg_thick  = std::max(0.04f, 0.12f * std::min(w, d));
+        const float leg_dx     = std::max(0.f, 0.42f * w);  // spread along width
+        const float back_thick = std::max(0.04f, 0.08f * d);
+        const float back_h     = std::max(0.08f, h - seat_h - seat_thick);
+        // Seat plank (wider than deep, like a park bench)
+        make_cuboid_part(QColor(140, 95, 50), QColor(60, 40, 22), 15.f,
                          cen, yaw, 0.f, 0.f, w, d, seat_thick,
-                         leg_h + 0.5f * seat_thick, pn, gk);
-        // Four legs
+                         seat_h + 0.5f * seat_thick, pn, gk);
+        // Two pairs of stout legs (no rear legs separate — bench style)
         for (float sx : {1.f, -1.f})
-            for (float sy : {1.f, -1.f})
-                make_cuboid_part(QColor(110, 72, 38), QColor(48, 30, 15), 12.f,
-                                 cen, yaw, sx * leg_dx, sy * leg_dy,
-                                 leg_thick, leg_thick, leg_h,
-                                 0.5f * leg_h, pn, gk);
+            make_cuboid_part(QColor(100, 68, 35), QColor(45, 28, 14), 12.f,
+                             cen, yaw, sx * leg_dx, 0.f,
+                             leg_thick, d * 0.85f, seat_h,
+                             0.5f * seat_h, pn, gk);
+        // Backrest (tall thin board at rear edge, -Y local)
+        make_cuboid_part(QColor(140, 95, 50), QColor(60, 40, 22), 15.f,
+                         cen, yaw, 0.f, -(0.5f * d - 0.5f * back_thick),
+                         w, back_thick, back_h,
+                         seat_h + seat_thick + 0.5f * back_h, pn, gk);
     };
 
     // Pot / planter : lower box + upper crown
