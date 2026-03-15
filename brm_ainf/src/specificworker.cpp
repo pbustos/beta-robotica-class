@@ -20,6 +20,7 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <QVBoxLayout>
 
 
@@ -104,6 +105,7 @@ SpecificWorker::SpecificWorker(const ConfigLoader& configLoader, TuplePrx tprx, 
 SpecificWorker::~SpecificWorker()
 {
 	std::cout << "Destroying SpecificWorker" << std::endl;
+    stop_efe_hotzone_motion();
     set_bootstrap_rotation(false);
      // Stop background threads first
     room_ai.stop();
@@ -328,8 +330,26 @@ void SpecificWorker::compute()
                 << b.vertex_precision[7] << b.vertex_precision[8] << b.vertex_precision[9]
                 << "active=" << b.activated_vertex_a << b.activated_vertex_b;
 
+        if (params.ENABLE_EFE_HOTZONE_POLICY
+            && !b.expand
+            && b.proposal == rc::BmrResult::ProposalType::ADD_TWO_POINT_INDENT)
+        {
+            drive_toward_hotzone_efe(res, b);
+        }
+        else
+        {
+            stop_efe_hotzone_motion();
+        }
+
         if (bmr_opt->expand)
+        {
+            stop_efe_hotzone_motion();
             room_ai.apply_bmr_result(*bmr_opt);
+        }
+    }
+    else
+    {
+        stop_efe_hotzone_motion();
     }
 }
 
@@ -465,6 +485,129 @@ void SpecificWorker::set_bootstrap_rotation(bool enable)
     {
         qWarning() << "Bootstrap rotation command failed:" << e.what();
     }
+}
+
+void SpecificWorker::drive_toward_hotzone_efe(const rc::RoomConceptAI::UpdateResult &res, const rc::BmrResult &bmr)
+{
+    if (!params.ENABLE_EFE_HOTZONE_POLICY)
+        return;
+
+    const float w = std::max(0.5f, res.state[0]);
+    const float l = std::max(0.5f, res.state[1]);
+    const float hx = 0.5f * w;
+    const float hy = 0.5f * l;
+    const float tmid = 0.5f * (bmr.indent_a + bmr.indent_b);
+    const float depth = std::max(0.05f, bmr.indent_depth);
+
+    Eigen::Vector2f hot = Eigen::Vector2f::Zero();
+    switch (bmr.indent_side)
+    {
+        case 0: hot = Eigen::Vector2f(tmid * hx, -hy + 0.5f * depth); break;
+        case 1: hot = Eigen::Vector2f(hx - 0.5f * depth, tmid * hy); break;
+        case 2: hot = Eigen::Vector2f(tmid * hx, hy - 0.5f * depth); break;
+        case 3: hot = Eigen::Vector2f(-hx + 0.5f * depth, tmid * hy); break;
+        default: return;
+    }
+
+    struct Action
+    {
+        float advx;
+        float advz;
+        float rot;
+        const char *name;
+    };
+
+    const float vf = params.EFE_FORWARD_SPEED;
+    const float wr = params.EFE_ROT_SPEED;
+    const std::array<Action, 6> actions = {{
+        {0.f,  vf,  0.f, "fwd"},
+        {0.f,  0.f,  wr, "turn_left"},
+        {0.f,  0.f, -wr, "turn_right"},
+        {0.f,  0.8f * vf,  0.7f * wr, "arc_left"},
+        {0.f,  0.8f * vf, -0.7f * wr, "arc_right"},
+        {0.f,  0.f,  0.f, "hold"}
+    }};
+
+    const float x0 = res.state[2];
+    const float y0 = res.state[3];
+    const float phi0 = res.state[4];
+    const float dt = std::max(0.1f, params.EFE_DT);
+    const float sigma2 = std::max(1e-3f, params.EFE_PRIOR_SIGMA * params.EFE_PRIOR_SIGMA);
+
+    auto wrap_pi = [](float a) -> float
+    {
+        while (a > static_cast<float>(M_PI)) a -= static_cast<float>(2.0 * M_PI);
+        while (a < static_cast<float>(-M_PI)) a += static_cast<float>(2.0 * M_PI);
+        return a;
+    };
+
+    float best_g = std::numeric_limits<float>::infinity();
+    Action best = actions.back();
+
+    for (const auto &a : actions)
+    {
+        const float c = std::cos(phi0);
+        const float s = std::sin(phi0);
+        const float x1 = x0 + (a.advx * c - a.advz * s) * dt;
+        const float y1 = y0 + (a.advx * s + a.advz * c) * dt;
+        const float phi1 = wrap_pi(phi0 + a.rot * dt);
+
+        const float dx = x1 - hot.x();
+        const float dy = y1 - hot.y();
+        const float risk = 0.5f * (dx * dx + dy * dy) / sigma2;
+
+        const float heading = std::atan2(hot.y() - y1, hot.x() - x1);
+        const float h_err = wrap_pi(heading - phi1);
+        const float ambiguity = params.EFE_ANGLE_WEIGHT * h_err * h_err;
+
+        const float effort = params.EFE_CONTROL_WEIGHT *
+                             (a.advx * a.advx + a.advz * a.advz + 0.5f * a.rot * a.rot);
+
+        const float g = risk + ambiguity + effort;
+        if (g < best_g)
+        {
+            best_g = g;
+            best = a;
+        }
+    }
+
+    try
+    {
+        omnirobot_proxy->setSpeedBase(best.advx, best.advz, best.rot);
+        efe_hotzone_active_ = true;
+
+        static std::int64_t last_efe_log_ms = 0;
+        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        if (now_ms - last_efe_log_ms >= 1000)
+        {
+            qInfo() << "[EFE] hot-zone target=" << hot.x() << hot.y()
+                    << " action=" << best.name
+                    << " cmd=" << best.advx << best.advz << best.rot
+                    << " G=" << best_g;
+            last_efe_log_ms = now_ms;
+        }
+    }
+    catch(const Ice::Exception &e)
+    {
+        qWarning() << "EFE hot-zone command failed:" << e.what();
+    }
+}
+
+void SpecificWorker::stop_efe_hotzone_motion()
+{
+    if (!efe_hotzone_active_)
+        return;
+
+    try
+    {
+        omnirobot_proxy->stopBase();
+    }
+    catch(const Ice::Exception &e)
+    {
+        qWarning() << "Stop EFE motion failed:" << e.what();
+    }
+    efe_hotzone_active_ = false;
 }
 
 void SpecificWorker::read_lidar()

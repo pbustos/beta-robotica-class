@@ -155,6 +155,13 @@ struct Params
 		bool BOOTSTRAP_ENABLE_ROTATION = true; // Slow in-place rotation to improve observation diversity
 		bool BOOTSTRAP_ROTATE_ONLY_PRESEED = true; // Stop rotating once seeded to reduce estimator lag
 		float BOOTSTRAP_ROT_SPEED = 0.1f; // rad/s
+		bool ENABLE_EFE_HOTZONE_POLICY = true; // Approach BMR hot-zone to gather discriminative evidence
+		float EFE_DT = 1.0f; // seconds, one-step look-ahead horizon
+		float EFE_PRIOR_SIGMA = 0.8f; // meters, desired-prior covariance std
+		float EFE_FORWARD_SPEED = 0.12f; // m/s
+		float EFE_ROT_SPEED = 0.25f; // rad/s
+		float EFE_ANGLE_WEIGHT = 0.20f; // heading uncertainty term weight
+		float EFE_CONTROL_WEIGHT = 0.05f; // control effort term weight
 		float ODOMETRY_NOISE_FACTOR = 0.1f;  // Gaussian noise std added to odometry (fraction of reading)
 		// Camera extrinsics: camera frame origin expressed in robot frame (meters)
 		float CAMERA_TX = 0.0f;
@@ -175,6 +182,7 @@ struct Params
 	bool room_bootstrapped_ = false;
 	int bootstrap_accept_streak_ = 0;
 	bool bootstrap_rotating_ = false;
+	bool efe_hotzone_active_ = false;
 	rc::RoomBootstrapper room_bootstrapper_;
 	std::unique_ptr<rc::Viewer2D> viewer_2d_;
 	std::vector<QGraphicsEllipseItem*> lidar_draw_items_;
@@ -194,6 +202,8 @@ struct Params
     bool try_initialize_room_from_lidar(const rc::LidarData &lidar_data,
                                         const std::vector<rc::OdometryReading> &odometry_history);
 	void set_bootstrap_rotation(bool enable);
+	void drive_toward_hotzone_efe(const rc::RoomConceptAI::UpdateResult &res, const rc::BmrResult &bmr);
+	void stop_efe_hotzone_motion();
 	void set_phase(RuntimePhase new_phase);
 	void set_compound_score_label(const rc::RoomConceptAI::UpdateResult &res);
 	static const char *phase_to_cstr(RuntimePhase phase);
