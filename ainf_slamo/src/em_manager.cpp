@@ -419,14 +419,83 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
     const float cy = static_cast<float>(img_h) * 0.5f;
     constexpr float near_depth = 0.05f;
 
-    auto to_camera_sel = [&](const Eigen::Vector2f& p_robot, float z_world) -> Eigen::Vector3f
-    {
-        return Eigen::Vector3f(p_robot.x() - ctx_.camera_tx,
-                               p_robot.y() - ctx_.camera_ty,
-                               z_world - ctx_.camera_tz);
+    // --- candidate selection (frustum-polygon intersection on the ground plane) ---
+    //
+    // Build the camera's horizontal frustum as a trapezoid in world coords,
+    // then test each furniture footprint for proper 2-D polygon intersection.
+    // This is more robust than projecting corners and checking bbox overlap
+    // because it correctly handles partial overlaps and edge-only visibility.
+
+    constexpr float frustum_near = 0.30f;   // metres – skip very close objects
+    constexpr float frustum_far  = 6.0f;    // metres – maximum range
+
+    const float left_slope  = -cx / std::max(1.f, fx);                                    // x_cam / depth for u = 0
+    const float right_slope = (static_cast<float>(img_w) - cx) / std::max(1.f, fx);       // x_cam / depth for u = img_w
+
+    // Four corners of the trapezoid in the robot frame (CCW winding).
+    const Eigen::Vector2f fn_l(ctx_.camera_tx + left_slope  * frustum_near, ctx_.camera_ty + frustum_near);
+    const Eigen::Vector2f fn_r(ctx_.camera_tx + right_slope * frustum_near, ctx_.camera_ty + frustum_near);
+    const Eigen::Vector2f ff_r(ctx_.camera_tx + right_slope * frustum_far,  ctx_.camera_ty + frustum_far);
+    const Eigen::Vector2f ff_l(ctx_.camera_tx + left_slope  * frustum_far,  ctx_.camera_ty + frustum_far);
+
+    // Transform to world coordinates.
+    const std::vector<Eigen::Vector2f> frustum_world = {
+        robot_pose * fn_l, robot_pose * fn_r, robot_pose * ff_r, robot_pose * ff_l
     };
 
-    // --- candidate selection (bounding-box overlap with camera image) ---
+    qInfo() << "  [EM] frustum trapezoid (world):"
+             << "NL(" << frustum_world[0].x() << frustum_world[0].y() << ")"
+             << "NR(" << frustum_world[1].x() << frustum_world[1].y() << ")"
+             << "FR(" << frustum_world[2].x() << frustum_world[2].y() << ")"
+             << "FL(" << frustum_world[3].x() << frustum_world[3].y() << ")";
+
+    // 2-D polygon–polygon intersection test.
+    auto polygons_intersect_2d = [](const std::vector<Eigen::Vector2f>& A,
+                                    const std::vector<Eigen::Vector2f>& B) -> bool
+    {
+        // Point-in-polygon (ray-casting parity test).
+        auto pip = [](const Eigen::Vector2f& p, const std::vector<Eigen::Vector2f>& poly) -> bool
+        {
+            bool inside = false;
+            for (std::size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+            {
+                const auto& pi = poly[i];
+                const auto& pj = poly[j];
+                if (((pi.y() > p.y()) != (pj.y() > p.y())) &&
+                    (p.x() < (pj.x() - pi.x()) * (p.y() - pi.y()) /
+                              (pj.y() - pi.y()) + pi.x()))
+                    inside = !inside;
+            }
+            return inside;
+        };
+
+        // Proper segment–segment intersection (no touch).
+        auto segs_cross = [](const Eigen::Vector2f& a1, const Eigen::Vector2f& a2,
+                             const Eigen::Vector2f& b1, const Eigen::Vector2f& b2) -> bool
+        {
+            auto cross2 = [](const Eigen::Vector2f& u, const Eigen::Vector2f& v)
+            { return u.x() * v.y() - u.y() * v.x(); };
+            const Eigen::Vector2f d1 = a2 - a1, d2 = b2 - b1, d3 = b1 - a1;
+            const float denom = cross2(d1, d2);
+            if (std::abs(denom) < 1e-10f) return false;
+            const float t = cross2(d3, d2) / denom;
+            const float s = cross2(d3, d1) / denom;
+            constexpr float eps = 1e-6f;
+            return (t > eps && t < 1.f - eps && s > eps && s < 1.f - eps);
+        };
+
+        // Case 1: any vertex of A inside B.
+        for (const auto& v : A) if (pip(v, B)) return true;
+        // Case 2: any vertex of B inside A.
+        for (const auto& v : B) if (pip(v, A)) return true;
+        // Case 3: any edge of A crosses any edge of B.
+        for (std::size_t i = 0; i < A.size(); ++i)
+            for (std::size_t j = 0; j < B.size(); ++j)
+                if (segs_cross(A[i], A[(i + 1) % A.size()], B[j], B[(j + 1) % B.size()]))
+                    return true;
+        return false;
+    };
+
     std::vector<int> candidate_indices;
     candidate_indices.reserve(furniture_polygons.size());
     const Eigen::Vector2f robot_xy = robot_pose.translation();
@@ -436,54 +505,17 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
         if (fp.vertices.size() < 3)
             continue;
 
-        const float h = std::max(0.2f, fp.height);
-
-        // Distance gate: skip objects whose centroid is far from the robot.
-        const Eigen::Vector2f c_world = centroid_of(fp);
-        const float dist = (c_world - robot_xy).norm();
-        constexpr float max_object_dist = 6.0f;   // metres
-        if (dist > max_object_dist)
-        {
-            qInfo() << "  [EM] distance-reject:" << QString::fromStdString(fp.label.empty() ? fp.id : fp.label)
-                     << "dist=" << dist;
-            continue;
-        }
-
-        // Project all footprint corners at floor (z=0) and top (z=h), then
-        // check whether the projected bounding-box overlaps the camera image.
-        float min_u =  std::numeric_limits<float>::max();
-        float max_u = -std::numeric_limits<float>::max();
-        float min_v =  std::numeric_limits<float>::max();
-        float max_v = -std::numeric_limits<float>::max();
-        bool any_in_front = false;
-
-        for (const auto& v : fp.vertices)
-        {
-            const Eigen::Vector2f vr = world_to_robot * v;
-            for (float z : {0.f, h})
-            {
-                const Eigen::Vector3f pc = to_camera_sel(vr, z);
-                const float depth = pc.y();
-                if (depth <= near_depth) continue;
-                any_in_front = true;
-                const float u_proj = cx + fx * (pc.x() / depth);
-                const float v_proj = cy - fy * (pc.z() / depth);
-                if (std::isfinite(u_proj) && std::isfinite(v_proj))
-                {
-                    min_u = std::min(min_u, u_proj); max_u = std::max(max_u, u_proj);
-                    min_v = std::min(min_v, v_proj); max_v = std::max(max_v, v_proj);
-                }
-            }
-        }
-
-        const bool bbox_overlaps = any_in_front
-            && max_u >= 0.f && min_u < static_cast<float>(img_w)
-            && max_v >= 0.f && min_v < static_cast<float>(img_h);
-
-        if (bbox_overlaps)
+        if (polygons_intersect_2d(fp.vertices, frustum_world))
             candidate_indices.push_back(static_cast<int>(i));
         else
-            qInfo() << "  [EM] frustum-reject:" << QString::fromStdString(fp.label.empty() ? fp.id : fp.label);
+        {
+            const Eigen::Vector2f c = centroid_of(fp);
+            const float dist = (c - robot_xy).norm();
+            if (dist < 8.0f)   // only log nearby rejects to reduce noise
+                qInfo() << "  [EM] frustum-reject:" << QString::fromStdString(fp.label.empty() ? fp.id : fp.label)
+                         << "centroid=(" << c.x() << c.y() << ") nverts=" << fp.vertices.size()
+                         << "v0=(" << fp.vertices[0].x() << fp.vertices[0].y() << ")";
+        }
     }
 
     // --- line-of-sight filter: discard objects behind walls ---
@@ -995,7 +1027,7 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
             const auto& pj = poly[j];
             const bool intersect = ((pi.y() > p.y()) != (pj.y() > p.y())) &&
                                    (p.x() < (pj.x() - pi.x()) * (p.y() - pi.y()) /
-                                                std::max(1e-9f, (pj.y() - pi.y())) + pi.x());
+                                                (pj.y() - pi.y()) + pi.x());
             if (intersect)
                 inside = !inside;
         }
