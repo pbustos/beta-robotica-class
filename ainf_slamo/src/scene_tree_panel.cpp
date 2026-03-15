@@ -162,7 +162,7 @@ bool SceneTreePanel::is_object_item(QTreeWidgetItem* item)
 QTreeWidgetItem* SceneTreePanel::make_object_item(
     const rc::SceneGraphModel* /*m*/,
     const QString& label, const QString& type_str,
-    float tx, float ty, float yaw_rad,
+    float tx, float ty, float tz, float yaw_rad,
     float width, float depth, float height,
     std::optional<float> last_fit_sdf) const
 {
@@ -177,6 +177,7 @@ QTreeWidgetItem* SceneTreePanel::make_object_item(
     const float yd = static_cast<float>(qRadiansToDegrees(static_cast<double>(yaw_rad)));
     item->addChild(make_kv("tx",     fmt(tx)     + " m", true, label, "tx"));
     item->addChild(make_kv("ty",     fmt(ty)     + " m", true, label, "ty"));
+    item->addChild(make_kv("tz",     fmt(tz)     + " m", true, label, "tz"));
     item->addChild(make_kv("yaw",    fmt(yd)     + " °", true, label, "yaw_deg"));
     item->addChild(make_kv("width",  fmt(width)  + " m", true, label, "width"));
     item->addChild(make_kv("depth",  fmt(depth)  + " m", true, label, "depth"));
@@ -309,7 +310,7 @@ void SceneTreePanel::rebuild_from_model()
             auto* oi = make_object_item(model_,
                 qlabel,
                 QString::fromStdString(obj->object_type),
-                obj->translation.x(), obj->translation.y(), obj->yaw_rad,
+                obj->translation.x(), obj->translation.y(), obj->translation.z(), obj->yaw_rad,
                 obj->extents.x(), obj->extents.y(), obj->extents.z(),
                 obj->last_fit_sdf);
             floor_item->addChild(oi);
@@ -372,6 +373,7 @@ void SceneTreePanel::update_object_display(const QString& label)
         const QString prop = child->data(1, kPropRole).toString();
         if      (prop == "tx")      child->setText(1, fmt(node.translation.x()) + " m");
         else if (prop == "ty")      child->setText(1, fmt(node.translation.y()) + " m");
+        else if (prop == "tz")      child->setText(1, fmt(node.translation.z()) + " m");
         else if (prop == "yaw_deg") child->setText(1, fmt(yd)                   + " °");
         else if (prop == "width")   child->setText(1, fmt(node.extents.x())     + " m");
         else if (prop == "depth")   child->setText(1, fmt(node.extents.y())     + " m");

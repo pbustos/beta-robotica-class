@@ -657,6 +657,30 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         const float wx = -cen.x();
         const float wz =  cen.y();
 
+        // ---- Invisible bounding cuboid for reliable picking ----
+        // QConeMesh / QSphereMesh have unreliable triangle picking in Qt3D.
+        {
+            const float crown_r = top_r * 1.10f;
+            const float bbox_w  = 2.f * crown_r;
+            auto* e    = new Qt3DCore::QEntity(root_entity_);
+            auto* mesh = new Qt3DExtras::QCuboidMesh(e);
+            mesh->setXExtent(bbox_w);
+            mesh->setYExtent(h);
+            mesh->setZExtent(bbox_w);
+
+            auto* mat = new Qt3DExtras::QPhongAlphaMaterial(e);
+            mat->setAlpha(0.f);
+
+            auto* tf = new Qt3DCore::QTransform(e);
+            tf->setTranslation(QVector3D(wx, 0.5f * h, wz));
+
+            e->addComponent(mesh);
+            e->addComponent(mat);
+            e->addComponent(tf);
+            attach_picker(e, pn);
+            furniture_entities_.push_back(e);
+        }
+
         // ---- Pot body: truncated cone (QConeMesh with topRadius > bottomRadius) ----
         {
             auto* e    = new Qt3DCore::QEntity(root_entity_);
@@ -678,7 +702,6 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             e->addComponent(cone);
             e->addComponent(mat);
             e->addComponent(tf);
-            attach_picker(e, pn);
             furniture_entities_.push_back(e);
             register_group_part(gk, cen, yaw, tf);
         }
@@ -705,7 +728,6 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             e->addComponent(mesh);
             e->addComponent(mat);
             e->addComponent(tf);
-            attach_picker(e, pn);
             furniture_entities_.push_back(e);
             register_group_part(gk, cen, yaw, tf);
         }

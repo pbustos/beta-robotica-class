@@ -5,7 +5,7 @@
 
 void SpecificWorker::slot_new_target(QPointF pos)
 {
-    if (!loc_initialized_.load() || !nav_manager_.path_planner().is_ready())
+    if (!room_ai.is_loc_initialized() || !nav_manager_.path_planner().is_ready())
     {
         qWarning() << "Cannot set target: room not initialized or planner not ready";
         return;

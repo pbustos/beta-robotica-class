@@ -65,7 +65,7 @@ Q_SIGNALS:
     /**
      * Emitted when the user edits a numeric property cell of an object node.
      * @param label    Object label string.
-     * @param property One of: "tx", "ty", "yaw_deg", "width", "depth", "height"
+     * @param property One of: "tx", "ty", "tz", "yaw_deg", "width", "depth", "height"
      * @param value    New value (yaw in degrees; distances in metres).
      */
     void objectPropertyEdited(const QString& label, const QString& property, float value);
@@ -83,7 +83,7 @@ private:
     QTreeWidgetItem* make_object_item(const rc::SceneGraphModel* m,
                                       const QString& label,
                                       const QString& type_str,
-                                      float tx, float ty, float yaw_rad,
+                                      float tx, float ty, float tz, float yaw_rad,
                                       float width, float depth, float height,
                                       std::optional<float> last_fit_sdf = std::nullopt) const;
 

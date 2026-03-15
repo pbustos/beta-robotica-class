@@ -669,6 +669,18 @@ bool SceneGraphModel::set_object_pose(const std::string& label,
     return true;
 }
 
+bool SceneGraphModel::set_object_tz(const std::string& label, float tz)
+{
+    Node* floor = find_floor(root_);
+    if (!floor) return false;
+    Node* obj = find_object_by_label(*floor, label);
+    if (!obj) return false;
+
+    obj->translation.z() = tz;
+    emit objectChanged(QString::fromStdString(label));
+    return true;
+}
+
 bool SceneGraphModel::set_object_extents(const std::string& label,
                                           float width, float depth, float height)
 {

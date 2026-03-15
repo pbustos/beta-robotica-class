@@ -87,12 +87,8 @@ SpecificWorker::~SpecificWorker()
     statemachine.stop();
 
     // Stop background threads first
-    stop_localization_thread_ = true;
+    room_ai.stop();
     stop_lidar_thread = true;
-    if (localization_th_.joinable())
-    {
-        localization_th_.join();
-    }
     if (read_lidar_th.joinable())
     {
         read_lidar_th.join();
@@ -282,11 +278,7 @@ void SpecificWorker::initialize()
 
         connect(grounding_fit_mesh_button_, &QPushButton::clicked, this, [this]()
         {
-            std::optional<rc::RoomConceptAI::UpdateResult> res_opt;
-            {
-                std::lock_guard lock(loc_result_mutex_);
-                res_opt = loc_result_;
-            }
+            auto res_opt = room_ai.get_last_result();
             if (!res_opt.has_value() || !res_opt->ok)
             {
                 if (grounding_status_label_)
@@ -296,7 +288,9 @@ void SpecificWorker::initialize()
             try
             {
                 const auto tdata = imagesegmentation_proxy->getAll(false);
-                em_manager_.run_camera_validator(res_opt->robot_pose, tdata);
+                std::vector<int> vis;
+                { std::lock_guard lock(synth_vis_mutex_); vis = last_visible_indices_; }
+                em_manager_.run_camera_validator(res_opt->robot_pose, tdata, vis);
             }
             catch (const Ice::Exception&)
             {
@@ -442,11 +436,7 @@ void SpecificWorker::initialize()
             else
             {
                 // Fetch localization and camera data then delegate to EM manager
-                std::optional<rc::RoomConceptAI::UpdateResult> res_opt;
-                {
-                    std::lock_guard lock(loc_result_mutex_);
-                    res_opt = loc_result_;
-                }
+                auto res_opt = room_ai.get_last_result();
                 if (!res_opt.has_value() || !res_opt->ok)
                 {
                     if (grounding_status_label_)
@@ -456,7 +446,9 @@ void SpecificWorker::initialize()
                 try
                 {
                     const auto tdata = imagesegmentation_proxy->getAll(false);
-                    em_manager_.run_camera_validator(res_opt->robot_pose, tdata);
+                    std::vector<int> vis;
+                    { std::lock_guard lock(synth_vis_mutex_); vis = last_visible_indices_; }
+                    em_manager_.run_camera_validator(res_opt->robot_pose, tdata, vis);
                 }
                 catch (const Ice::Exception&)
                 {
@@ -790,7 +782,14 @@ void SpecificWorker::initialize()
     viewer_2d_->center_on(robot_cx, robot_cy);
 
     // Start localization thread (room_ai runs independently from compute loop)
-    localization_th_ = std::thread(&SpecificWorker::run_localization, this);
+    {
+        rc::RoomConceptAI::RunContext loc_ctx;
+        loc_ctx.sensor_buffer = &buffer_sync;
+        loc_ctx.velocity_buffer = &velocity_buffer_;
+        loc_ctx.odometry_buffer = &odometry_buffer_;
+        room_ai.set_run_context(loc_ctx);
+        room_ai.start();
+    }
     qInfo() << __FUNCTION__ << "Started localization thread";
 
     // EM manager context setup (after camera_viewer, scene_graph, furniture are ready)
@@ -808,6 +807,25 @@ void SpecificWorker::initialize()
         em_ctx.camera_tz = params.CAMERA_TZ;
         em_ctx.on_accepted = [this]() { draw_furniture(); save_scene_graph_to_usd(); };
         em_manager_.set_context(em_ctx);
+    }
+
+    // Synthetic camera renderer extrinsics (intrinsics set lazily from first TImage)
+    {
+        rc::SyntheticCameraRenderer::CameraExtrinsics extr;
+        extr.tx = params.CAMERA_TX;
+        extr.ty = params.CAMERA_TY;
+        extr.tz = params.CAMERA_TZ;
+        synthetic_renderer_.set_extrinsics(extr);
+        synthetic_renderer_.set_wall_height(2.5f);
+        // Default intrinsics matching the wireframe overlay convention (640×640 image)
+        rc::SyntheticCameraRenderer::CameraIntrinsics intr;
+        intr.fx = 0.9f * 640.f;
+        intr.fy = 0.9f * 640.f;
+        intr.cx = 320.f;
+        intr.cy = 320.f;
+        intr.width = 640;
+        intr.height = 640;
+        synthetic_renderer_.set_intrinsics(intr);
     }
 
     // Navigation manager context setup
@@ -843,15 +861,11 @@ void SpecificWorker::compute()
     { qWarning() << "No lidar data from buffer_sync"; return; };
 
     // ===== READ LATEST LOCALIZATION RESULT FROM THREAD =====
-    std::optional<rc::RoomConceptAI::UpdateResult> res_opt;
-    {
-        std::lock_guard lock(loc_result_mutex_);
-        res_opt = loc_result_;
-    }
+    auto res_opt = room_ai.get_last_result();
 
     if (!res_opt.has_value() || !res_opt->ok)
     {
-        if (!loc_initialized_.load())
+        if (!room_ai.is_loc_initialized())
             qWarning() << "Waiting for localization thread...";
         return;
     }
@@ -870,6 +884,17 @@ void SpecificWorker::compute()
                                                    2.5f);
         if (!em_manager_.is_overlay_locked())
             update_camera_wireframe_overlay(res.robot_pose);
+
+        // Render synthetic camera overlay (walls/floor/furniture wireframes)
+        auto synth_result = synthetic_renderer_.render(
+            res.robot_pose,
+            layout_manager_.furniture(),
+            layout_manager_.room_polygon());
+        camera_viewer_->set_synthetic_overlay(synth_result.overlay);
+        {
+            std::lock_guard lock(synth_vis_mutex_);
+            last_visible_indices_ = std::move(synth_result.visible_furniture_indices);
+        }
     }
 
     auto t0 = std::chrono::steady_clock::now();
@@ -1064,7 +1089,7 @@ void SpecificWorker::slot_robot_dragging(QPointF pos)
     if (capturing_room_polygon)
         return;
 
-    if (!loc_initialized_.load())
+    if (!room_ai.is_loc_initialized())
         return;
 
     // Get current robot orientation to preserve it during drag
@@ -1072,7 +1097,7 @@ void SpecificWorker::slot_robot_dragging(QPointF pos)
     const float current_theta = current_state[4];  // [half_w, half_h, x, y, theta]
 
     // Move robot to new position, keeping orientation
-    push_loc_command(LocCmdSetPose{static_cast<float>(pos.x()), static_cast<float>(pos.y()), current_theta});
+    push_loc_command(rc::RoomConceptAI::CmdSetPose{static_cast<float>(pos.x()), static_cast<float>(pos.y()), current_theta});
 }
 
 void SpecificWorker::slot_robot_drag_end(QPointF pos)
@@ -1081,14 +1106,14 @@ void SpecificWorker::slot_robot_drag_end(QPointF pos)
     if (capturing_room_polygon)
         return;
 
-    if (!loc_initialized_.load())
+    if (!room_ai.is_loc_initialized())
         return;
 
     // Final position after drag
     const auto current_state = get_loc_state();
     const float current_theta = current_state[4];
 
-    push_loc_command(LocCmdSetPose{static_cast<float>(pos.x()), static_cast<float>(pos.y()), current_theta});
+    push_loc_command(rc::RoomConceptAI::CmdSetPose{static_cast<float>(pos.x()), static_cast<float>(pos.y()), current_theta});
     qInfo() << "Robot dragged to (" << pos.x() << "," << pos.y() << ")";
 }
 
@@ -1098,7 +1123,7 @@ void SpecificWorker::slot_robot_rotate(QPointF pos)
     if (capturing_room_polygon)
         return;
 
-    if (!loc_initialized_.load())
+    if (!room_ai.is_loc_initialized())
         return;
 
     // Get current robot position
@@ -1112,7 +1137,7 @@ void SpecificWorker::slot_robot_rotate(QPointF pos)
     const float new_theta = std::atan2(dy, dx);
 
     // Update robot orientation only, keep position
-    push_loc_command(LocCmdSetPose{robot_x, robot_y, new_theta});
+    push_loc_command(rc::RoomConceptAI::CmdSetPose{robot_x, robot_y, new_theta});
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1120,7 +1145,7 @@ void SpecificWorker::slot_robot_rotate(QPointF pos)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::save_last_pose()
 {
-    if (!loc_initialized_.load())
+    if (!room_ai.is_loc_initialized())
         return;
 
     const auto state = get_loc_state();
@@ -1246,93 +1271,8 @@ void SpecificWorker::perform_grid_search(const std::vector<Eigen::Vector3f>& lid
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-/// Localization Thread
+/// Localization Thread  (now managed by room_ai – see RoomConceptAI::run())
 ////////////////////////////////////////////////////////////////////////////////////////////////
-void SpecificWorker::push_loc_command(LocCommand cmd)
-{
-    std::lock_guard lock(loc_cmd_mutex_);
-    loc_pending_commands_.push_back(std::move(cmd));
-}
-
-void SpecificWorker::run_localization()
-{
-    qInfo() << "[LocThread] Localization thread started";
-
-    auto wait_period = std::chrono::milliseconds(40);
-    std::int64_t last_lidar_timestamp = -1;
-    constexpr auto kMinWait = std::chrono::milliseconds(2);
-    constexpr auto kMaxWait = std::chrono::milliseconds(100);
-
-    while (!stop_localization_thread_.load())
-    {
-        // ===== 1. DRAIN PENDING UI COMMANDS =====
-        {
-            std::vector<LocCommand> cmds;
-            {
-                std::lock_guard lock(loc_cmd_mutex_);
-                cmds.swap(loc_pending_commands_);
-            }
-            for (auto& cmd : cmds)
-            {
-                std::visit([this](auto&& arg)
-                {
-                    using T = std::decay_t<decltype(arg)>;
-                    if constexpr (std::is_same_v<T, LocCmdSetPolygon>)
-                        room_ai.set_polygon_room(arg.vertices);
-                    else if constexpr (std::is_same_v<T, LocCmdSetPose>)
-                        room_ai.set_robot_pose(arg.x, arg.y, arg.theta);
-                    else if constexpr (std::is_same_v<T, LocCmdGridSearch>)
-                        room_ai.grid_search_initial_pose(arg.lidar_points, arg.grid_res, arg.angle_res);
-                }, cmd);
-            }
-        }
-
-        // ===== 2. CHECK INITIALIZATION =====
-        if (!room_ai.is_initialized())
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            continue;
-        }
-
-        // ===== 3. READ LIDAR DATA =====
-        const auto &[gt_, lidar_high_, lidar_low_] = buffer_sync.read_last();
-
-        if (!lidar_high_.has_value())
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            continue;
-        }
-
-        // ===== 4. SNAPSHOT VELOCITY & ODOMETRY HISTORY =====
-        auto vel_snap = velocity_buffer_.get_snapshot<0>();
-        auto odom_snap = odometry_buffer_.get_snapshot<0>();
-
-        // ===== 5. RUN LOCALIZATION UPDATE =====
-        const auto res = room_ai.update(lidar_high_.value(), vel_snap, odom_snap);
-
-        // ===== 6. PUBLISH RESULT =====
-        {
-            std::lock_guard lock(loc_result_mutex_);
-            loc_result_ = res;
-        }
-        if (res.ok && !loc_initialized_.load())
-            loc_initialized_ = true;
-
-        // Pace with timestamp feedback from buffer_sync (similar to read_lidar hysteresis):
-        // if lidar timestamp is repeated, slow down; if it advances, speed up.
-        const auto current_lidar_timestamp = lidar_high_->second;
-        const bool repeated_timestamp = (current_lidar_timestamp == last_lidar_timestamp);
-        if (repeated_timestamp)
-            wait_period = std::min(wait_period + std::chrono::milliseconds(1), kMaxWait);
-        else
-            wait_period = std::max(wait_period - std::chrono::milliseconds(1), kMinWait);
-
-        last_lidar_timestamp = current_lidar_timestamp;
-        std::this_thread::sleep_for(wait_period);
-    }
-
-    qInfo() << "[LocThread] Localization thread stopped";
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 /////SUBSCRIPTION to sendData method from JoystickAdapter interface

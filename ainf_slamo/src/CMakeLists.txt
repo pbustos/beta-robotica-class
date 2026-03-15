@@ -113,6 +113,7 @@ LIST(APPEND SOURCES
   ../src/object_ownership_em.cpp
   ../src/scene_graph_adapter.cpp
   ../src/scene_graph_model.cpp
+  ../src/synthetic_camera_renderer.cpp
   ../src/object_models/table_analytic_model.cpp
   ../src/object_models/chair_analytic_model.cpp
   ../src/object_models/bench_analytic_model.cpp
@@ -139,6 +140,8 @@ LIST(APPEND HEADERS
   ../src/furniture_types.h
   ../src/scene_graph_adapter.h
   ../src/scene_graph_model.h
+  ../src/synthetic_camera_renderer.h
+  ../src/buffer_types.h
   ../src/object_models/table_analytic_model.h
   ../src/object_models/chair_analytic_model.h
   ../src/object_models/bench_analytic_model.h

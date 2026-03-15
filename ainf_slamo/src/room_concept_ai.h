@@ -3,6 +3,11 @@
 #include <memory>
 #include <vector>
 #include <limits>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <variant>
+#include <optional>
 
 // ---- PyTorch vs Qt macros (slots/signals/emit) ----
 // Qt uses 'slots' as a macro. PyTorch/libtorch has methods named slots(), which breaks compilation.
@@ -38,6 +43,7 @@
 #include <Eigen/Dense>
 #include <Lidar3D.h>
 #include "common_types.h"
+#include "buffer_types.h"
 #include "room_model.h"
 
 namespace rc
@@ -147,7 +153,47 @@ public:
         {}
     };
 
+    // ===== Threading / Run Context =====
+    /// External buffers that the localization thread reads from directly.
+    struct RunContext
+    {
+        SensorBuffer*   sensor_buffer   = nullptr;  // lidar + GT pose
+        VelocityBuffer* velocity_buffer = nullptr;  // joystick / controller commands
+        OdometryBuffer* odometry_buffer = nullptr;  // measured odometry (encoders/IMU)
+    };
+
+    /// Thread-safe command variants (pushed from UI thread, drained in run loop)
+    struct CmdSetPolygon  { std::vector<Eigen::Vector2f> vertices; };
+    struct CmdSetPose     { float x; float y; float theta; };
+    struct CmdGridSearch  { std::vector<Eigen::Vector3f> lidar_points; float grid_res; float angle_res; };
+    using Command = std::variant<CmdSetPolygon, CmdSetPose, CmdGridSearch>;
+
     RoomConceptAI() = default;
+    ~RoomConceptAI();
+
+    /// Set the run context (buffer pointers).  Must be called before start().
+    void set_run_context(const RunContext& ctx) { run_ctx_ = ctx; }
+
+    /// Start the internal localization thread.  Requires set_run_context() first.
+    void start();
+
+    /// Request the localization thread to stop and join it.
+    void stop();
+
+    /// True while the localization thread is running.
+    bool is_running() const { return loc_running_.load(); }
+
+    /// True once the first successful UpdateResult has been published.
+    bool is_loc_initialized() const { return loc_initialized_.load(); }
+
+    /// Thread-safe: get the latest UpdateResult (nullopt if not yet available).
+    std::optional<UpdateResult> get_last_result() const;
+
+    /// Thread-safe convenience: returns [half_w, half_h, x, y, theta] or zeros.
+    Eigen::Matrix<float,5,1> get_loc_state() const;
+
+    /// Thread-safe: push a command to be executed on the localization thread.
+    void push_command(Command cmd);
 
     void set_initial_state(float width, float length, float x, float y, float phi);
     void set_polygon_room(const std::vector<Eigen::Vector2f>& polygon_vertices);
@@ -179,6 +225,22 @@ public:
     Eigen::Matrix3f current_covariance = Eigen::Matrix3f::Identity() * 0.1f;
 
 private:
+   // ===== Threading internals =====
+   RunContext run_ctx_;
+   std::thread loc_thread_;
+   std::atomic<bool> stop_requested_{false};
+   std::atomic<bool> loc_running_{false};
+   std::atomic<bool> loc_initialized_{false};
+
+   mutable std::mutex result_mutex_;
+   std::optional<UpdateResult> last_result_;
+
+   std::mutex cmd_mutex_;
+   std::vector<Command> pending_commands_;
+
+   /// The localization loop body (runs on loc_thread_)
+   void run();
+
    std::shared_ptr<Model> model_;
    std::int64_t last_lidar_timestamp = 0;
    UpdateResult last_update_result;

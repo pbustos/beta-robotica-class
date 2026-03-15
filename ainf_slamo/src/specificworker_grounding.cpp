@@ -119,6 +119,10 @@ void SpecificWorker::set_object_property(const QString& label, const QString& pr
         const float ty = (property == "ty") ? value : node.translation.y();
         scene_graph_.set_object_pose(label.toStdString(), tx, ty, node.yaw_rad);
     }
+    else if (property == "tz")
+    {
+        scene_graph_.set_object_tz(label.toStdString(), value);
+    }
     else if (property == "yaw_deg")
     {
         const int idx = find_furniture_index_by_name(label);

@@ -1234,4 +1234,126 @@ namespace rc
         return {result, fused_precision};
     }
 
+    // =====================================================================
+    //  Threading: start / stop / run / get_last_result / push_command
+    // =====================================================================
+
+    RoomConceptAI::~RoomConceptAI()
+    {
+        stop();
+    }
+
+    void RoomConceptAI::start()
+    {
+        if (loc_running_.load()) return;
+        stop_requested_ = false;
+        loc_thread_ = std::thread(&RoomConceptAI::run, this);
+    }
+
+    void RoomConceptAI::stop()
+    {
+        stop_requested_ = true;
+        if (loc_thread_.joinable())
+            loc_thread_.join();
+    }
+
+    std::optional<RoomConceptAI::UpdateResult> RoomConceptAI::get_last_result() const
+    {
+        std::lock_guard lock(result_mutex_);
+        return last_result_;
+    }
+
+    Eigen::Matrix<float,5,1> RoomConceptAI::get_loc_state() const
+    {
+        std::lock_guard lock(result_mutex_);
+        if (last_result_.has_value() && last_result_->ok)
+            return last_result_->state;
+        return Eigen::Matrix<float,5,1>::Zero();
+    }
+
+    void RoomConceptAI::push_command(Command cmd)
+    {
+        std::lock_guard lock(cmd_mutex_);
+        pending_commands_.push_back(std::move(cmd));
+    }
+
+    void RoomConceptAI::run()
+    {
+        qInfo() << "[LocThread] Localization thread started";
+        loc_running_ = true;
+
+        auto wait_period = std::chrono::milliseconds(40);
+        std::int64_t last_ts = -1;
+        constexpr auto kMinWait = std::chrono::milliseconds(2);
+        constexpr auto kMaxWait = std::chrono::milliseconds(100);
+
+        while (!stop_requested_.load())
+        {
+            // ===== 1. DRAIN PENDING COMMANDS =====
+            {
+                std::vector<Command> cmds;
+                {
+                    std::lock_guard lock(cmd_mutex_);
+                    cmds.swap(pending_commands_);
+                }
+                for (auto& cmd : cmds)
+                {
+                    std::visit([this](auto&& arg)
+                    {
+                        using T = std::decay_t<decltype(arg)>;
+                        if constexpr (std::is_same_v<T, CmdSetPolygon>)
+                            set_polygon_room(arg.vertices);
+                        else if constexpr (std::is_same_v<T, CmdSetPose>)
+                            set_robot_pose(arg.x, arg.y, arg.theta);
+                        else if constexpr (std::is_same_v<T, CmdGridSearch>)
+                            grid_search_initial_pose(arg.lidar_points, arg.grid_res, arg.angle_res);
+                    }, cmd);
+                }
+            }
+
+            // ===== 2. CHECK INITIALIZATION =====
+            if (!is_initialized())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
+
+            // ===== 3. READ LIDAR DATA =====
+            const auto& [gt_, lidar_high_, lidar_low_] = run_ctx_.sensor_buffer->read_last();
+            if (!lidar_high_.has_value())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
+            }
+
+            // ===== 4. SNAPSHOT VELOCITY & ODOMETRY HISTORY =====
+            auto vel_snap  = run_ctx_.velocity_buffer->get_snapshot<0>();
+            auto odom_snap = run_ctx_.odometry_buffer->get_snapshot<0>();
+
+            // ===== 5. RUN LOCALIZATION UPDATE =====
+            const auto res = update(lidar_high_.value(), vel_snap, odom_snap);
+
+            // ===== 6. PUBLISH RESULT =====
+            {
+                std::lock_guard lock(result_mutex_);
+                last_result_ = res;
+            }
+            if (res.ok && !loc_initialized_.load())
+                loc_initialized_ = true;
+
+            // Adaptive pacing: slow down on repeated timestamps, speed up on new data
+            const auto current_ts = lidar_high_->second;
+            if (current_ts == last_ts)
+                wait_period = std::min(wait_period + std::chrono::milliseconds(1), kMaxWait);
+            else
+                wait_period = std::max(wait_period - std::chrono::milliseconds(1), kMinWait);
+
+            last_ts = current_ts;
+            std::this_thread::sleep_for(wait_period);
+        }
+
+        loc_running_ = false;
+        qInfo() << "[LocThread] Localization thread stopped";
+    }
+
 } // namespace rc

@@ -46,8 +46,9 @@
 #include "layout_manager.h"
 #include "em_manager.h"
 #include "navigation_manager.h"
+#include "synthetic_camera_renderer.h"
 #include <QSplitter>
-#include "doublebuffer_sync/doublebuffer_sync.h"
+#include "buffer_types.h"
 #include "room_concept_ai.h"
 #include "pointcloud_center_estimator.h"
 #include "polygon_path_planner.h"
@@ -129,6 +130,9 @@ class SpecificWorker : public GenericWorker
 	std::unique_ptr<rc::Viewer3D> viewer_3d_;            // 3D scene viewer (owned by us)
 	std::unique_ptr<SceneTreePanel> scene_tree_;          // 3rd pane: scene element tree
 	std::unique_ptr<CameraViewer>  camera_viewer_;        // Camera popup dialog
+	rc::SyntheticCameraRenderer    synthetic_renderer_;    // Wireframe overlay renderer
+	std::mutex synth_vis_mutex_;
+	std::vector<int> last_visible_indices_;                  // cached from last synthetic render
 
 	struct Params
 	{
@@ -163,13 +167,11 @@ class SpecificWorker : public GenericWorker
 	rc::Timer<> clock;
 	FPSCounter fps;
 
-	// Type alias for lidar data in buffer
-	using LidarData = std::pair<std::vector<Eigen::Vector3f>, std::int64_t>;
+	// Type alias for lidar data in buffer (delegates to rc::LidarData from buffer_types.h)
+	using LidarData = rc::LidarData;
 
 	// Sync Buffer: slot 0 = GT pose, slot 1 = HELIOS high lidar, slot 2 = BPEARL low lidar
-	BufferSync<InOut<Eigen::Affine2f, Eigen::Affine2f>,
-			   InOut<LidarData, LidarData>,
-			   InOut<LidarData, LidarData>> buffer_sync;
+	rc::SensorBuffer buffer_sync;
 
 	// Lidar Thread
 	std::thread read_lidar_th;
@@ -218,42 +220,22 @@ class SpecificWorker : public GenericWorker
 	int grounding_world_index_ = -1;
 	int focused_model_index_ = -1;
 	EMManager em_manager_;
-	BufferSync<InOut<rc::VelocityCommand, rc::VelocityCommand>> velocity_buffer_{20};
+	rc::VelocityBuffer velocity_buffer_{20};
 
 	// Measured odometry readings from FullPoseEstimationPub (thread-safe via BufferSync)
-	BufferSync<InOut<rc::OdometryReading, rc::OdometryReading>> odometry_buffer_{20};
+	rc::OdometryBuffer odometry_buffer_{20};
 
-	// ===== Localization Thread =====
-	// room_ai runs in its own thread, publishing UpdateResult to loc_result_
-	std::thread localization_th_;
-	std::atomic<bool> stop_localization_thread_{false};
-	void run_localization();
-
-	// Localization output: latest UpdateResult (mutex-guarded, SPSC)
-	mutable std::mutex loc_result_mutex_;
-	std::optional<rc::RoomConceptAI::UpdateResult> loc_result_;
-	std::atomic<bool> loc_initialized_{false};  // true once room_ai has produced its first result
-
-	// Command queue: UI slots push commands, localization thread drains them
-	struct LocCmdSetPolygon { std::vector<Eigen::Vector2f> vertices; };
-	struct LocCmdSetPose    { float x; float y; float theta; };
-	struct LocCmdGridSearch { std::vector<Eigen::Vector3f> lidar_points; float grid_res; float angle_res; };
-	using LocCommand = std::variant<LocCmdSetPolygon, LocCmdSetPose, LocCmdGridSearch>;
-	std::mutex loc_cmd_mutex_;
-	std::vector<LocCommand> loc_pending_commands_;
-	void push_loc_command(LocCommand cmd);
+	// ===== Localization (delegated to room_ai) =====
+	// room_ai owns its own thread; these helpers forward commands and read results.
 
 	/// Thread-safe read of latest localization state [half_w, half_h, x, y, theta]
 	/// Returns zeros if not yet initialized
-	Eigen::Matrix<float,5,1> get_loc_state() const
-	{
-		std::lock_guard lock(loc_result_mutex_);
-		if (loc_result_.has_value() && loc_result_->ok)
-			return loc_result_->state;
-		return Eigen::Matrix<float,5,1>::Zero();
-	}
+	Eigen::Matrix<float,5,1> get_loc_state() const { return room_ai.get_loc_state(); }
 
-	// Active inference room concept (owned by localization thread after init)
+	/// Push a command to the localization thread (thin wrapper)
+	void push_loc_command(rc::RoomConceptAI::Command cmd) { room_ai.push_command(std::move(cmd)); }
+
+	// Active inference room concept (owns localization thread)
 	rc::RoomConceptAI room_ai;
 
 	void draw_path_threadsafe(const std::vector<Eigen::Vector2f>& path);

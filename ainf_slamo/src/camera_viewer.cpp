@@ -336,6 +336,12 @@ void CameraViewer::set_em_decision_buttons_visible(bool visible)
     }
 }
 
+void CameraViewer::set_synthetic_overlay(const QImage& overlay)
+{
+    std::lock_guard<std::mutex> lock(wireframe_mutex_);
+    synthetic_overlay_ = overlay;
+}
+
 // ---------------------------------------------------------------------------
 // show / hide → start / stop timer
 // ---------------------------------------------------------------------------
@@ -848,6 +854,7 @@ void CameraViewer::grab_frame()
         std::vector<QColor> em_colors;
         std::vector<QString> em_labels;
         QString em_title;
+        QImage synth_overlay;
         {
             std::lock_guard<std::mutex> lock(wireframe_mutex_);
             wireframe_segments = wireframe_segments_camera_;
@@ -861,6 +868,7 @@ void CameraViewer::grab_frame()
             em_colors = em_class_colors_;
             em_labels = em_class_labels_;
             em_title = em_overlay_title_;
+            synth_overlay = synthetic_overlay_;
         }
 
         if (!wireframe_segments.empty())
@@ -1064,6 +1072,12 @@ void CameraViewer::grab_frame()
                 painter.setPen(QPen(QColor(245, 245, 245), 1));
                 painter.drawText(QPoint(30, y), em_labels[k]);
             }
+        }
+        // Composite synthetic camera overlay (walls/floor/furniture wireframes)
+        if (!synth_overlay.isNull() && synth_overlay.size() == px.size())
+        {
+            painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+            painter.drawImage(0, 0, synth_overlay);
         }
         painter.end();
         } // !raw_mode_

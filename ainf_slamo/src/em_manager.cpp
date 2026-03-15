@@ -292,7 +292,8 @@ void EMManager::clear_overlay()
 // run_camera_validator  (button-triggered, ~1400 lines)
 // ---------------------------------------------------------------------------
 void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
-                                     const RoboCompImageSegmentation::TData& tdata)
+                                     const RoboCompImageSegmentation::TData& tdata,
+                                     const std::vector<int>& visible_indices)
 {
     if (!ctx_.camera_viewer)
         return;
@@ -499,6 +500,20 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
     std::vector<int> candidate_indices;
     candidate_indices.reserve(furniture_polygons.size());
     const Eigen::Vector2f robot_xy = robot_pose.translation();
+
+    if (!visible_indices.empty())
+    {
+        // Use pre-computed visibility from the synthetic camera renderer.
+        for (int idx : visible_indices)
+        {
+            if (idx >= 0 && idx < static_cast<int>(furniture_polygons.size()) &&
+                furniture_polygons[idx].vertices.size() >= 3)
+                candidate_indices.push_back(idx);
+        }
+        qInfo() << "  [EM] using synthetic renderer visibility:" << candidate_indices.size() << "candidates";
+    }
+    else
+    {
     for (std::size_t i = 0; i < furniture_polygons.size(); ++i)
     {
         const auto& fp = furniture_polygons[i];
@@ -517,6 +532,7 @@ void EMManager::run_camera_validator(const Eigen::Affine2f& robot_pose,
                          << "v0=(" << fp.vertices[0].x() << fp.vertices[0].y() << ")";
         }
     }
+    } // else (frustum fallback)
 
     // --- line-of-sight filter: discard objects behind walls ---
     if (!room_polygon.empty() && room_polygon.size() >= 3)

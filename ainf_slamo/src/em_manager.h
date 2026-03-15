@@ -48,8 +48,11 @@ public:
     void apply_visuals();
 
     // Camera EM validator (button-triggered)
+    // If visible_indices is provided (from SyntheticCameraRenderer), they are used
+    // instead of re-computing the frustum polygon intersection.
     void run_camera_validator(const Eigen::Affine2f& robot_pose,
-                              const RoboCompImageSegmentation::TData& tdata);
+                              const RoboCompImageSegmentation::TData& tdata,
+                              const std::vector<int>& visible_indices = {});
     void apply_pending_adjustments(bool accept);
 
     // Clear overlay state (used when toggling EM off)

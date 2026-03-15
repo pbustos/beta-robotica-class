@@ -70,7 +70,7 @@ void SpecificWorker::calibrate_gt_offset(const Eigen::Affine2f &estimated_pose, 
 
 void SpecificWorker::slot_calibrate_gt()
 {
-    if (!loc_initialized_.load())
+    if (!room_ai.is_loc_initialized())
     {
         qWarning() << "Cannot calibrate GT: room_ai not initialized";
         return;

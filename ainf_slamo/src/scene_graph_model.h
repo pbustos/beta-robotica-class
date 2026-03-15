@@ -69,6 +69,8 @@ public:
     // ---- Authoritative setters — emit objectChanged ----
     /// Teleport object to a new pose; polygon is reconstructed as a W×D rectangle.
     bool set_object_pose(const std::string& label, float tx, float ty, float yaw_rad);
+    /// Set the vertical translation of an object.
+    bool set_object_tz(const std::string& label, float tz);
     /// Resize object; polygon is reconstructed as a W×D rectangle.
     bool set_object_extents(const std::string& label, float width, float depth, float height);
 

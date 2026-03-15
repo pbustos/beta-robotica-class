@@ -61,7 +61,7 @@ void SpecificWorker::slot_flip_x()
     flip_x_applied_ = !flip_x_applied_;
 
     // Update the room model with flipped polygon (thread-safe)
-    push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
+    push_loc_command(rc::RoomConceptAI::CmdSetPolygon{layout_manager_.room_polygon()});
     nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
 
     // Redraw the polygon
@@ -90,7 +90,7 @@ void SpecificWorker::slot_flip_y()
     flip_y_applied_ = !flip_y_applied_;
 
     // Update the room model with flipped polygon (thread-safe)
-    push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
+    push_loc_command(rc::RoomConceptAI::CmdSetPolygon{layout_manager_.room_polygon()});
     nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
 
     // Redraw the polygon
@@ -226,7 +226,7 @@ void SpecificWorker::load_layout_from_file(const std::string& filename)
     // If polygon was loaded, initialize room_ai
     if (layout_manager_.room_polygon().size() >= 3)
     {
-        push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
+        push_loc_command(rc::RoomConceptAI::CmdSetPolygon{layout_manager_.room_polygon()});
         nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
         nav_manager_.trajectory_controller().set_room_boundary(layout_manager_.room_polygon());
         if (!layout_manager_.furniture().empty())

@@ -81,6 +81,9 @@ class CameraViewer : public QDialog
         /// Show or hide EM decision buttons (accept/reject) after fitting.
         void set_em_decision_buttons_visible(bool visible);
 
+        /// Set the synthetic camera overlay image (rendered by SyntheticCameraRenderer).
+        void set_synthetic_overlay(const QImage& overlay);
+
         /// True when the viewer is in raw-image mode (no overlays/masking).
         bool is_raw_mode() const { return raw_mode_; }
 
@@ -128,6 +131,8 @@ class CameraViewer : public QDialog
         std::vector<QColor> em_class_colors_;
         std::vector<QString> em_class_labels_;
         QString em_overlay_title_;
+
+        QImage synthetic_overlay_;
 
         bool infrastructure_ctx_valid_ = false;
         Eigen::Affine2f infrastructure_robot_pose_ = Eigen::Affine2f::Identity();

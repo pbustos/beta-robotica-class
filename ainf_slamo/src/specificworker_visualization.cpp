@@ -274,7 +274,7 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
 
             // Vertices are already in room frame (where user clicked)
             // Pass them to room_ai via thread-safe command queue
-            push_loc_command(LocCmdSetPolygon{layout_manager_.room_polygon()});
+            push_loc_command(rc::RoomConceptAI::CmdSetPolygon{layout_manager_.room_polygon()});
             nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
 
             // Draw final polygon (fixed in room frame)
