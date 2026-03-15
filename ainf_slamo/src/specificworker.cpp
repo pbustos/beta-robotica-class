@@ -883,12 +883,20 @@ void SpecificWorker::compute()
                                                    params.CAMERA_TZ,
                                                    2.5f);
         if (!em_manager_.is_overlay_locked())
-            update_camera_wireframe_overlay(res.robot_pose);
+        {
+            if (camera_viewer_->show_objects())
+                update_camera_wireframe_overlay(res.robot_pose);
+            else
+                camera_viewer_->clear_wireframe_overlay();
+        }
 
         // Render synthetic camera overlay (walls/floor/furniture wireframes)
+        const auto& furniture = camera_viewer_->show_objects()
+            ? layout_manager_.furniture()
+            : std::vector<rc::FurniturePolygonData>{};
         auto synth_result = synthetic_renderer_.render(
             res.robot_pose,
-            layout_manager_.furniture(),
+            furniture,
             layout_manager_.room_polygon());
         camera_viewer_->set_synthetic_overlay(synth_result.overlay);
         {

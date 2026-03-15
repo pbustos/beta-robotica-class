@@ -1868,23 +1868,6 @@ void Viewer3D::init_path_entity()
     material->setDiffuse(QColor(0, 255, 80));
     material->setShininess(0.0f);
 
-    // Add a QLineWidth render state so the path stays visible at any zoom level.
-    if (material->effect())
-    {
-        for (Qt3DRender::QTechnique* tech : material->effect()->techniques())
-        {
-            if (!tech) continue;
-            for (Qt3DRender::QRenderPass* pass : tech->renderPasses())
-            {
-                if (!pass) continue;
-                auto* lw = new Qt3DRender::QLineWidth(pass);
-                lw->setValue(3.0f);          // 3 px – visible at all zoom levels
-                lw->setSmooth(true);
-                pass->addRenderState(lw);
-            }
-        }
-    }
-
     path_geo_ = new Qt3DCore::QGeometry(path_entity_);
     path_buf_ = new Qt3DCore::QBuffer(path_geo_);
     path_attr_ = new Qt3DCore::QAttribute(path_geo_);
@@ -1899,10 +1882,9 @@ void Viewer3D::init_path_entity()
 
     path_renderer_ = new Qt3DRender::QGeometryRenderer(path_entity_);
     path_renderer_->setGeometry(path_geo_);
-    // LineStrip instead of TriangleStrip: every vertex is a point on the centre
-    // line; no need to compute per-vertex offsets, and the line is always
-    // at least 1 pixel wide due to the QLineWidth state above.
-    path_renderer_->setPrimitiveType(Qt3DRender::QGeometryRenderer::LineStrip);
+    // TriangleStrip ribbon: two vertices per waypoint give world-space width
+    // that stays constant regardless of camera zoom.
+    path_renderer_->setPrimitiveType(Qt3DRender::QGeometryRenderer::TriangleStrip);
 
     path_entity_->addComponent(path_renderer_);
     path_entity_->addComponent(material);
@@ -1917,22 +1899,51 @@ void Viewer3D::update_path(const std::vector<Eigen::Vector2f>& path)
         return;
     }
 
-    // Store one 3D point per path waypoint on the centreline slightly above floor.
-    const float H = 0.04f;   // 4 cm above floor to avoid Z-fighting
+    // Build a triangle-strip ribbon with world-space half-width so the path
+    // remains clearly visible at any zoom level.
+    constexpr float HALF_W = 0.04f;  // 4 cm half-width (8 cm total ribbon)
+    constexpr float H      = 0.04f;  // 4 cm above floor to avoid Z-fighting
+
+    // Two vertices per waypoint → 2*N vertices, 3 floats each.
+    const std::size_t N = path.size();
     QByteArray data;
-    data.resize(static_cast<int>(path.size()) * 3 * static_cast<int>(sizeof(float)));
+    data.resize(static_cast<int>(N * 2 * 3 * sizeof(float)));
     auto* raw = reinterpret_cast<float*>(data.data());
 
-    for (std::size_t i = 0; i < path.size(); ++i)
+    for (std::size_t i = 0; i < N; ++i)
     {
-        raw[i * 3 + 0] = -path[i].x();   // room X → scene -X
-        raw[i * 3 + 1] = H;
-        raw[i * 3 + 2] =  path[i].y();   // room Y → scene +Z
+        // Compute a perpendicular offset in the XZ plane.
+        Eigen::Vector2f dir;
+        if (i == 0)
+            dir = (path[1] - path[0]);
+        else if (i == N - 1)
+            dir = (path[N - 1] - path[N - 2]);
+        else
+            dir = (path[i + 1] - path[i - 1]);
+
+        float len = dir.norm();
+        if (len < 1e-6f) dir = Eigen::Vector2f(1.f, 0.f);
+        else             dir /= len;
+
+        // Perpendicular in 2D: rotate 90°
+        Eigen::Vector2f perp(-dir.y(), dir.x());
+
+        Eigen::Vector2f left  = path[i] + HALF_W * perp;
+        Eigen::Vector2f right = path[i] - HALF_W * perp;
+
+        // Left vertex  (room X → scene -X, room Y → scene +Z)
+        raw[i * 6 + 0] = -left.x();
+        raw[i * 6 + 1] =  H;
+        raw[i * 6 + 2] =  left.y();
+        // Right vertex
+        raw[i * 6 + 3] = -right.x();
+        raw[i * 6 + 4] =  H;
+        raw[i * 6 + 5] =  right.y();
     }
 
     path_buf_->setData(data);
-    path_attr_->setCount(static_cast<uint>(path.size()));
-    path_renderer_->setVertexCount(static_cast<int>(path.size()));
+    path_attr_->setCount(static_cast<uint>(N * 2));
+    path_renderer_->setVertexCount(static_cast<int>(N * 2));
 }
 
 } // namespace rc

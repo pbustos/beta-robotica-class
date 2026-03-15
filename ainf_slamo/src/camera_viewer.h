@@ -87,6 +87,9 @@ class CameraViewer : public QDialog
         /// True when the viewer is in raw-image mode (no overlays/masking).
         bool is_raw_mode() const { return raw_mode_; }
 
+        /// True when the user wants to see yellow furniture wireframes.
+        bool show_objects() const { return show_objects_; }
+
     signals:
         void emRequested();
         void emAcceptRequested();
@@ -111,8 +114,12 @@ class CameraViewer : public QDialog
         QPushButton* em_button_   = nullptr;
         QPushButton* em_accept_button_ = nullptr;
         QPushButton* em_reject_button_ = nullptr;
+        QPushButton* objects_button_  = nullptr;
+        QPushButton* mask_button_     = nullptr;
         QCheckBox*  depth_check_  = nullptr;
         bool        raw_mode_     = false;
+        bool        show_objects_ = false;
+        bool        mask_infrastructure_ = false;
 
         QTimer* timer_            = nullptr;
         int     frame_count_      = 0;

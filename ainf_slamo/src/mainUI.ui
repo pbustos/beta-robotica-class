@@ -359,7 +359,7 @@
           <widget class="QPushButton" name="pushButton_showLidar">
            <property name="text"><string>Lidar</string></property>
            <property name="checkable"><bool>true</bool></property>
-           <property name="checked"><bool>true</bool></property>
+           <property name="checked"><bool>false</bool></property>
            <property name="toolTip"><string>Toggle LiDAR point cloud drawing</string></property>
           </widget>
          </item>
@@ -367,7 +367,7 @@
           <widget class="QPushButton" name="pushButton_showTrajs">
            <property name="text"><string>Trajs</string></property>
            <property name="checkable"><bool>true</bool></property>
-           <property name="checked"><bool>true</bool></property>
+           <property name="checked"><bool>false</bool></property>
            <property name="toolTip"><string>Toggle MPPI trajectory drawing</string></property>
           </widget>
          </item>

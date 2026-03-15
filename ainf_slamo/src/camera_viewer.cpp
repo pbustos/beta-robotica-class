@@ -188,7 +188,7 @@ CameraViewer::CameraViewer(RoboCompImageSegmentation::ImageSegmentationPrxPtr pr
     fps_spin_->setToolTip("Capture frame rate");
     ctrl_layout->addWidget(fps_spin_);
 
-    em_button_ = new QPushButton("Run EM Reassignment", ctrl_bar);
+    em_button_ = new QPushButton("EM", ctrl_bar);
     em_button_->setToolTip("Start EM reassignment on visible model objects");
     ctrl_layout->addWidget(em_button_);
 
@@ -201,6 +201,20 @@ CameraViewer::CameraViewer(RoboCompImageSegmentation::ImageSegmentationPrxPtr pr
     em_reject_button_->setToolTip("Reject the fitted geometry and keep current model");
     em_reject_button_->setEnabled(false);
     ctrl_layout->addWidget(em_reject_button_);
+
+    objects_button_ = new QPushButton("Objects", ctrl_bar);
+    objects_button_->setCheckable(true);
+    objects_button_->setChecked(false);
+    objects_button_->setToolTip("Toggle yellow furniture wireframes on the overlay");
+    ctrl_layout->addWidget(objects_button_);
+    connect(objects_button_, &QPushButton::toggled, this, [this](bool on){ show_objects_ = on; });
+
+    mask_button_ = new QPushButton("Mask", ctrl_bar);
+    mask_button_->setCheckable(true);
+    mask_button_->setChecked(false);
+    mask_button_->setToolTip("Black out wall/floor/ceiling pixels (infrastructure masking)");
+    ctrl_layout->addWidget(mask_button_);
+    connect(mask_button_, &QPushButton::toggled, this, [this](bool on){ mask_infrastructure_ = on; });
 
     auto* raw_button = new QPushButton("Raw Image", ctrl_bar);
     raw_button->setCheckable(true);
@@ -411,7 +425,7 @@ void CameraViewer::grab_frame()
         {
         {
             std::lock_guard<std::mutex> lock(wireframe_mutex_);
-            if (infrastructure_ctx_valid_ && !infrastructure_room_polygon_.empty())
+            if (infrastructure_ctx_valid_ && !infrastructure_room_polygon_.empty() && mask_infrastructure_)
             {
                 QImage qimg = px.toImage().convertToFormat(QImage::Format_RGB888);
                 const int w = qimg.width();
