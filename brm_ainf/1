@@ -1,0 +1,13 @@
+import "Lidar3D.idsl";
+import "OmniRobot.idsl";
+
+Component brm_ainf
+{
+    Communications
+    {
+        requires Lidad3D, OmniRobot;
+    };
+    language Cpp11;
+    gui Qt(QWidget);
+};
+
