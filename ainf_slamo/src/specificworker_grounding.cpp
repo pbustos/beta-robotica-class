@@ -106,6 +106,95 @@ void SpecificWorker::rotate_furniture_by_name(const QString& name, float angle_r
         scene_tree_->update_object_display(QString::fromStdString(fp.label));
 }
 
+int SpecificWorker::wall_index_from_pick_name(const QString& name) const
+{
+    static const QRegularExpression wall_re(R"(^\s*Wall\s+(\d+)\s*$)",
+                                            QRegularExpression::CaseInsensitiveOption);
+    const auto m = wall_re.match(name);
+    if (!m.hasMatch())
+        return -1;
+    bool ok = false;
+    const int wall_num_1based = m.captured(1).toInt(&ok);
+    if (!ok || wall_num_1based <= 0)
+        return -1;
+
+    const int idx = wall_num_1based - 1;
+    const auto& poly = layout_manager_.room_polygon();
+    if (idx < 0 || idx >= static_cast<int>(poly.size()))
+        return -1;
+    return idx;
+}
+
+void SpecificWorker::translate_wall_by_name(const QString& name, float dx_room, float dy_room)
+{
+    const int idx = wall_index_from_pick_name(name);
+    if (idx < 0 || (std::abs(dx_room) < 1e-6f && std::abs(dy_room) < 1e-6f))
+        return;
+
+    auto poly = layout_manager_.room_polygon();
+    if (poly.size() < 3)
+        return;
+
+    const int j = (idx + 1) % static_cast<int>(poly.size());
+    const Eigen::Vector2f d(dx_room, dy_room);
+    poly[static_cast<std::size_t>(idx)] += d;
+    poly[static_cast<std::size_t>(j)] += d;
+
+    layout_manager_.set_room_polygon(poly);
+    rc::SceneGraphAdapter::rebuild_graph(
+        scene_graph_, layout_manager_.room_polygon(), layout_manager_.furniture(),
+        [](const std::string& l) { return EMManager::model_height_from_label(l); }, 2.6f);
+
+    draw_room_polygon();
+    draw_furniture();
+
+    nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
+    nav_manager_.trajectory_controller().set_room_boundary(layout_manager_.room_polygon());
+    const auto obs = layout_manager_.obstacle_polygons();
+    nav_manager_.path_planner().set_obstacles(obs);
+    nav_manager_.trajectory_controller().set_static_obstacles(obs);
+}
+
+void SpecificWorker::rotate_wall_by_name(const QString& name, float angle_rad, const QVector3D& axis)
+{
+    if (std::abs(axis.y()) <= 0.5f || std::abs(angle_rad) < 1e-6f)
+        return;
+
+    const int idx = wall_index_from_pick_name(name);
+    if (idx < 0)
+        return;
+
+    auto poly = layout_manager_.room_polygon();
+    if (poly.size() < 3)
+        return;
+
+    const int j = (idx + 1) % static_cast<int>(poly.size());
+    const Eigen::Vector2f a = poly[static_cast<std::size_t>(idx)];
+    const Eigen::Vector2f b = poly[static_cast<std::size_t>(j)];
+    const Eigen::Vector2f c = 0.5f * (a + b);
+
+    const float cs = std::cos(angle_rad);
+    const float sn = std::sin(angle_rad);
+    const Eigen::Vector2f da = a - c;
+    const Eigen::Vector2f db = b - c;
+    poly[static_cast<std::size_t>(idx)] = c + Eigen::Vector2f(cs * da.x() - sn * da.y(), sn * da.x() + cs * da.y());
+    poly[static_cast<std::size_t>(j)] = c + Eigen::Vector2f(cs * db.x() - sn * db.y(), sn * db.x() + cs * db.y());
+
+    layout_manager_.set_room_polygon(poly);
+    rc::SceneGraphAdapter::rebuild_graph(
+        scene_graph_, layout_manager_.room_polygon(), layout_manager_.furniture(),
+        [](const std::string& l) { return EMManager::model_height_from_label(l); }, 2.6f);
+
+    draw_room_polygon();
+    draw_furniture();
+
+    nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
+    nav_manager_.trajectory_controller().set_room_boundary(layout_manager_.room_polygon());
+    const auto obs = layout_manager_.obstacle_polygons();
+    nav_manager_.path_planner().set_obstacles(obs);
+    nav_manager_.trajectory_controller().set_static_obstacles(obs);
+}
+
 void SpecificWorker::set_object_property(const QString& label, const QString& property, float value)
 {
     const std::string key = label.toStdString();

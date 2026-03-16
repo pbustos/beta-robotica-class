@@ -226,9 +226,12 @@ void SpecificWorker::initialize()
             if (idx > 0)
                 picked = picked.left(idx);
 
-            const int picked_idx = find_furniture_index_by_name(picked);
-            if (picked_idx >= 0)
-                focused_model_index_ = picked_idx;
+            if (!picked.startsWith("Wall "))
+            {
+                const int picked_idx = find_furniture_index_by_name(picked);
+                if (picked_idx >= 0)
+                    focused_model_index_ = picked_idx;
+            }
 
             if (scene_tree_)
                 scene_tree_->select_item_by_name(picked);
@@ -237,19 +240,36 @@ void SpecificWorker::initialize()
         connect(viewer_3d_.get(), &rc::Viewer3D::objectTranslateRequested,
                 this, [this](const QString& n, float dx_room, float dy_room)
         {
-            translate_furniture_by_name(n, dx_room, dy_room);
+            if (!undo_group_open_)
+            {
+                push_undo_snapshot();
+                undo_group_open_ = true;
+            }
+            if (n.trimmed().startsWith("Wall "))
+                translate_wall_by_name(n, dx_room, dy_room);
+            else
+                translate_furniture_by_name(n, dx_room, dy_room);
         });
 
         connect(viewer_3d_.get(), &rc::Viewer3D::objectRotateRequested,
                 this, [this](const QString& n, float angle_rad, const QVector3D& axis)
         {
-            rotate_furniture_by_name(n, angle_rad, axis);
+            if (!undo_group_open_)
+            {
+                push_undo_snapshot();
+                undo_group_open_ = true;
+            }
+            if (n.trimmed().startsWith("Wall "))
+                rotate_wall_by_name(n, angle_rad, axis);
+            else
+                rotate_furniture_by_name(n, angle_rad, axis);
         });
 
         // Save scene to disk once the user releases the gizmo after dragging.
         connect(viewer_3d_.get(), &rc::Viewer3D::objectDragFinished,
                 this, [this](const QString&)
         {
+            undo_group_open_ = false;
             save_scene_graph_to_usd();
         });
 
@@ -305,6 +325,7 @@ void SpecificWorker::initialize()
                              float tx, float ty, float yaw_deg,
                              float width_m, float depth_m, float height_m)
         {
+            push_undo_snapshot();
             // Build a unique numbered label (e.g. "chair_2")
             int count = 1;
             for (const auto& fp : layout_manager_.furniture())
@@ -472,13 +493,18 @@ void SpecificWorker::initialize()
     {
         connect(scene_tree_.get(), &SceneTreePanel::furnitureClicked, this, [this](const QString& name, bool selected)
         {
+            const bool is_wall = name.trimmed().startsWith("wall_", Qt::CaseInsensitive)
+                              || name.trimmed().startsWith("Wall ", Qt::CaseInsensitive);
             if (selected)
             {
-                focused_model_index_ = find_furniture_index_by_name(name);
+                if (!is_wall)
+                    focused_model_index_ = find_furniture_index_by_name(name);
+                else
+                    focused_model_index_ = -1;
                 if (viewer_3d_)
                     viewer_3d_->set_selected_object_for_gizmo(name);
             }
-            else if (focused_model_index_ == find_furniture_index_by_name(name))
+            else if (is_wall || focused_model_index_ == find_furniture_index_by_name(name))
             {
                 focused_model_index_ = -1;
                 if (viewer_3d_)
@@ -491,6 +517,7 @@ void SpecificWorker::initialize()
         connect(scene_tree_.get(), &SceneTreePanel::objectPropertyEdited,
                 this, [this](const QString& label, const QString& prop, float val)
         {
+            push_undo_snapshot();
             set_object_property(label, prop, val);
         });
 
@@ -498,6 +525,7 @@ void SpecificWorker::initialize()
         connect(scene_tree_.get(), &SceneTreePanel::removeObjectRequested,
                 this, [this](const QString& label)
         {
+            push_undo_snapshot();
             const std::string lbl = label.toStdString();
             layout_manager_.remove_furniture(lbl);
             // Update planner obstacles
@@ -615,6 +643,9 @@ void SpecificWorker::initialize()
         label_episodeStatus->setText("EP: IDLE");
         label_episodeStatus->setStyleSheet("background-color: #CFD8DC; color: black; padding: 2px; border-radius: 2px; font-size: 8pt;");
     }
+
+    auto* undo_shortcut = new QShortcut(QKeySequence::Undo, this);
+    connect(undo_shortcut, &QShortcut::activated, this, [this]() { undo_last_action(); });
     if (label_safetyGuard != nullptr)
     {
         label_safetyGuard->setText("SG: OFF");

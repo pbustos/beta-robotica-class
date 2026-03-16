@@ -8,6 +8,7 @@
 #include <QVBoxLayout>
 #include <QMenu>
 #include <QAction>
+#include <QRegularExpression>
 #include <QtMath>
 
 // ---------------------------------------------------------------------------
@@ -65,7 +66,7 @@ SceneTreePanel::SceneTreePanel(QWidget* parent)
     // isSelected() there always sees the post-change state.
     connect(tree_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int)
     {
-        if (!item || !is_object_item(item))
+        if (!item || (!is_object_item(item) && !is_wall_item(item)))
             return;
 
         if (item == active_selected_item_)
@@ -156,6 +157,12 @@ bool SceneTreePanel::is_object_item(QTreeWidgetItem* item)
     return item->parent()->text(0) == "Floor";
 }
 
+bool SceneTreePanel::is_wall_item(QTreeWidgetItem* item)
+{
+    if (!item || !item->parent()) return false;
+    return item->parent()->text(0) == "Wall Perimeter";
+}
+
 // ---------------------------------------------------------------------------
 // make_object_item
 // ---------------------------------------------------------------------------
@@ -229,6 +236,43 @@ QTreeWidgetItem* SceneTreePanel::find_object_item(const QString& label) const
                 const QString cur = obj->data(0, kLabelRole).toString().trimmed().toLower();
                 if (cur == target || cur.contains(target) || target.contains(cur))
                     return obj;
+            }
+        }
+    }
+    return nullptr;
+}
+
+QTreeWidgetItem* SceneTreePanel::find_wall_item(const QString& label_or_pick_name) const
+{
+    QString target = label_or_pick_name.trimmed().toLower();
+    if (target.isEmpty()) return nullptr;
+
+    // Accept 3D pick alias "Wall N" and map to scene-graph label "wall_(N-1)".
+    static const QRegularExpression wall_pick_re(R"(^\s*wall\s+(\d+)\s*$)",
+                                                 QRegularExpression::CaseInsensitiveOption);
+    const auto m = wall_pick_re.match(target);
+    if (m.hasMatch())
+    {
+        bool ok = false;
+        const int one_based = m.captured(1).toInt(&ok);
+        if (ok && one_based > 0)
+            target = QString("wall_%1").arg(one_based - 1);
+    }
+
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i)
+    {
+        auto* room = tree_->topLevelItem(i);
+        for (int j = 0; room && j < room->childCount(); ++j)
+        {
+            auto* mid = room->child(j);
+            if (!mid || mid->text(0) != "Wall Perimeter") continue;
+            for (int k = 0; k < mid->childCount(); ++k)
+            {
+                auto* wall = mid->child(k);
+                if (!wall) continue;
+                const QString cur = wall->text(0).trimmed().toLower();
+                if (cur == target || cur.contains(target) || target.contains(cur))
+                    return wall;
             }
         }
     }
@@ -400,6 +444,8 @@ bool SceneTreePanel::select_item_by_name(const QString& name)
     tree_->clearSelection();
     tree_->setCurrentItem(nullptr);
     QTreeWidgetItem* best = find_object_item(name);
+    if (!best)
+        best = find_wall_item(name);
     if (!best) return false;
     best->setSelected(true);
     tree_->setCurrentItem(best);
@@ -420,7 +466,9 @@ bool SceneTreePanel::toggle_item_by_name(const QString& name)
     for (auto* item : tree_->selectedItems())
     {
         if (!item) continue;
-        const QString cur = item->data(0, kLabelRole).toString().trimmed().toLower();
+        QString cur = item->data(0, kLabelRole).toString().trimmed().toLower();
+        if (cur.isEmpty())
+            cur = item->text(0).trimmed().toLower();
         if (cur == target || cur.contains(target) || target.contains(cur))
         {
             tree_->clearSelection();

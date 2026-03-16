@@ -262,6 +262,7 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
             std::vector<Qt3DCore::QEntity*> furniture_entities_;
             std::unordered_map<std::string, QVector3D> furniture_centers_world_;
             std::unordered_map<std::string, FurnitureGroup> furniture_groups_;
+            std::unordered_map<std::string, QVector3D> wall_centers_world_;
 
             // Object editing gizmo
             Qt3DCore::QEntity* gizmo_root_ = nullptr;

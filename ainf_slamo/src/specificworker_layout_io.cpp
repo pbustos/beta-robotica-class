@@ -260,6 +260,50 @@ void SpecificWorker::save_scene_graph_to_usd()
     qInfo() << "Saved scene graph to" << PERSISTED_SCENE_GRAPH_FILE << "objects=" << layout_manager_.furniture().size();
 }
 
+void SpecificWorker::push_undo_snapshot()
+{
+    const std::string usda = scene_graph_.to_usda();
+    if (!undo_stack_.empty() && undo_stack_.back() == usda)
+        return;
+
+    undo_stack_.push_back(usda);
+    if (undo_stack_.size() > MAX_UNDO_STEPS)
+        undo_stack_.erase(undo_stack_.begin());
+}
+
+void SpecificWorker::undo_last_action()
+{
+    if (undo_stack_.empty())
+    {
+        qInfo() << "Undo: stack empty";
+        return;
+    }
+
+    const std::string snapshot = undo_stack_.back();
+    undo_stack_.pop_back();
+    undo_group_open_ = false;
+
+    if (!scene_graph_.from_usda(snapshot))
+    {
+        qWarning() << "Undo: failed to restore snapshot";
+        return;
+    }
+
+    layout_manager_.set_room_polygon(scene_graph_.room_polygon_xy());
+    layout_manager_.replace_all(rc::SceneGraphAdapter::to_furniture(scene_graph_.objects()));
+
+    nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
+    nav_manager_.trajectory_controller().set_room_boundary(layout_manager_.room_polygon());
+    const auto obs = layout_manager_.obstacle_polygons();
+    nav_manager_.path_planner().set_obstacles(obs);
+    nav_manager_.trajectory_controller().set_static_obstacles(obs);
+
+    draw_room_polygon();
+    draw_furniture();
+    save_scene_graph_to_usd();
+    qInfo() << "Undo: restored previous scene state";
+}
+
 bool SpecificWorker::load_scene_graph_from_usd()
 {
     QFile file(PERSISTED_SCENE_GRAPH_FILE);

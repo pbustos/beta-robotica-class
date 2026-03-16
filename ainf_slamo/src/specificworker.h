@@ -283,6 +283,9 @@ class SpecificWorker : public GenericWorker
 	int find_furniture_index_by_name(const QString& name) const;
 	void translate_furniture_by_name(const QString& name, float dx_room, float dy_room);
 	void rotate_furniture_by_name(const QString& name, float angle_rad, const QVector3D& axis);
+	int wall_index_from_pick_name(const QString& name) const;
+	void translate_wall_by_name(const QString& name, float dx_room, float dy_room);
+	void rotate_wall_by_name(const QString& name, float angle_rad, const QVector3D& axis);
 	void set_object_property(const QString& label, const QString& property, float value);
 	void update_segmented_points_3d(const Eigen::Affine2f &robot_pose);
 	void draw_estimated_room(const Eigen::Matrix<float, 5, 1> &state);
@@ -315,6 +318,8 @@ class SpecificWorker : public GenericWorker
     void load_polygon_from_svg(const QString& svg_content);
 	void save_scene_graph_to_usd();
 	bool load_scene_graph_from_usd();
+	void push_undo_snapshot();
+	void undo_last_action();
 
 	// Pose persistence (for fast restart)
 	void save_last_pose();
@@ -323,6 +328,9 @@ class SpecificWorker : public GenericWorker
 	void perform_grid_search(const std::vector<Eigen::Vector3f>& lidar_points);
 	static constexpr const char* LAST_POSE_FILE = "./last_pose.json";
 	static constexpr const char* PERSISTED_SCENE_GRAPH_FILE = "./scene_graph.usda";
+	std::vector<std::string> undo_stack_;
+	bool undo_group_open_ = false;
+	static constexpr std::size_t MAX_UNDO_STEPS = 50;
 
 	// GT calibration: offset from Webots frame to map frame
 	Eigen::Affine2f gt_offset_ = Eigen::Affine2f::Identity();

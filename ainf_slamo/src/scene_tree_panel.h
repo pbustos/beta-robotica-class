@@ -92,9 +92,11 @@ private:
                                     float length_m, float angle_deg) const;
 
     QTreeWidgetItem* find_object_item(const QString& label) const;
+    QTreeWidgetItem* find_wall_item(const QString& label_or_pick_name) const;
 
     // ---- Click-handling helpers ----
     static bool is_object_item(QTreeWidgetItem* item);
+    static bool is_wall_item(QTreeWidgetItem* item);
 
     static QTreeWidgetItem* make_kv(const QString& key,
                                     const QString& value  = {},

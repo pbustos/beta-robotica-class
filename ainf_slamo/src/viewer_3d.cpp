@@ -28,6 +28,7 @@
 #include <QEvent>
 #include <QCoreApplication>
 #include <QDir>
+#include <QRegularExpression>
 #include <cmath>
 #include <algorithm>
 
@@ -324,6 +325,7 @@ void Viewer3D::rebuild_walls(const std::vector<Eigen::Vector2f>& poly)
         delete e;
     }
     wall_entities_.clear();
+    wall_centers_world_.clear();
 
     if (poly.size() < 2) return;
 
@@ -378,7 +380,9 @@ void Viewer3D::rebuild_walls(const std::vector<Eigen::Vector2f>& poly)
         wallE->addComponent(mesh);
         wallE->addComponent(mat);
         wallE->addComponent(tf);
-        attach_picker(wallE, QStringLiteral("Wall %1").arg(i+1));
+        const QString wall_name = QStringLiteral("Wall %1").arg(i+1);
+        attach_picker(wallE, wall_name);
+        wall_centers_world_[wall_name.toStdString()] = QVector3D(-mid.x(), wall_height_ * 0.5f, mid.y());
 
         wall_entities_.push_back(wallE);
     }
@@ -1199,6 +1203,19 @@ void Viewer3D::show_gizmo_for_object(const QString& name)
 
     const QString qname = name.trimmed();
     const QString qbase = normalize(qname);
+    QString wall_alias = qbase;
+    {
+        static const QRegularExpression wall_model_re(R"(^\s*wall_(\d+)\s*$)",
+                                                      QRegularExpression::CaseInsensitiveOption);
+        const auto m = wall_model_re.match(qbase);
+        if (m.hasMatch())
+        {
+            bool ok = false;
+            const int zero_based = m.captured(1).toInt(&ok);
+            if (ok && zero_based >= 0)
+                wall_alias = QString("Wall %1").arg(zero_based + 1);
+        }
+    }
     // Store requested name first so stale previous selection is not reused.
     selected_object_name_ = qbase;
 
@@ -1206,7 +1223,20 @@ void Viewer3D::show_gizmo_for_object(const QString& name)
     if (it == furniture_centers_world_.end())
         it = furniture_centers_world_.find(qbase.toStdString());
 
+    bool using_wall_center = false;
+    std::unordered_map<std::string, QVector3D>::iterator wit = wall_centers_world_.end();
     if (it == furniture_centers_world_.end())
+    {
+        wit = wall_centers_world_.find(qname.toStdString());
+        if (wit == wall_centers_world_.end())
+            wit = wall_centers_world_.find(qbase.toStdString());
+        if (wit == wall_centers_world_.end())
+            wit = wall_centers_world_.find(wall_alias.toStdString());
+        if (wit != wall_centers_world_.end())
+            using_wall_center = true;
+    }
+
+    if (it == furniture_centers_world_.end() && !using_wall_center)
     {
         // Case-insensitive fallback and relaxed matching for picked aliases.
         const QString target = qbase.toLower();
@@ -1220,9 +1250,24 @@ void Viewer3D::show_gizmo_for_object(const QString& name)
                 break;
             }
         }
+
+        if (it == furniture_centers_world_.end())
+        {
+            for (auto wfit = wall_centers_world_.begin(); wfit != wall_centers_world_.end(); ++wfit)
+            {
+                const QString key = QString::fromStdString(wfit->first);
+                const QString key_base = normalize(key).toLower();
+                if (key_base == target || key.toLower().contains(target) || target.contains(key_base))
+                {
+                    wit = wfit;
+                    using_wall_center = true;
+                    break;
+                }
+            }
+        }
     }
 
-    if (it == furniture_centers_world_.end())
+    if (it == furniture_centers_world_.end() && !using_wall_center)
     {
         // Keep current gizmo if lookup misses transiently (e.g. asynchronous refresh).
         if (gizmo_root_ && gizmo_root_->isEnabled() && !selected_object_name_.isEmpty())
@@ -1231,7 +1276,8 @@ void Viewer3D::show_gizmo_for_object(const QString& name)
         return;
     }
 
-    gizmo_tf_->setTranslation(it->second + QVector3D(0.f, 0.85f, 0.f));
+    const QVector3D base = using_wall_center ? wit->second : it->second;
+    gizmo_tf_->setTranslation(base + QVector3D(0.f, 0.85f, 0.f));
     // Match the default selection size to the effective interaction size.
     gizmo_tf_->setScale(1.15f);
     gizmo_root_->setEnabled(true);
@@ -1593,12 +1639,12 @@ void Viewer3D::attach_picker(Qt3DCore::QEntity* e, const QString& name)
             if (name.startsWith("__GIZMO_"))
                 return;
 
-            if (name != "Floor" && !name.startsWith("Wall ") && name != "Robot")
+            if (name != "Floor" && name != "Robot")
             {
                 show_gizmo_for_object(name);
                 emit objectLeftClicked(name);
             }
-            // Floor / Wall / Robot clicks are ignored for selection purposes;
+            // Floor/Robot clicks are ignored for selection purposes;
             // the gizmo stays on the previously selected furniture.
 
             // Keep plain left-drag orbit stable (no implicit translation on press).

@@ -435,6 +435,16 @@ QJsonObject SceneGraphModel::to_json() const
         obj["translation"] = vec3_to_json(n.translation);
         obj["yaw_rad"] = static_cast<double>(n.yaw_rad);
         obj["extents"] = vec3_to_json(n.extents);
+        if (n.type == "object")
+        {
+            const std::string effective_object_type = n.object_type.empty() ? infer_object_type(n.label) : n.object_type;
+            obj["object_type"] = QString::fromStdString(effective_object_type);
+            // Persist a simple geometry hint so USD payload explicitly records pot-as-truncated-cone.
+            if (effective_object_type == "pot")
+                obj["geometry"] = QStringLiteral("truncated_cone");
+            else
+                obj["geometry"] = QStringLiteral("box");
+        }
         if (n.last_fit_sdf.has_value())
             obj["last_fit_sdf"] = static_cast<double>(n.last_fit_sdf.value());
 
@@ -467,6 +477,9 @@ bool SceneGraphModel::from_json(const QJsonObject& json)
         n.id = obj.value("id").toString().toStdString();
         n.label = obj.value("label").toString().toStdString();
         n.type = obj.value("type").toString().toStdString();
+        n.object_type = obj.value("object_type").toString().toStdString();
+        if (n.type == "object" && n.object_type.empty())
+            n.object_type = infer_object_type(n.label);
         n.translation = json_to_vec3(obj.value("translation").toArray());
         n.yaw_rad = static_cast<float>(obj.value("yaw_rad").toDouble(0.0));
         n.extents = json_to_vec3(obj.value("extents").toArray());
