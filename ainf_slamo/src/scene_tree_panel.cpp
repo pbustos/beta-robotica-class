@@ -95,11 +95,19 @@ SceneTreePanel::SceneTreePanel(QWidget* parent)
         // Strip units suffix, then parse.
         QString raw = item->text(1).trimmed();
         raw.remove(QRegularExpression(R"(\s*(m|°)\s*$)"));
+        raw.replace(',', '.');
         bool ok = false;
         const float value = raw.toFloat(&ok);
         if (!ok)
         {
-            if (model_) update_object_display(label);
+            if (model_)
+            {
+                if (label.trimmed().startsWith("wall_", Qt::CaseInsensitive)
+                    || label.trimmed().startsWith("Wall ", Qt::CaseInsensitive))
+                    rebuild_from_model();
+                else
+                    update_object_display(label);
+            }
             return;
         }
         emit objectPropertyEdited(label, prop, value);
@@ -209,8 +217,8 @@ QTreeWidgetItem* SceneTreePanel::make_wall_item(const QString& label,
     auto* item = new QTreeWidgetItem();
     item->setText(0, label);
     item->setText(1, fmt(length_m, 2) + " m");
-    item->addChild(make_kv("pos_x",  fmt(pos_x)        + " m"));
-    item->addChild(make_kv("pos_y",  fmt(pos_y)        + " m"));
+    item->addChild(make_kv("pos_x",  fmt(pos_x)        + " m", true, label, "pos_x"));
+    item->addChild(make_kv("pos_y",  fmt(pos_y)        + " m", true, label, "pos_y"));
     item->addChild(make_kv("length", fmt(length_m, 2)  + " m"));
     item->addChild(make_kv("angle",  fmt(angle_deg, 1) + " °"));
     return item;

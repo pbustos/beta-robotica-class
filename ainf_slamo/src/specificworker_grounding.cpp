@@ -108,17 +108,34 @@ void SpecificWorker::rotate_furniture_by_name(const QString& name, float angle_r
 
 int SpecificWorker::wall_index_from_pick_name(const QString& name) const
 {
-    static const QRegularExpression wall_re(R"(^\s*Wall\s+(\d+)\s*$)",
-                                            QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression wall_re(
+        R"(^\s*(?:Wall\s+(\d+)|wall_(\d+))\s*$)",
+        QRegularExpression::CaseInsensitiveOption);
     const auto m = wall_re.match(name);
     if (!m.hasMatch())
         return -1;
-    bool ok = false;
-    const int wall_num_1based = m.captured(1).toInt(&ok);
-    if (!ok || wall_num_1based <= 0)
+    int idx = -1;
+    if (!m.captured(1).isEmpty())
+    {
+        bool ok = false;
+        const int wall_num_1based = m.captured(1).toInt(&ok);
+        if (!ok || wall_num_1based <= 0)
+            return -1;
+        idx = wall_num_1based - 1;
+    }
+    else if (!m.captured(2).isEmpty())
+    {
+        bool ok = false;
+        const int wall_num_0based = m.captured(2).toInt(&ok);
+        if (!ok || wall_num_0based < 0)
+            return -1;
+        idx = wall_num_0based;
+    }
+    else
+    {
         return -1;
+    }
 
-    const int idx = wall_num_1based - 1;
     const auto& poly = layout_manager_.room_polygon();
     if (idx < 0 || idx >= static_cast<int>(poly.size()))
         return -1;
@@ -197,6 +214,35 @@ void SpecificWorker::rotate_wall_by_name(const QString& name, float angle_rad, c
 
 void SpecificWorker::set_object_property(const QString& label, const QString& property, float value)
 {
+    const int wall_idx = wall_index_from_pick_name(label);
+    if (wall_idx >= 0)
+    {
+        const QString prop = property.trimmed().toLower();
+        const bool edit_x = (prop == "pos_x" || prop == "tx" || prop == "x");
+        const bool edit_y = (prop == "pos_y" || prop == "ty" || prop == "y");
+        if (!edit_x && !edit_y)
+            return;
+
+        const auto& poly = layout_manager_.room_polygon();
+        if (poly.size() < 3)
+            return;
+
+        const int j = (wall_idx + 1) % static_cast<int>(poly.size());
+        const Eigen::Vector2f center =
+            0.5f * (poly[static_cast<std::size_t>(wall_idx)] + poly[static_cast<std::size_t>(j)]);
+
+        const float dx = edit_x ? (value - center.x()) : 0.f;
+        const float dy = edit_y ? (value - center.y()) : 0.f;
+        translate_wall_by_name(QString("Wall %1").arg(wall_idx + 1), dx, dy);
+
+        // Tree edits are discrete actions: persist immediately and force a
+        // deterministic panel refresh of wall properties.
+        if (scene_tree_)
+            scene_tree_->rebuild_from_model();
+        save_scene_graph_to_usd();
+        return;
+    }
+
     const std::string key = label.toStdString();
     auto node_opt = scene_graph_.get_object_node(key);
     if (!node_opt) return;

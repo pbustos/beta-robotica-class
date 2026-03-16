@@ -296,6 +296,64 @@ void SpecificWorker::slot_capture_room_toggled(bool checked)
     }
 }
 
+void SpecificWorker::slot_edit_layout_toggled(bool checked)
+{
+    if (checked)
+    {
+        if (capturing_room_polygon)
+            pushButton_captureRoom->setChecked(false);
+
+        if (layout_manager_.room_polygon().size() < 3)
+        {
+            qWarning() << "Edit layout requires an existing polygon with at least 3 vertices";
+            pushButton_editLayout->setChecked(false);
+            return;
+        }
+
+        editing_room_layout_ = true;
+        editing_corner_idx_ = -1;
+        editing_room_polygon_ = layout_manager_.room_polygon();
+        viewer_2d_->set_room_edit_corners(editing_room_polygon_, true);
+        pushButton_editLayout->setText("Save Edit Layout");
+        qInfo() << "2D layout edit mode ON: drag orange corners to reshape room";
+        return;
+    }
+
+    if (!editing_room_layout_)
+        return;
+
+    editing_room_layout_ = false;
+    editing_corner_idx_ = -1;
+    viewer_2d_->set_room_edit_corners({}, false);
+    pushButton_editLayout->setText("Edit Layout");
+
+    if (editing_room_polygon_.size() < 3)
+    {
+        qWarning() << "Edited polygon invalid; keeping previous layout";
+        draw_room_polygon();
+        return;
+    }
+
+    push_undo_snapshot();
+    layout_manager_.set_room_polygon(editing_room_polygon_);
+
+    rc::SceneGraphAdapter::rebuild_graph(
+        scene_graph_, layout_manager_.room_polygon(), layout_manager_.furniture(),
+        [](const std::string& l) { return EMManager::model_height_from_label(l); }, 2.6f);
+
+    nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
+    nav_manager_.trajectory_controller().set_room_boundary(layout_manager_.room_polygon());
+    const auto obs = layout_manager_.obstacle_polygons();
+    nav_manager_.path_planner().set_obstacles(obs);
+    nav_manager_.trajectory_controller().set_static_obstacles(obs);
+
+    draw_room_polygon();
+    draw_furniture();
+    save_scene_graph_to_usd();
+
+    qInfo() << "2D layout edit mode OFF: modified layout committed and saved";
+}
+
 void SpecificWorker::on_scene_clicked(QPointF pos)
 {
     // This function is now only used for polygon capture mode

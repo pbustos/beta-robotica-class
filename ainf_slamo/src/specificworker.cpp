@@ -414,6 +414,7 @@ void SpecificWorker::initialize()
 
     // Connect capture room button
     connect(pushButton_captureRoom, &QPushButton::toggled, this, &SpecificWorker::slot_capture_room_toggled);
+    connect(pushButton_editLayout, &QPushButton::toggled, this, &SpecificWorker::slot_edit_layout_toggled);
 
     // Connect Ctrl+Left click on the scene for polygon capture (uses robot_rotate signal)
     connect(viewer_2d_.get(), &rc::Viewer2D::robot_rotate, this, &SpecificWorker::on_scene_clicked);
@@ -1124,6 +1125,26 @@ void SpecificWorker::clear_path(bool stop_controller, bool clear_stored_path)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void SpecificWorker::slot_robot_dragging(QPointF pos)
 {
+    if (editing_room_layout_)
+    {
+        if (editing_room_polygon_.size() < 3)
+            return;
+
+        if (editing_corner_idx_ < 0)
+            editing_corner_idx_ = viewer_2d_->nearest_room_edit_corner(pos, 0.45f);
+        if (editing_corner_idx_ < 0 || editing_corner_idx_ >= static_cast<int>(editing_room_polygon_.size()))
+            return;
+
+        editing_room_polygon_[static_cast<std::size_t>(editing_corner_idx_)] =
+            Eigen::Vector2f(static_cast<float>(pos.x()), static_cast<float>(pos.y()));
+        viewer_2d_->update_room_edit_corner(static_cast<std::size_t>(editing_corner_idx_),
+                                            editing_room_polygon_[static_cast<std::size_t>(editing_corner_idx_)]);
+        viewer_2d_->draw_room_polygon(editing_room_polygon_, false);
+        if (viewer_3d_)
+            viewer_3d_->rebuild_walls(editing_room_polygon_);
+        return;
+    }
+
     // Don't move robot while capturing room polygon
     if (capturing_room_polygon)
         return;
@@ -1141,6 +1162,22 @@ void SpecificWorker::slot_robot_dragging(QPointF pos)
 
 void SpecificWorker::slot_robot_drag_end(QPointF pos)
 {
+    if (editing_room_layout_)
+    {
+        if (editing_corner_idx_ >= 0 && editing_corner_idx_ < static_cast<int>(editing_room_polygon_.size()))
+        {
+            editing_room_polygon_[static_cast<std::size_t>(editing_corner_idx_)] =
+                Eigen::Vector2f(static_cast<float>(pos.x()), static_cast<float>(pos.y()));
+            viewer_2d_->update_room_edit_corner(static_cast<std::size_t>(editing_corner_idx_),
+                                                editing_room_polygon_[static_cast<std::size_t>(editing_corner_idx_)]);
+            viewer_2d_->draw_room_polygon(editing_room_polygon_, false);
+            if (viewer_3d_)
+                viewer_3d_->rebuild_walls(editing_room_polygon_);
+        }
+        editing_corner_idx_ = -1;
+        return;
+    }
+
     // Don't move robot while capturing room polygon
     if (capturing_room_polygon)
         return;
@@ -1158,6 +1195,9 @@ void SpecificWorker::slot_robot_drag_end(QPointF pos)
 
 void SpecificWorker::slot_robot_rotate(QPointF pos)
 {
+    if (editing_room_layout_)
+        return;
+
     // Don't rotate robot while capturing room polygon
     if (capturing_room_polygon)
         return;

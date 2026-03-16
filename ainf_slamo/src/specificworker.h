@@ -202,6 +202,9 @@ class SpecificWorker : public GenericWorker
 	bool auto_center_ = false;       // Auto-center view on robot
 	bool draw_lidar_ = false;        // Toggle lidar point rendering
 	bool draw_trajectories_ = false; // Toggle trajectory debug rendering
+	bool editing_room_layout_ = false; // 2D room-corner edit mode
+	int editing_corner_idx_ = -1;      // currently dragged corner index
+	std::vector<Eigen::Vector2f> editing_room_polygon_; // working polygon while editing
         bool initial_center_done_ = false; // Flag to center view once at start
 	QSplitter* splitter_ = nullptr;  // Horizontal splitter (2D | 3D views)
 	QSplitter* right_splitter_ = nullptr; // Vertical splitter in right pane (tree top | palette bottom)
@@ -339,6 +342,7 @@ class SpecificWorker : public GenericWorker
 
 private slots:
 	void slot_capture_room_toggled(bool checked);
+	void slot_edit_layout_toggled(bool checked);
 	void slot_save_layout();
 	void slot_flip_x();
 	void slot_flip_y();

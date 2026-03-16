@@ -174,6 +174,59 @@ void Viewer2D::clear_room_polygon()
     }
 }
 
+void Viewer2D::set_room_edit_corners(const std::vector<Eigen::Vector2f>& verts, bool visible)
+{
+    for (auto* item : room_edit_corner_items_)
+    {
+        agv_->scene.removeItem(item);
+        delete item;
+    }
+    room_edit_corner_items_.clear();
+
+    if (!visible)
+        return;
+
+    constexpr float radius = 0.16f;
+    for (const auto& v : verts)
+    {
+        auto* item = agv_->scene.addEllipse(
+            -radius, -radius, 2.f * radius, 2.f * radius,
+            QPen(QColor(255, 140, 0), 0.05),
+            QBrush(QColor(255, 165, 0, 180)));
+        item->setPos(v.x(), v.y());
+        item->setZValue(30);
+        room_edit_corner_items_.push_back(item);
+    }
+}
+
+void Viewer2D::update_room_edit_corner(std::size_t idx, const Eigen::Vector2f& pos)
+{
+    if (idx >= room_edit_corner_items_.size() || room_edit_corner_items_[idx] == nullptr)
+        return;
+    room_edit_corner_items_[idx]->setPos(pos.x(), pos.y());
+}
+
+int Viewer2D::nearest_room_edit_corner(const QPointF& scene_pos, float max_dist_m) const
+{
+    int best_idx = -1;
+    float best_d2 = max_dist_m * max_dist_m;
+    for (std::size_t i = 0; i < room_edit_corner_items_.size(); ++i)
+    {
+        const auto* item = room_edit_corner_items_[i];
+        if (!item) continue;
+        const QPointF p = item->pos();
+        const float dx = static_cast<float>(scene_pos.x() - p.x());
+        const float dy = static_cast<float>(scene_pos.y() - p.y());
+        const float d2 = dx * dx + dy * dy;
+        if (d2 <= best_d2)
+        {
+            best_d2 = d2;
+            best_idx = static_cast<int>(i);
+        }
+    }
+    return best_idx;
+}
+
 void Viewer2D::save_polygon_to_backup()
 {
     // Discard any previous backup

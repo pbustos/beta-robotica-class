@@ -75,6 +75,9 @@ public:
     // ----- Room polygon outline -----
     void draw_room_polygon(const std::vector<Eigen::Vector2f>& verts, bool is_capturing);
     void clear_room_polygon();
+    void set_room_edit_corners(const std::vector<Eigen::Vector2f>& verts, bool visible);
+    void update_room_edit_corner(std::size_t idx, const Eigen::Vector2f& pos);
+    int nearest_room_edit_corner(const QPointF& scene_pos, float max_dist_m) const;
     /// Move current polygon item into backup (used when starting a new capture).
     void save_polygon_to_backup();
     /// Restore polygon from backup and discard any current polygon.
@@ -149,6 +152,7 @@ private:
     // Room polygon outline
     QGraphicsPolygonItem* polygon_item_         = nullptr;
     QGraphicsPolygonItem* polygon_item_backup_  = nullptr;
+    std::vector<QGraphicsEllipseItem*> room_edit_corner_items_;
 
     // Furniture
     std::vector<QGraphicsPolygonItem*> furniture_draw_items_;

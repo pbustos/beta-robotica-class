@@ -318,6 +318,7 @@ void Viewer3D::build_floor(const std::vector<Eigen::Vector2f>& poly)
 // ---------------------------------------------------------------------------
 void Viewer3D::rebuild_walls(const std::vector<Eigen::Vector2f>& poly)
 {
+    const bool had_walls_before = !wall_entities_.empty();
     // Delete old wall entities
     for (auto* e : wall_entities_)
     {
@@ -331,17 +332,21 @@ void Viewer3D::rebuild_walls(const std::vector<Eigen::Vector2f>& poly)
 
     build_floor(poly);
 
-    // Re-position camera to frame the room
-    const Eigen::Vector2f cen = polygon_centroid(poly);
-    float span = 0.f;
-    for (const auto& v : poly)
-        span = std::max(span, (v - cen).norm());
-    const float view_dist = std::max(8.f, span * 1.8f);
+    // Only auto-frame once (first wall build). Subsequent wall edits must keep
+    // the user camera pose untouched to avoid recentering jumps.
+    if (!had_walls_before)
+    {
+        const Eigen::Vector2f cen = polygon_centroid(poly);
+        float span = 0.f;
+        for (const auto& v : poly)
+            span = std::max(span, (v - cen).norm());
+        const float view_dist = std::max(8.f, span * 1.8f);
 
-    Qt3DRender::QCamera* cam = window_->camera();
-    cam->setViewCenter(QVector3D(-cen.x(), 0.f, cen.y()));
-    cam->setPosition(QVector3D(-cen.x(), view_dist, cen.y() - view_dist));
-    cam->setUpVector(QVector3D(0.f, 1.f, 0.f));
+        Qt3DRender::QCamera* cam = window_->camera();
+        cam->setViewCenter(QVector3D(-cen.x(), 0.f, cen.y()));
+        cam->setPosition(QVector3D(-cen.x(), view_dist, cen.y() - view_dist));
+        cam->setUpVector(QVector3D(0.f, 1.f, 0.f));
+    }
 
     // One QCuboidMesh per wall segment
     const QColor wall_diffuse(248, 248, 245);   // near-white walls
@@ -1276,8 +1281,17 @@ void Viewer3D::show_gizmo_for_object(const QString& name)
         return;
     }
 
-    const QVector3D base = using_wall_center ? wit->second : it->second;
-    gizmo_tf_->setTranslation(base + QVector3D(0.f, 0.85f, 0.f));
+    QVector3D base = using_wall_center ? wit->second : it->second;
+    if (using_wall_center && camera_)
+    {
+        // Pull wall gizmo out of the wall plane toward the camera so handles,
+        // especially the vertical one, do not remain visually embedded.
+        QVector3D to_cam = camera_->position() - base;
+        to_cam.setY(0.f);
+        if (to_cam.lengthSquared() > 1e-6f)
+            base += to_cam.normalized() * 0.38f;
+    }
+    gizmo_tf_->setTranslation(base + QVector3D(0.f, using_wall_center ? 1.05f : 0.85f, 0.f));
     // Match the default selection size to the effective interaction size.
     gizmo_tf_->setScale(1.15f);
     gizmo_root_->setEnabled(true);
@@ -1409,25 +1423,12 @@ bool Viewer3D::eventFilter(QObject* watched, QEvent* event)
             apply_gizmo_drag_delta(delta);
             return true;
         }
-        // Keep camera orbit pivot aligned to the selected gizmo during left-drag
-        // (orbit).  Restrict to left button only — right-drag is pan and must not
-        // have its viewCenter snapped back, otherwise pan fights the gizmo lock and
-        // the camera ends up in erratic positions.
-        if (gizmo_root_ && gizmo_root_->isEnabled() && gizmo_tf_ && camera_
-            && (me->buttons() & Qt::LeftButton)
-            && !(me->buttons() & Qt::RightButton))
-        {
-            camera_->setViewCenter(gizmo_tf_->translation());
-        }
+        // Do not force viewCenter while navigating: this caused unintended
+        // recentering after pan/rotate sequences.
         update_gizmo_screen_scale();
     }
     else if (event->type() == QEvent::Wheel || event->type() == QEvent::Resize)
     {
-        if (event->type() == QEvent::Wheel
-            && gizmo_root_ && gizmo_root_->isEnabled() && gizmo_tf_ && camera_)
-        {
-            camera_->setViewCenter(gizmo_tf_->translation());
-        }
         update_gizmo_screen_scale();
     }
     else if (event->type() == QEvent::MouseButtonPress)

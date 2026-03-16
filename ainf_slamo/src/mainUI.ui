@@ -329,6 +329,13 @@
          <property name="text"><string>Save Layout</string></property>
         </widget>
        </item>
+         <item>
+          <widget class="QPushButton" name="pushButton_editLayout">
+           <property name="text"><string>Edit Layout</string></property>
+           <property name="checkable"><bool>true</bool></property>
+           <property name="toolTip"><string>Toggle 2D corner edit mode for room layout</string></property>
+          </widget>
+         </item>
        <item>
         <widget class="QPushButton" name="pushButton_flipX">
          <property name="text"><string>Flip X</string></property>
