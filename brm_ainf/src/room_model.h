@@ -41,7 +41,7 @@ namespace rc
 
 /**
  * Model - Room model for Active Inference SLAM
- * Supports both axis-aligned box and polygon rooms
+ * Supports both axis-aligned box and Manhattan polygon rooms
  *
  * State (5): [width, length, x, y, phi]
  *  - width/length: room dimensions (m)
@@ -55,7 +55,17 @@ public:
 
     // Room parameters (fixed)
     torch::Tensor half_extents;      // [half_width, half_length] - for box mode
-    torch::Tensor polygon_vertices;  // [N, 2] polygon vertices in room frame
+    // Reconstructed Manhattan polygon vertices [N, 2] in room frame (N comes from the active hypothesis).
+    torch::Tensor polygon_vertices;
+    // Optimized free-edge logits (first N-2 edges). Edge lengths are softplus(logits)+min.
+    torch::Tensor polygon_edge_logits;
+    // Fixed Manhattan edge directions [N, 2], each edge in {(+/-1,0),(0,+/-1)}.
+    torch::Tensor polygon_edge_dirs;
+    // Fixed anchor vertex for reconstruction stability [2].
+    torch::Tensor polygon_anchor;
+    // Reference edge lengths [N] from initialization (used for weak topology regularization).
+    torch::Tensor polygon_ref_lengths;
+    float polygon_min_edge = 0.05f;
     bool use_polygon = false;
 
     // Robot pose wrt room center (optimized)
@@ -99,6 +109,12 @@ public:
     // Compute SDF for points in robot frame
     torch::Tensor sdf(const torch::Tensor& points_robot) const;
 
+    // Return reconstructed Manhattan polygon vertices [N,2].
+    torch::Tensor current_polygon_vertices() const;
+
+    // Soft constraints to keep Manhattan reconstruction in a simple/topology-preserving regime.
+    torch::Tensor polygon_constraint_loss() const;
+
     // Get current state as Eigen vector [width, length, x, y, phi]
     Eigen::Matrix<float, 5, 1> get_state() const;
 
@@ -107,6 +123,9 @@ public:
 
 private:
     void init_common();
+
+  // Reconstruct vertices and full edge lengths from manifold parameters.
+  std::pair<torch::Tensor, torch::Tensor> reconstruct_polygon_from_params() const;
 
     // SDF for box room
     torch::Tensor sdf_box(const torch::Tensor& points_robot,

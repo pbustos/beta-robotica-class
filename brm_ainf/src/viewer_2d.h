@@ -13,6 +13,7 @@
 #include <QGraphicsEllipseItem>
 #include <QGraphicsLineItem>
 #include <QGraphicsRectItem>
+#include <QGraphicsTextItem>
 #include <Eigen/Dense>
 #include <vector>
 
@@ -117,6 +118,24 @@ public:
     /// Hide all trajectory segments, carrot marker, robot-to-carrot line.
     void hide_trajectory_debug();
 
+    // ----- BMR candidate ghost polygons -----
+    struct CandidateDrawData
+    {
+        std::vector<Eigen::Vector2f> verts;
+        float score     = 0.f;
+        bool  is_corner = false; // corner-indent → green, wall-indent → cyan
+        bool  is_chosen = false; // brighter solid line for the selected challenger
+        // Label fields
+        int   side_id   = -1;  // wall side (0-3)
+        int   corner_id = -1;  // corner index (0-3 → BL/BR/TR/TL)
+        float seg_a     = 0.f; // wall segment start
+        float seg_b     = 0.f; // wall segment end
+    };
+    /// Replace all ghost candidate polygons with the new set.
+    void draw_candidate_polygons(const std::vector<CandidateDrawData>& candidates);
+    /// Remove all ghost candidate polygons and their score labels.
+    void clear_candidate_polygons();
+
     // ----- Force repaint -----
     void invalidate();
 
@@ -166,6 +185,10 @@ private:
     std::vector<std::vector<QGraphicsLineItem*>> traj_draw_items_;
     QGraphicsEllipseItem* traj_carrot_marker_     = nullptr;
     QGraphicsLineItem*    traj_robot_to_carrot_   = nullptr;
+
+    // BMR candidate ghost polygons
+    std::vector<QGraphicsPolygonItem*> candidate_polygon_items_;
+    std::vector<QGraphicsTextItem*>    candidate_score_items_;
 };
 
 } // namespace rc

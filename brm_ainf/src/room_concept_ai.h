@@ -249,6 +249,17 @@ public:
         return Eigen::Matrix<float,5,1>::Zero();
     }
 
+    bool is_using_polygon_room() const;
+    std::vector<Eigen::Vector2f> get_room_polygon_vertices() const;
+
+    /// Thread-safe static: SDF Huber accuracy of a candidate polygon at the given pose.
+    /// Creates a temporary Model — no shared state is accessed.
+    static float eval_polygon_sdf_only(
+        const std::vector<Eigen::Vector2f>& polygon_room_verts,
+        const std::vector<Eigen::Vector3f>& lidar_points_robot,
+        float pose_x, float pose_y, float pose_theta,
+        float wall_height);
+
     UpdateResult update(const std::pair<std::vector<Eigen::Vector3f>, std::int64_t> &lidar,
                         const std::vector<rc::VelocityCommand> &velocity_history,
                         const std::vector<rc::OdometryReading> &odometry_history);
@@ -432,6 +443,11 @@ private:
             const auto reverse_term = torch::mean(wall_to_points);
 
             total_loss = total_loss + params.reverse_sdf_weight * reverse_term;
+        }
+
+        if (m.use_polygon)
+        {
+            total_loss = total_loss + m.polygon_constraint_loss();
         }
 
         return total_loss;

@@ -1,7 +1,44 @@
 #include "room_model.h"
 
+#include <algorithm>
+#include <cmath>
+#include <tuple>
+
 namespace rc
 {
+
+namespace
+{
+Eigen::Vector2f dominant_axis_dir(const Eigen::Vector2f& e)
+{
+    if (std::abs(e.x()) >= std::abs(e.y()))
+    {
+        const float sx = (e.x() >= 0.f) ? 1.f : -1.f;
+        return {sx, 0.f};
+    }
+    const float sy = (e.y() >= 0.f) ? 1.f : -1.f;
+    return {0.f, sy};
+}
+
+bool orthogonal_dirs(const Eigen::Vector2f& a, const Eigen::Vector2f& b)
+{
+    return std::abs(a.dot(b)) < 1e-5f;
+}
+
+template<typename T>
+std::vector<T> rotate_left(const std::vector<T>& v, int shift)
+{
+    if (v.empty())
+        return v;
+    const int n = static_cast<int>(v.size());
+    const int s = ((shift % n) + n) % n;
+    std::vector<T> out;
+    out.reserve(v.size());
+    for (int i = 0; i < n; ++i)
+        out.push_back(v[(i + s) % n]);
+    return out;
+}
+} // namespace
 
 void Model::set_device(torch::Device device)
 {
@@ -38,31 +75,80 @@ void Model::init_from_polygon(const std::vector<Eigen::Vector2f>& vertices,
     use_polygon = true;
     half_height = wall_height * 0.5f;
 
-    // Store polygon vertices as tensor [N, 2]
-    std::vector<float> verts_flat;
-    verts_flat.reserve(vertices.size() * 2);
-    for (const auto& v : vertices)
-    {
-        verts_flat.push_back(v.x());
-        verts_flat.push_back(v.y());
-    }
-    polygon_vertices = torch::from_blob(verts_flat.data(),
-        {static_cast<long>(vertices.size()), 2}, torch::kFloat32).clone().to(device_);
+    if (vertices.size() < 3)
+        return;
 
-    // Pre-compute segment data for faster SDF
-    const int64_t num_verts = polygon_vertices.size(0);
-    auto indices_a = torch::arange(num_verts,
-        torch::TensorOptions().dtype(torch::kLong).device(device_));
-    auto indices_b = (indices_a + 1) % num_verts;
-    seg_a_ = polygon_vertices.index_select(0, indices_a).contiguous();
-    const auto seg_b = polygon_vertices.index_select(0, indices_b).contiguous();
-    seg_ab_ = (seg_b - seg_a_).contiguous();
-    seg_ab_sq_ = torch::sum(seg_ab_ * seg_ab_, /*dim=*/1).contiguous();
+    // Preserve the exact BMR-proposed polygon vertices to avoid flattening dents.
+    const auto& verts10 = vertices;
+
+    // Build a Manhattan-by-construction manifold from the initial polygon:
+    // fixed axis-aligned edge directions + trainable edge lengths.
+    std::vector<Eigen::Vector2f> edge_dirs;
+    std::vector<float> edge_lengths;
+    edge_dirs.reserve(verts10.size());
+    edge_lengths.reserve(verts10.size());
+    for (size_t i = 0; i < verts10.size(); ++i)
+    {
+        const auto& a = verts10[i];
+        const auto& b = verts10[(i + 1) % verts10.size()];
+        const Eigen::Vector2f e = b - a;
+        const Eigen::Vector2f d = dominant_axis_dir(e);
+        const float len = std::max(0.01f, std::abs(e.dot(d)));
+        edge_dirs.push_back(d);
+        edge_lengths.push_back(len);
+    }
+
+    // Rotate the edge sequence so the last two closure directions are orthogonal.
+    int shift = 0;
+    for (int i = 0; i < static_cast<int>(edge_dirs.size()); ++i)
+    {
+        const int j = (i + 1) % static_cast<int>(edge_dirs.size());
+        if (orthogonal_dirs(edge_dirs[i], edge_dirs[j]))
+        {
+            shift = (i + 2) % static_cast<int>(edge_dirs.size());
+            break;
+        }
+    }
+    const auto verts_rot = rotate_left(verts10, shift);
+    const auto dirs_rot = rotate_left(edge_dirs, shift);
+    const auto lens_rot = rotate_left(edge_lengths, shift);
+
+    std::vector<float> dirs_flat;
+    dirs_flat.reserve(dirs_rot.size() * 2);
+    for (const auto& d : dirs_rot)
+    {
+        dirs_flat.push_back(d.x());
+        dirs_flat.push_back(d.y());
+    }
+    polygon_edge_dirs = torch::from_blob(dirs_flat.data(),
+        {static_cast<long>(dirs_rot.size()), 2}, torch::kFloat32).clone().to(device_);
+
+    polygon_anchor = torch::tensor({verts_rot.front().x(), verts_rot.front().y()},
+        torch::TensorOptions().dtype(torch::kFloat32).device(device_));
+
+    polygon_ref_lengths = torch::from_blob(const_cast<float*>(lens_rot.data()),
+        {static_cast<long>(lens_rot.size())}, torch::kFloat32).clone().to(device_);
+
+    const int n = static_cast<int>(lens_rot.size());
+    const int n_free = std::max(1, n - 2);
+    std::vector<float> logits;
+    logits.reserve(static_cast<size_t>(n_free));
+    for (int i = 0; i < n_free; ++i)
+    {
+        const float y = std::max(1e-4f, lens_rot[i] - polygon_min_edge);
+        logits.push_back(std::log(std::exp(y) - 1.0f));  // inverse softplus
+    }
+    polygon_edge_logits = torch::from_blob(logits.data(),
+        {static_cast<long>(logits.size())}, torch::kFloat32).clone().to(device_);
+    polygon_edge_logits = polygon_edge_logits.set_requires_grad(true);
+
+    // Expose the current reconstructed polygon for visualization/debug consumers.
+    polygon_vertices = current_polygon_vertices();
 
     // Compute bounding box for half_extents (for compatibility)
-    float min_x = vertices[0].x(), max_x = vertices[0].x();
-    float min_y = vertices[0].y(), max_y = vertices[0].y();
-    for (const auto& v : vertices)
+    float min_x = verts10[0].x(), max_x = verts10[0].x();
+    float min_y = verts10[0].y(), max_y = verts10[0].y();
+    for (const auto& v : verts10)
     {
         min_x = std::min(min_x, v.x()); max_x = std::max(max_x, v.x());
         min_y = std::min(min_y, v.y()); max_y = std::max(max_y, v.y());
@@ -76,6 +162,7 @@ void Model::init_from_polygon(const std::vector<Eigen::Vector2f>& vertices,
     robot_theta = torch::tensor({phi},
         torch::TensorOptions().dtype(torch::kFloat32).device(device_).requires_grad(true));
 
+    register_parameter("polygon_edge_logits", polygon_edge_logits);
     register_parameter("robot_pos", robot_pos);
     register_parameter("robot_theta", robot_theta);
 
@@ -198,18 +285,26 @@ torch::Tensor Model::sdf_box(const torch::Tensor& points_robot,
 torch::Tensor Model::sdf_polygon(const torch::Tensor& points_room_xy) const
 {
     // Fully vectorized: broadcast [N,1,2] vs [1,S,2] for all segments at once
-    // Segment tensors (seg_a_, seg_ab_, seg_ab_sq_) are already on device_ from init
+    const auto verts = current_polygon_vertices().to(points_room_xy.device());
+    const auto num_verts = verts.size(0);
+    auto indices_a = torch::arange(num_verts,
+        torch::TensorOptions().dtype(torch::kLong).device(points_room_xy.device()));
+    auto indices_b = (indices_a + 1) % num_verts;
+    const auto seg_a = verts.index_select(0, indices_a).contiguous();
+    const auto seg_b = verts.index_select(0, indices_b).contiguous();
+    const auto seg_ab = (seg_b - seg_a).contiguous();
+    const auto seg_ab_sq = torch::sum(seg_ab * seg_ab, /*dim=*/1).contiguous();
 
     // points: [N, 2] → [N, 1, 2];  segments: [S, 2] → [1, S, 2]
     const auto pts = points_room_xy.unsqueeze(1);  // [N, 1, 2]
-    const auto a_  = seg_a_.unsqueeze(0);           // [1, S, 2]
-    const auto ab_ = seg_ab_.unsqueeze(0);          // [1, S, 2]
+    const auto a_  = seg_a.unsqueeze(0);            // [1, S, 2]
+    const auto ab_ = seg_ab.unsqueeze(0);           // [1, S, 2]
 
     // ap = pts - a  →  [N, S, 2]
     const auto ap = pts - a_;
 
     // t = clamp(dot(ap, ab) / |ab|², 0, 1)  →  [N, S]
-    auto t = torch::sum(ap * ab_, /*dim=*/2) / (seg_ab_sq_.unsqueeze(0) + 1e-8f);
+    auto t = torch::sum(ap * ab_, /*dim=*/2) / (seg_ab_sq.unsqueeze(0) + 1e-8f);
     t = torch::clamp(t, 0.0f, 1.0f);
 
     // closest = a + t * ab  →  [N, S, 2]
@@ -231,11 +326,30 @@ Eigen::Matrix<float, 5, 1> Model::get_state() const
     auto ext_cpu = half_extents.to(torch::kCPU);
     auto pos_cpu = robot_pos.to(torch::kCPU);
     auto th_cpu  = robot_theta.to(torch::kCPU);
-    const auto ext = ext_cpu.accessor<float,1>();
+    float width = 2.f * ext_cpu.accessor<float,1>()[0];
+    float length = 2.f * ext_cpu.accessor<float,1>()[1];
+
+    if (use_polygon && polygon_edge_logits.defined())
+    {
+        const auto poly_cpu = current_polygon_vertices().to(torch::kCPU);
+        auto p = poly_cpu.accessor<float,2>();
+        float min_x = p[0][0], max_x = p[0][0];
+        float min_y = p[0][1], max_y = p[0][1];
+        for (int i = 1; i < poly_cpu.size(0); ++i)
+        {
+            min_x = std::min(min_x, p[i][0]);
+            max_x = std::max(max_x, p[i][0]);
+            min_y = std::min(min_y, p[i][1]);
+            max_y = std::max(max_y, p[i][1]);
+        }
+        width = max_x - min_x;
+        length = max_y - min_y;
+    }
+
     const auto pos = pos_cpu.accessor<float,1>();
     const auto th  = th_cpu.accessor<float,1>();
     Eigen::Matrix<float,5,1> s;
-    s << 2.f*ext[0], 2.f*ext[1], pos[0], pos[1], th[0];
+    s << width, length, pos[0], pos[1], th[0];
     return s;
 }
 
@@ -243,7 +357,82 @@ std::vector<torch::Tensor> Model::optim_parameters() const
 {
     if (!use_polygon)
         return {half_extents, robot_pos, robot_theta};
-    return {robot_pos, robot_theta};
+    return {polygon_edge_logits, robot_pos, robot_theta};
+}
+
+std::pair<torch::Tensor, torch::Tensor> Model::reconstruct_polygon_from_params() const
+{
+    const auto device = polygon_edge_logits.device();
+    const auto dirs = polygon_edge_dirs.to(device);
+    const auto anchor = polygon_anchor.to(device);
+
+    const int n = static_cast<int>(dirs.size(0));
+    const int n_free = std::max(1, n - 2);
+
+    auto lengths = torch::zeros({n}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+    auto free_lengths = torch::softplus(polygon_edge_logits) + polygon_min_edge;
+    lengths.index_put_({torch::indexing::Slice(0, n_free)}, free_lengths);
+
+    std::vector<torch::Tensor> verts;
+    verts.reserve(static_cast<size_t>(n));
+
+    auto v = anchor.clone();
+    verts.push_back(v);
+    for (int i = 0; i < n_free; ++i)
+    {
+        const auto li = lengths.index({i});
+        const auto di = dirs.index({i});
+        v = v + li * di;
+        verts.push_back(v);
+    }
+
+    const auto d_last_a = dirs.index({n - 2});
+    const auto d_last_b = dirs.index({n - 1});
+    const auto residual = anchor - v;
+    const auto l_last_a = torch::sum(residual * d_last_a);
+    lengths.index_put_({n - 2}, l_last_a);
+
+    const auto v_last = v + l_last_a * d_last_a;
+    const auto l_last_b = torch::sum((anchor - v_last) * d_last_b);
+    lengths.index_put_({n - 1}, l_last_b);
+    verts.push_back(v_last);
+
+    auto verts_tensor = torch::stack(verts, 0);
+    return {verts_tensor, lengths};
+}
+
+torch::Tensor Model::current_polygon_vertices() const
+{
+    if (!use_polygon || !polygon_edge_logits.defined() || !polygon_edge_dirs.defined())
+        return torch::Tensor();
+
+    auto [verts, lengths] = reconstruct_polygon_from_params();
+    (void)lengths;
+    return verts;
+}
+
+torch::Tensor Model::polygon_constraint_loss() const
+{
+    if (!use_polygon || !polygon_edge_logits.defined() || !polygon_edge_dirs.defined())
+        return torch::zeros({}, torch::TensorOptions().dtype(torch::kFloat32).device(device_));
+
+    auto [verts, lengths] = reconstruct_polygon_from_params();
+
+    const auto ref = polygon_ref_lengths.to(lengths.device());
+    const auto min_len = torch::full_like(lengths, polygon_min_edge);
+
+    // Penalize edge flips/collapses and large deviations from initialized topology.
+    const auto neg_penalty = torch::mean(torch::pow(torch::relu(min_len - lengths), 2));
+    const auto shape_reg = torch::mean(torch::pow(lengths - ref, 2));
+
+    // Keep closure numerically tight in optimization.
+    const auto v0 = verts.index({0});
+    const auto vlast = verts.index({verts.size(0) - 1});
+    const auto d_last = polygon_edge_dirs.to(lengths.device()).index({polygon_edge_dirs.size(0) - 1});
+    const auto closure_vec = v0 - vlast - lengths.index({lengths.size(0) - 1}) * d_last;
+    const auto closure_penalty = torch::sum(closure_vec * closure_vec);
+
+    return 50.0f * neg_penalty + 0.05f * shape_reg + 10.0f * closure_penalty;
 }
 
 

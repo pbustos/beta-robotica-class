@@ -200,6 +200,57 @@ void Viewer2D::restore_polygon_from_backup()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BMR candidate ghost polygons
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Viewer2D::draw_candidate_polygons(const std::vector<CandidateDrawData>& candidates)
+{
+    clear_candidate_polygons();
+
+    for (const auto& c : candidates)
+    {
+        if (c.verts.size() < 3)
+            continue;
+
+        // wall-indent → cyan palette; corner-indent → green palette
+        // chosen → more opaque solid line; runner-up → translucent dashed line
+        const int alpha_fill = c.is_chosen ? 160 : 80;
+        QColor pen_color = c.is_corner
+            ? QColor(60, 220, 100, alpha_fill)   // green for corner
+            : QColor(60, 180, 255, alpha_fill);  // cyan for wall
+
+        QPen pen(pen_color, c.is_chosen ? 0.12f : 0.07f);
+        pen.setStyle(c.is_chosen ? Qt::SolidLine : Qt::DashLine);
+
+        QPolygonF poly;
+        for (const auto& v : c.verts)
+            poly << QPointF(v.x(), v.y());
+        poly << QPointF(c.verts.front().x(), c.verts.front().y()); // close
+
+        auto* pitem = agv_->scene.addPolygon(poly, pen, QBrush(Qt::NoBrush));
+        pitem->setZValue(7);
+        candidate_polygon_items_.push_back(pitem);
+    }
+}
+
+void Viewer2D::clear_candidate_polygons()
+{
+    for (auto* item : candidate_polygon_items_)
+    {
+        agv_->scene.removeItem(item);
+        delete item;
+    }
+    candidate_polygon_items_.clear();
+
+    for (auto* item : candidate_score_items_)
+    {
+        agv_->scene.removeItem(item);
+        delete item;
+    }
+    candidate_score_items_.clear();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Furniture polygons
 // ─────────────────────────────────────────────────────────────────────────────
 

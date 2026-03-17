@@ -166,6 +166,54 @@ namespace rc
 
         const torch::Tensor points_tensor = points_to_tensor_xyz(sampled_points, get_device());
 
+        auto compute_fit_quality = [&](UpdateResult &out)
+        {
+            torch::NoGradGuard no_grad;
+            const auto sdf_abs = torch::abs(model_->sdf(points_tensor));
+            const auto n = sdf_abs.size(0);
+            const std::int64_t k90 = std::max<std::int64_t>(1, static_cast<std::int64_t>(0.9f * static_cast<float>(n - 1)) + 1);
+            out.sdf_p90 = std::get<0>(sdf_abs.kthvalue(k90)).item<float>();
+
+            out.reverse_sdf = 0.f;
+            if (!model_->use_polygon)
+            {
+                const auto device = points_tensor.device();
+                const auto pxy = points_tensor.index({torch::indexing::Slice(), torch::indexing::Slice(0,2)});
+                const auto theta = model_->robot_theta.to(device);
+                const auto pos = model_->robot_pos.to(device);
+                const auto c = torch::cos(theta).squeeze();
+                const auto s = torch::sin(theta).squeeze();
+
+                auto rot = torch::zeros({2, 2}, pxy.options());
+                rot[0][0] = c;
+                rot[0][1] = -s;
+                rot[1][0] = s;
+                rot[1][1] = c;
+
+                const auto points_room_xy = torch::matmul(pxy, rot.transpose(0,1)) + pos;
+                const auto he = model_->half_extents.to(device);
+                const auto hw = he.index({0});
+                const auto hl = he.index({1});
+                const int ns = std::max(8, params.reverse_sdf_wall_samples);
+                const auto t = torch::linspace(-1.0f, 1.0f, ns, pxy.options());
+
+                const auto top = torch::stack({t * hw, (t * 0.0f) + hl}, 1);
+                const auto bottom = torch::stack({t * hw, (t * 0.0f) - hl}, 1);
+                const auto right = torch::stack({(t * 0.0f) + hw, t * hl}, 1);
+                const auto left = torch::stack({(t * 0.0f) - hw, t * hl}, 1);
+                const auto wall_samples = torch::cat({top, bottom, right, left}, 0);
+
+                const auto pairwise = torch::cdist(wall_samples, points_room_xy, 2.0);
+                out.reverse_sdf = torch::mean(std::get<0>(torch::min(pairwise, 1))).item<float>();
+            }
+
+            const float scale = std::max(1e-3f, params.belief_scale_m);
+            const float composite = out.sdf_mse
+                                  + params.belief_p90_weight * out.sdf_p90
+                                  + params.belief_reverse_weight * out.reverse_sdf;
+            out.belief_score = std::exp(-composite / scale);
+        };
+
         // Increment tracking step counter
         tracking_step_count_++;
 
@@ -199,6 +247,7 @@ namespace rc
                     res.ok = true;
                     res.final_loss = mean_sdf_pred;
                     res.sdf_mse = mean_sdf_pred;
+                    compute_fit_quality(res);
                     res.iterations_used = 0;
                     res.state = model_->get_state();
 
@@ -289,6 +338,13 @@ namespace rc
                 std::make_unique<torch::optim::AdamOptions>(params.learning_rate_dims)
             );
         }
+        else if (model_->use_polygon)
+        {
+            param_groups.emplace_back(
+                std::vector<torch::Tensor>{model_->polygon_edge_logits},
+                std::make_unique<torch::optim::AdamOptions>(params.learning_rate_dims)
+            );
+        }
         param_groups.emplace_back(
             std::vector<torch::Tensor>{model_->robot_pos},
             std::make_unique<torch::optim::AdamOptions>(params.learning_rate_pos)
@@ -342,7 +398,6 @@ namespace rc
                 model_->half_extents.data().index({0}).clamp_(min_hw, max_hw);
                 model_->half_extents.data().index({1}).clamp_(min_hl, max_hl);
             }
-
             prev_loss = last_loss;
             last_loss = loss.item<float>();
             iterations = i + 1;
@@ -421,6 +476,25 @@ namespace rc
                 res.covariance = current_covariance;
             }
 
+            // ===== LAPLACE VFE COMPLEXITY CORRECTION =====
+            // The optimizer's last_loss already contains accuracy (SDF likelihood) +
+            // mean-KL (Mahalanobis via prior_loss()).  The missing KL terms are the
+            // trace and log-det parts of KL[q||π]:
+            //   complexity = 0.5 * ( tr(Λ_π Σ_q) - log|Λ_π Σ_q| - n )
+            // where Lq = Λ_π Σ_q = prior_precision * res.covariance
+            {
+                const Eigen::Matrix3f Lq = prior_precision * res.covariance;
+                const float trace_term    = Lq.trace();
+                const float logdet_term   = std::log(std::max(1e-12f, Lq.determinant()));
+                const float complexity    = 0.5f * (trace_term - logdet_term - 3.0f);
+                res.vfe.accuracy     = last_loss;
+                res.vfe.complexity   = complexity;
+                res.vfe.total        = last_loss + complexity;
+                res.vfe.trace_term   = trace_term;
+                res.vfe.logdet_ratio = logdet_term;
+                res.vfe.valid        = true;
+            }
+
         } catch (const std::exception &e) {
             // Hessian computation failed, use propagated covariance
             std::cerr << "Covariance update failed: " << e.what() << std::endl;
@@ -429,7 +503,7 @@ namespace rc
         }
 
         res.ok = true;
-        res.final_loss = last_loss;
+        res.final_loss = res.vfe.valid ? res.vfe.total : last_loss;
         res.sdf_mse = compute_sdf_mse_unscaled(points_tensor, *model_);  // Unscaled for UI
         if (!std::isfinite(res.sdf_mse))
         {
@@ -437,53 +511,7 @@ namespace rc
             res.ok = false;
             return res;
         }
-
-        {
-            torch::NoGradGuard no_grad;
-            const auto sdf_abs = torch::abs(model_->sdf(points_tensor));
-            const auto n = sdf_abs.size(0);
-            const std::int64_t k90 = std::max<std::int64_t>(1, static_cast<std::int64_t>(0.9f * static_cast<float>(n - 1)) + 1);
-            res.sdf_p90 = std::get<0>(sdf_abs.kthvalue(k90)).item<float>();
-
-            res.reverse_sdf = 0.f;
-            if (!model_->use_polygon)
-            {
-                const auto device = points_tensor.device();
-                const auto pxy = points_tensor.index({torch::indexing::Slice(), torch::indexing::Slice(0,2)});
-                const auto theta = model_->robot_theta.to(device);
-                const auto pos = model_->robot_pos.to(device);
-                const auto c = torch::cos(theta).squeeze();
-                const auto s = torch::sin(theta).squeeze();
-
-                auto rot = torch::zeros({2, 2}, pxy.options());
-                rot[0][0] = c;
-                rot[0][1] = -s;
-                rot[1][0] = s;
-                rot[1][1] = c;
-
-                const auto points_room_xy = torch::matmul(pxy, rot.transpose(0,1)) + pos;
-                const auto he = model_->half_extents.to(device);
-                const auto hw = he.index({0});
-                const auto hl = he.index({1});
-                const int ns = std::max(8, params.reverse_sdf_wall_samples);
-                const auto t = torch::linspace(-1.0f, 1.0f, ns, pxy.options());
-
-                const auto top = torch::stack({t * hw, (t * 0.0f) + hl}, 1);
-                const auto bottom = torch::stack({t * hw, (t * 0.0f) - hl}, 1);
-                const auto right = torch::stack({(t * 0.0f) + hw, t * hl}, 1);
-                const auto left = torch::stack({(t * 0.0f) - hw, t * hl}, 1);
-                const auto wall_samples = torch::cat({top, bottom, right, left}, 0);
-
-                const auto pairwise = torch::cdist(wall_samples, points_room_xy, 2.0);
-                res.reverse_sdf = torch::mean(std::get<0>(torch::min(pairwise, 1))).item<float>();
-            }
-
-            const float scale = std::max(1e-3f, params.belief_scale_m);
-            const float composite = res.sdf_mse
-                                  + params.belief_p90_weight * res.sdf_p90
-                                  + params.belief_reverse_weight * res.reverse_sdf;
-            res.belief_score = std::exp(-composite / scale);
-        }
+        compute_fit_quality(res);
 
         res.iterations_used = iterations;
         res.state = model_->get_state();
@@ -570,27 +598,60 @@ namespace rc
         return res;
     }
 
+    float RoomConceptAI::eval_polygon_sdf_only(
+        const std::vector<Eigen::Vector2f>& polygon_room_verts,
+        const std::vector<Eigen::Vector3f>& lidar_points_robot,
+        float pose_x, float pose_y, float pose_theta,
+        float wall_height)
+    {
+        if (polygon_room_verts.size() < 3 || lidar_points_robot.empty())
+            return 1e9f;
+        try
+        {
+            Model tmp;
+            tmp.init_from_polygon(polygon_room_verts, pose_x, pose_y, pose_theta, wall_height);
+            const auto pts = points_to_tensor_xyz(lidar_points_robot);
+            torch::NoGradGuard ngd;
+            const auto sdf_vals = tmp.sdf(pts);
+            constexpr float huber_delta = 0.15f;
+            constexpr float sigma_obs   = 0.05f;
+            const float inv_var = 1.0f / (sigma_obs * sigma_obs);
+            const auto huber = torch::nn::functional::huber_loss(
+                sdf_vals, torch::zeros_like(sdf_vals),
+                torch::nn::functional::HuberLossFuncOptions()
+                    .reduction(torch::kMean).delta(huber_delta));
+            return 0.5f * inv_var * huber.item<float>();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[eval_polygon_sdf_only] " << e.what() << std::endl;
+            return 1e9f;
+        }
+    }
+
     void RoomConceptAI::apply_bmr_result(const BmrResult &bmr)
     {
         if (!bmr.valid || !bmr.expand)
-            return;
-
-        std::optional<UpdateResult> last;
         {
-            std::lock_guard lock(result_mutex_);
-            last = last_result_;
-        }
-        if (!last.has_value() || !last->ok)
+            qInfo() << "[BMR] apply skipped: invalid or expand=false";
             return;
+        }
 
-        const float L1 = std::max(0.5f, last->state[0]);
-        const float W1 = std::max(0.5f, last->state[1]);
+        if (model_ == nullptr)
+        {
+            qInfo() << "[BMR] apply skipped: model not initialized";
+            return;
+        }
+
+        const auto state = model_->get_state();
+        const float L1 = std::max(0.5f, state[0]);
+        const float W1 = std::max(0.5f, state[1]);
         try_expand_model_from_bmr(bmr, L1, W1);
     }
 
     void RoomConceptAI::try_expand_model_from_bmr(const BmrResult &bmr, float L1, float W1)
     {
-        if (!bmr.valid || !bmr.expand || model_ == nullptr || model_->use_polygon)
+        if (!bmr.valid || !bmr.expand || model_ == nullptr)
             return;
 
         const float hx = 0.5f * L1;
@@ -614,8 +675,10 @@ namespace rc
                     const float x2 = b * hx;
                     poly = {
                         {-hx, -hy},
+                        { x1, -hy},
                         { x1, -hy + depth},
                         { x2, -hy + depth},
+                        { x2, -hy},
                         { hx, -hy},
                         { hx,  hy},
                         {-hx,  hy}
@@ -629,8 +692,10 @@ namespace rc
                     poly = {
                         {-hx, -hy},
                         { hx, -hy},
+                        { hx, y1},
                         { hx - depth, y1},
                         { hx - depth, y2},
+                        { hx, y2},
                         { hx,  hy},
                         {-hx,  hy}
                     };
@@ -644,8 +709,10 @@ namespace rc
                         {-hx, -hy},
                         { hx, -hy},
                         { hx,  hy},
+                        { x2,  hy},
                         { x2,  hy - depth},
                         { x1,  hy - depth},
+                        { x1,  hy},
                         {-hx,  hy}
                     };
                     break;
@@ -660,8 +727,10 @@ namespace rc
                         { hx, -hy},
                         { hx,  hy},
                         {-hx,  hy},
+                        {-hx, y2},
                         {-hx + depth, y2},
-                        {-hx + depth, y1}
+                        {-hx + depth, y1},
+                        {-hx, y1}
                     };
                     break;
                 }
@@ -670,6 +739,65 @@ namespace rc
             push_command(CmdSetPolygon{poly});
             qInfo() << "[BMR] Structural jump: 2-point wall indent activated. side=" << bmr.indent_side
                     << " depth=" << depth << " segment=[" << a << "," << b << "]"
+                    << " active latent vertices=" << bmr.activated_vertex_a << bmr.activated_vertex_b;
+            return;
+        }
+
+        if (bmr.proposal == BmrResult::ProposalType::ADD_CORNER_INDENT)
+        {
+            if (bmr.activated_vertex_a < 0 || bmr.activated_vertex_b < 0)
+                return;
+
+            const float depth = std::clamp(bmr.indent_depth, 0.1f, 0.8f * std::min(hx, hy));
+            std::vector<Eigen::Vector2f> poly;
+            switch (bmr.indent_corner)
+            {
+                case 0: // bottom-left
+                    poly = {
+                        {-hx + depth, -hy},
+                        { hx, -hy},
+                        { hx,  hy},
+                        {-hx,  hy},
+                        {-hx, -hy + depth},
+                        {-hx + depth, -hy + depth}
+                    };
+                    break;
+                case 1: // bottom-right
+                    poly = {
+                        {-hx, -hy},
+                        { hx - depth, -hy},
+                        { hx - depth, -hy + depth},
+                        { hx, -hy + depth},
+                        { hx,  hy},
+                        {-hx,  hy}
+                    };
+                    break;
+                case 2: // top-right
+                    poly = {
+                        {-hx, -hy},
+                        { hx, -hy},
+                        { hx,  hy - depth},
+                        { hx - depth,  hy - depth},
+                        { hx - depth,  hy},
+                        {-hx,  hy}
+                    };
+                    break;
+                case 3: // top-left
+                default:
+                    poly = {
+                        {-hx, -hy},
+                        { hx, -hy},
+                        { hx,  hy},
+                        {-hx + depth,  hy},
+                        {-hx + depth,  hy - depth},
+                        {-hx,  hy - depth}
+                    };
+                    break;
+            }
+
+            push_command(CmdSetPolygon{poly});
+            qInfo() << "[BMR] Structural jump: corner indent activated. corner=" << bmr.indent_corner
+                    << " depth=" << depth
                     << " active latent vertices=" << bmr.activated_vertex_a << bmr.activated_vertex_b;
             return;
         }
@@ -701,13 +829,9 @@ namespace rc
         // Test 4 orientations: base, +90°, +180°, +270° (covers symmetries)
         const std::vector<float> angle_offsets = {0.0f, M_PI_2, M_PI, 3.0f * M_PI_2};
 
-        // Also test mirrored positions (x, y) and (-x, y) with all rotations
-        // This handles axis-mirroring ambiguity
+        // Keep XY fixed and disambiguate only orientation at the current pose.
         const std::vector<std::pair<float, float>> position_variants = {
-            {x, y},      // Original
-            {-x, y},     // Mirror X
-            {x, -y},     // Mirror Y
-            {-x, -y}     // Mirror both
+            {x, y}
         };
 
         // Subsample points for faster evaluation
@@ -778,9 +902,9 @@ namespace rc
 
         // Get room bounds from polygon or half_extents
         float min_x, max_x, min_y, max_y;
-        if (model_->use_polygon && model_->polygon_vertices.defined())
+        if (model_->use_polygon)
         {
-            auto verts_cpu = model_->polygon_vertices.to(torch::kCPU);
+            auto verts_cpu = model_->current_polygon_vertices().to(torch::kCPU);
             auto acc = verts_cpu.accessor<float, 2>();
             min_x = max_x = acc[0][0];
             min_y = max_y = acc[0][1];
@@ -905,7 +1029,8 @@ namespace rc
         float init_y = 0.0f;
         float init_phi = 0.0f;
 
-        if (model_ != nullptr)
+        const bool had_model = (model_ != nullptr);
+        if (had_model)
         {
             // Preserve current robot pose
             const auto state = model_->get_state();
@@ -921,9 +1046,15 @@ namespace rc
         // Reset state but keep covariance reasonable
         last_lidar_timestamp = 0;
         last_update_result = UpdateResult{};
+        last_update_result.ok = true;
+        last_update_result.state = model_->get_state();
+        last_update_result.robot_pose.translation() = Eigen::Vector2f(init_x, init_y);
+        last_update_result.robot_pose.linear() = Eigen::Rotation2Df(init_phi).toRotationMatrix();
         current_covariance = Eigen::Matrix3f::Identity() * 0.1f;
-        needs_orientation_search_ = true;  // Will search for best orientation on first update
-        has_smoothed_pose_ = false;  // Reset smoothing
+        // During structural jump we already have a localized pose; avoid global reorientation.
+        needs_orientation_search_ = !had_model;
+        smoothed_pose_ = Eigen::Vector3f(init_x, init_y, init_phi);
+        has_smoothed_pose_ = true;
         tracking_step_count_ = 0;  // Reset early exit tracking
         prediction_early_exits_ = 0;
         current_velocity_weights_ = Eigen::Vector3f::Ones();  // Reset velocity weights
@@ -1173,7 +1304,7 @@ namespace rc
             // Integrate this segment
             const float dx_local = (adv_x * dt);
             const float dy_local = (adv_z * dt);
-            const float dtheta = -rot * dt;  // Negative for right-hand rule
+            const float dtheta = -rot * dt;  // Match robot convention: positive command rotates toward negative world yaw
 
             // Transform to global frame using RUNNING theta
             total_delta[0] += dx_local * std::cos(running_theta) - dy_local * std::sin(running_theta);
@@ -1351,7 +1482,7 @@ namespace rc
             // Odometry velocities are in robot frame: adv=forward(Y), side=lateral(X), rot=angular
             const float dx_local = odom.side * dt;   // lateral (X in robot frame)
             const float dy_local = odom.adv * dt;    // forward (Y in robot frame)
-            const float dtheta = -odom.rot * dt;     // same sign convention as commanded
+            const float dtheta = -odom.rot * dt;     // keep measured odometry sign consistent with commanded prior
 
             // Transform to global frame using running theta
             total_delta[0] += dx_local * std::cos(running_theta) - dy_local * std::sin(running_theta);
@@ -1467,6 +1598,29 @@ namespace rc
         if (last_result_.has_value() && last_result_->ok)
             return last_result_->state;
         return Eigen::Matrix<float,5,1>::Zero();
+    }
+
+    bool RoomConceptAI::is_using_polygon_room() const
+    {
+        return model_ != nullptr && model_->use_polygon;
+    }
+
+    std::vector<Eigen::Vector2f> RoomConceptAI::get_room_polygon_vertices() const
+    {
+        std::vector<Eigen::Vector2f> verts;
+        if (model_ == nullptr || !model_->use_polygon)
+            return verts;
+
+        const auto poly_cpu = model_->current_polygon_vertices().to(torch::kCPU);
+        if (poly_cpu.dim() != 2 || poly_cpu.size(1) < 2)
+            return verts;
+
+        verts.reserve(static_cast<size_t>(poly_cpu.size(0)));
+        auto acc = poly_cpu.accessor<float, 2>();
+        for (int i = 0; i < poly_cpu.size(0); ++i)
+            verts.emplace_back(acc[i][0], acc[i][1]);
+
+        return verts;
     }
 
     void RoomConceptAI::push_command(Command cmd)
