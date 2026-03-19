@@ -132,9 +132,15 @@ public:
         float seg_b     = 0.f; // wall segment end
     };
     /// Replace all ghost candidate polygons with the new set.
-    void draw_candidate_polygons(const std::vector<CandidateDrawData>& candidates);
+    /// hx,hy are room half-extents, used to map side-local (a,b) to wall coordinates.
+    void draw_candidate_polygons(const std::vector<CandidateDrawData>& candidates, float hx, float hy);
     /// Remove all ghost candidate polygons and their score labels.
     void clear_candidate_polygons();
+
+    /// Draw thick colored lines on the walls for the top hot-zone segments.
+    /// Color: #1 red, #2 orange, #3 yellow.  Offset inward slightly for visibility.
+    void draw_hot_zones(const std::vector<std::array<float,4>>& zones, float hx, float hy);
+    void clear_hot_zones();
 
     // ----- Force repaint -----
     void invalidate();
@@ -186,9 +192,12 @@ private:
     QGraphicsEllipseItem* traj_carrot_marker_     = nullptr;
     QGraphicsLineItem*    traj_robot_to_carrot_   = nullptr;
 
-    // BMR candidate ghost polygons
-    std::vector<QGraphicsPolygonItem*> candidate_polygon_items_;
+    // BMR candidate ghost polygons and hot-zone segment lines
+    std::vector<QGraphicsItem*> candidate_polygon_items_;
     std::vector<QGraphicsTextItem*>    candidate_score_items_;
+
+    // Top hot-zone segment items
+    std::vector<QGraphicsItem*> hot_zone_items_;
 };
 
 } // namespace rc

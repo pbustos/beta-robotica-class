@@ -49,6 +49,24 @@ Eigen::Vector2f SceneGraphModel::compute_polygon_centroid(const std::vector<Eige
     return c / static_cast<float>(poly.size());
 }
 
+Eigen::Vector2f SceneGraphModel::compute_obb_center(const std::vector<Eigen::Vector2f>& poly, float yaw)
+{
+    if (poly.empty())
+        return Eigen::Vector2f::Zero();
+    const Eigen::Vector2f xdir( std::cos(yaw),  std::sin(yaw));
+    const Eigen::Vector2f ydir(-std::sin(yaw),  std::cos(yaw));
+    float min_x =  std::numeric_limits<float>::max(), max_x = -std::numeric_limits<float>::max();
+    float min_y =  std::numeric_limits<float>::max(), max_y = -std::numeric_limits<float>::max();
+    for (const auto& p : poly)
+    {
+        const float lx = p.dot(xdir);
+        const float ly = p.dot(ydir);
+        min_x = std::min(min_x, lx); max_x = std::max(max_x, lx);
+        min_y = std::min(min_y, ly); max_y = std::max(max_y, ly);
+    }
+    return xdir * 0.5f * (min_x + max_x) + ydir * 0.5f * (min_y + max_y);
+}
+
 const SceneGraphModel::Node* SceneGraphModel::find_floor_const(const Node& root)
 {
     for (const auto& child : root.children)
@@ -210,12 +228,8 @@ void SceneGraphModel::rebuild(const std::vector<Eigen::Vector2f>& room_polygon,
         if (obj_src.vertices.size() < 3)
             continue;
 
-        const Eigen::Vector2f c = compute_polygon_centroid(obj_src.vertices);
-
-        // Always use the stored yaw from the furniture data (the old
-        // room-centre fallback is no longer needed — every object now
-        // carries an explicit yaw_rad, including the valid value 0).
         const float y_yaw = obj_src.frame_yaw_inward_rad;
+        const Eigen::Vector2f c = compute_obb_center(obj_src.vertices, y_yaw);
 
         Node obj;
         obj.id = obj_src.id;
@@ -270,8 +284,8 @@ bool SceneGraphModel::upsert_object(const SceneGraphObject& object)
         obj = &floor->children.back();
     }
 
-    const Eigen::Vector2f c = compute_polygon_centroid(object.vertices);
     const float y_yaw = object.frame_yaw_inward_rad;
+    const Eigen::Vector2f c = compute_obb_center(object.vertices, y_yaw);
     obj->translation = Eigen::Vector3f(c.x(), c.y(), 0.f);
     obj->yaw_rad = y_yaw;
     obj->last_fit_sdf = object.last_fit_sdf;
@@ -344,7 +358,7 @@ bool SceneGraphModel::try_update_object_fit(const std::string& id,
     if (!improved)
         return false;
 
-    const Eigen::Vector2f c = compute_polygon_centroid(world_vertices);
+    const Eigen::Vector2f c_approx = compute_polygon_centroid(world_vertices);
 
     Eigen::Vector2f room_center = Eigen::Vector2f::Zero();
     if (!root_.local_vertices.empty())
@@ -355,12 +369,13 @@ bool SceneGraphModel::try_update_object_fit(const std::string& id,
         room_center /= static_cast<float>(root_.local_vertices.size());
     }
 
-    Eigen::Vector2f ydir = room_center - c;
+    Eigen::Vector2f ydir = room_center - c_approx;
     if (ydir.norm() < 1e-4f)
         ydir = Eigen::Vector2f(0.f, 1.f);
     ydir.normalize();
     const float y_yaw = std::atan2(ydir.y(), ydir.x());
 
+    const Eigen::Vector2f c = compute_obb_center(world_vertices, y_yaw);
     obj->translation = Eigen::Vector3f(c.x(), c.y(), 0.f);
     obj->yaw_rad = y_yaw;
     obj->last_fit_sdf = new_sdf;
@@ -650,8 +665,8 @@ void SceneGraphModel::sync_object_silent(const std::string& label,
     Node* obj = find_object_by_label(*floor, label);
     if (!obj || world_vertices.size() < 3) return;
 
-    const Eigen::Vector2f c   = compute_polygon_centroid(world_vertices);
     const float           yaw = yaw_override.value_or(obj->yaw_rad);
+    const Eigen::Vector2f c   = compute_obb_center(world_vertices, yaw);
 
     obj->translation.x() = c.x();
     obj->translation.y() = c.y();

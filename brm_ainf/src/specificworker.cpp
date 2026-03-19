@@ -47,12 +47,19 @@ indent_candidate_polygon(const rc::BmrResult::IndentCandidateInfo& c, float hx, 
     }
     else if (c.proposal == PT::ADD_CORNER_INDENT && c.corner >= 0 && c.corner <= 3)
     {
+        // 2-DOF corner: independent dx (horizontal) and dy (vertical).
+        const float dx = (c.depth_x > 0.01f || c.depth_y > 0.01f)
+            ? std::clamp(c.depth_x, 0.1f, 0.8f * hx)
+            : depth;
+        const float dy = (c.depth_x > 0.01f || c.depth_y > 0.01f)
+            ? std::clamp(c.depth_y, 0.1f, 0.8f * hy)
+            : depth;
         switch (c.corner)
         {
-            case 0: return {{-hx+depth,-hy},{hx,-hy},{hx,hy},{-hx,hy},{-hx,-hy+depth},{-hx+depth,-hy+depth}}; // BL
-            case 1: return {{-hx,-hy},{hx-depth,-hy},{hx-depth,-hy+depth},{hx,-hy+depth},{hx,hy},{-hx,hy}};    // BR
-            case 2: return {{-hx,-hy},{hx,-hy},{hx,hy-depth},{hx-depth,hy-depth},{hx-depth,hy},{-hx,hy}};      // TR
-            case 3: default: return {{-hx,-hy},{hx,-hy},{hx,hy},{-hx+depth,hy},{-hx+depth,hy-depth},{-hx,hy-depth}}; // TL
+            case 0: return {{-hx+dx,-hy},{hx,-hy},{hx,hy},{-hx,hy},{-hx,-hy+dy},{-hx+dx,-hy+dy}}; // BL
+            case 1: return {{-hx,-hy},{hx-dx,-hy},{hx-dx,-hy+dy},{hx,-hy+dy},{hx,hy},{-hx,hy}};    // BR
+            case 2: return {{-hx,-hy},{hx,-hy},{hx,hy-dy},{hx-dx,hy-dy},{hx-dx,hy},{-hx,hy}};      // TR
+            case 3: default: return {{-hx,-hy},{hx,-hy},{hx,hy},{-hx+dx,hy},{-hx+dx,hy-dy},{-hx,hy-dy}}; // TL
         }
     }
     return {};
@@ -144,20 +151,59 @@ void SpecificWorker::initialize()
         vf_layout->setContentsMargins(0, 0, 0, 0);
         vf_layout->addWidget(viewer_2d_->get_widget());
 
-        // Style the right candidates panel.
+        // Style the bottom candidates panel.
         candidatesTitleLabel->setStyleSheet(
             "QLabel { font-weight: bold; font-size: 11pt; padding: 4px; border-bottom: 1px solid #555; }");
         winnerLabel->setStyleSheet(
             "QLabel { font-weight: bold; color: rgb(50, 200, 50); padding: 4px; border-top: 1px solid #555; }");
         candidateListWidget->setStyleSheet(
-            "QListWidget { background: #1e1e1e; color: #dddddd; font-family: monospace; font-size: 9pt; }");
+            "QListWidget { background: #1a1a1a; color: #dddddd; font-family: monospace; font-size: 9pt; }"
+            "QListWidget::item { padding: 3px 6px; border-bottom: 1px solid #2a2a2a; }");
 
-        // Set initial splitter sizes (viewer ~80 %, candidates panel ~20 %).
-        mainSplitter->setSizes({900, 280});
+        // Set initial splitter sizes (viewer ~75%, candidates panel ~25%).
+        mainSplitter->setSizes({600, 200});
 
         // Wire member pointers for later updates.
         candidate_list_ = candidateListWidget;
         winner_label_   = winnerLabel;
+
+        // Control bar: stop button + velocity readout.
+        stop_btn_ = stopRobotBtn;
+        vel_advx_label_ = velAdvxLabel;
+        vel_advz_label_ = velAdvzLabel;
+        vel_rot_label_  = velRotLabel;
+        stop_btn_->setStyleSheet(
+            "QPushButton { background: #8b0000; color: white; font-weight: bold; padding: 4px 12px; border-radius: 3px; }"
+            "QPushButton:hover { background: #cc0000; }"
+            "QPushButton:pressed { background: #550000; }");
+        const QString vel_style = "QLabel { color: #00ccff; font-family: monospace; font-size: 9pt; padding: 2px 8px; }";
+        vel_advx_label_->setStyleSheet(vel_style);
+        vel_advz_label_->setStyleSheet(vel_style);
+        vel_rot_label_->setStyleSheet(vel_style);
+        connect(stop_btn_, &QPushButton::clicked, this, [this]() {
+            efe_motion_paused_ = !efe_motion_paused_;
+            if (efe_motion_paused_)
+            {
+                stop_efe_hotzone_motion();
+                try { omnirobot_proxy->stopBase(); } catch (...) {}
+                if (vel_advx_label_) vel_advx_label_->setText("vx: 0.000 m/s");
+                if (vel_advz_label_) vel_advz_label_->setText("vz: 0.000 m/s");
+                if (vel_rot_label_)  vel_rot_label_->setText("rot: 0.000 rad/s");
+                stop_btn_->setText("Resume Robot");
+                stop_btn_->setStyleSheet(
+                    "QPushButton { background: #006400; color: white; font-weight: bold; padding: 4px 12px; border-radius: 3px; }"
+                    "QPushButton:hover { background: #009900; }"
+                    "QPushButton:pressed { background: #004400; }");
+            }
+            else
+            {
+                stop_btn_->setText("Stop Robot");
+                stop_btn_->setStyleSheet(
+                    "QPushButton { background: #8b0000; color: white; font-weight: bold; padding: 4px 12px; border-radius: 3px; }"
+                    "QPushButton:hover { background: #cc0000; }"
+                    "QPushButton:pressed { background: #550000; }");
+            }
+        });
 
         viewer_2d_->show();
 
@@ -316,7 +362,6 @@ void SpecificWorker::compute()
         bmr_opt.has_value())
     {
         const auto &b = *bmr_opt;
-        const bool polygon_mode = room_ai.is_using_polygon_room();
         qInfo() << "[BMR] check"
                 << "logBF=" << b.log_bf_01
                 << "z2=" << b.posterior_z_sq
@@ -326,6 +371,7 @@ void SpecificWorker::compute()
                 << "corner=" << b.indent_corner
                 << "segment=[" << b.indent_a << "," << b.indent_b << "]"
                 << "depth=" << b.indent_depth
+                << "dx=" << b.indent_depth_x << "dy=" << b.indent_depth_y
                 << "score(chal/current)=" << b.indent_score << "/" << b.current_indent_score
                 << "switchBF=" << b.switch_log_bf_01
                 << "latent p4..p9="
@@ -334,50 +380,89 @@ void SpecificWorker::compute()
                 << "active=" << b.activated_vertex_a << b.activated_vertex_b;
 
         const bool indent_candidate =
-            (!polygon_mode && !b.expand && b.proposal == rc::BmrResult::ProposalType::ADD_TWO_POINT_INDENT);
+            (!b.expand && (b.proposal == rc::BmrResult::ProposalType::ADD_TWO_POINT_INDENT ||
+                           b.proposal == rc::BmrResult::ProposalType::ADD_CORNER_INDENT));
 
         if (indent_candidate)
             last_indent_bmr = b;
         else
             last_indent_bmr.reset();
 
-        if (params.ENABLE_EFE_HOTZONE_POLICY && indent_candidate)
+        if (!efe_motion_paused_ && params.ENABLE_EFE_HOTZONE_POLICY && indent_candidate)
         {
             drive_toward_hotzone_efe(res, b);
         }
-        else
+        else if (!indent_candidate || efe_motion_paused_)
         {
             stop_efe_hotzone_motion();
         }
 
-        // Draw ghost candidate polygons in the viewer for visual debugging.
-        if (viewer_2d_ && !b.all_candidates.empty())
+        // ── Hot-zone only debug mode ──
+        // Disable candidate polygons; show only hot-zone segments on the viewer.
+        if (viewer_2d_)
         {
             const float L1 = std::max(0.5f, res.state[0]);
             const float W1 = std::max(0.5f, res.state[1]);
             const float hx = 0.5f * L1;
             const float hy = 0.5f * W1;
 
-            std::vector<rc::Viewer2D::CandidateDrawData> draw_candidates;
-            for (const auto& cand : b.all_candidates)
+            // Clear old candidate ghosts.
+            viewer_2d_->clear_candidate_polygons();
+
+            // Draw top-3 hot-zone segments and print debug values.
+            if (!b.hot_zones.empty())
             {
-                auto verts = indent_candidate_polygon(cand, hx, hy);
-                if (!verts.empty())
+                static const char* side_names_hz[] = {"Bottom", "Right", "Top", "Left"};
+                qInfo() << "──── HOT-ZONE SEGMENTS (top" << b.hot_zones.size() << ") ────";
+                std::vector<std::array<float,4>> hz_draw;
+                for (std::size_t k = 0; k < b.hot_zones.size(); ++k)
                 {
-                    rc::Viewer2D::CandidateDrawData d;
-                    d.verts     = std::move(verts);
-                    d.score     = cand.score;
-                    d.is_corner = (cand.proposal == rc::BmrResult::ProposalType::ADD_CORNER_INDENT);
-                    d.is_chosen = cand.is_chosen;
-                    d.side_id   = cand.side;
-                    d.corner_id = cand.corner;
-                    d.seg_a     = cand.a;
-                    d.seg_b     = cand.b;
-                    draw_candidates.push_back(std::move(d));
+                    const auto& hz = b.hot_zones[k];
+                    const char* sn = (hz.side >= 0 && hz.side < 4) ? side_names_hz[hz.side] : "?";
+                    qInfo().nospace()
+                        << "  #" << (k+1)
+                        << "  side=" << hz.side << " (" << sn << ")"
+                        << "  bins=[" << hz.i0 << "," << hz.i1 << "]"
+                        << "  seg=[" << QString::number(hz.a, 'f', 2).toStdString().c_str()
+                        << "," << QString::number(hz.b, 'f', 2).toStdString().c_str() << "]"
+                        << "  mean_d=" << QString::number(hz.mean_dist, 'f', 3).toStdString().c_str()
+                        << "  raw=" << QString::number(hz.raw_score, 'f', 4).toStdString().c_str()
+                        << "  prox=" << QString::number(hz.prox, 'f', 3).toStdString().c_str()
+                        << "  score=" << QString::number(hz.score, 'f', 4).toStdString().c_str();
+                    hz_draw.push_back({static_cast<float>(hz.side), hz.a, hz.b, static_cast<float>(k)});
+                }
+                viewer_2d_->draw_hot_zones(hz_draw, hx, hy);
+            }
+            else
+            {
+                viewer_2d_->clear_hot_zones();
+                qInfo() << "──── HOT-ZONE SEGMENTS: none found ────";
+            }
+
+            // Dump per-side distance profiles (compact: show bins > 0.05 only).
+            {
+                static const char* side_names_prof[] = {"Bot", "Rgt", "Top", "Lft"};
+                for (int s = 0; s < 4; ++s)
+                {
+                    QString bins;
+                    int active_count = 0;
+                    for (int i = 0; i < 32; ++i)
+                    {
+                        float d = b.dist_profiles[s][i];
+                        if (d > 0.05f)
+                        {
+                            bins += QString(" [%1]=%2").arg(i).arg(double(d), 0, 'f', 2);
+                            ++active_count;
+                        }
+                    }
+                    if (active_count > 0)
+                        qInfo().nospace() << "  profile " << side_names_prof[s] << " (" << active_count << " active):" << bins;
+                    else
+                        qInfo().nospace() << "  profile " << side_names_prof[s] << ": all zero";
                 }
             }
-            viewer_2d_->draw_candidate_polygons(draw_candidates);
-            update_candidate_list(b.all_candidates);
+
+            update_candidate_list(b);
         }
 
         if (bmr_opt->expand)
@@ -386,12 +471,12 @@ void SpecificWorker::compute()
             stop_efe_hotzone_motion();
             room_ai.apply_bmr_result(*bmr_opt);
             if (viewer_2d_) viewer_2d_->clear_candidate_polygons();
-            update_candidate_list({});
+            update_candidate_list(rc::BmrResult{});
         }
     }
     else
     {
-        if (params.ENABLE_EFE_HOTZONE_POLICY && last_indent_bmr.has_value())
+        if (!efe_motion_paused_ && params.ENABLE_EFE_HOTZONE_POLICY && last_indent_bmr.has_value())
         {
             // Continue EFE control at compute rate using the latest valid BMR indent hypothesis.
             drive_toward_hotzone_efe(res, *last_indent_bmr);
@@ -447,7 +532,7 @@ void SpecificWorker::set_compound_score_label(const rc::RoomConceptAI::UpdateRes
     {
         score_label_->setStyleSheet("QLabel { color: rgb(0,160,70); font-weight: 700; padding: 2px 4px; }");
     }
-    else if (score >= 0.35f)
+    else if (score >= 0.20f)
     {
         score_label_->setStyleSheet("QLabel { color: rgb(210,140,0); font-weight: 700; padding: 2px 4px; }");
     }
@@ -462,12 +547,20 @@ void SpecificWorker::update_viewer(const rc::LidarData &lidar_data, const rc::Ro
     update_viewer(lidar_data.first, res);
 }
 
-void SpecificWorker::update_candidate_list(const std::vector<rc::BmrResult::IndentCandidateInfo>& candidates)
+void SpecificWorker::update_candidate_list(const rc::BmrResult& bmr)
 {
     if (!candidate_list_ || !winner_label_)
         return;
 
+    const auto& candidates = bmr.all_candidates;
     candidate_list_->clear();
+
+    // Corner/side name tables.
+    static const char* corner_names[]   = {"BL (bottom-left)", "BR (bottom-right)",
+                                            "TR (top-right)",   "TL (top-left)"};
+    static const char* side_names[]     = {"Bottom", "Right", "Top", "Left"};
+
+
 
     int chosen_idx = -1;
     for (int i = 0; i < static_cast<int>(candidates.size()); ++i)
@@ -475,63 +568,128 @@ void SpecificWorker::update_candidate_list(const std::vector<rc::BmrResult::Inde
         const auto& c = candidates[i];
         const bool is_wall   = (c.proposal == rc::BmrResult::ProposalType::ADD_TWO_POINT_INDENT);
         const bool is_corner = (c.proposal == rc::BmrResult::ProposalType::ADD_CORNER_INDENT);
+        if (!is_wall && !is_corner) continue;
 
-        QString type_str = is_wall ? "Wall" : (is_corner ? "Corner" : "???");
-        QString detail;
-        if (is_wall)
-            detail = QString("side=%1  [%2, %3]  d=%4")
-                .arg(c.side)
+        // ── Type header ──
+        QString type_label, geometry_detail;
+        if (is_corner)
+        {
+            const char* cn  = (c.corner >= 0 && c.corner < 4) ? corner_names[c.corner]  : "?";
+            type_label    = QString("[Corner %1]  %2").arg(c.corner).arg(cn);
+            geometry_detail = QString("dx = %1 m  dy = %2 m  |  2 free params (dx, dy)")
+                .arg(double(c.depth_x), 0, 'f', 3)
+                .arg(double(c.depth_y), 0, 'f', 3);
+        }
+        else
+        {
+            const char* sn  = (c.side >= 0 && c.side < 4) ? side_names[c.side]  : "?";
+            type_label    = QString("[Wall  side %1]  %2 wall").arg(c.side).arg(sn);
+            geometry_detail = QString("seg [%1, %2]  depth = %3 m  |  3 free params (d, a, b)")
                 .arg(double(c.a), 0, 'f', 2)
                 .arg(double(c.b), 0, 'f', 2)
                 .arg(double(c.depth), 0, 'f', 3);
-        else
-        {
-            static const char* corner_names[] = {"BL", "BR", "TR", "TL"};
-            const char* cname = (c.corner >= 0 && c.corner < 4) ? corner_names[c.corner] : "?";
-            detail = QString("corner=%1(%2)  d=%3")
-                .arg(c.corner)
-                .arg(cname)
-                .arg(double(c.depth), 0, 'f', 3);
         }
 
-        const QString prefix = c.is_chosen ? QString::fromUtf8("\u2605 ") : "  ";
-        const QString text = QString("%1[%2]  score=%3  %4")
-            .arg(prefix)
-            .arg(type_str)
-            .arg(double(c.score), 0, 'f', 4)
-            .arg(detail);
+        const QString score_str = QString("score = %1  (raw = %2)").arg(double(c.score), 0, 'f', 4).arg(double(c.raw_score), 0, 'f', 4);
+        const QString prefix    = c.is_chosen ? QString::fromUtf8("\u2605 ") : "  ";
 
-        auto* item = new QListWidgetItem(text, candidate_list_);
-        if (c.is_chosen)
+        // Build two-line entry: "★ [type]   score" / geometry.
+        const QString line1 = QString("%1%2    %3").arg(prefix).arg(type_label).arg(score_str);
+        const QString line2 = QString("    %1").arg(geometry_detail);
+
+        // Item 1 — main line (bold, white).
         {
-            item->setForeground(is_corner ? QColor(60, 220, 100) : QColor(60, 180, 255));
+            auto* item = new QListWidgetItem(line1, candidate_list_);
             QFont f = item->font();
-            f.setBold(true);
+            f.setBold(c.is_chosen);
             item->setFont(f);
-            chosen_idx = i;
+            item->setForeground(Qt::white);
+            if (c.is_chosen) chosen_idx = i;
         }
-        else
+        // Item 2 — geometry detail.
         {
-            item->setForeground(QColor(140, 140, 140));
+            auto* item = new QListWidgetItem(line2, candidate_list_);
+            item->setForeground(Qt::white);
         }
     }
 
-    // Winner summary label
+    // ── Winner banner ──
+    // Show both the current accepted hypothesis (if any) and the current challenger.
+    QString banner;
+
+    // Line 1: current accepted hypothesis.
+    if (bmr.current_proposal != rc::BmrResult::ProposalType::NONE)
+    {
+        const bool cur_corner = (bmr.current_proposal == rc::BmrResult::ProposalType::ADD_CORNER_INDENT);
+        if (cur_corner && bmr.current_corner >= 0 && bmr.current_corner < 4)
+        {
+            const char* cn = corner_names[bmr.current_corner];
+            banner = QString("Accepted: Corner %1 (%2)  dx=%3 dy=%4  |  raw=%5")
+                .arg(bmr.current_corner).arg(cn)
+                .arg(double(bmr.current_depth_x), 0, 'f', 3)
+                .arg(double(bmr.current_depth_y), 0, 'f', 3)
+                .arg(double(bmr.current_indent_score), 0, 'f', 4);
+        }
+        else if (bmr.current_side >= 0 && bmr.current_side < 4)
+        {
+            const char* sn = side_names[bmr.current_side];
+            banner = QString("Accepted: Wall %1 (%2)  depth=%3  |  raw=%4")
+                .arg(bmr.current_side).arg(sn)
+                .arg(double(bmr.current_depth), 0, 'f', 3)
+                .arg(double(bmr.current_indent_score), 0, 'f', 4);
+        }
+    }
+
+    // Line 2: current frame's challenger (winner of this round).
     if (chosen_idx >= 0)
     {
         const auto& w = candidates[chosen_idx];
         const bool is_corner = (w.proposal == rc::BmrResult::ProposalType::ADD_CORNER_INDENT);
-        const QString kind = is_corner
-            ? QString("Corner %1").arg(w.corner)
-            : QString("Wall side %1  [%2,%3]").arg(w.side).arg(double(w.a), 0, 'f', 2).arg(double(w.b), 0, 'f', 2);
-        winner_label_->setText(QString("Winner: %1\n  depth=%2  score=%3")
-            .arg(kind)
-            .arg(double(w.depth), 0, 'f', 3)
-            .arg(double(w.score), 0, 'f', 4));
+        const bool is_wall   = (w.proposal == rc::BmrResult::ProposalType::ADD_TWO_POINT_INDENT);
+
+        QString kind, geom;
+        if (is_corner)
+        {
+            const char* cn = (w.corner >= 0 && w.corner < 4) ? corner_names[w.corner] : "?";
+            kind = QString("Corner %1 (%2)").arg(w.corner).arg(cn);
+            geom = QString("dx=%1 dy=%2 | score=%3 raw=%4")
+                .arg(double(w.depth_x), 0, 'f', 3).arg(double(w.depth_y), 0, 'f', 3)
+                .arg(double(w.score), 0, 'f', 4).arg(double(w.raw_score), 0, 'f', 4);
+        }
+        else if (is_wall)
+        {
+            const char* sn = (w.side >= 0 && w.side < 4) ? side_names[w.side] : "?";
+            kind = QString("Wall %1 (%2)").arg(w.side).arg(sn);
+            geom = QString("seg[%1,%2] d=%3 | score=%4 raw=%5")
+                .arg(double(w.a), 0, 'f', 2).arg(double(w.b), 0, 'f', 2)
+                .arg(double(w.depth), 0, 'f', 3)
+                .arg(double(w.score), 0, 'f', 4).arg(double(w.raw_score), 0, 'f', 4);
+        }
+        if (!banner.isEmpty()) banner += '\n';
+        banner += QString("Challenger: %1  %2").arg(kind).arg(geom);
+
+        // BF status: show switch BF if there's an accepted hypothesis,
+        // or accumulation BF toward first commitment otherwise.
+        if (bmr.current_proposal != rc::BmrResult::ProposalType::NONE)
+            banner += QString("\nSwitch BF: %1").arg(double(bmr.switch_log_bf_01), 0, 'f', 3);
+        else
+            banner += QString("\nBF: %1 / %2 (threshold)")
+                .arg(double(bmr.log_bf_01), 0, 'f', 3)
+                .arg(double(-2.0), 0, 'f', 1);
+    }
+    else if (!candidates.empty())
+    {
+        // Candidates were evaluated but none beats the rectangle (all scores ≤ 0).
+        if (!banner.isEmpty()) banner += '\n';
+        banner += "Challenger: none (rectangle wins)";
+    }
+
+    if (!banner.isEmpty())
+    {
+        winner_label_->setText(banner);
         winner_label_->setStyleSheet(
-            is_corner
-                ? "QLabel { font-weight: bold; color: rgb(60,220,100); padding: 4px; border-top: 1px solid #555; }"
-                : "QLabel { font-weight: bold; color: rgb(60,180,255); padding: 4px; border-top: 1px solid #555; }");
+            "QLabel { font-weight: bold; color: white; font-size: 9pt;"
+            " padding: 6px; border-top: 2px solid white; background: #111; }");
     }
     else
     {
@@ -569,6 +727,17 @@ void SpecificWorker::update_viewer(const std::vector<Eigen::Vector3f> &points, c
             {-w * 0.5f,  l * 0.5f}
         };
         viewer_2d_->draw_room_polygon(room_poly, false);
+    }
+
+    // One-shot: fit the view to the estimated room layout on first render.
+    if (!viewer_fitted_)
+    {
+        const float w = res.state[0];
+        const float l = res.state[1];
+        const float margin = 0.15f * std::max(w, l);
+        viewer_2d_->fit_to_scene(QRectF(-w * 0.5f - margin, -l * 0.5f - margin,
+                                         w + 2.f * margin, l + 2.f * margin));
+        viewer_fitted_ = true;
     }
 
     auto &scene = viewer_2d_->scene();
@@ -696,6 +865,10 @@ void SpecificWorker::send_base_command(float advx, float advz, float rot)
     constexpr float M_TO_MM = 1000.f;
     omnirobot_proxy->setSpeedBase(advx * M_TO_MM, advz * M_TO_MM, rot);
     push_velocity_command(advx, advz, rot);
+    // Update velocity display.
+    if (vel_advx_label_) vel_advx_label_->setText(QString("vx: %1 m/s").arg(double(advx), 0, 'f', 3));
+    if (vel_advz_label_) vel_advz_label_->setText(QString("vz: %1 m/s").arg(double(advz), 0, 'f', 3));
+    if (vel_rot_label_)  vel_rot_label_->setText(QString("rot: %1 rad/s").arg(double(rot), 0, 'f', 3));
 }
 
 void SpecificWorker::drive_toward_hotzone_efe(const rc::RoomConceptAI::UpdateResult &res, const rc::BmrResult &bmr)
@@ -711,14 +884,36 @@ void SpecificWorker::drive_toward_hotzone_efe(const rc::RoomConceptAI::UpdateRes
     const float depth = std::max(0.05f, bmr.indent_depth);
 
     Eigen::Vector2f hot = Eigen::Vector2f::Zero();
-    switch (bmr.indent_side)
+    const float wm = std::max(0.1f, params.EFE_WALL_MARGIN); // minimum inward distance from wall
+    if (bmr.indent_side >= 0)
     {
-        case 0: hot = Eigen::Vector2f(tmid * hx, -hy + 0.5f * depth); break;
-        case 1: hot = Eigen::Vector2f(hx - 0.5f * depth, tmid * hy); break;
-        case 2: hot = Eigen::Vector2f(tmid * hx, hy - 0.5f * depth); break;
-        case 3: hot = Eigen::Vector2f(-hx + 0.5f * depth, tmid * hy); break;
-        default: return;
+        // Wall indent: hot-zone inward from wall by at least wall_margin.
+        const float off = std::max(wm, 0.5f * depth);
+        switch (bmr.indent_side)
+        {
+            case 0: hot = Eigen::Vector2f(tmid * hx, -hy + off); break;
+            case 1: hot = Eigen::Vector2f(hx - off, tmid * hy); break;
+            case 2: hot = Eigen::Vector2f(tmid * hx, hy - off); break;
+            case 3: hot = Eigen::Vector2f(-hx + off, tmid * hy); break;
+            default: return;
+        }
     }
+    else if (bmr.indent_corner >= 0)
+    {
+        // Corner indent: hot-zone offset by half of each independent depth, clamped to wall_margin.
+        const float ox = std::max(wm, 0.5f * std::max(0.05f, bmr.indent_depth_x));
+        const float oy = std::max(wm, 0.5f * std::max(0.05f, bmr.indent_depth_y));
+        switch (bmr.indent_corner)
+        {
+            case 0: hot = Eigen::Vector2f(-hx + ox,  -hy + oy); break;  // BL
+            case 1: hot = Eigen::Vector2f( hx - ox,  -hy + oy); break;  // BR
+            case 2: hot = Eigen::Vector2f( hx - ox,   hy - oy); break;  // TR
+            case 3: hot = Eigen::Vector2f(-hx + ox,   hy - oy); break;  // TL
+            default: return;
+        }
+    }
+    else
+        return;
 
     struct Action
     {
@@ -772,6 +967,9 @@ void SpecificWorker::drive_toward_hotzone_efe(const rc::RoomConceptAI::UpdateRes
     const int tree_depth = std::max(1, params.EFE_TREE_DEPTH);
     const float discount = std::clamp(params.EFE_DISCOUNT, 0.0f, 1.0f);
     const float sigma2 = std::max(1e-3f, params.EFE_PRIOR_SIGMA * params.EFE_PRIOR_SIGMA);
+    const float process_noise_trans2 = params.EFE_PROCESS_NOISE_TRANS * params.EFE_PROCESS_NOISE_TRANS;
+    const float process_noise_rot2   = params.EFE_PROCESS_NOISE_ROT   * params.EFE_PROCESS_NOISE_ROT;
+    const float obs_noise_var = std::max(1e-4f, params.EFE_OBS_NOISE_VAR);
 
     auto wrap_pi = [](float a) -> float
     {
@@ -780,56 +978,189 @@ void SpecificWorker::drive_toward_hotzone_efe(const rc::RoomConceptAI::UpdateRes
         return a;
     };
 
-    // Indent half-width in world metres (used as Fisher-info scale for the SDF observation).
-    // The indent runs over fraction |b-a| of the relevant half-extent.
-    const float indent_half_w = 0.5f * std::abs(bmr.indent_b - bmr.indent_a)
-                                * ((bmr.indent_side == 0 || bmr.indent_side == 2) ? hx : hy);
+    // Indent half-width in world metres.
+    float indent_half_w;
+    if (bmr.indent_side >= 0 && bmr.indent_side < 4)
+        indent_half_w = 0.5f * std::abs(bmr.indent_b - bmr.indent_a)
+                        * ((bmr.indent_side == 0 || bmr.indent_side == 2) ? hx : hy);
+    else
+        indent_half_w = 0.5f * depth;  // corner: use depth as proxy for visible extent
 
-    // Predict expected Fisher information of the SDF lidar observation about indent geometry
-    // from predicted pose (px, py, pphi).
-    // Proxy: (visible_angular_width)^2 = (indent_half_w * cos(off-axis angle) / range)^2.
-    // Higher when the robot faces the indent squarely and is close to it.
-    auto predict_info_gain = [&](float px, float py, float pphi) -> float
+    // Wall-inward normal in world (room) frame for the active indent side.
+    // Used both for D-optimality projection and rank-1 belief update.
+    Eigen::Vector2f wall_normal = Eigen::Vector2f::Zero();
+    if (bmr.indent_side >= 0)
     {
-        const Eigen::Vector2f d = hot_eff - Eigen::Vector2f(px, py);
+        switch (bmr.indent_side)
+        {
+            case 0: wall_normal = { 0.f,  1.f}; break;  // bottom wall, normal +y
+            case 1: wall_normal = {-1.f,  0.f}; break;  // right  wall, normal -x
+            case 2: wall_normal = { 0.f, -1.f}; break;  // top    wall, normal -y
+            case 3: wall_normal = { 1.f,  0.f}; break;  // left   wall, normal +x
+            default: break;
+        }
+    }
+    else if (bmr.indent_corner >= 0)
+    {
+        // Corner: use diagonal inward normal (pointing toward room centre).
+        constexpr float inv_sqrt2 = 0.70710678f;
+        switch (bmr.indent_corner)
+        {
+            case 0: wall_normal = { inv_sqrt2,  inv_sqrt2}; break;  // BL → toward centre
+            case 1: wall_normal = {-inv_sqrt2,  inv_sqrt2}; break;  // BR
+            case 2: wall_normal = {-inv_sqrt2, -inv_sqrt2}; break;  // TR
+            case 3: wall_normal = { inv_sqrt2, -inv_sqrt2}; break;  // TL
+            default: break;
+        }
+    }
+    if (wall_normal.squaredNorm() < 0.5f)
+        return;  // no valid proposal
+
+    // Initial belief from current Laplace posterior.
+    const Eigen::Vector3f mu0{x0, y0, phi0};
+    // res.covariance is (x,y,phi) 3x3 Laplace posterior covariance.
+    // Guard against near-singular matrices from early uninitialised frames.
+    Eigen::Matrix3f Sigma0 = res.covariance;
+    Sigma0(0,0) = std::max(Sigma0(0,0), 1e-4f);
+    Sigma0(1,1) = std::max(Sigma0(1,1), 1e-4f);
+    Sigma0(2,2) = std::max(Sigma0(2,2), 1e-4f);
+
+    // --- D-optimality expected information gain ----------------------------
+    // EIG = 0.5 * log( 1 + lambda_obs * v_n^T Sigma_xy v_n )
+    // where lambda_obs = vis_width^2 / (range^2 * obs_noise_var).
+    // This is the Bayesian D-optimality criterion: it measures how much the
+    // observation from this pose will reduce pose uncertainty in the wall-normal
+    // direction, given the *current* belief covariance Sigma.
+    auto d_opt_eig = [&](const Eigen::Vector3f& mu, const Eigen::Matrix3f& Sigma) -> float
+    {
+        const Eigen::Vector2f d = hot_eff - Eigen::Vector2f(mu.x(), mu.y());
         const float range   = d.norm() + 0.1f;
         const float bearing = std::atan2(d.y(), d.x());
-        // Robot sensor forward axis is local +Y -> world direction phi+pi/2.
-        const float sensor_fwd = wrap_pi(pphi + static_cast<float>(M_PI_2));
+        const float sensor_fwd = wrap_pi(mu.z() + static_cast<float>(M_PI_2));
         const float ang_err    = wrap_pi(bearing - sensor_fwd);
         const float cos_a  = std::max(0.f, std::cos(ang_err));
-        const float vis    = indent_half_w * cos_a;
-        return (vis * vis) / (range * range);  // Fisher info \propto (visible_width / range)^2
+        const float vis_w  = indent_half_w * cos_a;
+
+        const float lambda_obs = (vis_w * vis_w) / (range * range * obs_noise_var);
+        // Marginal variance of belief along wall-normal direction (2x2 xy sub-block).
+        const float var_n = wall_normal.dot(Sigma.topLeftCorner<2,2>() * wall_normal);
+        return 0.5f * std::log(1.f + lambda_obs * var_n);
     };
 
-    // Recursive EFE tree evaluation.
-    // Returns the MINIMUM discounted cumulative G over all (tree_depth - depth) deep
-    // continuations from state (px, py, pphi).
-    // disc = discount factor accumulated up to this call level.
-    std::function<float(float, float, float, int, float)> eval_tree;
-    eval_tree = [&](float px, float py, float pphi, int depth, float disc) -> float
+    // --- Rank-1 belief update after expected observation ------------------
+    // Woodbury identity: Sigma_post = Sigma - (lambda/(1+lambda*var_n)) * Su * Su^T
+    // where u = [wall_normal; 0] (observation only affects x,y, not phi).
+    auto belief_update = [&](const Eigen::Matrix3f& Sigma, float lambda_obs) -> Eigen::Matrix3f
+    {
+        Eigen::Vector3f u = Eigen::Vector3f::Zero();
+        u.head<2>() = wall_normal;
+        const float var_n = wall_normal.dot(Sigma.topLeftCorner<2,2>() * wall_normal);
+        const float alpha = lambda_obs / (1.f + lambda_obs * var_n);
+        const Eigen::Vector3f Su = Sigma * u;
+        return Sigma - alpha * Su * Su.transpose();
+    };
+
+    // --- Unscented Transform belief propagation ---------------------------
+    // Propagates Gaussian belief (mu, Sigma) through the nonlinear motion model.
+    // Uses 6 symmetric sigma points (kappa=0, equal weights 1/6).
+    // Returns (mu', Sigma') including process noise Q.
+    auto ut_propagate = [&](const Eigen::Vector3f& mu, const Eigen::Matrix3f& Sigma,
+                             float advx, float advz, float rot_rate)
+        -> std::pair<Eigen::Vector3f, Eigen::Matrix3f>
+    {
+        // Cholesky decomposition; fallback to scaled identity on failure.
+        Eigen::LLT<Eigen::Matrix3f> llt(Sigma);
+        Eigen::Matrix3f L;
+        if (llt.info() == Eigen::Success)
+            L = llt.matrixL();
+        else
+            L = Eigen::Matrix3f::Identity() * 0.01f;
+
+        constexpr float kSqrt3 = 1.7320508f;  // sqrt(n=3) with kappa=0
+
+        // 6 symmetric sigma points (center gets weight 0 with kappa=0, omitted).
+        Eigen::Matrix<float, 3, 6> sp_prop;
+        for (int i = 0; i < 3; ++i)
+        {
+            for (int sign = 0; sign < 2; ++sign)
+            {
+                const Eigen::Vector3f sp = mu + (sign == 0 ? 1.f : -1.f) * kSqrt3 * L.col(i);
+                const float c = std::cos(sp.z()), s = std::sin(sp.z());
+                const int col = i * 2 + sign;
+                sp_prop(0, col) = sp.x() + (advx * c - advz * s) * dt;
+                sp_prop(1, col) = sp.y() + (advx * s + advz * c) * dt;
+                sp_prop(2, col) = wrap_pi(sp.z() - rot_rate * dt);
+            }
+        }
+
+        // Reconstruct mean (equal weight 1/6).
+        Eigen::Vector3f mu_new = sp_prop.rowwise().mean();
+        mu_new.z() = wrap_pi(mu_new.z());
+
+        // Reconstruct covariance.
+        Eigen::Matrix3f S = Eigen::Matrix3f::Zero();
+        for (int j = 0; j < 6; ++j)
+        {
+            Eigen::Vector3f dv = sp_prop.col(j) - mu_new;
+            dv.z() = wrap_pi(dv.z());
+            S += dv * dv.transpose();
+        }
+        S /= 6.f;
+        // Add process noise.
+        S(0,0) += process_noise_trans2;
+        S(1,1) += process_noise_trans2;
+        S(2,2) += process_noise_rot2;
+
+        return {mu_new, S};
+    };
+
+    // --- Recursive EFE tree evaluation ------------------------------------
+    // State: (mu, Sigma) — full Gaussian belief.
+    // Returns minimum discounted G over all continuations at this level.
+    // At each node: propagate belief via UT, compute D-opt EIG, update belief
+    // via rank-1 Woodbury (accumulating information across the rollout).
+    std::function<float(const Eigen::Vector3f&, const Eigen::Matrix3f&, int, float)> eval_tree;
+    eval_tree = [&](const Eigen::Vector3f& mu, const Eigen::Matrix3f& Sigma,
+                    int depth, float disc) -> float
     {
         if (depth >= tree_depth) return 0.f;
         float min_g = std::numeric_limits<float>::infinity();
         for (const auto &a : actions)
         {
-            const float c  = std::cos(pphi);
-            const float sp = std::sin(pphi);
-            const float nx   = px + (a.advx * c  - a.advz * sp) * dt;
-            const float ny   = py + (a.advx * sp + a.advz * c ) * dt;
-            const float nphi = wrap_pi(pphi - a.rot * dt);
+            // 1. UT prediction: propagate belief through motion model.
+            auto [mu_pred, Sigma_pred] = ut_propagate(mu, Sigma, a.advx, a.advz, a.rot);
 
-            const float ddx = nx - hot_eff.x(), ddy = ny - hot_eff.y();
+            // 2. D-optimality EIG from predicted belief.
+            const float eig = d_opt_eig(mu_pred, Sigma_pred);
+
+            // 3. Rank-1 belief update from hypothetical observation (info accumulates).
+            const Eigen::Vector2f d = hot_eff - Eigen::Vector2f(mu_pred.x(), mu_pred.y());
+            const float range = d.norm() + 0.1f;
+            const float bearing = std::atan2(d.y(), d.x());
+            const float sensor_fwd = wrap_pi(mu_pred.z() + static_cast<float>(M_PI_2));
+            const float ang_err = wrap_pi(bearing - sensor_fwd);
+            const float cos_a = std::max(0.f, std::cos(ang_err));
+            const float vis_w = indent_half_w * cos_a;
+            const float lambda_obs = (vis_w * vis_w) / (range * range * obs_noise_var);
+            const Eigen::Matrix3f Sigma_post = belief_update(Sigma_pred, lambda_obs);
+
+            // 4. G: pragmatic (goal-reaching) + epistemic (negative EIG) + effort.
+            const float ddx = mu_pred.x() - hot_eff.x(), ddy = mu_pred.y() - hot_eff.y();
             const float risk      = 0.5f * (ddx*ddx + ddy*ddy) / sigma2;
-            // Epistemic: negative info-gain (lower G = more informative pose)
-            const float epistemic = -params.EFE_INFO_GAIN_WEIGHT * predict_info_gain(nx, ny, nphi);
+            const float epistemic = -params.EFE_INFO_GAIN_WEIGHT * eig;
             const float effort    = params.EFE_CONTROL_WEIGHT *
                                     (a.advx*a.advx + a.advz*a.advz + 0.5f*a.rot*a.rot);
             const float g_step    = disc * (risk + epistemic + effort);
-            min_g = std::min(min_g, g_step + eval_tree(nx, ny, nphi, depth + 1, disc * discount));
+
+            // 5. Recurse with posterior belief.
+            min_g = std::min(min_g, g_step + eval_tree(mu_pred, Sigma_post, depth + 1, disc * discount));
         }
         return min_g;
     };
+
+    // --- Root action evaluation -------------------------------------------
+    constexpr int N_ACTIONS = 6;
+    std::array<float, N_ACTIONS> G_vals;
 
     float best_g = std::numeric_limits<float>::infinity();
     int best_idx = static_cast<int>(actions.size()) - 1;
@@ -840,64 +1171,74 @@ void SpecificWorker::drive_toward_hotzone_efe(const rc::RoomConceptAI::UpdateRes
     traj_debug.robot_x = x0;
     traj_debug.robot_y = y0;
 
-    for (int ai = 0; ai < static_cast<int>(actions.size()); ++ai)
+    for (int ai = 0; ai < N_ACTIONS; ++ai)
     {
         const auto &a = actions[ai];
 
-        // Root step (depth 0).
-        const float c  = std::cos(phi0);
-        const float s  = std::sin(phi0);
-        const float nx   = x0 + (a.advx * c  - a.advz * s) * dt;
-        const float ny   = y0 + (a.advx * s  + a.advz * c) * dt;
-        const float nphi = wrap_pi(phi0 - a.rot * dt);
+        // Root step: UT-propagate from initial belief.
+        auto [mu_pred, Sigma_pred] = ut_propagate(mu0, Sigma0, a.advx, a.advz, a.rot);
 
-        const float ddx = nx - hot_eff.x(), ddy = ny - hot_eff.y();
+        const float eig = d_opt_eig(mu_pred, Sigma_pred);
+
+        // Belief update at root step.
+        const Eigen::Vector2f d0 = hot_eff - Eigen::Vector2f(mu_pred.x(), mu_pred.y());
+        const float range0 = d0.norm() + 0.1f;
+        const float bearing0 = std::atan2(d0.y(), d0.x());
+        const float sfwd0 = wrap_pi(mu_pred.z() + static_cast<float>(M_PI_2));
+        const float ae0   = wrap_pi(bearing0 - sfwd0);
+        const float lobs0 = (indent_half_w * indent_half_w * std::max(0.f, std::cos(ae0)) * std::max(0.f, std::cos(ae0)))
+                            / (range0 * range0 * obs_noise_var);
+        const Eigen::Matrix3f Sigma_post0 = belief_update(Sigma_pred, lobs0);
+
+        const float ddx = mu_pred.x() - hot_eff.x(), ddy = mu_pred.y() - hot_eff.y();
         const float risk      = 0.5f * (ddx*ddx + ddy*ddy) / sigma2;
-        const float epistemic = -params.EFE_INFO_GAIN_WEIGHT * predict_info_gain(nx, ny, nphi);
+        const float epistemic = -params.EFE_INFO_GAIN_WEIGHT * eig;
         const float effort    = params.EFE_CONTROL_WEIGHT *
                                 (a.advx*a.advx + a.advz*a.advz + 0.5f*a.rot*a.rot);
-        // G(root action ai) = root step cost + minimum G over depth-1 subtree.
         const float g_root = risk + epistemic + effort
-                           + eval_tree(nx, ny, nphi, 1, discount);
+                           + eval_tree(mu_pred, Sigma_post0, 1, discount);
 
-        if (g_root < best_g)
-        {
-            best_g = g_root;
-            best_idx = ai;
-        }
+        G_vals[ai] = g_root;
+        if (g_root < best_g) { best_g = g_root; best_idx = ai; }
 
-        // Build visualization trajectory: greedy single-step lookahead from root step.
+        // Visualization: greedy single-step lookahead continuation.
         auto &traj = traj_debug.trajectories[ai];
         traj.clear();
         traj.emplace_back(x0, y0);
-        traj.emplace_back(nx, ny);
-        float vx = nx, vy = ny, vphi = nphi;
+        traj.emplace_back(mu_pred.x(), mu_pred.y());
+        Eigen::Vector3f vm = mu_pred;
+        Eigen::Matrix3f vS = Sigma_post0;
         for (int k = 2; k <= tree_depth; ++k)
         {
             float best_local = std::numeric_limits<float>::infinity();
-            float bx = vx, by = vy, bphi = vphi;
+            Eigen::Vector3f bm = vm;
             for (const auto &va : actions)
             {
-                const float vc = std::cos(vphi), vs = std::sin(vphi);
-                const float tx = vx + (va.advx * vc - va.advz * vs) * dt;
-                const float ty = vy + (va.advx * vs + va.advz * vc) * dt;
-                const float tp = wrap_pi(vphi - va.rot * dt);
-                const float tdx = tx - hot_eff.x(), tdy = ty - hot_eff.y();
+                auto [tm, tS] = ut_propagate(vm, vS, va.advx, va.advz, va.rot);
+                const float tdx = tm.x() - hot_eff.x(), tdy = tm.y() - hot_eff.y();
                 const float tg  = 0.5f * (tdx*tdx + tdy*tdy) / sigma2
-                                 - params.EFE_INFO_GAIN_WEIGHT * predict_info_gain(tx, ty, tp);
-                if (tg < best_local) { best_local = tg; bx = tx; by = ty; bphi = tp; }
+                                 - params.EFE_INFO_GAIN_WEIGHT * d_opt_eig(tm, tS);
+                if (tg < best_local) { best_local = tg; bm = tm; vS = tS; }
             }
-            traj.emplace_back(bx, by);
-            vx = bx; vy = by; vphi = bphi;
+            traj.emplace_back(bm.x(), bm.y());
+            vm = bm;
         }
     }
 
+    // --- Deterministic argmin policy ----------------------------------------
+    // Use the action with the lowest Expected Free Energy.
+    // Previous Boltzmann sampling introduced stochastic selection of zero-speed
+    // actions (hold, turn-only) that killed forward motion.
+    const float cmd_advx = actions[best_idx].advx;
+    float       cmd_advz = actions[best_idx].advz;
+    const float cmd_rot  = actions[best_idx].rot;
+
     const Eigen::Vector2f cur{x0, y0};
     const float target_dist = (hot_eff - cur).norm();
-    if (target_dist > params.EFE_TURN_ONLY_MIN_DIST && (best_idx == 1 || best_idx == 2))
-    {
-        best_idx = (best_idx == 1) ? 3 : 4;
-    }
+    // Turn-only guard: if the blended command has negligible forward speed and the
+    // target is far, inject a minimum forward component to avoid turn-in-place dithering.
+    if (target_dist > params.EFE_TURN_ONLY_MIN_DIST && cmd_advz < 0.3f * params.EFE_FORWARD_SPEED)
+        cmd_advz = 0.3f * params.EFE_FORWARD_SPEED;
 
     traj_debug.best_idx = best_idx;
     if (viewer_2d_ != nullptr)
@@ -906,11 +1247,9 @@ void SpecificWorker::drive_toward_hotzone_efe(const rc::RoomConceptAI::UpdateRes
         viewer_2d_->invalidate();
     }
 
-    const Action &best = actions[best_idx];
-
     try
     {
-        send_base_command(best.advx, best.advz, best.rot);
+        send_base_command(cmd_advx, cmd_advz, cmd_rot);
         efe_hotzone_active_ = true;
 
         static std::int64_t last_efe_log_ms = 0;
@@ -920,10 +1259,10 @@ void SpecificWorker::drive_toward_hotzone_efe(const rc::RoomConceptAI::UpdateRes
         {
             qInfo() << "[EFE] hot-zone global=" << hot.x() << hot.y()
                 << " local=" << hot_eff.x() << hot_eff.y()
-                        << " action=" << best.name
                         << " depth=" << tree_depth
-                    << " cmd=" << best.advx << best.advz << best.rot
-                    << " G=" << best_g;
+                        << " best_action=" << actions[best_idx].name
+                        << " cmd=" << cmd_advx << cmd_advz << cmd_rot
+                        << " G_best=" << best_g;
             last_efe_log_ms = now_ms;
         }
     }

@@ -12,6 +12,41 @@
 #include <set>
 #include <unordered_map>
 
+int SpecificWorker::pick_attention_target(const Eigen::Affine2f& robot_pose) const
+{
+    const Eigen::Vector2f cam_origin_robot(params.CAMERA_TX, params.CAMERA_TY);
+    const Eigen::Vector2f cam_origin_world = robot_pose * cam_origin_robot;
+    // Camera forward direction in world frame
+    const Eigen::Rotation2Df rot(robot_pose.rotation());
+    const Eigen::Vector2f cam_dir_world = (rot * Eigen::Vector2f(0.f, 1.f)).normalized();
+
+    float best_score = std::numeric_limits<float>::infinity();
+    int best_idx = -1;
+    const auto& furniture = layout_manager_.furniture();
+    for (int i = 0; i < static_cast<int>(furniture.size()); ++i)
+    {
+        const auto& fp = furniture[i];
+        if (fp.vertices.empty()) continue;
+
+        Eigen::Vector2f centroid = Eigen::Vector2f::Zero();
+        for (const auto& v : fp.vertices) centroid += v;
+        centroid /= static_cast<float>(fp.vertices.size());
+
+        const Eigen::Vector2f oc = centroid - cam_origin_world;
+        const float along = oc.dot(cam_dir_world);
+        if (along < 0.2f) continue;  // behind camera
+
+        const float perp = std::abs(oc.x() * cam_dir_world.y() - oc.y() * cam_dir_world.x());
+        const float score = perp / along + along * 1e-4f;
+        if (score < best_score)
+        {
+            best_score = score;
+            best_idx = i;
+        }
+    }
+    return best_idx;
+}
+
 int SpecificWorker::find_furniture_index_by_name(const QString& name) const
 {
     auto normalize = [](QString s)
@@ -311,6 +346,9 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
     if (!camera_viewer_)
         return;
 
+    if (!camera_intr_.valid)
+        return;
+
     if (layout_manager_.furniture().empty())
     {
         camera_viewer_->clear_wireframe_overlay();
@@ -327,10 +365,12 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
                                z_world - params.CAMERA_TZ);
     };
 
-    const float cx = 320.f;
-    const float cy = 320.f;
-    const float fx = 0.9f * 640.f;
-    const float fy = 0.9f * 640.f;
+    const float cx = camera_intr_.cx;
+    const float cy = camera_intr_.cy;
+    const float fx = camera_intr_.fx;
+    const float fy = camera_intr_.fy;
+    const float img_w = static_cast<float>(camera_intr_.w);
+    const float img_h = static_cast<float>(camera_intr_.h);
     constexpr float near_depth = 0.05f;
     constexpr float max_select_bearing = 50.f * static_cast<float>(M_PI) / 180.f;
     constexpr float center_bearing_ref = 20.f * static_cast<float>(M_PI) / 180.f;
@@ -342,7 +382,7 @@ void SpecificWorker::update_camera_wireframe_overlay(const Eigen::Affine2f &robo
         const float u = cx + fx * (p_cam.x() / depth);
         const float v = cy - fy * (p_cam.z() / depth);
         return std::isfinite(u) && std::isfinite(v) &&
-               u >= 0.f && u < 640.f && v >= 0.f && v < 640.f;
+               u >= 0.f && u < img_w && v >= 0.f && v < img_h;
     };
 
     auto polygon_area = [](const std::vector<Eigen::Vector2f>& poly) -> float

@@ -134,6 +134,14 @@ class SpecificWorker : public GenericWorker
 	std::mutex synth_vis_mutex_;
 	std::vector<int> last_visible_indices_;                  // cached from last synthetic render
 
+	// Camera intrinsics (lazily set from first TImage via CameraViewer signal)
+	struct CachedCameraIntrinsics {
+		float fx = 0.f, fy = 0.f;     // zero until first TImage arrives
+		float cx = 0.f, cy = 0.f;
+		int   w  = 0,   h  = 0;
+		bool  valid = false;
+	} camera_intr_;
+
 	struct Params
 	{
 		bool USE_WEBOTS = true;  // When false, disables all Webots connections (for real robot)
@@ -179,7 +187,6 @@ class SpecificWorker : public GenericWorker
 	void read_lidar();
 
 	// Room model
-	bool capturing_room_polygon = false;
 
 	// Layout manager: owns furniture polygons, room polygon, wraps scene graph
 	rc::SceneGraphModel scene_graph_;
@@ -283,6 +290,7 @@ class SpecificWorker : public GenericWorker
 	                       const std::vector<Eigen::Vector3f> &points_low,
 	                       const Eigen::Affine2f &robot_pose);
 	void update_camera_wireframe_overlay(const Eigen::Affine2f &robot_pose);
+	int pick_attention_target(const Eigen::Affine2f& robot_pose) const;
 	int find_furniture_index_by_name(const QString& name) const;
 	void translate_furniture_by_name(const QString& name, float dx_room, float dy_room);
 	void rotate_furniture_by_name(const QString& name, float angle_rad, const QVector3D& axis);
@@ -310,9 +318,7 @@ class SpecificWorker : public GenericWorker
 	                           bool blocked_state);
 	void finish_episode(const std::string &status);
 
-	// Room polygon capture
 	void draw_room_polygon();
-	void on_scene_clicked(QPointF pos);
 
 	// Layout save/load
     void save_layout_to_svg(const std::string& filename);
@@ -341,9 +347,8 @@ class SpecificWorker : public GenericWorker
 	void calibrate_gt_offset(const Eigen::Affine2f &estimated_pose, const Eigen::Affine2f &webots_pose);
 
 private slots:
-	void slot_capture_room_toggled(bool checked);
-	void slot_edit_layout_toggled(bool checked);
 	void slot_save_layout();
+	void slot_edit_layout_toggled(bool checked);
 	void slot_flip_x();
 	void slot_flip_y();
 	void slot_robot_dragging(QPointF pos);

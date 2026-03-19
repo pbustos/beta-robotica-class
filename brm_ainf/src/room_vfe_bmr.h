@@ -50,13 +50,35 @@ struct BmrResult
         int corner = -1;   // corner-indent: 0=BL,1=BR,2=TR,3=TL; wall: -1
         float a     = 0.f; // segment start (side-local [-1,1])
         float b     = 0.f; // segment end
-        float depth = 0.f;
+        float depth = 0.f;   // wall: single depth; corner: legacy compat (= depth_x)
+        float depth_x = 0.f; // corner: indent along the horizontal side
+        float depth_y = 0.f; // corner: indent along the vertical side
         float score = 0.f;
+        float raw_score = 0.f; // VFE score without proximity (for diagnostics)
         bool  is_chosen = false; // true for the candidate that wins the round
     };
 
     // All evaluated candidates from the latest check (wall_best + corner_best).
     std::vector<IndentCandidateInfo> all_candidates;
+
+    // Top hot-zone segments from the distance profile (pre-VFE, pre-proximity).
+    struct HotZoneSegment
+    {
+        int   side  = -1;    // 0=bottom,1=right,2=top,3=left
+        int   i0    = 0;     // first bin index
+        int   i1    = 0;     // last bin index
+        float a     = 0.f;   // segment start in side-local [-1,1]
+        float b     = 0.f;   // segment end
+        float mean_dist = 0.f;  // mean distance from base wall
+        float raw_score = 0.f;  // segment_score (mean_dist × span_ratio), no proximity
+        float prox  = 0.f;   // proximity weight applied to this zone
+        float score = 0.f;   // raw_score × prox
+    };
+    std::vector<HotZoneSegment> hot_zones;  // up to 3, sorted best-first
+
+    // Raw distance profiles (32 bins per side) for debugging.
+    // dists[side][bin] = distance from nearest lidar point to that wall sample.
+    std::array<std::array<float, 32>, 4> dist_profiles{};
 
     // Bayesian Reduction structural hypothesis:
     // - 10 Manhattan vertices total.
@@ -71,10 +93,20 @@ struct BmrResult
     int indent_corner = -1; // 0=bottom-left,1=bottom-right,2=top-right,3=top-left
     float indent_a = 0.f;   // segment start (side-local coordinate)
     float indent_b = 0.f;   // segment end (side-local coordinate)
-    float indent_depth = 0.f;
+    float indent_depth = 0.f;   // legacy single depth (= indent_depth_x for corners)
+    float indent_depth_x = 0.f;  // corner: indent along the horizontal side
+    float indent_depth_y = 0.f;  // corner: indent along the vertical side
     float indent_score = 0.f;
     float current_indent_score = 0.f;
     float switch_log_bf_01 = 0.f;
+
+    // Identity of the currently accepted indent hypothesis (if any).
+    ProposalType current_proposal = ProposalType::NONE;
+    int current_side = -1;
+    int current_corner = -1;
+    float current_depth = 0.f;
+    float current_depth_x = 0.f;
+    float current_depth_y = 0.f;
 
     bool expand = false;
     bool valid = false;
@@ -84,6 +116,7 @@ class RoomVFEBMR
 {
 public:
     float bmr_threshold = -2.0f;
+    float bmr_saturation = 5.0f;  // clamp cumulative log-BF to ±this value
     float ext_prior_sigma_dim = 3.0f;
     float ext_prior_sigma_pos = 2.0f;
     // Prior std for the Laplace Occam factor — one per parameter type.
@@ -109,6 +142,9 @@ public:
         const std::vector<Eigen::Vector2f> &points_room_xy,
         float L1,
         float W1,
+        float robot_x,
+        float robot_y,
+        float robot_phi,
         CandidateScorer scorer = {}) const;
 
 private:
@@ -121,6 +157,8 @@ private:
         float a = 0.f;
         float b = 0.f;
         float depth = 0.f;
+        float depth_x = 0.f;
+        float depth_y = 0.f;
         float score = 0.f;
         int activated_vertex_a = -1;
         int activated_vertex_b = -1;

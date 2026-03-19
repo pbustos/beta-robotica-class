@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 
 namespace rc {
 
@@ -203,9 +204,22 @@ void Viewer2D::restore_polygon_from_backup()
 // BMR candidate ghost polygons
 // ─────────────────────────────────────────────────────────────────────────────
 
-void Viewer2D::draw_candidate_polygons(const std::vector<CandidateDrawData>& candidates)
+void Viewer2D::draw_candidate_polygons(const std::vector<CandidateDrawData>& candidates, float hx, float hy)
 {
     clear_candidate_polygons();
+
+    // Helper: map side-local coordinate t∈[-1,1] to room-frame point on the wall.
+    auto side_point = [hx, hy](int side, float t) -> QPointF
+    {
+        t = std::clamp(t, -1.f, 1.f);
+        switch (side)
+        {
+            case 0: return {t * hx, -hy};   // bottom
+            case 1: return {hx,  t * hy};   // right
+            case 2: return {t * hx,  hy};   // top
+            default: return {-hx, t * hy};  // left
+        }
+    };
 
     for (const auto& c : candidates)
     {
@@ -230,6 +244,105 @@ void Viewer2D::draw_candidate_polygons(const std::vector<CandidateDrawData>& can
         auto* pitem = agv_->scene.addPolygon(poly, pen, QBrush(Qt::NoBrush));
         pitem->setZValue(7);
         candidate_polygon_items_.push_back(pitem);
+
+        // ── Hot-zone segment: thick line on the wall where the feature was detected ──
+        const QColor hz_col = c.is_chosen
+            ? QColor(255, 200, 0, 220)    // bright yellow for the chosen one
+            : QColor(255, 200, 0, 100);   // dim yellow for runners-up
+        const float hz_width = c.is_chosen ? 0.14f : 0.08f;
+        QPen hz_pen(hz_col, hz_width, Qt::SolidLine, Qt::RoundCap);
+
+        if (!c.is_corner && c.side_id >= 0 && c.side_id <= 3)
+        {
+            // Wall candidate: segment [a,b] on the wall side.
+            auto* seg = agv_->scene.addLine(
+                QLineF(side_point(c.side_id, c.seg_a), side_point(c.side_id, c.seg_b)),
+                hz_pen);
+            seg->setZValue(9);
+            candidate_polygon_items_.push_back(seg);
+        }
+        else if (c.is_corner && c.corner_id >= 0 && c.corner_id < 4)
+        {
+            // Corner candidate: short segments at the corner end of two adjacent sides.
+            // corner_profile_mean uses kCornerWindowBins=5 out of nside=32.
+            constexpr float kFrac = 5.f / 31.f;  // fraction of [-1,1] range covered
+            const int cidx = c.corner_id;
+            // side_a = horizontal side, side_b = vertical side
+            const int side_a = (cidx <= 1) ? 0 : 2;
+            const int side_b = (cidx == 0 || cidx == 3) ? 3 : 1;
+            const bool low_a = (cidx == 0 || cidx == 3);
+            const bool low_b = (cidx == 0 || cidx == 1);
+            const float a0 = low_a ? -1.f : (1.f - 2.f * kFrac);
+            const float a1 = low_a ? (-1.f + 2.f * kFrac) : 1.f;
+            const float b0 = low_b ? -1.f : (1.f - 2.f * kFrac);
+            const float b1 = low_b ? (-1.f + 2.f * kFrac) : 1.f;
+
+            auto* sega = agv_->scene.addLine(
+                QLineF(side_point(side_a, a0), side_point(side_a, a1)), hz_pen);
+            sega->setZValue(9);
+            candidate_polygon_items_.push_back(sega);
+            auto* segb = agv_->scene.addLine(
+                QLineF(side_point(side_b, b0), side_point(side_b, b1)), hz_pen);
+            segb->setZValue(9);
+            candidate_polygon_items_.push_back(segb);
+        }
+
+        // Label for corner candidates only — wall (blue/cyan) labels are suppressed.
+        // Label is placed near the corresponding room corner, not at the polygon centroid.
+        if (!c.is_corner)
+            continue;
+
+        static const char* cnames[] = {"BL", "BR", "TR", "TL"};
+        const char* cn = (c.corner_id >= 0 && c.corner_id < 4) ? cnames[c.corner_id] : "?";
+        const QString label = QString("C%1 %2").arg(c.corner_id).arg(cn);
+
+        // Derive room corner from the polygon bounding box.
+        // The polygon clips the room corner, so the bbox extremes ARE the room corner.
+        float minx = std::numeric_limits<float>::max(),  miny = minx;
+        float maxx = -std::numeric_limits<float>::max(), maxy = maxx;
+        for (const auto& v : c.verts)
+        {
+            if (v.x() < minx) minx = v.x();
+            if (v.y() < miny) miny = v.y();
+            if (v.x() > maxx) maxx = v.x();
+            if (v.y() > maxy) maxy = v.y();
+        }
+        float lx, ly;
+        switch (c.corner_id)
+        {
+            case 0:  lx = minx; ly = miny; break; // BL
+            case 1:  lx = maxx; ly = miny; break; // BR
+            case 2:  lx = maxx; ly = maxy; break; // TR
+            default: lx = minx; ly = maxy; break; // TL (3)
+        }
+
+        auto* titem = new QGraphicsTextItem(label);
+        QFont font;
+        font.setBold(true);
+        font.setPixelSize(16);
+        titem->setFont(font);
+        constexpr float label_scale = 0.020f;
+        // y-mirror to counteract view's scale(1,-1) flip.
+        titem->setTransform(QTransform(label_scale, 0, 0, 0, -label_scale, 0, 0, 0, 1));
+        titem->setDefaultTextColor(QColor(60, 220, 100, c.is_chosen ? 255 : 160));
+
+        // Position label just outside the room corner (beyond the magenta layout).
+        const QRectF br = titem->mapToScene(titem->boundingRect()).boundingRect();
+        const float W = static_cast<float>(br.width());
+        const float H = static_cast<float>(br.height());
+        constexpr float pad = 0.12f;
+        float tx, ty;
+        switch (c.corner_id)
+        {
+            case 0:  tx = lx - W - pad;   ty = ly - pad;     break; // BL: left & below
+            case 1:  tx = lx + pad;        ty = ly - pad;     break; // BR: right & below
+            case 2:  tx = lx + pad;        ty = ly + H + pad; break; // TR: right & above
+            default: tx = lx - W - pad;    ty = ly + H + pad; break; // TL: left & above
+        }
+        titem->setPos(tx, ty);
+        titem->setZValue(8);
+        agv_->scene.addItem(titem);
+        candidate_score_items_.push_back(titem);
     }
 }
 
@@ -248,6 +361,103 @@ void Viewer2D::clear_candidate_polygons()
         delete item;
     }
     candidate_score_items_.clear();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Top hot-zone segments (thick colored lines on walls)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Viewer2D::draw_hot_zones(const std::vector<std::array<float,4>>& zones, float hx, float hy)
+{
+    clear_hot_zones();
+
+    auto side_point = [hx, hy](int side, float t) -> QPointF
+    {
+        t = std::clamp(t, -1.f, 1.f);
+        switch (side)
+        {
+            case 0: return {t * hx, -hy};
+            case 1: return {hx,  t * hy};
+            case 2: return {t * hx,  hy};
+            default: return {-hx, t * hy};
+        }
+    };
+
+    // Inward offset per side, staggered by rank so lines don't overlap.
+    auto inward_offset = [](int side, int rank) -> QPointF
+    {
+        const float off = 0.20f + 0.15f * static_cast<float>(rank);  // #1=0.20, #2=0.35, #3=0.50
+        switch (side)
+        {
+            case 0: return {0,  off};  // bottom → up
+            case 1: return {-off, 0};  // right → left
+            case 2: return {0, -off};  // top → down
+            default: return {off, 0};  // left → right
+        }
+    };
+
+    // Colors: #1 red, #2 orange, #3 yellow.
+    static const QColor colors[] = {
+        QColor(255, 30, 30, 240),
+        QColor(255, 160, 0, 220),
+        QColor(30, 120, 255, 200)
+    };
+
+    for (std::size_t k = 0; k < zones.size() && k < 3; ++k)
+    {
+        const int side = static_cast<int>(zones[k][0]);
+        const float a  = zones[k][1];
+        const float b  = zones[k][2];
+
+        const QPointF p0 = side_point(side, a);
+        const QPointF p1 = side_point(side, b);
+        const QPointF off = inward_offset(side, static_cast<int>(k));
+
+        const float width = (k == 0) ? 0.14f : 0.09f;
+        QPen pen(colors[k], width, Qt::SolidLine, Qt::RoundCap);
+        auto* line = agv_->scene.addLine(
+            QLineF(p0 + off, p1 + off), pen);
+        line->setZValue(10);
+        hot_zone_items_.push_back(line);
+
+        // Rank label placed well inside the room, away from the line.
+        // Use a large extra inward push so the text doesn't overlap the line.
+        auto label_offset = [](int s, int rank) -> QPointF
+        {
+            const float lo = 0.45f + 0.20f * static_cast<float>(rank);
+            switch (s)
+            {
+                case 0: return {0,  lo};
+                case 1: return {-lo, 0};
+                case 2: return {0, -lo};
+                default: return {lo, 0};
+            }
+        };
+
+        auto* label = new QGraphicsTextItem(QString("#%1").arg(k + 1));
+        QFont font;
+        font.setBold(true);
+        font.setPixelSize(18);
+        label->setFont(font);
+        label->setDefaultTextColor(colors[k]);
+        constexpr float lscale = 0.022f;
+        label->setTransform(QTransform(lscale, 0, 0, 0, -lscale, 0, 0, 0, 1));
+        const QPointF mid = (p0 + p1) * 0.5 + label_offset(side, static_cast<int>(k));
+        label->setPos(mid);
+        label->setZValue(11);
+        agv_->scene.addItem(label);
+        hot_zone_items_.push_back(label);
+    }
+}
+
+void Viewer2D::clear_hot_zones()
+{
+    for (auto* item : hot_zone_items_)
+    {
+        agv_->scene.removeItem(item);
+        delete item;
+    }
+    hot_zone_items_.clear();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

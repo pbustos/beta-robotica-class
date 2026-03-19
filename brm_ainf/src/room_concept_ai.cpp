@@ -619,7 +619,7 @@ namespace rc
             const auto huber = torch::nn::functional::huber_loss(
                 sdf_vals, torch::zeros_like(sdf_vals),
                 torch::nn::functional::HuberLossFuncOptions()
-                    .reduction(torch::kMean).delta(huber_delta));
+                    .reduction(torch::kSum).delta(huber_delta));
             return 0.5f * inv_var * huber.item<float>();
         }
         catch (const std::exception& e)
@@ -748,26 +748,28 @@ namespace rc
             if (bmr.activated_vertex_a < 0 || bmr.activated_vertex_b < 0)
                 return;
 
-            const float depth = std::clamp(bmr.indent_depth, 0.1f, 0.8f * std::min(hx, hy));
+            // 2-DOF corner: independent depth along horizontal (dx) and vertical (dy) sides.
+            const float dx = std::clamp(bmr.indent_depth_x, 0.1f, 0.8f * hx);
+            const float dy = std::clamp(bmr.indent_depth_y, 0.1f, 0.8f * hy);
             std::vector<Eigen::Vector2f> poly;
             switch (bmr.indent_corner)
             {
                 case 0: // bottom-left
                     poly = {
-                        {-hx + depth, -hy},
+                        {-hx + dx, -hy},
                         { hx, -hy},
                         { hx,  hy},
                         {-hx,  hy},
-                        {-hx, -hy + depth},
-                        {-hx + depth, -hy + depth}
+                        {-hx, -hy + dy},
+                        {-hx + dx, -hy + dy}
                     };
                     break;
                 case 1: // bottom-right
                     poly = {
                         {-hx, -hy},
-                        { hx - depth, -hy},
-                        { hx - depth, -hy + depth},
-                        { hx, -hy + depth},
+                        { hx - dx, -hy},
+                        { hx - dx, -hy + dy},
+                        { hx, -hy + dy},
                         { hx,  hy},
                         {-hx,  hy}
                     };
@@ -776,9 +778,9 @@ namespace rc
                     poly = {
                         {-hx, -hy},
                         { hx, -hy},
-                        { hx,  hy - depth},
-                        { hx - depth,  hy - depth},
-                        { hx - depth,  hy},
+                        { hx,  hy - dy},
+                        { hx - dx,  hy - dy},
+                        { hx - dx,  hy},
                         {-hx,  hy}
                     };
                     break;
@@ -788,16 +790,16 @@ namespace rc
                         {-hx, -hy},
                         { hx, -hy},
                         { hx,  hy},
-                        {-hx + depth,  hy},
-                        {-hx + depth,  hy - depth},
-                        {-hx,  hy - depth}
+                        {-hx + dx,  hy},
+                        {-hx + dx,  hy - dy},
+                        {-hx,  hy - dy}
                     };
                     break;
             }
 
             push_command(CmdSetPolygon{poly});
             qInfo() << "[BMR] Structural jump: corner indent activated. corner=" << bmr.indent_corner
-                    << " depth=" << depth
+                    << " dx=" << dx << " dy=" << dy
                     << " active latent vertices=" << bmr.activated_vertex_a << bmr.activated_vertex_b;
             return;
         }

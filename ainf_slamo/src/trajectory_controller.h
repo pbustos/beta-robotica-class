@@ -120,7 +120,17 @@ public:
         float lambda_lateral_clearance = 5.0f;
         float lateral_probe_offset = 0.22f;         // side probe offset from trajectory centerline
         float lateral_clearance_margin = 0.25;     // desired extra side clearance over robot radius
-        float lateral_closing_gain = 2.0f;          // extra penalty when side clearance is decreasing
+        float lateral_closing_gain = 0.0f;          // extra penalty when side clearance is decreasing
+                                                    // (disabled: replaced by CBF term below)
+
+        // Control Barrier Function (CBF) — velocity-aware safety barrier
+        // h(x,v) = d_ESDF - r_robot - v²/(2*a_max)
+        // Penalises rollout steps where ḣ + α·h < 0 (barrier decreasing too fast)
+        bool  enable_cbf          = true;
+        float lambda_cbf          = 6.0f;   // weight for CBF violation cost
+        float cbf_alpha           = 1.5f;   // class-K decay rate  (larger = more conservative)
+        float cbf_max_decel       = 1.0f;   // assumed max braking deceleration  (m/s²)
+        float cbf_cost_cap        = 10.0f;  // per-step CBF cost cap
 
         // Continuous clearance relaxation near final goal (no hard switch):
         // far from goal -> use d_safe, close to goal -> relax toward robot_radius + goal_obstacle_margin

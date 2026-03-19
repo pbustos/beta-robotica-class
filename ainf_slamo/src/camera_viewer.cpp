@@ -24,15 +24,18 @@ enum class InfraMaskMode
 
 InfraMaskMode read_infra_mask_mode()
 {
-    const char* s = std::getenv("AINFO_INFRA_MASK_MODE");
-    if (s == nullptr)
+    static const InfraMaskMode cached = []()
+    {
+        const char* s = std::getenv("AINFO_INFRA_MASK_MODE");
+        if (s == nullptr)
+            return InfraMaskMode::WallsOnly;
+        std::string mode(s);
+        std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (mode == "all" || mode == "allplanes" || mode == "wall_floor_ceiling")
+            return InfraMaskMode::AllPlanes;
         return InfraMaskMode::WallsOnly;
-
-    std::string mode(s);
-    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (mode == "all" || mode == "allplanes" || mode == "wall_floor_ceiling")
-        return InfraMaskMode::AllPlanes;
-    return InfraMaskMode::WallsOnly;
+    }();
+    return cached;
 }
 
 bool extract_depth_buffer_meters(const RoboCompImageSegmentation::TDepth& depth,
@@ -156,8 +159,7 @@ CameraViewer::CameraViewer(RoboCompImageSegmentation::ImageSegmentationPrxPtr pr
         : QDialog(parent, Qt::Window), proxy_(std::move(proxy))
 {
     setWindowTitle("Camera Viewer");
-    setMinimumSize(640, 520);
-    resize(600, 700);
+    setMinimumSize(320, 260);
 
     // ---- Tab widget (RGB | Depth) -------------------------------------------
     tabs_ = new QTabWidget(this);
@@ -221,6 +223,20 @@ CameraViewer::CameraViewer(RoboCompImageSegmentation::ImageSegmentationPrxPtr pr
     raw_button->setToolTip("Show raw camera image without infrastructure masking or overlays");
     ctrl_layout->addWidget(raw_button);
     connect(raw_button, &QPushButton::toggled, this, [this](bool on){ raw_mode_ = on; });
+
+    attention_button_ = new QPushButton("Attention", ctrl_bar);
+    attention_button_->setCheckable(true);
+    attention_button_->setChecked(false);
+    attention_button_->setToolTip("Toggle crosshair: selects the first object on the centre ray");
+    ctrl_layout->addWidget(attention_button_);
+    connect(attention_button_, &QPushButton::toggled, this, [this](bool on){ attention_mode_ = on; });
+
+    yolo_button_ = new QPushButton("YOLO", ctrl_bar);
+    yolo_button_->setCheckable(true);
+    yolo_button_->setChecked(false);
+    yolo_button_->setToolTip("Show YOLO detection outlines");
+    ctrl_layout->addWidget(yolo_button_);
+    connect(yolo_button_, &QPushButton::toggled, this, [this](bool on){ show_yolo_ = on; });
 
     ctrl_layout->addStretch();
 
@@ -394,11 +410,16 @@ void CameraViewer::grab_frame()
     try
     {
         const auto tdata = proxy_->getAll(false);
-        const auto timg = tdata.image;
+        const auto& timg = tdata.image;
+
+        // Defer depth extraction until actually needed (mask mode or depth tab)
+        const bool need_depth = mask_infrastructure_ || (tabs_->currentIndex() == 1);
         int depth_w_cached = 0;
         int depth_h_cached = 0;
         std::vector<float> depth_m_cached;
-        const bool have_depth_cached = extract_depth_from_tdata(tdata, depth_w_cached, depth_h_cached, depth_m_cached);
+        const bool have_depth_cached = need_depth
+            ? extract_depth_from_tdata(tdata, depth_w_cached, depth_h_cached, depth_m_cached)
+            : false;
 
         // ---- RGB --------------------------------------------------------
         if (timg.width <= 0 || timg.height <= 0 || timg.image.empty())
@@ -419,6 +440,22 @@ void CameraViewer::grab_frame()
                          timg.width, timg.height, timg.depth, static_cast<int>(timg.image.size()),
                          timg.compressed ? 1 : 0);
             return;
+        }
+
+        // Lazily report camera intrinsics from TImage once they are valid
+        if (!intrinsics_reported_)
+        {
+            const float img_w = static_cast<float>(timg.width);
+            const float img_h = static_cast<float>(timg.height);
+            float fx = static_cast<float>(timg.focalx);
+            float fy = static_cast<float>(timg.focaly);
+            if (!std::isfinite(fx) || fx < 10.f) fx = img_w * 0.9f;
+            if (!std::isfinite(fy) || fy < 10.f) fy = img_h * 0.9f;
+            emit intrinsicsReceived(fx, fy, img_w * 0.5f, img_h * 0.5f,
+                                    timg.width, timg.height);
+            intrinsics_reported_ = true;
+            std::println("[CameraViewer] intrinsics: fx={:.1f} fy={:.1f} cx={:.1f} cy={:.1f} {}x{}",
+                         fx, fy, img_w * 0.5f, img_h * 0.5f, timg.width, timg.height);
         }
 
         if (!raw_mode_)
@@ -748,72 +785,58 @@ void CameraViewer::grab_frame()
                     return best_t;
                 };
 
-                // 3) Two-pass masking: mask all infrastructure rays, then restore foreground by depth.
+                // 3) Single-pass masking: black-out infrastructure, restore foreground by depth.
                 if (have_depth_cached && depth_w_cached > 0 && depth_h_cached > 0)
                 {
-                    const QImage original_qimg = qimg.copy();
                     int finite_hits = 0;
                     int floor_hits = 0;
                     int ceil_hits = 0;
                     int wall_hits = 0;
+                    int restored_hits = 0;
+                    const float inv_fx = 1.f / std::max(1e-5f, fx);
+                    const float inv_fy = 1.f / std::max(1e-5f, fy);
 
                     for (int y = 0; y < h; ++y)
                     {
                         uchar* rgb = qimg.scanLine(y);
                         const uchar* wm = infra_mask.constScanLine(y);
+                        const float ry = cy - (static_cast<float>(y) + 0.5f);
                         for (int x = 0; x < w; ++x)
                         {
-                            const Eigen::Vector3f ray_cam((static_cast<float>(x) + 0.5f - cx) / std::max(1e-5f, fx),
+                            const Eigen::Vector3f ray_cam((static_cast<float>(x) + 0.5f - cx) * inv_fx,
                                                           1.f,
-                                                          (cy - (static_cast<float>(y) + 0.5f)) / std::max(1e-5f, fy));
+                                                          ry * inv_fy);
                             int hit_kind = 0;
                             const float d_inf = first_infra_depth_along_ray(ray_cam, &hit_kind);
-                            if (std::isfinite(d_inf) || wm[x] > 0)
-                            {
-                                if (std::isfinite(d_inf))
-                                {
-                                    ++finite_hits;
-                                    if (hit_kind == 1) ++floor_hits;
-                                    else if (hit_kind == 2) ++ceil_hits;
-                                    else if (hit_kind == 3) ++wall_hits;
-                                }
-                                rgb[3 * x + 0] = 0;
-                                rgb[3 * x + 1] = 0;
-                                rgb[3 * x + 2] = 0;
-                            }
-                        }
-                    }
-
-                    int restored_hits = 0;
-                    for (int y = 0; y < h; ++y)
-                    {
-                        uchar* rgb = qimg.scanLine(y);
-                        const uchar* rgb0 = original_qimg.constScanLine(y);
-                        for (int x = 0; x < w; ++x)
-                        {
-                            int hit_kind = 0;
-                            const Eigen::Vector3f ray_cam((static_cast<float>(x) + 0.5f - cx) / std::max(1e-5f, fx),
-                                                          1.f,
-                                                          (cy - (static_cast<float>(y) + 0.5f)) / std::max(1e-5f, fy));
-                            const float d_inf = first_infra_depth_along_ray(ray_cam, &hit_kind);
-                            if (!std::isfinite(d_inf))
+                            const bool is_infra = std::isfinite(d_inf) || wm[x] > 0;
+                            if (!is_infra)
                                 continue;
 
-                            const int xd = std::clamp((x * depth_w_cached) / std::max(1, w), 0, depth_w_cached - 1);
-                            const int yd = std::clamp((y * depth_h_cached) / std::max(1, h), 0, depth_h_cached - 1);
-                            const float d_obs = depth_m_cached[static_cast<std::size_t>(yd) * static_cast<std::size_t>(depth_w_cached)
-                                                             + static_cast<std::size_t>(xd)];
-                            const float margin = 0.08f + 0.01f * d_inf;
-                            const bool keep_foreground = (hit_kind == 3) &&
-                                                         std::isfinite(d_obs) && d_obs > near_depth &&
-                                                         std::isfinite(d_inf) && (d_obs + margin < d_inf);
-                            if (keep_foreground)
+                            if (std::isfinite(d_inf))
                             {
-                                ++restored_hits;
-                                rgb[3 * x + 0] = rgb0[3 * x + 0];
-                                rgb[3 * x + 1] = rgb0[3 * x + 1];
-                                rgb[3 * x + 2] = rgb0[3 * x + 2];
+                                ++finite_hits;
+                                if (hit_kind == 1) ++floor_hits;
+                                else if (hit_kind == 2) ++ceil_hits;
+                                else if (hit_kind == 3) ++wall_hits;
+
+                                // Check depth to restore foreground objects in front of walls
+                                if (hit_kind == 3)
+                                {
+                                    const int xd = std::clamp((x * depth_w_cached) / std::max(1, w), 0, depth_w_cached - 1);
+                                    const int yd = std::clamp((y * depth_h_cached) / std::max(1, h), 0, depth_h_cached - 1);
+                                    const float d_obs = depth_m_cached[static_cast<std::size_t>(yd) * static_cast<std::size_t>(depth_w_cached)
+                                                                     + static_cast<std::size_t>(xd)];
+                                    const float margin = 0.08f + 0.01f * d_inf;
+                                    if (std::isfinite(d_obs) && d_obs > near_depth && (d_obs + margin < d_inf))
+                                    {
+                                        ++restored_hits;
+                                        continue;  // keep original pixel
+                                    }
+                                }
                             }
+                            rgb[3 * x + 0] = 0;
+                            rgb[3 * x + 1] = 0;
+                            rgb[3 * x + 2] = 0;
                         }
                     }
 
@@ -828,15 +851,18 @@ void CameraViewer::grab_frame()
                 else
                 {
                     // Fallback when depth is unavailable.
+                    const float inv_fx = 1.f / std::max(1e-5f, fx);
+                    const float inv_fy = 1.f / std::max(1e-5f, fy);
                     for (int y = 0; y < h; ++y)
                     {
                         uchar* rgb = qimg.scanLine(y);
                         const uchar* wm = infra_mask.constScanLine(y);
+                        const float ry = cy - (static_cast<float>(y) + 0.5f);
                         for (int x = 0; x < w; ++x)
                         {
-                            const Eigen::Vector3f ray_cam((static_cast<float>(x) + 0.5f - cx) / std::max(1e-5f, fx),
+                            const Eigen::Vector3f ray_cam((static_cast<float>(x) + 0.5f - cx) * inv_fx,
                                                           1.f,
-                                                          (cy - (static_cast<float>(y) + 0.5f)) / std::max(1e-5f, fy));
+                                                          ry * inv_fy);
                             if (std::isfinite(first_infra_depth_along_ray(ray_cam)) || wm[x] > 0)
                             {
                                 rgb[3 * x + 0] = 0;
@@ -855,7 +881,48 @@ void CameraViewer::grab_frame()
 
         QPainter painter(&px);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        // YOLO mask/polygon painting intentionally disabled in EM validator mode.
+
+        // Draw YOLO detection outlines when enabled
+        if (show_yolo_ && !tdata.objects.empty())
+        {
+            QFont yolo_font;
+            yolo_font.setPixelSize(13);
+            yolo_font.setBold(true);
+            painter.setFont(yolo_font);
+
+            for (const auto& obj : tdata.objects)
+            {
+                if (obj.imagePolygon.size() < 2)
+                    continue;
+
+                // Build polygon
+                QPolygonF poly;
+                poly.reserve(static_cast<int>(obj.imagePolygon.size()));
+                for (const auto& pt : obj.imagePolygon)
+                    poly << QPointF(pt.x, pt.y);
+
+                // Bounding rect for simple bbox fallback / label placement
+                const QRectF br = poly.boundingRect();
+
+                // Draw outline
+                const QColor outline_color(0, 255, 0, 200);
+                painter.setPen(QPen(outline_color, 2));
+                painter.setBrush(Qt::NoBrush);
+                if (obj.imagePolygon.size() > 4)
+                    painter.drawPolygon(poly);   // segmentation mask
+                else
+                    painter.drawRect(br);         // bounding box
+
+                // Label + score
+                const QString text = QString("%1 %2%")
+                    .arg(QString::fromStdString(obj.label))
+                    .arg(static_cast<int>(obj.score * 100.f));
+                painter.setPen(QPen(QColor(0, 0, 0, 180), 1));
+                painter.drawText(QPointF(br.left() + 3, br.top() - 3), text);
+                painter.setPen(QPen(outline_color, 1));
+                painter.drawText(QPointF(br.left() + 2, br.top() - 4), text);
+            }
+        }
 
         std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>> wireframe_segments;
         std::vector<QColor> wireframe_colors;
@@ -1093,8 +1160,46 @@ void CameraViewer::grab_frame()
             painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
             painter.drawImage(0, 0, synth_overlay);
         }
+
+        // Draw crosshair and emit attention ray when attention mode is active
+        if (attention_mode_)
+        {
+            const int iw = px.width();
+            const int ih = px.height();
+            const float cx_px = iw * 0.5f;
+            const float cy_px = ih * 0.5f;
+            const int arm = std::min(iw, ih) / 12;
+
+            painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+            painter.setPen(QPen(QColor(255, 0, 0, 200), 2));
+            painter.drawLine(QPointF(cx_px - arm, cy_px), QPointF(cx_px + arm, cy_px));
+            painter.drawLine(QPointF(cx_px, cy_px - arm), QPointF(cx_px, cy_px + arm));
+            painter.drawEllipse(QPointF(cx_px, cy_px), arm * 0.6, arm * 0.6);
+
+            // Compute ray direction for centre pixel
+            float fx = static_cast<float>(timg.focalx);
+            float fy = static_cast<float>(timg.focaly);
+            if (!std::isfinite(fx) || fx < 10.f) fx = iw * 0.9f;
+            if (!std::isfinite(fy) || fy < 10.f) fy = ih * 0.9f;
+            // Centre pixel ray in camera frame: (0, 1, 0) normalised, but
+            // expressing it with actual focal length for consistency.
+            // ray = ((cx_px - cx) / fx, 1, (cy - cy_px) / fy) = (0, 1, 0)
+            emit attentionRay(0.f, 1.f, 0.f);
+        }
         painter.end();
         } // !raw_mode_
+
+        // On first valid frame, resize dialog to match image aspect ratio
+        if (!first_resize_done_ && timg.width > 0 && timg.height > 0)
+        {
+            first_resize_done_ = true;
+            const int ctrl_h = 40; // approximate height of control bar
+            const int tab_h  = 30; // tab bar height
+            const int margin = 16; // layout margins
+            const int target_w = std::min(timg.width, 1280);
+            const int target_h = target_w * timg.height / timg.width;
+            resize(target_w + margin, target_h + ctrl_h + tab_h + margin);
+        }
 
         rgb_label_->setPixmap(
             px.scaled(rgb_label_->size(), Qt::KeepAspectRatio,

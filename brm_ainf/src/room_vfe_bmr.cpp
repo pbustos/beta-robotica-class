@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
+#include <iomanip>
 
 namespace rc
 {
@@ -11,7 +13,7 @@ namespace
 constexpr int kNumMandatoryVertices = 4;
 constexpr int kNumTotalVertices = 10;
 constexpr int kMinIndentBins = 4;
-constexpr int kNumIndentGuesses = 5;
+constexpr int kNumIndentGuesses = 3;
 constexpr int kCornerWindowBins = 5;
 
 float segment_score_from_profile(const std::array<float, 32> &profile, int i0, int i1)
@@ -64,7 +66,8 @@ std::vector<Eigen::Vector2f> build_indent_polygon(
     BmrResult::ProposalType proposal,
     int side, int corner,
     float a, float b, float depth,
-    float hx, float hy)
+    float hx, float hy,
+    float depth_x = 0.f, float depth_y = 0.f)
 {
     a     = std::clamp(std::min(a, b), -0.95f, 0.95f);
     b     = std::clamp(std::max(a, b), -0.95f, 0.95f);
@@ -85,12 +88,20 @@ std::vector<Eigen::Vector2f> build_indent_polygon(
     }
     if (proposal == BmrResult::ProposalType::ADD_CORNER_INDENT)
     {
+        // 2-DOF corner: depth_x (horizontal) and depth_y (vertical) are independent.
+        // Fall back to the single 'depth' when both are zero (legacy callers).
+        const float dx = (depth_x > 0.01f || depth_y > 0.01f)
+            ? std::clamp(depth_x, 0.1f, 0.8f * hx)
+            : depth;
+        const float dy = (depth_x > 0.01f || depth_y > 0.01f)
+            ? std::clamp(depth_y, 0.1f, 0.8f * hy)
+            : depth;
         switch (corner)
         {
-            case 0: return {{-hx+depth,-hy},{hx,-hy},{hx,hy},{-hx,hy},{-hx,-hy+depth},{-hx+depth,-hy+depth}};
-            case 1: return {{-hx,-hy},{hx-depth,-hy},{hx-depth,-hy+depth},{hx,-hy+depth},{hx,hy},{-hx,hy}};
-            case 2: return {{-hx,-hy},{hx,-hy},{hx,hy-depth},{hx-depth,hy-depth},{hx-depth,hy},{-hx,hy}};
-            default: return {{-hx,-hy},{hx,-hy},{hx,hy},{-hx+depth,hy},{-hx+depth,hy-depth},{-hx,hy-depth}};
+            case 0: return {{-hx+dx,-hy},{hx,-hy},{hx,hy},{-hx,hy},{-hx,-hy+dy},{-hx+dx,-hy+dy}};   // BL
+            case 1: return {{-hx,-hy},{hx-dx,-hy},{hx-dx,-hy+dy},{hx,-hy+dy},{hx,hy},{-hx,hy}};      // BR
+            case 2: return {{-hx,-hy},{hx,-hy},{hx,hy-dy},{hx-dx,hy-dy},{hx-dx,hy},{-hx,hy}};        // TR
+            default: return {{-hx,-hy},{hx,-hy},{hx,hy},{-hx+dx,hy},{-hx+dx,hy-dy},{-hx,hy-dy}};     // TL
         }
     }
     return {};
@@ -143,7 +154,7 @@ std::optional<BmrResult> RoomVFEBMR::maybe_evaluate_from_lidar(
 
     const float L1 = std::max(0.5f, state[0]);
     const float W1 = std::max(0.5f, state[1]);
-    auto out = evaluate_bmr_from_points(points_room_xy, L1, W1, scorer);
+    auto out = evaluate_bmr_from_points(points_room_xy, L1, W1, x, y, phi, scorer);
 
     const bool indent_proposal =
         out.proposal == BmrResult::ProposalType::ADD_TWO_POINT_INDENT
@@ -156,6 +167,8 @@ std::optional<BmrResult> RoomVFEBMR::maybe_evaluate_from_lidar(
         if (!current_indent_hypothesis_.valid)
         {
             indent_log_bf_01_cumulative_ += out.log_bf_01;
+            indent_log_bf_01_cumulative_ = std::clamp(indent_log_bf_01_cumulative_,
+                -bmr_saturation, bmr_saturation);
             ++indent_evidence_count_;
             out.log_bf_01 = indent_log_bf_01_cumulative_;
             out.switch_log_bf_01 = 0.f;
@@ -179,6 +192,8 @@ std::optional<BmrResult> RoomVFEBMR::maybe_evaluate_from_lidar(
                 current_indent_hypothesis_.a = out.indent_a;
                 current_indent_hypothesis_.b = out.indent_b;
                 current_indent_hypothesis_.depth = out.indent_depth;
+                current_indent_hypothesis_.depth_x = out.indent_depth_x;
+                current_indent_hypothesis_.depth_y = out.indent_depth_y;
                 current_indent_hypothesis_.score = out.indent_score;
                 current_indent_hypothesis_.activated_vertex_a = next_a;
                 current_indent_hypothesis_.activated_vertex_b = next_b;
@@ -196,6 +211,14 @@ std::optional<BmrResult> RoomVFEBMR::maybe_evaluate_from_lidar(
             out.activated_vertex_b = current_indent_hypothesis_.activated_vertex_b;
             for (int i = 0; i < activated_vertex_count_; ++i)
                 out.vertex_precision[i] = 1.f;
+
+            // Expose current hypothesis identity for UI display.
+            out.current_proposal = current_indent_hypothesis_.proposal;
+            out.current_side     = current_indent_hypothesis_.side;
+            out.current_corner   = current_indent_hypothesis_.corner;
+            out.current_depth    = current_indent_hypothesis_.depth;
+            out.current_depth_x  = current_indent_hypothesis_.depth_x;
+            out.current_depth_y  = current_indent_hypothesis_.depth_y;
 
             // Positive delta means challenger explains data better (both VFE and heuristic modes).
             // VFE: scores = baseline−cand_vfe; −1×delta gives correct LLR sign (natural nats).
@@ -220,6 +243,8 @@ std::optional<BmrResult> RoomVFEBMR::maybe_evaluate_from_lidar(
             else
             {
                 indent_switch_log_bf_01_cumulative_ += llr_switch;
+                indent_switch_log_bf_01_cumulative_ = std::clamp(indent_switch_log_bf_01_cumulative_,
+                    -bmr_saturation, bmr_saturation);
                 ++indent_switch_evidence_count_;
             }
 
@@ -245,6 +270,8 @@ std::optional<BmrResult> RoomVFEBMR::maybe_evaluate_from_lidar(
                 current_indent_hypothesis_.a = out.indent_a;
                 current_indent_hypothesis_.b = out.indent_b;
                 current_indent_hypothesis_.depth = out.indent_depth;
+                current_indent_hypothesis_.depth_x = out.indent_depth_x;
+                current_indent_hypothesis_.depth_y = out.indent_depth_y;
                 current_indent_hypothesis_.score = out.indent_score;
                 current_indent_hypothesis_.activated_vertex_a = next_a;
                 current_indent_hypothesis_.activated_vertex_b = next_b;
@@ -256,10 +283,12 @@ std::optional<BmrResult> RoomVFEBMR::maybe_evaluate_from_lidar(
     }
     else
     {
-        indent_log_bf_01_cumulative_ = 0.f;
-        indent_evidence_count_ = 0;
-        indent_switch_log_bf_01_cumulative_ = 0.f;
-        indent_switch_evidence_count_ = 0;
+        // No indent proposal this frame. Instead of hard-resetting,
+        // decay the accumulator toward zero so occasional "no data" frames
+        // don't destroy all built-up evidence.
+        constexpr float kDecayRate = 0.85f;  // retain 85% per empty frame
+        indent_log_bf_01_cumulative_ *= kDecayRate;
+        indent_switch_log_bf_01_cumulative_ *= kDecayRate;
     }
 
     return out;
@@ -297,6 +326,9 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
     const std::vector<Eigen::Vector2f> &points_room_xy,
     float L1,
     float W1,
+    float robot_x,
+    float robot_y,
+    float robot_phi,
     CandidateScorer scorer) const
 {
     BmrResult out;
@@ -338,17 +370,115 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
             float best = 1e6f;
             for (const auto &p : points_room_xy)
                 best = std::min(best, (p - w).norm());
-            dists[s][i] = best;
+            // If no lidar point is within max_indent_dist of this wall sample,
+            // it means the lidar doesn't see that region — treat as no data (0),
+            // not as evidence of an indent.
+            constexpr float kMaxIndentDist = 1.5f;
+            dists[s][i] = (best <= kMaxIndentDist) ? best : 0.f;
         }
     }
 
-    // Find strongest contiguous high-residual segment on any side.
+    // Mask distance-profile bins that belong to the already-accepted indent.
+    // After commitment the lidar conforms to the indented wall, but profiles
+    // still measure against the base rectangle — creating ghost residuals that
+    // block detection of new features on other walls.
+    if (current_indent_hypothesis_.valid)
+    {
+        const auto& hyp = current_indent_hypothesis_;
+        if (hyp.proposal == BmrResult::ProposalType::ADD_CORNER_INDENT
+            && hyp.corner >= 0 && hyp.corner < 4)
+        {
+            const int cidx = hyp.corner;
+            const bool low_a = (cidx == 0 || cidx == 3);
+            const bool low_b = (cidx == 0 || cidx == 1);
+            const int side_a = (cidx <= 1) ? 0 : 2;
+            const int side_b = (cidx == 0 || cidx == 3) ? 3 : 1;
+
+            // Extent in t-space ([-1,1]).  1.5× margin absorbs edge effects.
+            const float ext_a = std::min(1.8f, 1.5f * hyp.depth_x / hx);
+            const float ext_b = std::min(1.8f, 1.5f * hyp.depth_y / hy);
+
+            for (int i = 0; i < nside; ++i)
+            {
+                const float t = -1.f + 2.f * static_cast<float>(i) / static_cast<float>(nside - 1);
+                if (( low_a && t < -1.f + ext_a) ||
+                    (!low_a && t >  1.f - ext_a))
+                    dists[side_a][i] = 0.f;
+                if (( low_b && t < -1.f + ext_b) ||
+                    (!low_b && t >  1.f - ext_b))
+                    dists[side_b][i] = 0.f;
+            }
+        }
+        else if (hyp.proposal == BmrResult::ProposalType::ADD_TWO_POINT_INDENT
+                 && hyp.side >= 0 && hyp.side < 4)
+        {
+            const float ta = std::min(hyp.a, hyp.b);
+            const float tb = std::max(hyp.a, hyp.b);
+            for (int i = 0; i < nside; ++i)
+            {
+                const float t = -1.f + 2.f * static_cast<float>(i) / static_cast<float>(nside - 1);
+                if (t >= ta && t <= tb)
+                    dists[hyp.side][i] = 0.f;
+            }
+        }
+    }
+
+    // Proximity + heading weighting for candidate scores.
+    // Lidar noise grows with distance, inflating residuals on far walls.
+    // Two multiplicative factors:
+    //   1. Quartic distance decay:  w_d = 1 / (1 + (r/r_ref)⁴)
+    //      r_ref = min(hx,hy) — the shorter room half-extent.
+    //      At r_ref the weight is 0.5; at 1.5× r_ref it drops to ~0.16;
+    //      at 2× r_ref ~0.06.  Quartic overcomes the d² noise growth
+    //      that neutralised the earlier quadratic version.
+    //   2. Forward-facing bonus:  w_f = 1 + 0.5 * max(0, cosα)
+    //      where α is the angle between the robot heading and the
+    //      direction to the zone.  Zones ahead of the robot get up to
+    //      1.5× weight; zones behind are unpenalised (w_f = 1).
+    const Eigen::Vector2f robot_pos(robot_x, robot_y);
+    const Eigen::Vector2f robot_fwd(std::cos(robot_phi), std::sin(robot_phi));
+    const float r_ref = std::min(hx, hy);
+    const float r_ref2 = r_ref * r_ref;
+
+    // Combined proximity·heading weight for a point in room frame.
+    auto zone_weight = [&](const Eigen::Vector2f& pt) -> float
+    {
+        const Eigen::Vector2f d = pt - robot_pos;
+        const float r2 = d.squaredNorm();
+        const float ratio = r2 / r_ref2;
+        const float w_dist = 1.f / (1.f + ratio * ratio);  // quartic decay
+        const float cos_a = (r2 > 1e-4f) ? d.dot(robot_fwd) / std::sqrt(r2) : 0.f;
+        const float w_fwd = 1.f + 0.5f * std::max(0.f, cos_a);  // [1.0, 1.5]
+        return w_dist * w_fwd;
+    };
+
+    // Side proximity at the segment midpoint.
+    auto side_proximity = [&](int side, float ta, float tb) -> float
+    {
+        const float tc = 0.5f * (ta + tb);
+        return zone_weight(side_point(side, tc));
+    };
+
+    // Corner proximity.
+    auto corner_proximity = [&](int cidx) -> float
+    {
+        const float cx = (cidx == 0 || cidx == 3) ? -hx : hx;
+        const float cy = (cidx == 0 || cidx == 1) ? -hy : hy;
+        return zone_weight(Eigen::Vector2f(cx, cy));
+    };
+
+    // Find strongest contiguous high-residual segments on all sides.
     const float min_depth = 0.18f;
     const int min_bins = kMinIndentBins;
     int best_side = -1;
     int best_i0 = -1;
     int best_i1 = -1;
     float best_score = 0.f;
+
+    // Collect ALL qualifying segments across all sides for hot-zone debugging.
+    // Ranked by raw profile score only (no proximity) so we see what the data says.
+    struct HZSeg { int side; int i0; int i1; float mean_d; float raw; };
+    std::vector<HZSeg> all_hz_segs;
 
     for (int s = 0; s < 4; ++s)
     {
@@ -369,7 +499,13 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
                     for (int k = start; k <= end; ++k) mean_d += dists[s][k];
                     mean_d /= static_cast<float>(len);
 
-                    const float score = segment_score_from_profile(dists[s], start, end);
+                    const float raw = segment_score_from_profile(dists[s], start, end);
+                    all_hz_segs.push_back({s, start, end, mean_d, raw});
+
+                    // Best segment uses proximity for candidate selection only.
+                    const auto [ta, tb] = bins_to_segment_ab(start, end, nside);
+                    const float prox = side_proximity(s, ta, tb);
+                    const float score = raw * prox;
                     if (score > best_score)
                     {
                         best_score = score;
@@ -382,6 +518,33 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
         }
     }
 
+    // Expose top-3 hot-zone segments ranked by RAW score (no proximity).
+    std::sort(all_hz_segs.begin(), all_hz_segs.end(),
+        [](const HZSeg& a, const HZSeg& b){ return a.raw > b.raw; });
+    {
+        const int n_hz = std::min(static_cast<int>(all_hz_segs.size()), 3);
+        out.hot_zones.resize(n_hz);
+        for (int k = 0; k < n_hz; ++k)
+        {
+            const auto& hz = all_hz_segs[k];
+            auto& o = out.hot_zones[k];
+            o.side = hz.side;
+            o.i0 = hz.i0;
+            o.i1 = hz.i1;
+            const auto [ta, tb] = bins_to_segment_ab(hz.i0, hz.i1, nside);
+            o.a = ta;
+            o.b = tb;
+            o.mean_dist = hz.mean_d;
+            o.raw_score = hz.raw;
+            // Compute proximity for info only, not for ranking.
+            o.prox = side_proximity(hz.side, ta, tb);
+            o.score = hz.raw * o.prox;
+        }
+    }
+
+    // Copy raw distance profiles for debug output.
+    out.dist_profiles = dists;
+
     struct IndentCandidate
     {
         BmrResult::ProposalType proposal = BmrResult::ProposalType::NONE;
@@ -389,8 +552,11 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
         int corner = -1;
         float a = 0.f;
         float b = 0.f;
-        float depth = 0.f;
+        float depth = 0.f;     // wall depth; corner: legacy (= depth_x)
+        float depth_x = 0.f;   // corner: indent along the horizontal side
+        float depth_y = 0.f;   // corner: indent along the vertical side
         float score = 0.f;
+        float raw_score = 0.f; // VFE score without proximity (for switch comparison)
     };
 
     IndentCandidate wall_best;
@@ -400,11 +566,12 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
     if (best_side >= 0)
     {
         // Systematic low-frequency exploration around the strongest hot-zone segment.
+        // Only 3 guesses: the detected segment plus ±1-bin symmetric shifts.
+        // Walls have 3 free params (more complex model) so we sample them more sparsely
+        // than corners (2 free params), letting the Occam penalty handle complexity.
         struct Candidate { int i0; int i1; float score; float depth; };
         std::array<Candidate, kNumIndentGuesses> cands = {{
             {best_i0, best_i1, 0.f, 0.f},
-            {best_i0 - 1, best_i1 - 1, 0.f, 0.f},
-            {best_i0 + 1, best_i1 + 1, 0.f, 0.f},
             {best_i0 - 1, best_i1 + 1, 0.f, 0.f},
             {best_i0 + 1, best_i1 - 1, 0.f, 0.f}
         }};
@@ -420,7 +587,9 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
             if (c.i1 - c.i0 + 1 < min_bins)
                 continue;
 
-            c.score = segment_score_from_profile(dists[best_side], c.i0, c.i1);
+            const auto [ca, cb] = bins_to_segment_ab(c.i0, c.i1, nside);
+            const float prox = side_proximity(best_side, ca, cb);
+            c.score = segment_score_from_profile(dists[best_side], c.i0, c.i1) * prox;
             float mean_d = 0.f;
             for (int i = c.i0; i <= c.i1; ++i)
                 mean_d += dists[best_side][i];
@@ -430,7 +599,6 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
                 best_cand = c;
 
             // Collect every valid wall guess for visualization.
-            const auto [ca, cb] = bins_to_segment_ab(c.i0, c.i1, nside);
             IndentCandidate wc;
             wc.proposal = BmrResult::ProposalType::ADD_TWO_POINT_INDENT;
             wc.side  = best_side;
@@ -472,13 +640,22 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
         const auto [ma, ra] = corner_profile_mean(dists[side_a], low_a);
         const auto [mb, rb] = corner_profile_mean(dists[side_b], low_b);
         const float depth = 0.5f * (ma + mb);
-        const float score = 0.6f * std::sqrt(std::max(0.f, ma * mb)) * (0.5f * (ra + rb));
+        const float prox = corner_proximity(cidx);
+        const float score = 0.6f * std::sqrt(std::max(0.f, ma * mb)) * (0.5f * (ra + rb)) * prox;
+
+        // Independent per-side depths: side_a is the horizontal side, side_b the vertical side.
+        // For corners 0(BL)/1(BR), side_a=bottom → dx along x, side_b=left/right → dy along y.
+        // For corners 2(TR)/3(TL), side_a=top → dx along x, side_b=right/left → dy along y.
+        const float seed_dx = std::clamp(ma, 0.1f, 0.8f * hx);
+        const float seed_dy = std::clamp(mb, 0.1f, 0.8f * hy);
 
         IndentCandidate cc;
         cc.proposal = BmrResult::ProposalType::ADD_CORNER_INDENT;
         cc.corner   = cidx;
         cc.side     = -1;
         cc.depth    = std::clamp(depth, 0.1f, 0.8f * std::min(hx, hy));
+        cc.depth_x  = seed_dx;
+        cc.depth_y  = seed_dy;
         cc.score    = std::max(0.f, score);
         all_corner_cands.push_back(cc);
 
@@ -512,6 +689,9 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
     if (scorer)
     {
         baseline_vfe = scorer({{-hx,-hy},{hx,-hy},{hx,hy},{-hx,hy}});
+        std::cerr << "[VFE] baseline_vfe=" << baseline_vfe
+            << " N_pts=" << points_room_xy.size()
+            << " hx=" << hx << " hy=" << hy << '\n';
         const float depth_sigma2 = depth_prior_sigma * depth_prior_sigma;
         const float ab_sigma2    = ab_prior_sigma    * ab_prior_sigma;
         // Finite-difference step for depth Hessian estimation.
@@ -523,7 +703,7 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
         // Diagonal terms via 2-point central FD; cross-terms via 4-point mixed FD.
         if (!all_wall_cands.empty())
         {
-            constexpr std::array<float, 5> kWallDepthMults = {0.5f, 0.75f, 1.0f, 1.5f, 2.0f};
+            constexpr std::array<float, 3> kWallDepthMults = {0.6f, 1.0f, 1.6f};
             for (auto& wc : all_wall_cands)
             {
                 const float d0 = wc.depth;
@@ -626,7 +806,16 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
                 M(2,0) = ab_sigma2    * H_db;          M(2,1) = ab_sigma2    * H_ab;    M(2,2) = 1.f + ab_sigma2 * H_bb;
 
                 const float occam = 0.5f * std::log(std::max(1.f, M.determinant()));
-                wc.score = (baseline_vfe - F_map) - occam;
+                const float raw = (baseline_vfe - F_map) - occam;
+                const float prox = side_proximity(wc.side, wc.a, wc.b);
+                wc.raw_score = raw;
+                wc.score = raw > 0.f ? raw * prox : raw;
+
+                std::cerr << "[VFE-wall] side=" << wc.side
+                    << " seg=[" << wc.a << "," << wc.b << "] d=" << wc.depth
+                    << "  baseline=" << baseline_vfe << " F_map=" << F_map
+                    << " fit=" << (baseline_vfe - F_map) << " occam=" << occam
+                    << " raw=" << raw << " prox=" << prox << " score=" << wc.score << '\n';
             }
             wall_best = *std::max_element(
                 all_wall_cands.begin(), all_wall_cands.end(),
@@ -634,66 +823,285 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
                 { return lhs.score < rhs.score; });
         }
 
-        // --- Corner candidates: depth search to find MAP; then Laplace Occam over 1 param ---
+        // --- Corner candidates: 2D grid search over (dx, dy); 2×2 Laplace Occam ---
+        // θ = (dx, dy).  Σ₀ = diag(σ_d², σ_d²).
+        // Occam = ½ log det(I₂ + Σ₀ H₂ₓ₂).
         if (!all_corner_cands.empty())
         {
-            constexpr std::array<float, 5> kDepthMults = {0.5f, 0.75f, 1.0f, 1.5f, 2.0f};
+            constexpr std::array<float, 5> kMults = {0.5f, 0.75f, 1.0f, 1.5f, 2.0f};
             for (auto& cc : all_corner_cands)
             {
-                const float d0 = cc.depth;
-                float best_F = std::numeric_limits<float>::infinity();
-                float best_d = d0;
-                // Collect (depth, F) pairs for curvature estimation.
-                struct DepthF { float d; float F; };
-                std::vector<DepthF> samples;
-                for (const float mult : kDepthMults)
-                {
-                    const float td = std::clamp(d0 * mult, 0.1f, 0.8f * std::min(hx, hy));
-                    const auto poly = build_indent_polygon(
-                        cc.proposal, cc.side, cc.corner, cc.a, cc.b, td, hx, hy);
-                    if (poly.empty()) continue;
-                    const float Fv = scorer(poly);
-                    samples.push_back({td, Fv});
-                    if (Fv < best_F) { best_F = Fv; best_d = td; }
-                }
-                cc.depth = best_d;
+                const float dx0 = cc.depth_x;
+                const float dy0 = cc.depth_y;
+                float best_F  = std::numeric_limits<float>::infinity();
+                float best_dx = dx0;
+                float best_dy = dy0;
 
-                // Estimate H_depth from the three samples nearest to best_d (central FD if available).
-                float H_depth = 0.f;
-                if (samples.size() >= 3)
+                // 2D grid: 5×5 = 25 scorer evaluations.
+                struct GridSample { float dx; float dy; float F; };
+                std::vector<GridSample> samples;
+                samples.reserve(25);
+                for (const float mx : kMults)
                 {
-                    // Sort by depth and find bracketing samples around best_d.
-                    std::sort(samples.begin(), samples.end(), [](const DepthF& x, const DepthF& y){ return x.d < y.d; });
-                    for (std::size_t i = 1; i + 1 < samples.size(); ++i)
+                    const float tdx = std::clamp(dx0 * mx, 0.1f, 0.8f * hx);
+                    for (const float my : kMults)
                     {
-                        if (samples[i].d == best_d || std::abs(samples[i].d - best_d) < 1e-4f)
-                        {
-                            const float h = 0.5f * (samples[i+1].d - samples[i-1].d);
-                            if (h > 1e-4f)
-                                H_depth = std::max(0.f,
-                                    (samples[i+1].F - 2.f*samples[i].F + samples[i-1].F) / (h*h));
-                            break;
-                        }
+                        const float tdy = std::clamp(dy0 * my, 0.1f, 0.8f * hy);
+                        const auto poly = build_indent_polygon(
+                            cc.proposal, cc.side, cc.corner, cc.a, cc.b, 0.f, hx, hy, tdx, tdy);
+                        if (poly.empty()) continue;
+                        const float Fv = scorer(poly);
+                        samples.push_back({tdx, tdy, Fv});
+                        if (Fv < best_F) { best_F = Fv; best_dx = tdx; best_dy = tdy; }
                     }
                 }
+                cc.depth_x = best_dx;
+                cc.depth_y = best_dy;
+                cc.depth   = 0.5f * (best_dx + best_dy);  // legacy compat
+                const float F_map = best_F;
+                if (F_map >= std::numeric_limits<float>::infinity()) { cc.score = -1e9f; continue; }
 
-                // Laplace Occam: 1 free param (depth only).
-                const float occam = 0.5f * std::log(1.f + depth_sigma2 * H_depth);
-                cc.score = (baseline_vfe - best_F) - occam;
+                // ---- 2×2 Hessian via central FD at the MAP ----
+                auto eval_corner = [&](float dx, float dy) -> float
+                {
+                    const auto poly = build_indent_polygon(
+                        cc.proposal, cc.side, cc.corner, cc.a, cc.b, 0.f, hx, hy, dx, dy);
+                    return poly.empty() ? F_map : scorer(poly);
+                };
+
+                const float dx_p = std::clamp(best_dx + kHfd, 0.1f, 0.8f * hx);
+                const float dx_m = std::clamp(best_dx - kHfd, 0.1f, 0.8f * hx);
+                const float dy_p = std::clamp(best_dy + kHfd, 0.1f, 0.8f * hy);
+                const float dy_m = std::clamp(best_dy - kHfd, 0.1f, 0.8f * hy);
+                const float hx_half = (dx_p - dx_m) * 0.5f;
+                const float hy_half = (dy_p - dy_m) * 0.5f;
+
+                float H_xx = 0.f, H_yy = 0.f, H_xy = 0.f;
+                if (hx_half > 1e-4f)
+                    H_xx = std::max(0.f,
+                        (eval_corner(dx_p, best_dy) - 2.f * F_map + eval_corner(dx_m, best_dy)) / (hx_half * hx_half));
+                if (hy_half > 1e-4f)
+                    H_yy = std::max(0.f,
+                        (eval_corner(best_dx, dy_p) - 2.f * F_map + eval_corner(best_dx, dy_m)) / (hy_half * hy_half));
+                if (hx_half > 1e-4f && hy_half > 1e-4f)
+                    H_xy = (eval_corner(dx_p, dy_p) - eval_corner(dx_p, dy_m)
+                          - eval_corner(dx_m, dy_p) + eval_corner(dx_m, dy_m))
+                          / (4.f * hx_half * hy_half);
+
+                // ---- Occam = ½ log det(I₂ + Σ₀ H₂ₓ₂) ----
+                Eigen::Matrix2f M;
+                M(0,0) = 1.f + depth_sigma2 * H_xx;   M(0,1) = depth_sigma2 * H_xy;
+                M(1,0) = depth_sigma2 * H_xy;          M(1,1) = 1.f + depth_sigma2 * H_yy;
+                const float occam = 0.5f * std::log(std::max(1.f, M.determinant()));
+                const float raw = (baseline_vfe - F_map) - occam;
+                const float prox = corner_proximity(cc.corner);
+                cc.raw_score = raw;
+                cc.score = raw > 0.f ? raw * prox : raw;
             }
             corner_best = *std::max_element(
                 all_corner_cands.begin(), all_corner_cands.end(),
                 [](const IndentCandidate& lhs, const IndentCandidate& rhs)
                 { return lhs.score < rhs.score; });
         }
+
+        // ===== ADAM REFINEMENT OF BEST CANDIDATES ==============================
+        // After the coarse grid search, refine wall_best and corner_best using a
+        // few steps of Adam (implemented with finite-difference gradients on the
+        // scorer).  This squeezes additional VFE improvement that the discrete
+        // grid may miss, producing more accurate MAP estimates and Occam factors.
+        constexpr int   kAdamSteps  = 8;
+        constexpr float kAdamLR     = 0.02f;
+        constexpr float kAdamBeta1  = 0.9f;
+        constexpr float kAdamBeta2  = 0.999f;
+        constexpr float kAdamEps    = 1e-8f;
+        constexpr float kGradH      = 0.02f;  // FD step for gradient estimation
+
+        // Helper: one-parameter Adam state.
+        struct AdamState1 { float m = 0.f; float v = 0.f; };
+
+        // --- Refine wall_best (depth only; a,b are discrete bin positions) ---
+        if (wall_best.proposal != BmrResult::ProposalType::NONE)
+        {
+            AdamState1 st;
+            float d = wall_best.depth;
+            float best_F = scorer(build_indent_polygon(
+                wall_best.proposal, wall_best.side, wall_best.corner,
+                wall_best.a, wall_best.b, d, hx, hy));
+
+            for (int step = 0; step < kAdamSteps; ++step)
+            {
+                const float dp = std::clamp(d + kGradH, 0.1f, 0.8f * std::min(hx, hy));
+                const float dm = std::clamp(d - kGradH, 0.1f, 0.8f * std::min(hx, hy));
+                const float h2 = dp - dm;
+                if (h2 < 1e-4f) break;
+                const auto pp = build_indent_polygon(wall_best.proposal, wall_best.side, wall_best.corner,
+                    wall_best.a, wall_best.b, dp, hx, hy);
+                const auto pm = build_indent_polygon(wall_best.proposal, wall_best.side, wall_best.corner,
+                    wall_best.a, wall_best.b, dm, hx, hy);
+                if (pp.empty() || pm.empty()) break;
+                const float grad = (scorer(pp) - scorer(pm)) / h2;  // dF/dd
+
+                st.m = kAdamBeta1 * st.m + (1.f - kAdamBeta1) * grad;
+                st.v = kAdamBeta2 * st.v + (1.f - kAdamBeta2) * grad * grad;
+                const float mhat = st.m / (1.f - std::pow(kAdamBeta1, step + 1));
+                const float vhat = st.v / (1.f - std::pow(kAdamBeta2, step + 1));
+                d -= kAdamLR * mhat / (std::sqrt(vhat) + kAdamEps);
+                d = std::clamp(d, 0.1f, 0.8f * std::min(hx, hy));
+
+                const auto cur_poly = build_indent_polygon(wall_best.proposal, wall_best.side, wall_best.corner,
+                    wall_best.a, wall_best.b, d, hx, hy);
+                if (!cur_poly.empty())
+                {
+                    const float Fv = scorer(cur_poly);
+                    if (Fv < best_F) { best_F = Fv; wall_best.depth = d; }
+                }
+            }
+            // Recompute wall score and Occam with the refined depth.
+            {
+                const float F_map = best_F;
+                const float dim   = (wall_best.side == 0 || wall_best.side == 2) ? hx : hy;
+                const float kHseg = std::max(kHfd, 0.01f * dim);
+                const float dp_   = std::clamp(wall_best.depth + kHfd, 0.1f, 0.8f * std::min(hx, hy));
+                const float dm_   = std::clamp(wall_best.depth - kHfd, 0.1f, 0.8f * std::min(hx, hy));
+                const float hd    = (dp_ - dm_) * 0.5f;
+                auto eval = [&](float dd, float a, float b) -> float {
+                    if (a >= b) return F_map;
+                    const auto poly = build_indent_polygon(wall_best.proposal, wall_best.side, wall_best.corner, a, b, dd, hx, hy);
+                    return poly.empty() ? F_map : scorer(poly);
+                };
+                float H_dd = 0.f;
+                if (hd > 1e-4f)
+                    H_dd = std::max(0.f, (eval(dp_, wall_best.a, wall_best.b) - 2.f*F_map + eval(dm_, wall_best.a, wall_best.b)) / (hd*hd));
+                float H_aa = 0.f, H_bb = 0.f;
+                const float ap_ = wall_best.a + kHseg, am_ = wall_best.a - kHseg;
+                const float bp_ = wall_best.b + kHseg, bm_ = wall_best.b - kHseg;
+                if (ap_ < wall_best.b && am_ < wall_best.b)
+                    H_aa = std::max(0.f, (eval(wall_best.depth, ap_, wall_best.b) - 2.f*F_map + eval(wall_best.depth, am_, wall_best.b)) / (kHseg*kHseg));
+                if (bp_ > wall_best.a && bm_ > wall_best.a)
+                    H_bb = std::max(0.f, (eval(wall_best.depth, wall_best.a, bp_) - 2.f*F_map + eval(wall_best.depth, wall_best.a, bm_)) / (kHseg*kHseg));
+                float H_da = 0.f, H_db = 0.f, H_ab = 0.f;
+                if (hd > 1e-4f && ap_ < wall_best.b && am_ < wall_best.b)
+                    H_da = (eval(dp_,ap_,wall_best.b) - eval(dp_,am_,wall_best.b)
+                          - eval(dm_,ap_,wall_best.b) + eval(dm_,am_,wall_best.b)) / (4.f*hd*kHseg);
+                if (hd > 1e-4f && bp_ > wall_best.a && bm_ > wall_best.a)
+                    H_db = (eval(dp_,wall_best.a,bp_) - eval(dp_,wall_best.a,bm_)
+                          - eval(dm_,wall_best.a,bp_) + eval(dm_,wall_best.a,bm_)) / (4.f*hd*kHseg);
+                if (ap_ < bm_)
+                    H_ab = (eval(wall_best.depth,ap_,bp_) - eval(wall_best.depth,ap_,bm_)
+                          - eval(wall_best.depth,am_,bp_) + eval(wall_best.depth,am_,bm_)) / (4.f*kHseg*kHseg);
+
+                Eigen::Matrix3f M;
+                M(0,0) = 1.f + depth_sigma2*H_dd;  M(0,1) = depth_sigma2*H_da;      M(0,2) = depth_sigma2*H_db;
+                M(1,0) = ab_sigma2*H_da;            M(1,1) = 1.f + ab_sigma2*H_aa;   M(1,2) = ab_sigma2*H_ab;
+                M(2,0) = ab_sigma2*H_db;            M(2,1) = ab_sigma2*H_ab;          M(2,2) = 1.f + ab_sigma2*H_bb;
+                const float occam = 0.5f * std::log(std::max(1.f, M.determinant()));
+                const float raw = (baseline_vfe - F_map) - occam;
+                const float prox = side_proximity(wall_best.side, wall_best.a, wall_best.b);
+                wall_best.raw_score = raw;
+                wall_best.score = raw > 0.f ? raw * prox : raw;
+            }
+        }
+
+        // --- Refine corner_best (dx, dy) ---
+        if (corner_best.proposal != BmrResult::ProposalType::NONE)
+        {
+            AdamState1 st_x, st_y;
+            float dx = corner_best.depth_x;
+            float dy = corner_best.depth_y;
+            float best_F = scorer(build_indent_polygon(
+                corner_best.proposal, corner_best.side, corner_best.corner,
+                corner_best.a, corner_best.b, 0.f, hx, hy, dx, dy));
+
+            for (int step = 0; step < kAdamSteps; ++step)
+            {
+                // gradient w.r.t. dx
+                const float dxp = std::clamp(dx + kGradH, 0.1f, 0.8f * hx);
+                const float dxm = std::clamp(dx - kGradH, 0.1f, 0.8f * hx);
+                const float hx2 = dxp - dxm;
+                // gradient w.r.t. dy
+                const float dyp = std::clamp(dy + kGradH, 0.1f, 0.8f * hy);
+                const float dym = std::clamp(dy - kGradH, 0.1f, 0.8f * hy);
+                const float hy2 = dyp - dym;
+                if (hx2 < 1e-4f || hy2 < 1e-4f) break;
+
+                auto ev = [&](float ddx, float ddy) -> float {
+                    const auto poly = build_indent_polygon(
+                        corner_best.proposal, corner_best.side, corner_best.corner,
+                        corner_best.a, corner_best.b, 0.f, hx, hy, ddx, ddy);
+                    return poly.empty() ? best_F : scorer(poly);
+                };
+                const float gx = (ev(dxp, dy) - ev(dxm, dy)) / hx2;
+                const float gy = (ev(dx, dyp) - ev(dx, dym)) / hy2;
+
+                st_x.m = kAdamBeta1 * st_x.m + (1.f - kAdamBeta1) * gx;
+                st_x.v = kAdamBeta2 * st_x.v + (1.f - kAdamBeta2) * gx * gx;
+                st_y.m = kAdamBeta1 * st_y.m + (1.f - kAdamBeta1) * gy;
+                st_y.v = kAdamBeta2 * st_y.v + (1.f - kAdamBeta2) * gy * gy;
+                const float t_corr = static_cast<float>(step + 1);
+                const float mx = st_x.m / (1.f - std::pow(kAdamBeta1, t_corr));
+                const float vx = st_x.v / (1.f - std::pow(kAdamBeta2, t_corr));
+                const float my = st_y.m / (1.f - std::pow(kAdamBeta1, t_corr));
+                const float vy = st_y.v / (1.f - std::pow(kAdamBeta2, t_corr));
+
+                dx -= kAdamLR * mx / (std::sqrt(vx) + kAdamEps);
+                dy -= kAdamLR * my / (std::sqrt(vy) + kAdamEps);
+                dx = std::clamp(dx, 0.1f, 0.8f * hx);
+                dy = std::clamp(dy, 0.1f, 0.8f * hy);
+
+                const float Fv = ev(dx, dy);
+                if (Fv < best_F) { best_F = Fv; corner_best.depth_x = dx; corner_best.depth_y = dy; }
+            }
+            corner_best.depth = 0.5f * (corner_best.depth_x + corner_best.depth_y);
+            // Recompute corner score and Occam with refined depths.
+            {
+                const float F_map = best_F;
+                auto eval_corner = [&](float ddx, float ddy) -> float {
+                    const auto poly = build_indent_polygon(
+                        corner_best.proposal, corner_best.side, corner_best.corner,
+                        corner_best.a, corner_best.b, 0.f, hx, hy, ddx, ddy);
+                    return poly.empty() ? F_map : scorer(poly);
+                };
+                const float dx_p = std::clamp(corner_best.depth_x + kHfd, 0.1f, 0.8f * hx);
+                const float dx_m = std::clamp(corner_best.depth_x - kHfd, 0.1f, 0.8f * hx);
+                const float dy_p = std::clamp(corner_best.depth_y + kHfd, 0.1f, 0.8f * hy);
+                const float dy_m = std::clamp(corner_best.depth_y - kHfd, 0.1f, 0.8f * hy);
+                const float hx_half = (dx_p - dx_m) * 0.5f;
+                const float hy_half = (dy_p - dy_m) * 0.5f;
+                float H_xx = 0.f, H_yy = 0.f, H_xy = 0.f;
+                if (hx_half > 1e-4f)
+                    H_xx = std::max(0.f, (eval_corner(dx_p, corner_best.depth_y) - 2.f*F_map + eval_corner(dx_m, corner_best.depth_y)) / (hx_half*hx_half));
+                if (hy_half > 1e-4f)
+                    H_yy = std::max(0.f, (eval_corner(corner_best.depth_x, dy_p) - 2.f*F_map + eval_corner(corner_best.depth_x, dy_m)) / (hy_half*hy_half));
+                if (hx_half > 1e-4f && hy_half > 1e-4f)
+                    H_xy = (eval_corner(dx_p, dy_p) - eval_corner(dx_p, dy_m)
+                          - eval_corner(dx_m, dy_p) + eval_corner(dx_m, dy_m)) / (4.f*hx_half*hy_half);
+                Eigen::Matrix2f M;
+                M(0,0) = 1.f + depth_sigma2*H_xx;  M(0,1) = depth_sigma2*H_xy;
+                M(1,0) = depth_sigma2*H_xy;         M(1,1) = 1.f + depth_sigma2*H_yy;
+                const float occam = 0.5f * std::log(std::max(1.f, M.determinant()));
+                const float raw = (baseline_vfe - F_map) - occam;
+                const float prox = corner_proximity(corner_best.corner);
+                corner_best.raw_score = raw;
+                corner_best.score = raw > 0.f ? raw * prox : raw;
+
+                std::cerr << "[VFE-corner] c=" << corner_best.corner
+                    << " dx=" << corner_best.depth_x << " dy=" << corner_best.depth_y
+                    << "  baseline=" << baseline_vfe << " F_map=" << F_map
+                    << " fit=" << (baseline_vfe - F_map) << " occam=" << occam
+                    << " raw=" << raw << " prox=" << prox << " score=" << corner_best.score << '\n';
+            }
+        }
     }
 
     // Select best challenger among wall/corner indents.
+    // Only propose if the best candidate has a positive score (beats the rectangle).
     IndentCandidate chosen;
-    if (wall_best.proposal != BmrResult::ProposalType::NONE && wall_best.score >= corner_best.score)
+    if (wall_best.proposal != BmrResult::ProposalType::NONE
+        && wall_best.score > 0.f && wall_best.score >= corner_best.score)
         chosen = wall_best;
-    else
+    else if (corner_best.score > 0.f)
         chosen = corner_best;
+    // else: chosen stays NONE — no indent beats the rectangle.
 
     // Expose all evaluated candidates for visualization.
     // Order: wall guesses (up to 5, sorted best-first) then all 4 corners (sorted best-first).
@@ -719,6 +1127,7 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
             info.b         = wc.b;
             info.depth     = wc.depth;
             info.score     = wc.score;
+            info.raw_score = wc.raw_score;
             info.is_chosen = (wall_chosen && i == 0);  // only the best wall guess can be chosen
             out.all_candidates.push_back(info);
         }
@@ -732,7 +1141,10 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
             info.a         = 0.f;
             info.b         = 0.f;
             info.depth     = cc.depth;
+            info.depth_x   = cc.depth_x;
+            info.depth_y   = cc.depth_y;
             info.score     = cc.score;
+            info.raw_score = cc.raw_score;
             info.is_chosen = (corner_chosen && i == 0);  // only the best corner can be chosen
             out.all_candidates.push_back(info);
         }
@@ -741,7 +1153,7 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
     // Convert selected evidence into BMR-style decision.
     if (chosen.proposal != BmrResult::ProposalType::NONE)
     {
-        out.indent_score = chosen.score;
+        out.indent_score = chosen.raw_score;
 
         out.current_indent_score = 0.f;
         if (scorer && current_indent_hypothesis_.valid)
@@ -750,7 +1162,8 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
             const auto cur_poly = build_indent_polygon(
                 current_indent_hypothesis_.proposal, current_indent_hypothesis_.side,
                 current_indent_hypothesis_.corner, current_indent_hypothesis_.a,
-                current_indent_hypothesis_.b, current_indent_hypothesis_.depth, hx, hy);
+                current_indent_hypothesis_.b, current_indent_hypothesis_.depth, hx, hy,
+                current_indent_hypothesis_.depth_x, current_indent_hypothesis_.depth_y);
             out.current_indent_score = cur_poly.empty() ? 0.f : (baseline_vfe - scorer(cur_poly));
         }
         else if (current_indent_hypothesis_.valid)
@@ -792,6 +1205,8 @@ BmrResult RoomVFEBMR::evaluate_bmr_from_points(
         out.indent_a = chosen.a;
         out.indent_b = chosen.b;
         out.indent_depth = chosen.depth;
+        out.indent_depth_x = chosen.depth_x;
+        out.indent_depth_y = chosen.depth_y;
         out.expand = false;
 
         out.valid = true;

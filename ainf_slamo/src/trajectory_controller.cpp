@@ -1388,11 +1388,14 @@ TrajectoryController::SimResult TrajectoryController::simulate_and_score(
     float x = 0.f, y = 0.f, theta = 0.f;
     float G_obs_total = 0.f;
     float G_lat_total = 0.f;
+    float G_cbf_total = 0.f;
     float G_progress = 0.f;
     const float discount = active_params_.cost_discount;
     float discount_acc = 1.f;
     float prev_dist_to_carrot = carrot_robot.norm();
-    float prev_side_min = std::numeric_limits<float>::infinity();
+    [[maybe_unused]] float prev_side_min = std::numeric_limits<float>::infinity();
+    // CBF state: h(x,v) = d_ESDF - r - v²/(2*a_max)
+    float prev_h_cbf = std::numeric_limits<float>::infinity();
     int actual_steps = 0;
 
     // Fix 1: Compute the scoring horizon — stop accumulating goal/progress cost
@@ -1463,16 +1466,41 @@ TrajectoryController::SimResult TrajectoryController::simulate_and_score(
                 G_lat_step += active_params_.lambda_lateral_clearance * deficit * deficit;
             }
 
-            if (std::isfinite(prev_side_min) && side_min < prev_side_min)
-            {
-                const float closing = (prev_side_min - side_min) / side_span;
-                G_lat_step += active_params_.lambda_lateral_clearance
-                            * active_params_.lateral_closing_gain
-                            * std::max(0.f, closing);
-            }
+            // Lateral closing-gain term — disabled; replaced by CBF below.
+            // if (std::isfinite(prev_side_min) && side_min < prev_side_min)
+            // {
+            //     const float closing = (prev_side_min - side_min) / side_span;
+            //     G_lat_step += active_params_.lambda_lateral_clearance
+            //                 * active_params_.lateral_closing_gain
+            //                 * std::max(0.f, closing);
+            // }
 
             G_lat_total += discount_acc * G_lat_step;
             prev_side_min = side_min;
+        }
+
+        // Control Barrier Function cost:
+        // h(x,v) = d_ESDF - r_robot - v²/(2*a_max)
+        // Penalise ḣ + α·h < 0  (barrier decaying faster than class-K allows)
+        if (active_params_.enable_cbf)
+        {
+            const float v        = seed.adv[s];
+            const float a_max    = std::max(active_params_.cbf_max_decel, 1e-3f);
+            const float h_curr   = esdf_val - active_params_.robot_radius
+                                 - (v * v) / (2.f * a_max);
+            if (std::isfinite(prev_h_cbf))
+            {
+                const float h_dot    = (h_curr - prev_h_cbf) / dt;
+                const float cbf_cond = h_dot + active_params_.cbf_alpha * h_curr;
+                if (cbf_cond < 0.f)
+                {
+                    const float viol = cbf_cond * cbf_cond;
+                    G_cbf_total += discount_acc
+                                 * std::min(active_params_.lambda_cbf * viol,
+                                            active_params_.cbf_cost_cap);
+                }
+            }
+            prev_h_cbf = h_curr;
         }
 
         G_obs_total += discount_acc * G_obs;
@@ -1568,7 +1596,7 @@ TrajectoryController::SimResult TrajectoryController::simulate_and_score(
         G_info *= adaptive_lambda_;  // λ temperature
     }
 
-    res.G_total = G_goal + G_obs_total + G_lat_total + G_smooth + G_vel_mag + G_vel_delta + G_info
+    res.G_total = G_goal + G_obs_total + G_lat_total + G_cbf_total + G_smooth + G_vel_mag + G_vel_delta + G_info
                 + active_params_.lambda_goal * G_progress
                 + (res.collides ? active_params_.collision_penalty : 0.f);
     return res;

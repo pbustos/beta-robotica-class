@@ -494,6 +494,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
     furniture_centers_world_.clear();
     furniture_groups_.clear();
 
+    float tz_floor_ = 0.f;  // set per-item in dispatch loop; 0 = bottom on floor
+
     auto register_group_part = [&](const std::string& group_key,
                                    const Eigen::Vector2f& centroid,
                                    float yaw_rad,
@@ -502,7 +504,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         auto& g = furniture_groups_[group_key];
         if (g.transforms.empty())
         {
-            g.center_world = QVector3D(-centroid.x(), 0.f, centroid.y());
+            g.center_world = QVector3D(-centroid.x(), tz_floor_, centroid.y());
             g.yaw_rad = yaw_rad;
         }
         g.transforms.push_back(tf);
@@ -555,7 +557,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         mat->setShininess(shininess);
 
         auto* tf = new Qt3DCore::QTransform(e);
-        tf->setTranslation(QVector3D(-wx, center_h, wy));
+        tf->setTranslation(QVector3D(-wx, tz_floor_ + center_h, wy));
         tf->setRotation(yaw_rot);
 
         e->addComponent(mesh);
@@ -681,7 +683,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             mat->setAlpha(0.f);
 
             auto* tf = new Qt3DCore::QTransform(e);
-            tf->setTranslation(QVector3D(wx, 0.5f * h, wz));
+            tf->setTranslation(QVector3D(wx, tz_floor_ + 0.5f * h, wz));
 
             e->addComponent(mesh);
             e->addComponent(mat);
@@ -706,7 +708,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             mat->setShininess(10.f);
 
             auto* tf = new Qt3DCore::QTransform(e);
-            tf->setTranslation(QVector3D(wx, 0.5f * pot_h, wz));
+            tf->setTranslation(QVector3D(wx, tz_floor_ + 0.5f * pot_h, wz));
 
             e->addComponent(cone);
             e->addComponent(mat);
@@ -731,7 +733,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
             mat->setShininess(5.f);
 
             auto* tf = new Qt3DCore::QTransform(e);
-            tf->setTranslation(QVector3D(wx, pot_h + 0.5f * crown_h, wz));
+            tf->setTranslation(QVector3D(wx, tz_floor_ + pot_h + 0.5f * crown_h, wz));
             tf->setScale3D(QVector3D(1.f, sy, 1.f));
 
             e->addComponent(mesh);
@@ -791,6 +793,8 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         const QString pn = QString::fromStdString(item.label);
         const std::string& gk = item.label;
 
+        tz_floor_ = item.tz;   // lift all parts of this object off the floor by tz
+
         if (ql.contains("mesa") || ql.contains("table"))
             make_table(cen, item.yaw_rad, w, d, h, pn, gk);
         else if (ql.contains("silla") || ql.contains("chair"))
@@ -807,7 +811,7 @@ void Viewer3D::update_furniture(const std::vector<FurnitureItem>& items)
         else
             make_generic(cen, item.yaw_rad, w, d, h, pn, gk);
 
-        furniture_centers_world_[item.label] = QVector3D(-cen.x(), 0.f, cen.y());
+        furniture_centers_world_[item.label] = QVector3D(-cen.x(), item.tz, cen.y());
 
         qInfo() << "[Viewer3D] Furniture:" << pn
                 << "at (" << cen.x() << "," << cen.y() << ")"

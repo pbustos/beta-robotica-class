@@ -25,12 +25,12 @@ class SyntheticCameraRenderer
 public:
     struct CameraIntrinsics
     {
-        float fx = 460.f;
-        float fy = 460.f;
-        float cx = 320.f;
-        float cy = 320.f;
-        int   width  = 640;
-        int   height = 640;
+        float fx = 0.f;
+        float fy = 0.f;
+        float cx = 0.f;
+        float cy = 0.f;
+        int   width  = 0;
+        int   height = 0;
     };
 
     struct CameraExtrinsics

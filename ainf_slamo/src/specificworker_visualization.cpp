@@ -241,158 +241,77 @@ void SpecificWorker::draw_path_threadsafe(const std::vector<Eigen::Vector2f>& pa
     }
 }
 
-void SpecificWorker::slot_capture_room_toggled(bool checked)
-{
-    capturing_room_polygon = checked;
-
-    if (checked)
-    {
-        // Start capturing — backup existing polygon (don't remove it yet)
-        layout_manager_.backup_room_polygon();
-        layout_manager_.begin_capture();
-
-        // Clear previous vertex markers
-        viewer_2d_->clear_capture_vertices();
-
-        // Move current polygon item into backup so the old outline stays visible
-        viewer_2d_->save_polygon_to_backup();
-
-        pushButton_captureRoom->setText("Ctrl+Click vertices...");
-        qInfo() << "Room capture started. Use Ctrl+Left click on the scene to add vertices. Ctrl+Click near the first point to close.";
-        qInfo() << "Existing polygon preserved until new one is completed.";
-    }
-    else
-    {
-        pushButton_captureRoom->setText("Capture Room");
-
-        if (layout_manager_.room_polygon().size() >= 3)
-        {
-            qInfo() << "Room polygon captured with" << layout_manager_.room_polygon().size() << "vertices";
-
-            // Clear vertex markers (yellow circles)
-            viewer_2d_->clear_capture_vertices();
-
-            // Vertices are already in room frame (where user clicked)
-            // Pass them to room_ai via thread-safe command queue
-            push_loc_command(rc::RoomConceptAI::CmdSetPolygon{layout_manager_.room_polygon()});
-            nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
-
-            // Draw final polygon (fixed in room frame)
-            draw_room_polygon();
-        }
-        else
-        {
-            qWarning() << "Need at least 3 vertices for a valid polygon. Restoring previous polygon.";
-
-            // Restore the backup polygon
-            layout_manager_.restore_room_polygon();
-
-            // Discard any partially-drawn new polygon and restore the backup outline
-            viewer_2d_->restore_polygon_from_backup();
-
-            // Clear vertex markers from failed capture
-            viewer_2d_->clear_capture_vertices();
-        }
-    }
-}
-
 void SpecificWorker::slot_edit_layout_toggled(bool checked)
 {
     if (checked)
     {
-        if (capturing_room_polygon)
-            pushButton_captureRoom->setChecked(false);
-
-        if (layout_manager_.room_polygon().size() < 3)
+        const auto &poly = layout_manager_.room_polygon();
+        if (poly.size() < 3)
         {
-            qWarning() << "Edit layout requires an existing polygon with at least 3 vertices";
-            pushButton_editLayout->setChecked(false);
+            qWarning() << "Edit layout: current room polygon is invalid (needs >= 3 vertices)";
+            if (pushButton_editLayout)
+            {
+                QSignalBlocker blocker(pushButton_editLayout);
+                pushButton_editLayout->setChecked(false);
+            }
             return;
         }
 
         editing_room_layout_ = true;
         editing_corner_idx_ = -1;
-        editing_room_polygon_ = layout_manager_.room_polygon();
+        editing_room_polygon_ = poly;
+
         viewer_2d_->set_room_edit_corners(editing_room_polygon_, true);
-        pushButton_editLayout->setText("Save Edit Layout");
-        qInfo() << "2D layout edit mode ON: drag orange corners to reshape room";
+        viewer_2d_->draw_room_polygon(editing_room_polygon_, false);
+        if (viewer_3d_)
+            viewer_3d_->rebuild_walls(editing_room_polygon_);
+
+        if (pushButton_editLayout)
+            pushButton_editLayout->setText("Save Layout");
+
+        qInfo() << "2D layout edit mode ON";
         return;
     }
-
-    if (!editing_room_layout_)
-        return;
 
     editing_room_layout_ = false;
     editing_corner_idx_ = -1;
+
+    if (pushButton_editLayout)
+        pushButton_editLayout->setText("Edit Layout");
+
     viewer_2d_->set_room_edit_corners({}, false);
-    pushButton_editLayout->setText("Edit Layout");
 
-    if (editing_room_polygon_.size() < 3)
+    if (editing_room_polygon_.size() >= 3)
     {
-        qWarning() << "Edited polygon invalid; keeping previous layout";
+        layout_manager_.set_room_polygon(editing_room_polygon_);
+
+        rc::SceneGraphAdapter::rebuild_graph(
+            scene_graph_, layout_manager_.room_polygon(), layout_manager_.furniture(),
+            [](const std::string& l) { return EMManager::model_height_from_label(l); }, 2.6f);
+
         draw_room_polygon();
-        return;
+        draw_furniture();
+
+        nav_manager_.trajectory_controller().set_room_boundary(layout_manager_.room_polygon());
+        const auto obs = layout_manager_.obstacle_polygons();
+        nav_manager_.path_planner().set_obstacles(obs);
+        nav_manager_.trajectory_controller().set_static_obstacles(obs);
+
+        save_scene_graph_to_usd();
+        qInfo() << "2D layout edit mode OFF: modified layout committed and saved";
     }
-
-    push_undo_snapshot();
-    layout_manager_.set_room_polygon(editing_room_polygon_);
-
-    rc::SceneGraphAdapter::rebuild_graph(
-        scene_graph_, layout_manager_.room_polygon(), layout_manager_.furniture(),
-        [](const std::string& l) { return EMManager::model_height_from_label(l); }, 2.6f);
-
-    nav_manager_.path_planner().set_polygon(layout_manager_.room_polygon());
-    nav_manager_.trajectory_controller().set_room_boundary(layout_manager_.room_polygon());
-    const auto obs = layout_manager_.obstacle_polygons();
-    nav_manager_.path_planner().set_obstacles(obs);
-    nav_manager_.trajectory_controller().set_static_obstacles(obs);
-
-    draw_room_polygon();
-    draw_furniture();
-    save_scene_graph_to_usd();
-
-    qInfo() << "2D layout edit mode OFF: modified layout committed and saved";
-}
-
-void SpecificWorker::on_scene_clicked(QPointF pos)
-{
-    // This function is now only used for polygon capture mode
-    // Robot movement is handled by slot_robot_dragging and slot_robot_rotate
-    if (!capturing_room_polygon)
-        return;
-
-    const Eigen::Vector2f click_pos(pos.x(), pos.y());
-
-    // Check if clicking near the first point to close the polygon
-    constexpr float close_threshold = 0.3f;  // 30cm
-    if (layout_manager_.room_polygon().size() >= 3)
+    else
     {
-        const float dist_to_first = (click_pos - layout_manager_.room_polygon().front()).norm();
-        if (dist_to_first < close_threshold)
-        {
-            // Close the polygon
-            pushButton_captureRoom->setChecked(false);  // triggers slot_capture_room_toggled(false)
-            return;
-        }
+        qWarning() << "Edit layout: keeping previous layout because edited polygon is invalid";
+        draw_room_polygon();
     }
-
-    // Add new vertex in room frame coordinates
-    layout_manager_.capture_vertex(click_pos);
-
-    // Draw vertex marker via Viewer2D
-    viewer_2d_->add_capture_vertex(pos);
-
-    // Draw temporary polygon outline
-    draw_room_polygon();
-
-    qInfo() << "Added vertex" << layout_manager_.room_polygon().size() << "at (" << pos.x() << "," << pos.y() << ")";
 }
 
 void SpecificWorker::draw_room_polygon()
 {
-    viewer_2d_->draw_room_polygon(layout_manager_.room_polygon(), capturing_room_polygon);
+    viewer_2d_->draw_room_polygon(layout_manager_.room_polygon(), false);
 
-    if (viewer_3d_ && !capturing_room_polygon && layout_manager_.room_polygon().size() >= 3)
+    if (viewer_3d_ && layout_manager_.room_polygon().size() >= 3)
         viewer_3d_->rebuild_walls(layout_manager_.room_polygon());
 }
 
@@ -431,6 +350,7 @@ void SpecificWorker::draw_furniture()
                                               std::max(0.08f, nd.extents.y()));
                 fi.yaw_rad  = nd.yaw_rad;
                 fi.height   = std::max(0.2f, nd.extents.z());
+                fi.tz       = nd.translation.z();
                 items.push_back(fi);
             }
         }

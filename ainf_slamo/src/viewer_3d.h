@@ -143,6 +143,7 @@ class WebotsStyleCameraController : public Qt3DExtras::QAbstractCameraController
                 Eigen::Vector2f size;      // oriented footprint extents (width, depth)
                 float yaw_rad = 0.f;       // orientation around vertical axis
                 float height  = 0.8f;      // height in metres
+                float tz      = 0.f;       // floor offset: 0 = bottom of object on floor
             };
             void update_furniture(const std::vector<FurnitureItem>& items);
 

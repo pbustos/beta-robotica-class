@@ -64,6 +64,7 @@
 #include <QGraphicsEllipseItem>
 #include <QLabel>
 #include <QListWidget>
+#include <QPushButton>
 #include <QSplitter>
 #include "buffer_types.h"
 #include "common_types.h"
@@ -151,25 +152,29 @@ struct Params
 		float INIT_SPAN_MARGIN = 0.35f; // Additive margin (m) to compensate sparse wall returns
 		float INIT_GRID_RESOLUTION = 0.4f; // meters for initial grid search
 		float INIT_ANGLE_RESOLUTION = static_cast<float>(M_PI / 18.0); // radians (10 deg) for initial grid search
-		float INIT_BELIEF_MIN = 0.50f;   // Accept bootstrap when belief exceeds this value
-		float INIT_SDF_P90_MAX = 0.15f;  // Accept bootstrap when SDF p90 is below this threshold (m)
-		float INIT_REVERSE_SDF_MAX = 0.12f; // Accept bootstrap when reverse SDF is below this threshold (m)
-		int INIT_ACCEPT_CONSECUTIVE = 5; // Number of consecutive valid frames required
+		float INIT_BELIEF_MIN = 0.35f;   // Accept bootstrap when belief exceeds this value
+		float INIT_SDF_P90_MAX = 0.25f;  // Accept bootstrap when SDF p90 is below this threshold (m)
+		float INIT_REVERSE_SDF_MAX = 0.20f; // Accept bootstrap when reverse SDF is below this threshold (m)
+		int INIT_ACCEPT_CONSECUTIVE = 3; // Number of consecutive valid frames required
 		bool BOOTSTRAP_ENABLE_ROTATION = true; // Slow in-place rotation to improve observation diversity
 		bool BOOTSTRAP_ROTATE_ONLY_PRESEED = true; // Stop rotating once seeded to reduce estimator lag
-		float BOOTSTRAP_ROT_SPEED = 0.1f; // rad/s
+		float BOOTSTRAP_ROT_SPEED = 0.15f; // rad/s
 		// EFE (Expected Free Energy) policy parameters for active exploration of BMR hot-zones
 		bool ENABLE_EFE_HOTZONE_POLICY = true; // Approach BMR hot-zone to gather discriminative evidence
 		float EFE_DT = 0.5f; // seconds per prediction step
 		int EFE_TREE_DEPTH = 4; // policy tree branching depth (|A|^D evaluated sequences, e.g. 6^4=1296)
 		float EFE_DISCOUNT = 0.90f; // temporal discount factor across tree levels
 		float EFE_PRIOR_SIGMA = 0.8f; // meters, goal-reaching prior covariance std
-		float EFE_FORWARD_SPEED = 0.12f; // m/s
-		float EFE_ROT_SPEED = 0.25f; // rad/s
-		float EFE_INFO_GAIN_WEIGHT = 0.40f; // weight for epistemic info-gain term (replaces heading-error proxy)
+		float EFE_FORWARD_SPEED = 0.25f; // m/s
+		float EFE_ROT_SPEED = 0.6f; // rad/s
+		float EFE_INFO_GAIN_WEIGHT = 0.40f; // weight on D-optimality epistemic term in EFE
 		float EFE_CONTROL_WEIGHT = 0.05f; // control effort term weight
+		float EFE_PROCESS_NOISE_TRANS = 0.01f; // m/step, UT motion model translation process noise
+		float EFE_PROCESS_NOISE_ROT   = 0.005f; // rad/step, UT process noise (rotation)
+		float EFE_OBS_NOISE_VAR       = 0.01f;  // m^2, SDF observation noise variance for D-optimality
 		float EFE_TURN_ONLY_MIN_DIST = 0.45f; // force translational arc when far from EFE target to avoid turn-in-place dithering
 		float EFE_LOCAL_GOAL_MAX_DIST = 1.2f; // meters, cap far hot-zones to a reachable local subgoal
+		float EFE_WALL_MARGIN = 0.6f; // meters, minimum distance from wall the target hot-zone is placed
 		float EFE_TARGET_SMOOTH_ALPHA = 0.30f; // low-pass filter for BMR hot-zone target to avoid left-right command jitter
 		float ODOMETRY_NOISE_FACTOR = 0.1f;  // Gaussian noise std added to odometry (fraction of reading)
 		// Camera extrinsics: camera frame origin expressed in robot frame (meters)
@@ -189,11 +194,14 @@ struct Params
 	bool loc_thread_started_ = false;
 	bool bootstrap_seeded_ = false;
 	bool room_bootstrapped_ = false;
+	bool viewer_fitted_ = false;
 	int bootstrap_accept_streak_ = 0;
 	bool bootstrap_rotating_ = false;
-	bool efe_hotzone_active_ = false;
+	bool efe_hotzone_active_  = false;
+	bool efe_motion_paused_   = false;   // set by Stop button; blocks drive_toward_hotzone_efe
 	bool has_smoothed_efe_target_ = false;
 	Eigen::Vector2f smoothed_efe_target_{Eigen::Vector2f::Zero()};
+	// (efe_g_var_ema_ removed — Boltzmann replaced by deterministic argmin)
 	rc::RoomBootstrapper room_bootstrapper_;
 	std::unique_ptr<rc::Viewer2D> viewer_2d_;
 	std::vector<QGraphicsEllipseItem*> lidar_draw_items_;
@@ -201,6 +209,10 @@ struct Params
 	QLabel*       score_label_     = nullptr;
 	QListWidget*  candidate_list_  = nullptr;
 	QLabel*       winner_label_    = nullptr;
+	QPushButton*  stop_btn_        = nullptr;
+	QLabel*       vel_advx_label_  = nullptr;
+	QLabel*       vel_advz_label_  = nullptr;
+	QLabel*       vel_rot_label_   = nullptr;
 
    // Active inference room concept (owns localization thread)
 	rc::RoomConceptAI room_ai;
@@ -224,7 +236,7 @@ struct Params
 	static const char *phase_to_cstr(RuntimePhase phase);
 	void update_viewer(const std::vector<Eigen::Vector3f> &points, const rc::RoomConceptAI::UpdateResult &res);
 	void update_viewer(const rc::LidarData &lidar_data, const rc::RoomConceptAI::UpdateResult &res);
-	void update_candidate_list(const std::vector<rc::BmrResult::IndentCandidateInfo>& candidates);
+	void update_candidate_list(const rc::BmrResult& bmr);
 
 	/**
      * \brief Flag indicating whether startup checks are enabled.

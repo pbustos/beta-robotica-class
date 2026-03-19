@@ -90,10 +90,18 @@ class CameraViewer : public QDialog
         /// True when the user wants to see yellow furniture wireframes.
         bool show_objects() const { return show_objects_; }
 
+        /// True when the attention crosshair mode is active.
+        bool is_attention_mode() const { return attention_mode_; }
+
     signals:
         void emRequested();
         void emAcceptRequested();
         void emRejectRequested();
+        /// Emitted once when valid camera intrinsics arrive from TImage.
+        void intrinsicsReceived(float fx, float fy, float cx, float cy, int width, int height);
+        /// Emitted every frame while attention mode is active, carrying the
+        /// centre-pixel ray direction in camera frame (x=lateral, y=forward, z=up).
+        void attentionRay(float rx, float ry, float rz);
 
     protected:
         void showEvent(QShowEvent* e) override;
@@ -116,10 +124,15 @@ class CameraViewer : public QDialog
         QPushButton* em_reject_button_ = nullptr;
         QPushButton* objects_button_  = nullptr;
         QPushButton* mask_button_     = nullptr;
+        QPushButton* attention_button_ = nullptr;
+        QPushButton* yolo_button_      = nullptr;
         QCheckBox*  depth_check_  = nullptr;
         bool        raw_mode_     = false;
         bool        show_objects_ = false;
         bool        mask_infrastructure_ = false;
+        bool        attention_mode_ = false;
+        bool        show_yolo_    = false;
+        bool        first_resize_done_ = false;
 
         QTimer* timer_            = nullptr;
         int     frame_count_      = 0;
@@ -148,6 +161,8 @@ class CameraViewer : public QDialog
         float infrastructure_camera_ty_ = 0.f;
         float infrastructure_camera_tz_ = 0.9f;
         float infrastructure_wall_height_ = 2.5f;
+
+        bool intrinsics_reported_ = false;
 
         static QPixmap timage_to_pixmap(const RoboCompImageSegmentation::TImage& img);
 };

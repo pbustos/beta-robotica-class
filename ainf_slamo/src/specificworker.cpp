@@ -40,6 +40,8 @@
 #include <QThread>
 #include <QDataStream>
 #include <QShortcut>
+#include <QMenu>
+#include <QGraphicsView>
 #include <unistd.h>  // For sysconf
 #include <cmath>     // For std::fabs
 #include <limits>    // For std::numeric_limits
@@ -412,20 +414,13 @@ void SpecificWorker::initialize()
         viewer_3d_->set_camera_state(cs);
     }
 
-    // Connect capture room button
-    connect(pushButton_captureRoom, &QPushButton::toggled, this, &SpecificWorker::slot_capture_room_toggled);
     connect(pushButton_editLayout, &QPushButton::toggled, this, &SpecificWorker::slot_edit_layout_toggled);
-
-    // Connect Ctrl+Left click on the scene for polygon capture (uses robot_rotate signal)
-    connect(viewer_2d_.get(), &rc::Viewer2D::robot_rotate, this, &SpecificWorker::on_scene_clicked);
 
     // Connect robot drag and rotate signals
     connect(viewer_2d_.get(), &rc::Viewer2D::robot_dragging, this, &SpecificWorker::slot_robot_dragging);
     connect(viewer_2d_.get(), &rc::Viewer2D::robot_drag_end, this, &SpecificWorker::slot_robot_drag_end);
     connect(viewer_2d_.get(), &rc::Viewer2D::robot_rotate, this, &SpecificWorker::slot_robot_rotate);
 
-    // Connect save/load layout buttons
-    connect(pushButton_saveLayout, &QPushButton::clicked, this, &SpecificWorker::slot_save_layout);
     connect(pushButton_flipX, &QPushButton::clicked, this, &SpecificWorker::slot_flip_x);
     connect(pushButton_flipY, &QPushButton::clicked, this, &SpecificWorker::slot_flip_y);
     connect(pushButton_calibrateGT, &QPushButton::clicked, this, &SpecificWorker::slot_calibrate_gt);
@@ -490,6 +485,22 @@ void SpecificWorker::initialize()
         });
     }
 
+    // Update synthetic renderer + grounding intrinsics from first real TImage
+    connect(camera_viewer_.get(), &CameraViewer::intrinsicsReceived,
+            this, [this](float fx, float fy, float cx, float cy, int w, int h)
+    {
+        camera_intr_ = {fx, fy, cx, cy, w, h, true};
+        rc::SyntheticCameraRenderer::CameraIntrinsics intr;
+        intr.fx = fx;  intr.fy = fy;
+        intr.cx = cx;  intr.cy = cy;
+        intr.width = w; intr.height = h;
+        synthetic_renderer_.set_intrinsics(intr);
+        qInfo() << "[Camera] intrinsics updated from TImage:"
+                << fx << fy << cx << cy << w << "x" << h;
+    });
+
+    // attentionRay signal is unused now – attention picking runs synchronously in compute().
+
     if (scene_tree_)
     {
         connect(scene_tree_.get(), &SceneTreePanel::furnitureClicked, this, [this](const QString& name, bool selected)
@@ -499,11 +510,13 @@ void SpecificWorker::initialize()
             if (selected)
             {
                 if (!is_wall)
+                {
                     focused_model_index_ = find_furniture_index_by_name(name);
+                    if (viewer_3d_)
+                        viewer_3d_->set_selected_object_for_gizmo(name);
+                }
                 else
                     focused_model_index_ = -1;
-                if (viewer_3d_)
-                    viewer_3d_->set_selected_object_for_gizmo(name);
             }
             else if (is_wall || focused_model_index_ == find_furniture_index_by_name(name))
             {
@@ -590,6 +603,7 @@ void SpecificWorker::initialize()
                                               std::max(0.08f, nd->extents.y()));
                 fi.yaw_rad  = nd->yaw_rad;
                 fi.height   = std::max(0.2f, nd->extents.z());
+                fi.tz       = nd->translation.z();
                 items.push_back(fi);
             }
             viewer_3d_->update_furniture(items);
@@ -656,9 +670,82 @@ void SpecificWorker::initialize()
     // Connect Shift+Right click on the scene for navigation target
     connect(viewer_2d_.get(), &rc::Viewer2D::new_mouse_coordinates, this, &SpecificWorker::slot_new_target);
 
-    // Ctrl+Right click on scene: cancel current navigation mission
-    connect(viewer_2d_.get(), &rc::Viewer2D::right_click, this, [this](QPointF)
+    // Ctrl+Right click on scene.
+    // - In layout edit mode: add/remove room corners.
+    // - Otherwise: cancel current navigation mission.
+    connect(viewer_2d_.get(), &rc::Viewer2D::right_click, this, [this](QPointF pos)
     {
+        if (editing_room_layout_)
+        {
+            if (editing_room_polygon_.size() < 3)
+                return;
+
+            const int hit_corner = viewer_2d_->nearest_room_edit_corner(pos, 0.28f);
+
+            // Map scene position to screen for context menu
+            auto *view = qobject_cast<QGraphicsView*>(viewer_2d_->get_widget());
+            const QPoint screen_pos = view
+                ? view->mapToGlobal(view->mapFromScene(pos))
+                : QCursor::pos();
+
+            QMenu menu;
+            if (hit_corner >= 0)
+            {
+                QAction *act_remove = menu.addAction("Remove corner");
+                if (editing_room_polygon_.size() <= 3)
+                    act_remove->setEnabled(false);
+
+                if (menu.exec(screen_pos) == act_remove && act_remove->isEnabled())
+                {
+                    editing_room_polygon_.erase(editing_room_polygon_.begin() + hit_corner);
+                    viewer_2d_->set_room_edit_corners(editing_room_polygon_, true);
+                    viewer_2d_->draw_room_polygon(editing_room_polygon_, false);
+                    if (viewer_3d_)
+                        viewer_3d_->rebuild_walls(editing_room_polygon_);
+                    qInfo() << "Edit layout: removed corner" << hit_corner;
+                }
+            }
+            else
+            {
+                QAction *act_add = menu.addAction("Add corner");
+                if (menu.exec(screen_pos) == act_add)
+                {
+                    // Insert a new corner on the closest polygon segment
+                    std::size_t best_seg = 0;
+                    float best_d2 = std::numeric_limits<float>::max();
+                    const Eigen::Vector2f p(static_cast<float>(pos.x()), static_cast<float>(pos.y()));
+                    Eigen::Vector2f best_proj = p;
+
+                    for (std::size_t i = 0; i < editing_room_polygon_.size(); ++i)
+                    {
+                        const std::size_t j = (i + 1) % editing_room_polygon_.size();
+                        const Eigen::Vector2f a = editing_room_polygon_[i];
+                        const Eigen::Vector2f b = editing_room_polygon_[j];
+                        const Eigen::Vector2f ab = b - a;
+                        const float ab2 = ab.squaredNorm();
+                        if (ab2 < 1e-8f) continue;
+                        const float t = std::clamp((p - a).dot(ab) / ab2, 0.f, 1.f);
+                        const Eigen::Vector2f proj = a + t * ab;
+                        const float d2 = (p - proj).squaredNorm();
+                        if (d2 < best_d2)
+                        {
+                            best_d2 = d2;
+                            best_seg = i;
+                            best_proj = proj;
+                        }
+                    }
+
+                    editing_room_polygon_.insert(editing_room_polygon_.begin() + static_cast<long>(best_seg + 1), best_proj);
+                    viewer_2d_->set_room_edit_corners(editing_room_polygon_, true);
+                    viewer_2d_->draw_room_polygon(editing_room_polygon_, false);
+                    if (viewer_3d_)
+                        viewer_3d_->rebuild_walls(editing_room_polygon_);
+                    qInfo() << "Edit layout: added corner on segment" << static_cast<int>(best_seg);
+                }
+            }
+            return;
+        }
+
         if (!nav_manager_.is_active() && !nav_manager_.has_path()) return;
         qInfo() << "Navigation cancelled by Ctrl+Right click";
         active_episode_.reset();
@@ -849,15 +936,8 @@ void SpecificWorker::initialize()
         extr.tz = params.CAMERA_TZ;
         synthetic_renderer_.set_extrinsics(extr);
         synthetic_renderer_.set_wall_height(2.5f);
-        // Default intrinsics matching the wireframe overlay convention (640×640 image)
-        rc::SyntheticCameraRenderer::CameraIntrinsics intr;
-        intr.fx = 0.9f * 640.f;
-        intr.fy = 0.9f * 640.f;
-        intr.cx = 320.f;
-        intr.cy = 320.f;
-        intr.width = 640;
-        intr.height = 640;
-        synthetic_renderer_.set_intrinsics(intr);
+        // Intrinsics will be set lazily from the first TImage via intrinsicsReceived signal.
+        // No hardcoded defaults — the signal handler above calls synthetic_renderer_.set_intrinsics().
     }
 
     // Navigation manager context setup
@@ -922,13 +1002,37 @@ void SpecificWorker::compute()
                 camera_viewer_->clear_wireframe_overlay();
         }
 
+        // Attention mode: pick the furniture closest to the camera forward ray
+        if (camera_viewer_->is_attention_mode())
+        {
+            const int att_idx = pick_attention_target(res.robot_pose);
+            if (att_idx >= 0 && att_idx != focused_model_index_)
+            {
+                focused_model_index_ = att_idx;
+                const auto& fp = layout_manager_.furniture()[att_idx];
+                const QString name = QString::fromStdString(fp.label.empty() ? fp.id : fp.label);
+                if (viewer_3d_)
+                    viewer_3d_->set_selected_object_for_gizmo(name);
+                if (scene_tree_)
+                    scene_tree_->select_item_by_name(name);
+                qInfo() << "[Attention] selected:" << name;
+            }
+        }
+
         // Render synthetic camera overlay (walls/floor/furniture wireframes)
-        const auto& furniture = camera_viewer_->show_objects()
-            ? layout_manager_.furniture()
-            : std::vector<rc::FurniturePolygonData>{};
+        std::vector<rc::FurniturePolygonData> furniture_to_render;
+        if (camera_viewer_->show_objects())
+        {
+            furniture_to_render = layout_manager_.furniture();
+        }
+        else if (camera_viewer_->is_attention_mode() && focused_model_index_ >= 0
+                 && focused_model_index_ < static_cast<int>(layout_manager_.furniture().size()))
+        {
+            furniture_to_render.push_back(layout_manager_.furniture()[focused_model_index_]);
+        }
         auto synth_result = synthetic_renderer_.render(
             res.robot_pose,
-            furniture,
+            furniture_to_render,
             layout_manager_.room_polygon());
         camera_viewer_->set_synthetic_overlay(synth_result.overlay);
         {
@@ -1145,10 +1249,6 @@ void SpecificWorker::slot_robot_dragging(QPointF pos)
         return;
     }
 
-    // Don't move robot while capturing room polygon
-    if (capturing_room_polygon)
-        return;
-
     if (!room_ai.is_loc_initialized())
         return;
 
@@ -1178,10 +1278,6 @@ void SpecificWorker::slot_robot_drag_end(QPointF pos)
         return;
     }
 
-    // Don't move robot while capturing room polygon
-    if (capturing_room_polygon)
-        return;
-
     if (!room_ai.is_loc_initialized())
         return;
 
@@ -1196,10 +1292,6 @@ void SpecificWorker::slot_robot_drag_end(QPointF pos)
 void SpecificWorker::slot_robot_rotate(QPointF pos)
 {
     if (editing_room_layout_)
-        return;
-
-    // Don't rotate robot while capturing room polygon
-    if (capturing_room_polygon)
         return;
 
     if (!room_ai.is_loc_initialized())

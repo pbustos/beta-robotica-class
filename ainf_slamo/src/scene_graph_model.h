@@ -105,6 +105,7 @@ private:
 
     static bool is_finite_positive(float v);
     static Eigen::Vector2f compute_polygon_centroid(const std::vector<Eigen::Vector2f>& poly);
+    static Eigen::Vector2f compute_obb_center(const std::vector<Eigen::Vector2f>& poly, float yaw);
     static const Node* find_floor_const(const Node& root);
     static Node* find_floor(Node& root);
     static Node* find_object(Node& floor, const std::string& id, const std::string& label);

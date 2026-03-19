@@ -441,6 +441,8 @@ SyntheticCameraRenderer::RenderResult SyntheticCameraRenderer::render(
     const std::vector<Eigen::Vector2f>& room_polygon) const
 {
     RenderResult result;
+    if (intr_.width <= 0 || intr_.height <= 0 || intr_.fx <= 0.f)
+        return result;
     result.overlay = QImage(intr_.width, intr_.height, QImage::Format_ARGB32_Premultiplied);
     result.overlay.fill(Qt::transparent);
 
