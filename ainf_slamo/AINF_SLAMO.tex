@@ -1,0 +1,1216 @@
+\documentclass[a4paper, 11pt]{article}
+
+% ── Geometry ──────────────────────────────────────────────────────────
+\usepackage[margin=25mm]{geometry}
+
+% ── Maths ─────────────────────────────────────────────────────────────
+\usepackage{amsmath, amssymb, bm}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator{\atantwo}{atan2}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\trace}{tr}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\vect}[1]{\bm{#1}}
+\newcommand{\mat}[1]{\bm{#1}}
+
+% ── Typography ────────────────────────────────────────────────────────
+\usepackage{parskip}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\hypersetup{colorlinks, linkcolor=blue!60!black, citecolor=blue!60!black, urlcolor=blue!60!black}
+
+% ── Figures ───────────────────────────────────────────────────────────
+\usepackage{graphicx}
+\usepackage{float}
+
+% ── Code verbatim ─────────────────────────────────────────────────────
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small, breaklines=true, frame=single}
+
+% ── Date ──────────────────────────────────────────────────────────────
+
+% =====================================================================
+\title{\textbf{AINF\_SLAMO} \\[4pt]
+       \large Implementation--Faithful Mathematical Reference}
+\author{Pablo Bustos --- RoboLab}
+\date{March 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{Scope}
+% =====================================================================
+
+This document catalogues every mathematical equation that is \emph{actually
+implemented} in the \texttt{ainf\_slamo} codebase.
+The focus is on concrete formulas used in \texttt{C++}, not generic textbook
+derivations.
+The companion document \texttt{main.tex} provides the theoretical Active
+Inference background.
+
+The areas covered are:
+
+\begin{enumerate}[label=(\roman*)]
+  \item Frames, state and conventions (Section~\ref{sec:frames}).
+  \item Active Inference localiser (Section~\ref{sec:localiser}).
+  \item Polygon visibility--graph planner (Section~\ref{sec:planner}).
+  \item MPPI/PD trajectory controller (Section~\ref{sec:controller}).
+  \item Camera model and synthetic rendering (Section~\ref{sec:camera}).
+  \item Object footprints and rotation conventions (Section~\ref{sec:footprints}).
+  \item Infrastructure masking (Section~\ref{sec:masking}).
+  \item LiDAR processing (Section~\ref{sec:lidar}).
+  \item YOLO/segmentation grounding (Section~\ref{sec:grounding}).
+  \item Episodic memory (Section~\ref{sec:episodic}).
+  \item Navigation completion (Section~\ref{sec:navcompl}).
+\end{enumerate}
+
+% =====================================================================
+\section{Frames, State and Conventions}\label{sec:frames}
+% =====================================================================
+
+All subsystems in \texttt{ainf\_slamo} share a small set of coordinate
+frames and conventions.  This section defines the three reference frames
+(room, robot, camera), the kinematic model that propagates the robot
+state, and the rotation matrix used throughout the codebase.  Consistent
+adherence to these definitions ensures that LiDAR, odometry, camera and
+planning data can be composed without sign or axis errors.
+
+\subsection{Coordinate frames}
+
+Three frames are used throughout the system:
+
+\begin{description}
+  \item[Room (world)] A fixed 2D/3D frame whose $XY$-plane is the floor.
+    Polygon vertices and furniture positions live here.
+  \item[Robot] Origin at the robot centre, $Y^+$ forward, $X^+$ right.
+    LiDAR and odometry are delivered in this frame.
+  \item[Camera] Origin at the camera optical centre ($0.92\,$m above the
+    robot centre, no lateral offset).
+    $X$ lateral, $Y$ forward (depth), $Z$ up.
+\end{description}
+
+\subsection{Robot kinematic convention}
+
+The controller and rollout model use $Y^+$ forward, $X^+$ right.
+Per-step motion model:
+\begin{equation}\label{eq:motion-model}
+\begin{aligned}
+  x_{t+1} &= x_t + v_t \sin\vartheta_t\,\Delta t, \\
+  y_{t+1} &= y_t + v_t \cos\vartheta_t\,\Delta t, \\
+  \vartheta_{t+1} &= \vartheta_t + \omega_t\,\Delta t.
+\end{aligned}
+\end{equation}
+
+\subsection{Localisation state vector}
+
+The room model exposes
+\begin{equation}
+  \vect{s} = [w,\; l,\; x,\; y,\; \phi]^\top,
+\end{equation}
+where $w, l$ are room dimensions and $(x, y, \phi)$ is the robot pose in the
+room frame.  After initialisation, optimisation acts only on $(x, y, \phi)$.
+
+\subsection{Standard 2D rotation matrix}
+
+Unless stated otherwise every rotation uses
+\begin{equation}\label{eq:R2d}
+  \mat{R}(\theta)
+  = \begin{bmatrix}
+      \cos\theta & -\sin\theta \\
+      \sin\theta &  \cos\theta
+    \end{bmatrix}.
+\end{equation}
+
+% =====================================================================
+\section{Localiser Mathematics (Active Inference)}\label{sec:localiser}
+% =====================================================================
+
+The localiser estimates the robot pose $(x, y, \phi)$ inside a
+known room polygon by minimising a variational free energy that
+balances LiDAR--wall fit (likelihood) against motion--prediction
+priors.  It fuses command and odometry priors via Gaussian precision
+weighting, propagates uncertainty through an EKF-style prediction
+step, and updates the posterior covariance with a diagonal Fisher
+approximation.  Adaptive gradient scaling and early-exit logic keep
+the per-frame cost low when the estimate is already trustworthy.
+
+\subsection{LiDAR to room transformation}
+
+Given LiDAR points $\vect{p}_i^{\text{robot}} \in \R^3$,
+their $XY$ projection is transformed to the room frame by
+\begin{equation}
+  \vect{p}_{i,xy}^{\text{room}}
+  = \mat{R}(\phi)\,\vect{p}_{i,xy}^{\text{robot}} + \vect{t},
+  \qquad
+  \vect{t} = [x, y]^\top.
+\end{equation}
+
+\subsection{SDF observation model}
+
+For polygon room mode the signed distance is
+\begin{equation}\label{eq:sdf}
+  d_i = \min_j \bigl\|\vect{p}_i - \Pi_{[a_j, b_j]}(\vect{p}_i)\bigr\|,
+\end{equation}
+where $\Pi_{[a,b]}(\vect{p})$ is the projection of $\vect{p}$ onto segment
+$[a, b]$ with clamped parameter:
+\begin{equation}\label{eq:seg-proj}
+  t = \operatorname{clamp}\!\Bigl(
+    \frac{(\vect{p} - \vect{a}) \cdot (\vect{b} - \vect{a})}
+         {\|\vect{b} - \vect{a}\|^2},\; 0,\; 1
+  \Bigr),
+  \qquad
+  \Pi_{[a,b]}(\vect{p}) = \vect{a} + t\,(\vect{b}-\vect{a}).
+\end{equation}
+
+\subsection{Variational objective (implemented loss)}
+
+The scalar minimised by the optimiser is
+\begin{equation}\label{eq:free-energy}
+  \mathcal{F}(\vect{s})
+  = \underbrace{
+      \frac{1}{2\sigma_{\text{obs}}^2}\;
+      \overline{\mathrm{Huber}_\delta(d_i, 0)}
+    }_{\text{likelihood term}}
+  \;+\;
+  \underbrace{
+      \frac{1}{2}
+      (\vect{s}_{\text{pose}} - \vect{\mu})^\top
+      \mat{\Pi}\,
+      (\vect{s}_{\text{pose}} - \vect{\mu})
+    }_{\text{prior term}},
+\end{equation}
+with implemented constants:
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  Symbol & Value \\
+  \midrule
+  $\sigma_{\text{obs}}$ & $0.05\,$m \\
+  $\delta$ (Huber threshold) & $0.15\,$m \\
+  $\vect{s}_{\text{pose}}$ & $[x, y, \phi]^\top$ \\
+  $(\vect{\mu}, \mat{\Pi})$ & from predicted motion prior \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+The robust UI metric is
+\begin{equation}
+  \operatorname{median}_i |d_i|.
+\end{equation}
+
+\subsection{Motion integration priors}
+
+Two priors are integrated between LiDAR timestamps:
+(i) \emph{command prior} from commanded $(adv_x, adv_z, rot)$ and
+(ii) \emph{odometry prior} from feedback $(adv, side, rot)$.
+Both integrate piecewise-constant commands over overlap windows:
+\begin{equation}\label{eq:motion-int}
+  \Delta\vect{p}
+  = \sum_k \mat{R}(\theta_k)
+    \begin{bmatrix} \Delta x_k^{\text{local}} \\ \Delta y_k^{\text{local}} \end{bmatrix},
+  \qquad
+  \Delta\theta = \sum_k \Delta\theta_k.
+\end{equation}
+
+\subsection{Dual-prior Gaussian fusion}
+
+From command prior $(\vect{\mu}_c, \mat{\Sigma}_c)$ and odometry prior
+$(\vect{\mu}_o, \mat{\Sigma}_o)$:
+\begin{equation}\label{eq:gaussian-fusion}
+\begin{aligned}
+  \mat{\Pi}_c &= \mat{\Sigma}_c^{-1}, \qquad
+  \mat{\Pi}_o = \mat{\Sigma}_o^{-1}, \\
+  \mat{\Pi}_f &= \mat{\Pi}_c + \mat{\Pi}_o, \\
+  \vect{\mu}_f &= \mat{\Pi}_f^{-1}\bigl(
+    \mat{\Pi}_c\,\vect{\mu}_c + \mat{\Pi}_o\,\vect{\mu}_o
+  \bigr).
+\end{aligned}
+\end{equation}
+Angular differences are unwrapped before fusion and the fused angle is
+normalised to $[-\pi, \pi]$.
+
+\subsection{EKF-style covariance prediction}
+
+\begin{equation}\label{eq:cov-pred}
+  \mat{P}^{-} = \mat{F}\,\mat{P}\,\mat{F}^\top + \mat{Q},
+\end{equation}
+with Jacobian entries (localised-state case):
+\begin{equation}
+  F_{x,\theta} = -\Delta y_{\text{loc}}\sin\theta - \Delta x_{\text{loc}}\cos\theta,
+  \qquad
+  F_{y,\theta} =  \Delta y_{\text{loc}}\cos\theta - \Delta x_{\text{loc}}\sin\theta.
+\end{equation}
+Noise $\mat{Q}$ is anisotropic in robot-local axes (forward/lateral), then
+rotated to global $XY$.  Forward uncertainty is larger than lateral.
+
+\subsection{Covariance update after optimisation}
+
+Posterior precision is
+\begin{equation}\label{eq:cov-update}
+  \mat{\Lambda}^{+}
+  = (\mat{P}^{-})^{-1} + \mat{H}_{\text{like}} + \lambda\,\mat{I},
+  \qquad
+  \mat{P}^{+} = (\mat{\Lambda}^{+})^{-1},
+\end{equation}
+where the implemented diagonal Fisher-style approximation is
+\begin{equation}
+  H_{ii}
+  \approx
+  \Bigl|\frac{\partial\mathcal{L}_{\text{like}}}{\partial\theta_i}\Bigr|
+  \cdot \frac{N}{\mathcal{L}_{\text{like}} + \epsilon}
+  + 10^{-4}.
+\end{equation}
+
+\subsection{Velocity-adaptive gradient weighting}
+
+During Adam optimisation, gradient components are scaled by
+motion-profile weights $w_x, w_y, w_\theta$:
+\begin{itemize}
+  \item Rotation-dominant: upweight $\theta$, downweight $(x, y)$.
+  \item Translation-dominant: upweight the dominant translation axis,
+        downweight $\theta$.
+\end{itemize}
+
+\subsection{Prediction-based early exit}
+
+Optimisation is skipped when all conditions hold:
+\begin{enumerate}
+  \item Tracking is stable for a minimum number of steps.
+  \item Predicted covariance trace $\trace(\mat{P}^{-})$ is below threshold.
+  \item Mean absolute predicted SDF satisfies
+    \begin{equation}
+      \bar{d} < \tau_{\text{exit}}
+      = \sigma_{\text{sdf}} \cdot \text{prediction\_trust\_factor}.
+    \end{equation}
+\end{enumerate}
+
+\subsection{Innovation and smoothing}
+
+After update, pose is exponentially smoothed:
+\begin{equation}
+  \hat{\vect{s}}_k
+  = \alpha\,\hat{\vect{s}}_{k-1} + (1-\alpha)\,\vect{s}_k,
+\end{equation}
+with wrapped-angle handling for $\phi$.  Innovation:
+\begin{equation}
+  \vect{\nu}_k = \vect{s}_k - \vect{\mu}_k^{-},
+\end{equation}
+with the angular component normalised to $[-\pi, \pi]$.
+
+% =====================================================================
+\section{Planner Mathematics (Polygon Visibility Graph)}\label{sec:planner}
+% =====================================================================
+
+The global planner constructs a visibility graph over the room polygon
+and all obstacle polygons.  Vertices are offset inward (room boundary)
+or outward (obstacles) to guarantee collision clearance.  Edges are
+added only between mutually visible nodes, verified by a multi-stage
+test against room walls and expanded obstacles.  A Dijkstra search on
+this weighted graph yields the shortest collision-free path from the
+robot to the goal.
+
+\subsection{Point-in-polygon test (ray casting)}
+
+For point $\vect{p}$ and each edge $(v_i, v_j)$, toggle inside/outside
+when
+\begin{equation}
+  \bigl((v_i^y > p_y) \ne (v_j^y > p_y)\bigr)
+  \;\land\;
+  \Bigl(p_x < \frac{(v_j^x - v_i^x)(p_y - v_i^y)}{v_j^y - v_i^y} + v_i^x\Bigr).
+\end{equation}
+
+\subsection{Segment intersection}
+
+Proper intersection uses 2D cross products:
+\begin{equation}
+  t = \frac{(\vect{b}_1 - \vect{a}_1) \times \vect{d}_2}
+           {\vect{d}_1 \times \vect{d}_2},
+  \qquad
+  u = \frac{(\vect{b}_1 - \vect{a}_1) \times \vect{d}_1}
+           {\vect{d}_1 \times \vect{d}_2},
+\end{equation}
+with strict interior checks $t, u \in (\epsilon, 1-\epsilon)$,
+$\epsilon = 10^{-5}$.
+
+\subsection{Inward and outward polygon offsets}
+
+For each vertex, candidates are sampled on a circle of radius $r$ over
+$36$ angles.
+\begin{itemize}
+  \item \textbf{Inward offset}: choose the candidate \emph{inside} the
+        polygon that maximises clearance.
+  \item \textbf{Outward offset} (obstacles): choose the candidate
+        \emph{outside} the polygon that maximises clearance.
+\end{itemize}
+If no feasible candidate is found, shorter radii are tried.
+Clearance score:
+\begin{equation}
+  c(\vect{p})
+  = \min_{e \in \partial\mathcal{P}}
+    \operatorname{dist}(\vect{p}, e).
+\end{equation}
+
+\subsection{Visibility predicate}
+
+A segment $(a, b)$ is visible iff:
+\begin{enumerate}
+  \item Both endpoints inside the room polygon.
+  \item Endpoints and midpoint not inside any expanded obstacle.
+  \item No intersection with the original room boundary.
+  \item No intersection with the inner boundary.
+  \item No intersection with obstacle edges.
+  \item No sampled interior point along the segment lies inside an expanded
+        obstacle.
+\end{enumerate}
+
+\subsection{Graph construction and shortest path}
+
+Nodes: inner polygon points plus obstacle navigation nodes.
+Edge weights are Euclidean:
+\begin{equation}
+  w_{ij} = \|\vect{p}_i - \vect{p}_j\|_2.
+\end{equation}
+Start and goal are inserted as temporary nodes with visibility-based
+edges.  Shortest path is found by Dijkstra:
+\begin{equation}
+  \operatorname{dist}(v)
+  = \min_{u \to v}\bigl(\operatorname{dist}(u) + w_{uv}\bigr).
+\end{equation}
+The path is rejected if total length exceeds
+\texttt{max\_path\_length}.
+
+% =====================================================================
+\section{Controller Mathematics (MPPI + Safety)}\label{sec:controller}
+% =====================================================================
+
+The trajectory controller converts the planned path into velocity
+commands via Model Predictive Path Integral (MPPI) control.  It rolls
+out hundreds of sampled trajectories over a robot-centric Euclidean
+Signed Distance Field (ESDF), scores each rollout by a composite cost
+that blends goal progress, obstacle proximity, lateral clearance,
+control smoothness and an information-theoretic correction, then
+weights the samples by a softmax to extract the optimal command.
+Adaptive temperature and noise scaling react to the current difficulty
+of the environment, while a forward safety guard provides a last-resort
+collision avoidance layer.  A PD fallback mode is available for simple
+open-space navigation.
+
+\subsection{ESDF construction}
+
+An occupancy grid in robot frame is built from LiDAR plus static obstacle
+samples transformed from room frame.
+A two-pass chamfer-like propagation approximates the distance transform;
+distances are then scaled by grid resolution.
+
+Query: bilinear interpolation.
+Gradient: centred finite differences, normalised.
+
+\subsection{Adaptive safety distance near goal}
+
+The effective safety distance interpolates between far and near values:
+\begin{equation}\label{eq:dsafe}
+  \alpha = e^{-d_{\text{goal}}/\tau},
+  \qquad
+  d_{\text{safe}}^{\text{eff}}
+  = (1-\alpha)\,d_{\text{far}} + \alpha\,d_{\text{near}}.
+\end{equation}
+
+\subsection{Obstacle step cost}
+
+Given ESDF value $d$:
+
+\paragraph{Soft term} (inside safety zone):
+\begin{equation}
+  g_{\text{soft}}
+  = \Bigl(\frac{d_{\text{safe}}^{\text{eff}} - d}
+               {d_{\text{safe}}^{\text{eff}} - r_{\text{robot}}}\Bigr)^2_+.
+\end{equation}
+
+\paragraph{Hard-close term} (inside close margin):
+\begin{equation}
+  g_{\text{hard}}
+  = k_{\text{close}}
+    \Bigl(\frac{(r_{\text{robot}} + m_{\text{close}}) - d}
+               {m_{\text{close}}}\Bigr)^2_+.
+\end{equation}
+
+\paragraph{Final capped cost:}
+\begin{equation}
+  G_{\text{obs}}^{\text{step}}
+  = \min\bigl(
+      \lambda_{\text{obs}}(g_{\text{soft}} + g_{\text{hard}}),\;
+      G_{\text{obs}}^{\text{cap}}
+    \bigr).
+\end{equation}
+
+\subsection{MPPI seed generation}
+
+The sampling set includes:
+\begin{itemize}
+  \item Nominal seed toward carrot.
+  \item Six injected exploratory seeds with heading offsets
+        $\pm 30°, \pm 60°, \pm 90°$.
+  \item Gaussian-perturbed seeds:
+    \begin{equation}
+      \vect{u}_t^{(k)} = \vect{u}_t^{\text{nom}} + \vect{\epsilon}_t^{(k)},
+      \qquad
+      \epsilon_{\text{adv}} \sim \mathcal{N}(0, \sigma_{\text{adv}}^2),
+      \quad
+      \epsilon_{\text{rot}} \sim \mathcal{N}(0, \sigma_{\text{rot}}^2).
+    \end{equation}
+\end{itemize}
+
+\subsection{Rollout objective}
+
+For each seed the total score is
+\begin{equation}\label{eq:rollout-score}
+  G = G_{\text{goal}} + G_{\text{obs}} + G_{\text{lat}}
+    + G_{\text{smooth}} + G_{\text{vel,mag}} + G_{\text{vel},\Delta}
+    + G_{\text{info}}
+    + \lambda_{\text{goal}} G_{\text{progress}}
+    + \mathbf{1}_{\text{collision}}\,P_{\text{collision}},
+\end{equation}
+where:
+\begin{align}
+  G_{\text{goal}}
+    &: \text{closest approach to carrot + heading penalty,} \\
+  G_{\text{obs}}
+    &: \text{discounted sum of per-step obstacle costs,} \\
+  G_{\text{lat}}
+    &: \text{low side clearance + worsening side trend,} \\
+  G_{\text{smooth}}
+    &= \lambda_{\text{smooth}}
+       (\Delta v_0^2 + \Delta\omega_0^2)
+       \;\text{(against previous optimum),} \\
+  G_{\text{vel,mag}}
+    &= \lambda_v \sum_t (v_t^2 + c_\omega\,\omega_t^2), \\
+  G_{\text{vel},\Delta}
+    &= \lambda_{\Delta v}
+       \sum_t (\Delta v_t^2 + c_\omega\,\Delta\omega_t^2).
+\end{align}
+Near-term collisions (within a hard horizon) make the seed infeasible;
+farther collisions incur a softer penalty.
+
+\subsection{Information-theoretic MPPI correction}
+
+For stochastic seeds:
+\begin{equation}
+  G_{\text{info}}
+  = \lambda \sum_t
+    \biggl(
+      u_{t,\text{adv}}^{\text{nom}}
+      \frac{\epsilon_{t,\text{adv}}}{\sigma_{\text{adv}}^2}
+      +
+      u_{t,\text{rot}}^{\text{nom}}
+      \frac{\epsilon_{t,\text{rot}}}{\sigma_{\text{rot}}^2}
+    \biggr).
+\end{equation}
+
+\subsection{MPPI weighting, ESS and control extraction}
+
+For non-colliding rollouts:
+\begin{equation}
+  w_k = \exp\!\Bigl(-\frac{G_k - G_{\min}}{\lambda_{\text{used}}}\Bigr),
+  \qquad
+  \hat{\vect{u}}_t = \sum_k \bar{w}_k\,\vect{u}_t^{(k)},
+  \qquad
+  \bar{w}_k = \frac{w_k}{\sum_j w_j}.
+\end{equation}
+Effective sample size:
+\begin{equation}
+  \mathrm{ESS}
+  = \frac{\bigl(\sum_k w_k\bigr)^2}{\sum_k w_k^2}.
+\end{equation}
+The command issued averages the first 3 optimised steps and applies
+velocity EMA.
+
+\subsection{Dominance-based adaptation}
+
+A dominance signal is computed as
+\begin{equation}
+  D = p_{\text{free}}\,R_\theta,
+  \qquad
+  E = 1 - D,
+\end{equation}
+where $p_{\text{free}}$ is the free-rollout ratio and $R_\theta$ the
+steering concentration.  A frontal Safety-Guard gate scales exploration
+influence.
+
+Adaptation laws:
+\begin{align}
+  \lambda &\leftarrow \operatorname{clip}\!\bigl(
+    \lambda_0(1 + 2E),\; \lambda_{\min},\; \lambda_{\max}\bigr), \\
+  \sigma_{\text{rot}} &\uparrow \text{ with } E, \qquad
+  \sigma_{\text{adv}} \downarrow \text{ with } E, \qquad
+  T \uparrow \text{ with } E.
+\end{align}
+
+\subsection{Safety guard -- forward risk simulation}
+
+A short-horizon forward simulation evaluates risk by querying ESDF along
+predicted states.  Trigger conditions:
+\begin{itemize}
+  \item Hard-threshold violation, or
+  \item Enough consecutive soft-threshold violations.
+\end{itemize}
+
+If triggered, the controller attempts (in order):
+\begin{enumerate}
+  \item Backup + turn command.
+  \item Backup only.
+  \item Scaled forward reduction.
+  \item Stop + turn fallback.
+\end{enumerate}
+
+\subsection{PD fallback mode}
+
+\begin{equation}
+  e_\theta = \atantwo(x_{\text{carrot}}, y_{\text{carrot}}),
+  \qquad
+  \omega = K_p\,e_\theta + K_d\,\Delta e_\theta,
+\end{equation}
+\begin{equation}
+  v = v_{\max}\,\max(0, \cos e_\theta)^p \cdot
+      \text{dist\_factor},
+\end{equation}
+followed by the same smoothing, Gaussian turning brake and ESDF safety
+gate.
+
+% =====================================================================
+\section{Camera Model and Synthetic Rendering}\label{sec:camera}
+% =====================================================================
+
+The camera subsystem bridges the 3D scene graph and the 2D image
+plane.  A calibrated pinhole model (intrinsics derived from the
+sensor's horizontal field of view) handles projection and
+unprojection.  The synthetic renderer transforms room walls and
+furniture into camera coordinates, clips against the near plane,
+projects to pixels, and performs ray--plane occlusion tests to
+determine visibility.  An attention mode scores each object by
+angular proximity to the optical axis, projected size, visibility
+and distance, selecting the most salient item for the robot's focus.
+
+\subsection{Camera intrinsics}
+
+The pinhole model is parametrised by a struct
+\texttt{CameraIntrinsics} $= (f_x, f_y, c_x, c_y, w, h)$.
+
+Values are computed from the simulated sensor's horizontal field of view
+$\theta_h$ at boot time:
+\begin{equation}\label{eq:intrinsics}
+  f_x = f_y = \frac{w}{2\tan(\theta_h / 2)},
+  \qquad
+  c_x = \tfrac{w}{2},
+  \qquad
+  c_y = \tfrac{h}{2}.
+\end{equation}
+Equality $f_x = f_y$ assumes square pixels.
+For the Webots ZED camera: $w = 1280$, $h = 720$,
+$\theta_h = 1.9198\,$rad, giving $f_x = f_y \approx 464.8$.
+
+\subsection{World $\to$ robot $\to$ camera transforms}
+
+\paragraph{World to robot.}
+\begin{equation}\label{eq:world2robot}
+  \vect{p}_{\text{robot}}
+  = \mat{R}(-\theta)\,\bigl(\vect{p}_{\text{world}} - \vect{t}\bigr),
+  \qquad
+  \vect{t} = [x_r, y_r]^\top.
+\end{equation}
+
+\paragraph{Robot to camera.}
+The camera is mounted at extrinsic offset
+$(t_x, t_y, t_z) = (0, 0, 0.92)\,$m (height only):
+\begin{equation}\label{eq:robot2cam}
+  \vect{p}_{\text{cam}}
+  = \begin{bmatrix}
+      p_{\text{robot}}^x - t_x \\
+      p_{\text{robot}}^y - t_y \\
+      z_{\text{world}} - t_z
+    \end{bmatrix}.
+\end{equation}
+Camera axes: $x$ lateral, $y$ forward (depth), $z$ up.
+
+\subsection{Pinhole projection (3D $\to$ 2D)}
+
+A point $\vect{p}_{\text{cam}} = (X, Y, Z)$ with $Y > 0.05\,$m (near plane)
+projects to pixel
+\begin{equation}\label{eq:projection}
+  u = c_x + f_x \,\frac{X}{Y},
+  \qquad
+  v = c_y - f_y \,\frac{Z}{Y}.
+\end{equation}
+
+\subsection{Ray unprojection (2D $\to$ 3D ray)}
+
+Given pixel $(u, v)$ the unit-depth camera ray is
+\begin{equation}\label{eq:unproject}
+  \vect{d}_{\text{cam}}
+  = \biggl(\frac{u - c_x}{f_x},\; 1,\; \frac{c_y - v}{f_y}\biggr).
+\end{equation}
+
+\subsection{Near-plane clipping}
+
+For a 3D line segment $(\vect{a}, \vect{b})$, if $a_y \leq 0.05\,$m the
+endpoint is interpolated forward:
+\begin{equation}
+  t = \frac{0.05 - a_y}{b_y - a_y},
+  \qquad
+  \vect{a}' = \vect{a} + t\,(\vect{b} - \vect{a}).
+\end{equation}
+The segment is rejected if both endpoints fail the near-plane test.
+A margin bounds check (image $\pm 200\,$px) rejects fully off-screen
+segments.
+
+\subsection{Wall plane construction}
+
+For each polygon edge from $\vect{a}_0$ to $\vect{b}_0$ (floor level), a
+quad is formed with top vertices $\vect{a}_1, \vect{b}_1$ at wall
+height~$h$.  The plane normal is
+\begin{equation}
+  \vect{u} = \vect{b}_0 - \vect{a}_0,
+  \qquad
+  \vect{v} = \vect{a}_1 - \vect{a}_0,
+  \qquad
+  \hat{\vect{n}} = \frac{\vect{u} \times \vect{v}}
+                        {\|\vect{u} \times \vect{v}\|},
+\end{equation}
+with plane equation $\hat{\vect{n}} \cdot \vect{p} + d = 0$,
+\;$d = -\hat{\vect{n}} \cdot \vect{a}_0$.
+
+\subsection{Ray--plane intersection for occlusion}
+
+A ray from the camera to object centroid $\vect{p}_{\text{cam}}$ hits a
+wall plane at
+\begin{equation}
+  t = \frac{-d}{\hat{\vect{n}} \cdot \vect{p}_{\text{cam}}}.
+\end{equation}
+The object is visible if $t = \infty$ (no hit) or $t \geq 1 - 10^{-3}$
+(wall behind object).
+
+\subsection{Attention mode -- angular proximity scoring}\label{sec:attention}
+
+For each furniture item with centroid $\vect{c}_{\text{cam}}$ in camera
+frame, the absolute bearing to the optical axis is
+\begin{equation}
+  \phi = \bigl|\atantwo(c_{\text{cam}}^x,\; c_{\text{cam}}^y)\bigr|.
+\end{equation}
+Items with $\phi > 50°$ are rejected.  A composite score selects the best:
+\begin{equation}\label{eq:attention-score}
+  S = 0.58\,s_{\text{center}}
+    + 0.22\,s_{\text{visible}}
+    + 0.15\,s_{\text{size}}
+    + 0.05\,s_{\text{proximity}},
+\end{equation}
+where
+\begin{align}
+  s_{\text{center}}
+    &= \operatorname{clamp}\!\bigl(1 - \phi / \phi_{\text{ref}},\; 0,\; 1\bigr),
+      \qquad \phi_{\text{ref}} = 20°, \\
+  s_{\text{visible}}
+    &= \operatorname{clamp}\!\bigl(\text{hits}/6,\; 0,\; 1\bigr), \\
+  s_{\text{size}}
+    &= \operatorname{clamp}\!\bigl(\ln(A+1)/2,\; 0,\; 1\bigr), \\
+  s_{\text{proximity}}
+    &= \frac{1}{1 + 0.35\,d},
+\end{align}
+with $A$ the projected area and $d$ the Euclidean distance.
+
+% =====================================================================
+\section{Object Footprints and Rotation Conventions}\label{sec:footprints}
+% =====================================================================
+
+Every piece of furniture in the scene graph is represented by a 2D
+footprint polygon in a local frame, transformed to world coordinates
+via the standard rotation.  Different object types (table, chair, pot)
+use different polygon templates.  Two rotation conventions coexist in
+the codebase: the standard $R(\theta)$ matrix used by footprints and
+renderers, and a non-standard axis convention internal to
+\texttt{SceneGraphModel}.  The mapping to Qt3D coordinates adds a
+further axis permutation and a $\pi$-offset on the Y-rotation.
+
+\subsection{Local-to-world transform}
+
+A local point $\vect{p}_{\text{loc}}$ is mapped to world by
+\begin{equation}\label{eq:local2world}
+  \vect{p}_{\text{world}}
+  = \vect{t} + \mat{R}(\theta)\,\vect{p}_{\text{loc}},
+  \qquad
+  \text{i.e.}\quad
+  \begin{bmatrix} p_x \\ p_y \end{bmatrix}
+  =
+  \begin{bmatrix} t_x \\ t_y \end{bmatrix}
+  +
+  \begin{bmatrix}
+    \cos\theta & -\sin\theta \\
+    \sin\theta &  \cos\theta
+  \end{bmatrix}
+  \begin{bmatrix} x_{\text{loc}} \\ y_{\text{loc}} \end{bmatrix}.
+\end{equation}
+Local $X$ = width, local $Y$ = depth (front direction).
+Front in world: $(-\sin\theta, \cos\theta)$.
+
+\subsection{Rectangular footprint}
+
+Four corners at local positions $(\pm w/2,\; \pm d/2)$ transformed
+by~\eqref{eq:local2world}.
+
+\subsection{Chair footprint}
+
+An $8$-vertex polygon: a rectangle with a backrest notch at $-Y$ (rear).
+Backrest thickness: $b_t = \texttt{backrest\_ratio} \cdot d$.
+
+\subsection{Circular footprint (pot)}
+
+A $16$-gon with radius $r = \max(w, d)/2$:
+\begin{equation}
+  \vect{v}_i
+  = \bigl(r\cos(2\pi i/16),\; r\sin(2\pi i/16)\bigr),
+  \qquad i = 0, \ldots, 15.
+\end{equation}
+
+\subsection{Rotation conventions}
+
+\paragraph{Standard (footprints, rendering, viewers).}
+Uses $\mat{R}(\theta)$ from~\eqref{eq:R2d}.
+
+\paragraph{Non-standard (SceneGraphModel, internal only).}
+\begin{equation}
+  \vect{y}_{\text{dir}} = (\cos\theta,\; \sin\theta),
+  \qquad
+  \vect{x}_{\text{dir}} = (\sin\theta,\; -\cos\theta).
+\end{equation}
+\textbf{Warning:} never use \texttt{SceneGraphModel::local\_to\_world\_polygon()}
+for rendering; use \texttt{rc::footprints::make()} instead.
+
+\subsection{Qt3D mapping}
+
+\paragraph{Position.}
+Room $(x, y)$ maps to Qt3D as
+\begin{equation}
+  X_{\text{Qt3D}} = -x, \qquad
+  Y_{\text{Qt3D}} = h,  \qquad
+  Z_{\text{Qt3D}} = y.
+\end{equation}
+
+\paragraph{Y-rotation.}
+Qt3D $R_y(\alpha)$ maps $(1,0,0) \to (\cos\alpha, 0, -\sin\alpha)$.
+To match the standard-convention width axis
+$(\cos\theta, \sin\theta) \to (-\cos\theta, 0, \sin\theta)$ one needs
+\begin{equation}\label{eq:qt3d-rot}
+  \alpha_{\text{Qt3D}} = \pi + \theta.
+\end{equation}
+
+% =====================================================================
+\section{Infrastructure Masking}\label{sec:masking}
+% =====================================================================
+
+Infrastructure masking segments each camera pixel into
+\emph{infrastructure} (floor, walls, ceiling) or \emph{foreground}
+(furniture, people).  For every pixel a ray is cast from the camera
+through the pinhole model and intersected analytically with the room's
+floor plane, ceiling plane and wall segments.  The nearest valid hit
+gives the infrastructure depth; pixels whose measured depth is close to
+or beyond this value are classified as infrastructure and can be
+suppressed in the display.
+
+For each camera pixel $(u, v)$ a ray
+$\vect{d}_{\text{cam}}$ is constructed via~\eqref{eq:unproject} and
+intersected with floor, ceiling and wall planes.
+The infrastructure depth is the minimum valid hit:
+\begin{equation}
+  d_{\text{infra}} = \min\bigl(t_{\text{floor}},\; t_{\text{ceil}},\;
+                               t_{\text{walls}}\bigr).
+\end{equation}
+
+\subsection{Floor intersection}
+
+\begin{equation}
+  t_{\text{floor}}
+  = \frac{-z_{\text{cam}}}{d_{\text{cam}}^z},
+  \qquad
+  \text{valid if } |d_{\text{cam}}^z| > 10^{-6}
+  \;\text{and}\;
+  \vect{p}_{xy} \in \text{polygon}.
+\end{equation}
+
+\subsection{Ceiling intersection}
+
+\begin{equation}
+  t_{\text{ceil}}
+  = \frac{h_{\text{wall}} - z_{\text{cam}}}{d_{\text{cam}}^z}.
+\end{equation}
+
+\subsection{Wall intersection (2D ray--segment)}
+
+For each wall edge $(\vect{a}, \vect{b})$, using 2D cross products:
+\begin{equation}
+  \operatorname{cross2}(\vect{u}, \vect{v}) = u_x v_y - u_y v_x,
+\end{equation}
+\begin{equation}
+  t = \frac{\operatorname{cross2}(\vect{q} - \vect{p},\; \vect{b} - \vect{a})}
+           {\operatorname{cross2}(\vect{d}_{\text{ray}},\; \vect{b} - \vect{a})},
+  \qquad
+  s_u = \frac{\operatorname{cross2}(\vect{q} - \vect{p},\; \vect{d}_{\text{ray}})}
+             {\operatorname{cross2}(\vect{d}_{\text{ray}},\; \vect{b} - \vect{a})}.
+\end{equation}
+Valid if $t > 0.05\,$m, $s_u \in [0, 1]$ and
+$0 \leq z_{\text{hit}} \leq h_{\text{wall}}$.
+
+% =====================================================================
+\section{LiDAR Processing}\label{sec:lidar}
+% =====================================================================
+
+Raw LiDAR point clouds are filtered, decimated and transformed before
+they reach the localiser or controller.  Height-band filters separate
+wall-level returns (used for room fitting) from low-level returns (used
+for obstacle detection).  A stride-based decimation keeps the point
+count bounded.  Finally, a rigid SE(2) transform maps robot-frame
+points into the room frame for use by the SDF observation model.
+
+\subsection{Height filtering}
+
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  Sensor & Height band & Purpose \\
+  \midrule
+  HELIOS (high) & $z \in [1.2, 2.2]\,$m & Wall detection \\
+  BPEARL (low)  & $z > 0.1\,$m          & Obstacle/people \\
+  \bottomrule
+\end{tabular}
+\end{center}
+Maximum range: $100\,$m.
+
+\subsection{Decimation}
+
+\begin{equation}
+  \text{stride}
+  = \max\!\bigl(1,\;
+    \lfloor\text{num\_points}\,/\,\text{pool\_size}\rfloor\bigr).
+\end{equation}
+
+\subsection{LiDAR $\to$ room transform (SE(2))}
+
+\begin{equation}
+  \vect{p}_{\text{room}}^{xy}
+  = \mat{R}(\phi)\,\vect{p}_{\text{robot}}^{xy} + \vect{t},
+  \qquad
+  \vect{t} = [x, y]^\top.
+\end{equation}
+
+\subsection{LiDAR visualisation in Qt3D}
+
+World coordinates:
+\begin{equation}
+  w_x = \cos\theta\, p_x - \sin\theta\, p_y + x_r,
+  \qquad
+  w_z = \sin\theta\, p_x + \cos\theta\, p_y + y_r.
+\end{equation}
+Mapped to Qt3D: $(-w_x,\; p_z,\; w_z)$.
+
+% =====================================================================
+\section{YOLO / Segmentation Grounding}\label{sec:grounding}
+% =====================================================================
+
+Detections from an external YOLO-based image segmentation service are
+grounded into the 3D scene graph.  Each detection mask is back-projected
+through the depth buffer to obtain a 3D point cloud, which is
+transformed from camera to robot to room frame.  Ground-plane points
+are clipped, and a PCA over the remaining cloud yields the object
+centroid and principal axis for pose estimation.  This section also
+covers the depth-buffer format conversions that handle the various
+encoding schemes.
+
+\subsection{3D point transformation pipeline}
+
+\begin{enumerate}
+  \item \textbf{Camera $\to$ robot}:
+    $\vect{p}_{\text{robot}}
+    = \vect{p}_{\text{cam}} + (\Delta t_x, \Delta t_y, \Delta t_z)$.
+  \item \textbf{Robot $\to$ room}:
+    $\vect{p}_{\text{room}} = \mat{R}(\theta)\,\vect{p}_{\text{robot}} + \vect{t}$.
+  \item \textbf{Z-lift}: $z' = z_{\text{robot}} + 0.05\,$m (keep above floor).
+  \item Output: $\vect{p}_{3\text{D}} = (p_{\text{room}}^x,\; p_{\text{room}}^y,\; z')$.
+\end{enumerate}
+
+\subsection{Ground clipping}
+
+\begin{equation}
+  z_{\text{floor}} = \min_i z_i + 0.06\,\text{m},
+  \qquad
+  \text{keep } \{p \mid p_z > z_{\text{floor}}\}.
+\end{equation}
+If the filtered set has $< 8$ points, the original cloud is kept.
+
+\subsection{Centroid and covariance}
+
+\begin{equation}
+  \vect{m} = \frac{1}{N}\sum_{i=1}^N \vect{p}_i,
+  \qquad
+  \mat{\Sigma}
+  = \frac{1}{N}\sum_{i=1}^N
+    (\vect{p}_i - \vect{m})(\vect{p}_i - \vect{m})^\top.
+\end{equation}
+Major axis = eigenvector of $\mat{\Sigma}$ with largest eigenvalue.
+
+\subsection{Depth buffer extraction}
+
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  Format & Conversion \\
+  \midrule
+  float32 & direct copy, apply scale \\
+  uint16  & mm $\to$ m \\
+  uint8   & raw bytes, scale to metres \\
+  \bottomrule
+\end{tabular}
+\end{center}
+Invalid values (NaN, Inf) are mapped to $0$.
+
+% =====================================================================
+\section{Episodic Memory}\label{sec:episodic}
+% =====================================================================
+
+The episodic memory records navigation episodes as feature vectors
+summarising trajectory statistics, speed profiles, control efficiency
+and computational load.  At query time, the $k$ most similar past
+episodes are retrieved via a weighted Euclidean distance in feature
+space.  Supporting geometric primitives (point-to-segment and
+point-to-polygon distance) are reused from the planner and shared with
+the masking subsystem.
+
+\subsection{Point-to-segment distance}
+
+\begin{equation}
+  \vect{ab} = \vect{b} - \vect{a},
+  \qquad
+  t = \operatorname{clamp}\!\Bigl(
+    \frac{(\vect{p} - \vect{a}) \cdot \vect{ab}}
+         {\max(10^{-9},\;\|\vect{ab}\|^2)},\; 0,\; 1
+  \Bigr),
+  \qquad
+  d = \bigl\|\vect{p} - (\vect{a} + t\,\vect{ab})\bigr\|.
+\end{equation}
+
+\subsection{Point-to-polygon distance}
+
+\begin{equation}
+  d_{\text{poly}}
+  = \min_i \operatorname{dist}(\vect{p},\; \text{edge}_i).
+\end{equation}
+
+\subsection{Episode similarity ($k$-NN retrieval)}
+
+Weighted Euclidean distance over feature vectors:
+\begin{equation}
+  d(\vect{f}_1, \vect{f}_2)
+  = \sqrt{\sum_i w_i\,(f_{1,i} - f_{2,i})^2}.
+\end{equation}
+The $k = 5$ nearest episodes are retrieved.
+
+\subsection{Stored episode metrics}
+
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  Category & Fields \\
+  \midrule
+  Trajectory    & \texttt{distance\_traveled, path\_efficiency} \\
+  Speed         & \texttt{mean\_speed, p95\_speed} \\
+  Rotation      & \texttt{mean\_rot, p95\_rot} \\
+  Efficiency    & \texttt{mean\_ess\_ratio, p05\_ess\_ratio} \\
+  Performance   & \texttt{mean\_cpu\_pct, p95\_mppi\_ms} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+% =====================================================================
+\section{Navigation Completion for \texttt{goto\_object}}\label{sec:navcompl}
+% =====================================================================
+
+Once the trajectory controller declares the path complete, a final
+heading-alignment phase rotates the robot to face the target object.
+This phase is decoupled from trajectory tracking and uses a simple
+yaw-error criterion with timeout and anti-oscillation guards.
+
+After path completion in object-navigation mode, a dedicated final heading
+phase (decoupled from trajectory tracking) steers toward the target.
+The yaw error in robot frame is
+\begin{equation}
+  e_\theta = \atantwo(x_{\text{obj}}^{\text{robot}},\;
+                      y_{\text{obj}}^{\text{robot}}).
+\end{equation}
+Exit conditions combine angle tolerance, distance checks, timeout cycles
+and anti-oscillation guards.
+
+% =====================================================================
+\section{Room Geometry}\label{sec:room-geom}
+% =====================================================================
+
+The room is represented as a closed 2D polygon whose vertices define
+the floor boundary.  This polygon serves multiple roles: it is the
+target shape for localisation SDF queries, the outer boundary for the
+visibility-graph planner, the source of wall planes for infrastructure
+masking and synthetic rendering, and the container for
+point-in-polygon membership tests.  Wall meshes for 3D visualisation
+are extruded from the polygon edges to a specified ceiling height.
+
+\subsection{Polygon representation}
+
+The room boundary is stored as a closed polygon
+$\{\vect{v}_i\}_{i=0}^{N-1} \subset \R^2$.
+
+\subsection{Signed distance field (polygon)}
+
+See Equation~\eqref{eq:sdf} with clamped segment projection~\eqref{eq:seg-proj}.
+
+\subsection{Wall mesh (3D)}
+
+Per edge $(x_1, y_1) \to (x_2, y_2)$:
+\begin{equation}
+  \text{Quad vertices:}\quad
+  \begin{cases}
+    v_0 = (x_1, y_1, 0), & v_1 = (x_1, y_1, h), \\
+    v_2 = (x_2, y_2, 0), & v_3 = (x_2, y_2, h).
+  \end{cases}
+\end{equation}
+Triangulated as $(v_0, v_2, v_1)$ and $(v_1, v_2, v_3)$.
+Total: $N$ edges $\to$ $6N$ triangle indices.
+
+% =====================================================================
+\section{Symbol Glossary}\label{sec:glossary}
+% =====================================================================
+
+\begin{center}
+\begin{tabular}{lp{10cm}}
+  \toprule
+  Symbol & Meaning \\
+  \midrule
+  $x, y, \theta$           & Robot pose in controller/localisation space \\
+  $v, \omega$               & Advance speed and rotational speed \\
+  $\Delta t$                & Control/update time step \\
+  $\vect{s} = [w,l,x,y,\phi]^\top$ & Room-localisation state \\
+  $d_i$                     & SDF distance residual for LiDAR point $i$ \\
+  $\sigma_{\text{obs}}, \delta$ & Observation noise scale and Huber threshold \\
+  $\vect{\mu}, \mat{\Pi}$   & Prior mean and precision matrix \\
+  $\mat{P}^{-}, \mat{P}^{+}$ & Predicted and posterior covariance \\
+  $\mat{F}, \mat{Q}$        & Motion Jacobian and process-noise covariance \\
+  $\vect{\nu}$              & Innovation residual \\
+  $f_x, f_y, c_x, c_y$     & Camera intrinsic parameters \\
+  $\theta_h$                & Camera horizontal field of view \\
+  $d_{\text{safe}}^{\text{eff}}$ & Effective safety distance \\
+  $G$                       & Total trajectory score for a rollout \\
+  $\lambda$                 & MPPI temperature (context-dependent) \\
+  $\mathrm{ESS}$            & Effective sample size of rollout weights \\
+  $D, E$                    & Dominance and exploration signals (adaptive MPPI) \\
+  $\mat{R}(\theta)$         & Standard 2D rotation matrix \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+% =====================================================================
+\section{Equation to Implementation Mapping}\label{sec:mapping}
+% =====================================================================
+
+\subsection{Localiser}
+
+\begin{center}
+\small
+\begin{tabular}{p{7cm}p{7cm}}
+  \toprule
+  Equation & Implementation \\
+  \midrule
+  Variational loss $\mathcal{F}$ \eqref{eq:free-energy}
+    & \texttt{loss\_sdf\_mse(...)} + \texttt{m.prior\_loss()} \\
+  Prior quadratic term
+    & \texttt{Model::prior\_loss()} with \texttt{prediction\_precision\_matrix} \\
+  Dual-prior fusion \eqref{eq:gaussian-fusion}
+    & \texttt{RoomConceptAI::fuse\_priors(...)} \\
+  Covariance prediction \eqref{eq:cov-pred}
+    & \texttt{predict\_step(...)} \\
+  Covariance update \eqref{eq:cov-update}
+    & covariance update block in \texttt{update(...)} \\
+  Early-exit threshold
+    & \texttt{sigma\_sdf} $\times$ \texttt{prediction\_trust\_factor} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Planner}
+
+\begin{center}
+\small
+\begin{tabular}{p{7cm}p{7cm}}
+  \toprule
+  Equation & Implementation \\
+  \midrule
+  Point-in-polygon   & \texttt{point\_in\_polygon(...)} \\
+  Segment intersection & \texttt{segments\_intersect\_proper(...)} \\
+  Inward/outward offsets & \texttt{offset\_polygon\_inward/outward(...)} \\
+  Visibility          & \texttt{is\_visible(...)} \\
+  Shortest path       & \texttt{dijkstra(...)}, \texttt{plan(...)} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Controller}
+
+\begin{center}
+\small
+\begin{tabular}{p{7cm}p{7cm}}
+  \toprule
+  Equation & Implementation \\
+  \midrule
+  Obstacle step cost  & \texttt{obstacle\_step\_cost(...)} \\
+  Repulsion strength  & \texttt{obstacle\_repulsion\_strength(...)} \\
+  Rollout score \eqref{eq:rollout-score}
+                      & \texttt{simulate\_and\_score(...)} \\
+  Info correction     & \texttt{simulate\_and\_score} with \texttt{use\_info\_correction} \\
+  MPPI control + ESS  & \texttt{compute(...)}, \texttt{compute\_ess(...)} \\
+  Dominance adaptation & \texttt{adapt\_from\_dominance(...)} \\
+  Safety gate         & safety gate block in \texttt{compute(...)}, \texttt{compute\_pd(...)} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Camera and rendering}
+
+\begin{center}
+\small
+\begin{tabular}{p{7cm}p{7cm}}
+  \toprule
+  Equation & Implementation \\
+  \midrule
+  Intrinsics \eqref{eq:intrinsics}
+    & \texttt{CameraViewer} intrinsics callback \\
+  Projection \eqref{eq:projection}
+    & \texttt{SyntheticCameraRenderer::project\_point()} \\
+  Unprojection \eqref{eq:unproject}
+    & ray construction in \texttt{CameraViewer::grab\_frame()} \\
+  Near-plane clip
+    & \texttt{SyntheticCameraRenderer::clip\_and\_project()} \\
+  Attention score \eqref{eq:attention-score}
+    & \texttt{pick\_attention\_target()} \\
+  Qt3D rotation \eqref{eq:qt3d-rot}
+    & object transform in \texttt{Viewer3D} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+% =====================================================================
+\appendix
+\section{Build and Run}
+% =====================================================================
+
+\begin{lstlisting}
+cmake --fresh -S . -B build_make -G "Unix Makefiles"
+make -C build_make -j20
+bin/ainf_slamo etc/config
+\end{lstlisting}
+
+\end{document}
