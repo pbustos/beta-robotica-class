@@ -122,6 +122,7 @@ public:
         float weight_smoothing_alpha = 0.3f;       // EMA smoothing for weight transitions
 
         // ===== VFE + BMR =====
+        bool force_rectangular = false; // When true, never switch to polygon model
         bool enable_vfe  = true;   // Compute full Laplace VFE each frame
         bool enable_bmr  = true;   // Run Savage-Dickey BMR gating
         int  bmr_check_period      = 30;  // Check BMR every N successful update frames

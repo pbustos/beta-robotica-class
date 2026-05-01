@@ -290,6 +290,15 @@ class SpecificWorker : public GenericWorker
 	                       const std::vector<Eigen::Vector3f> &points_low,
 	                       const Eigen::Affine2f &robot_pose);
 	void update_camera_wireframe_overlay(const Eigen::Affine2f &robot_pose);
+	void fit_object_to_depth();
+	struct PendingFit {
+		int furniture_index = -1;
+		std::vector<Eigen::Vector2f> original_vertices;
+		std::vector<Eigen::Vector2f> fitted_vertices;
+		float initial_sdf = 0.f;
+		float final_sdf = 0.f;
+	};
+	std::optional<PendingFit> pending_fit_;
 	int pick_attention_target(const Eigen::Affine2f& robot_pose) const;
 	int find_furniture_index_by_name(const QString& name) const;
 	void translate_furniture_by_name(const QString& name, float dx_room, float dy_room);

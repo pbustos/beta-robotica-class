@@ -126,6 +126,7 @@ private:
     int object_align_cycles_ = 0;
     bool object_final_align_active_ = false;
     float prev_angle_err_ = 0.f;
+    int sign_change_count_ = 0;
 
     std::vector<TempObstacle> temp_obstacles_;
     static constexpr float TEMP_OBSTACLE_TIMEOUT_SEC = 30.f;

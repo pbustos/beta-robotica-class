@@ -480,6 +480,9 @@ void SpecificWorker::initialize()
         connect(camera_viewer_.get(), &CameraViewer::emRejectRequested, this, [this]() {
             em_manager_.apply_pending_adjustments(false);
         });
+        connect(camera_viewer_.get(), &CameraViewer::fitRequested, this, [this]() {
+            fit_object_to_depth();
+        });
         connect(camera_viewer_.get(), &QDialog::finished, this, [this](int) {
             if (pushButton_camera) pushButton_camera->setChecked(false);
         });
@@ -808,7 +811,7 @@ void SpecificWorker::initialize()
 
 
     // Lidar thread is created
-    read_lidar_th = std::thread(&SpecificWorker::read_lidar,this);
+    read_lidar_th = std::thread(&SpecificWorker::rea,this);
     qInfo() << __FUNCTION__ << "Started lidar reader";
 
     // Wait for first lidar so we can initialize the concept with a data-driven guess

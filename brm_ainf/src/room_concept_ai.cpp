@@ -631,6 +631,11 @@ namespace rc
 
     void RoomConceptAI::apply_bmr_result(const BmrResult &bmr)
     {
+        if (params.force_rectangular)
+        {
+            qInfo() << "[BMR] apply skipped: force_rectangular mode";
+            return;
+        }
         if (!bmr.valid || !bmr.expand)
         {
             qInfo() << "[BMR] apply skipped: invalid or expand=false";
@@ -1019,6 +1024,11 @@ namespace rc
 
     void RoomConceptAI::set_polygon_room(const std::vector<Eigen::Vector2f>& polygon_vertices)
     {
+        if (params.force_rectangular)
+        {
+            qInfo() << "set_polygon_room: blocked by force_rectangular mode";
+            return;
+        }
         if (polygon_vertices.size() < 3)
         {
             std::cerr << "set_polygon_room: Need at least 3 vertices" << std::endl;

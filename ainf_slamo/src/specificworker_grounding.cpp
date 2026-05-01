@@ -1100,3 +1100,370 @@ void SpecificWorker::update_segmented_points_3d(const Eigen::Affine2f &robot_pos
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// fit_object_to_depth  (Fit button — single-object depth-based fitting)
+// ---------------------------------------------------------------------------
+void SpecificWorker::fit_object_to_depth()
+{
+    // --- 1. Prerequisites ---------------------------------------------------
+    if (!camera_intr_.valid)
+    {
+        qWarning() << "[Fit] camera intrinsics not yet available";
+        return;
+    }
+    auto res_opt = room_ai.get_last_result();
+    if (!res_opt.has_value() || !res_opt->ok)
+    {
+        qWarning() << "[Fit] localization not available";
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Fit: need localization");
+        return;
+    }
+    if (layout_manager_.furniture().empty())
+    {
+        qWarning() << "[Fit] no furniture in layout";
+        return;
+    }
+
+    const Eigen::Affine2f& robot_pose = res_opt->robot_pose;
+    const Eigen::Affine2f world_to_robot = robot_pose.inverse();
+
+    // --- 2. Select focused object -------------------------------------------
+    int idx = focused_model_index_;
+    if (idx < 0 || idx >= static_cast<int>(layout_manager_.furniture().size()))
+        idx = pick_attention_target(robot_pose);
+    if (idx < 0)
+    {
+        qWarning() << "[Fit] no object in view";
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Fit: no object in view");
+        return;
+    }
+
+    const auto& fp = layout_manager_.furniture()[static_cast<std::size_t>(idx)];
+    if (fp.vertices.size() < 3)
+        return;
+
+    const std::string base_name = fp.label.empty() ? fp.id : fp.label;
+    const float obj_height = EMManager::model_height_from_label(base_name);
+
+    // --- 3. Capture camera snapshot -----------------------------------------
+    RoboCompImageSegmentation::TData tdata;
+    try { tdata = imagesegmentation_proxy->getAll(false); }
+    catch (const Ice::Exception&)
+    {
+        qWarning() << "[Fit] segmentation proxy unavailable";
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Fit: camera unavailable");
+        return;
+    }
+
+    // --- 4. Extract depth buffer --------------------------------------------
+    int depth_w = 0, depth_h = 0;
+    std::vector<float> depth_m;
+    if (!EMManager::extract_depth_from_tdata(tdata, depth_w, depth_h, depth_m))
+    {
+        qWarning() << "[Fit] no depth data";
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Fit: no depth data");
+        return;
+    }
+
+    const float fx = camera_intr_.fx;
+    const float fy = camera_intr_.fy;
+    const float cx = camera_intr_.cx;
+    const float cy = camera_intr_.cy;
+    const int   img_w = camera_intr_.w;
+    const int   img_h = camera_intr_.h;
+
+    // Depth may have different resolution than RGB
+    const float fx_d = (depth_w == img_w) ? fx : fx * static_cast<float>(depth_w) / static_cast<float>(img_w);
+    const float fy_d = (depth_h == img_h) ? fy : fy * static_cast<float>(depth_h) / static_cast<float>(img_h);
+    const float cx_d = static_cast<float>(depth_w) * 0.5f;
+    const float cy_d = static_cast<float>(depth_h) * 0.5f;
+
+    // --- helpers (same conventions as update_camera_wireframe_overlay) ------
+    auto to_camera = [this](const Eigen::Vector2f& p_robot, float z_world) -> Eigen::Vector3f
+    {
+        return Eigen::Vector3f(p_robot.x() - params.CAMERA_TX,
+                               p_robot.y() - params.CAMERA_TY,
+                               z_world     - params.CAMERA_TZ);
+    };
+
+    auto project = [&](const Eigen::Vector3f& p_cam) -> Eigen::Vector2f
+    {
+        const float d = std::max(0.05f, p_cam.y());
+        return {cx + fx * (p_cam.x() / d), cy - fy * (p_cam.z() / d)};
+    };
+
+    // --- 5. Project furniture polygon → ROI ---------------------------------
+    float roi_umin =  1e9f, roi_umax = -1e9f;
+    float roi_vmin =  1e9f, roi_vmax = -1e9f;
+
+    for (const auto& v_world : fp.vertices)
+    {
+        const Eigen::Vector2f v_robot = world_to_robot * v_world;
+        for (float z : {0.f, obj_height})
+        {
+            const auto p_cam = to_camera(v_robot, z);
+            if (p_cam.y() < 0.05f) continue;
+            const auto uv = project(p_cam);
+            roi_umin = std::min(roi_umin, uv.x());  roi_umax = std::max(roi_umax, uv.x());
+            roi_vmin = std::min(roi_vmin, uv.y());  roi_vmax = std::max(roi_vmax, uv.y());
+        }
+    }
+
+    constexpr float margin = 50.f;
+    const int u0 = std::max(0,       static_cast<int>(roi_umin - margin));
+    const int u1 = std::min(img_w-1, static_cast<int>(roi_umax + margin));
+    const int v0 = std::max(0,       static_cast<int>(roi_vmin - margin));
+    const int v1 = std::min(img_h-1, static_cast<int>(roi_vmax + margin));
+    if (u1 <= u0 || v1 <= v0)
+    {
+        qWarning() << "[Fit] ROI empty – object not in view";
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Fit: object not in view");
+        return;
+    }
+
+    // --- 6. Build projected wireframe edges for proximity weight ------------
+    std::vector<std::pair<Eigen::Vector2f, Eigen::Vector2f>> projected_edges;
+    for (std::size_t i = 0; i < fp.vertices.size(); ++i)
+    {
+        const std::size_t j = (i + 1) % fp.vertices.size();
+        const Eigen::Vector2f a_r = world_to_robot * fp.vertices[i];
+        const Eigen::Vector2f b_r = world_to_robot * fp.vertices[j];
+        // horizontal edges at base and top
+        for (float z : {0.f, obj_height})
+        {
+            const auto ac = to_camera(a_r, z);
+            const auto bc = to_camera(b_r, z);
+            if (ac.y() > 0.05f && bc.y() > 0.05f)
+                projected_edges.push_back({project(ac), project(bc)});
+        }
+        // vertical edge at each corner
+        const auto bot = to_camera(a_r, 0.f);
+        const auto top = to_camera(a_r, obj_height);
+        if (bot.y() > 0.05f && top.y() > 0.05f)
+            projected_edges.push_back({project(bot), project(top)});
+    }
+
+    auto point_seg_dist = [](const Eigen::Vector2f& p,
+                             const Eigen::Vector2f& a,
+                             const Eigen::Vector2f& b) -> float
+    {
+        const Eigen::Vector2f ab = b - a;
+        const float t = std::clamp(ab.dot(p - a) / std::max(1e-8f, ab.squaredNorm()), 0.f, 1.f);
+        return (p - (a + t * ab)).norm();
+    };
+
+    const float roi_diag = std::hypot(roi_umax - roi_umin, roi_vmax - roi_vmin);
+    const float prox_sigma = std::max(20.f, roi_diag * 0.30f);
+
+    // --- 7. Find matching YOLO mask (label translation) --------------------
+    auto labels_match = [](const std::string& model_lbl, const std::string& yolo_lbl) -> bool
+    {
+        static const std::vector<std::pair<std::string, std::string>> table = {
+            {"mesa", "table"}, {"mesa", "dining table"},
+            {"silla", "chair"},
+            {"banco", "bench"},
+            {"monitor", "tv"}, {"pantalla", "tv"}, {"pantalla", "monitor"},
+            {"ordenador", "laptop"},
+            {"vitrina", "cabinet"}, {"estanteria", "shelf"},
+            {"maceta", "potted plant"}, {"planta", "potted plant"},
+            {"sofa", "couch"},
+            {"cama", "bed"},
+            {"nevera", "refrigerator"},
+        };
+        auto lc = [](std::string s) -> std::string
+        { std::transform(s.begin(), s.end(), s.begin(), ::tolower); return s; };
+        const std::string ml = lc(model_lbl), yl = lc(yolo_lbl);
+        if (ml == yl || ml.find(yl) != std::string::npos || yl.find(ml) != std::string::npos)
+            return true;
+        for (const auto& [es, en] : table)
+            if ((ml.find(es) != std::string::npos || ml.find(en) != std::string::npos) &&
+                (yl.find(es) != std::string::npos || yl.find(en) != std::string::npos))
+                return true;
+        return false;
+    };
+
+    const RoboCompImageSegmentation::SegmentedObject* yolo_match = nullptr;
+    for (const auto& obj : tdata.objects)
+    {
+        if (!obj.imagePolygon.empty() && labels_match(base_name, obj.label))
+        {
+            yolo_match = &obj;
+            break;
+        }
+    }
+
+    // Point-in-polygon for YOLO image polygon
+    auto pip_yolo = [](float px, float py,
+                       const RoboCompImageSegmentation::Polygon& poly) -> bool
+    {
+        bool inside = false;
+        for (std::size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+        {
+            const float xi = static_cast<float>(poly[i].x);
+            const float yi = static_cast<float>(poly[i].y);
+            const float xj = static_cast<float>(poly[j].x);
+            const float yj = static_cast<float>(poly[j].y);
+            if (((yi > py) != (yj > py)) &&
+                (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
+                inside = !inside;
+        }
+        return inside;
+    };
+
+    // Check YOLO coverage: skip w_yolo if mask covers < 5% of ROI
+    bool use_yolo = false;
+    if (yolo_match)
+    {
+        int hits = 0, total = 0;
+        for (int v = v0; v <= v1; v += 4)
+            for (int u = u0; u <= u1; u += 4)
+            {
+                ++total;
+                if (pip_yolo(static_cast<float>(u), static_cast<float>(v),
+                             yolo_match->imagePolygon))
+                    ++hits;
+            }
+        use_yolo = total > 0 && static_cast<float>(hits) / static_cast<float>(total) > 0.05f;
+    }
+
+    // --- 8. Iterate ROI pixels, weight, back-project surviving points ------
+    constexpr float z_floor   = 0.03f;
+    constexpr float z_ceiling = 2.3f;
+    constexpr float z_min_dep = 0.08f;
+    constexpr float z_max_dep = 6.0f;
+    constexpr float w_thresh  = 0.05f;
+    constexpr int   step      = 2;
+
+    const auto& room_polygon = layout_manager_.room_polygon();
+
+    std::vector<Eigen::Vector3f> fit_points;
+    fit_points.reserve(8000);
+
+    for (int v = v0; v <= v1; v += step)
+    {
+        for (int u = u0; u <= u1; u += step)
+        {
+            // Map to depth-buffer coords
+            const int du = std::clamp((u * depth_w) / std::max(1, img_w), 0, depth_w - 1);
+            const int dv = std::clamp((v * depth_h) / std::max(1, img_h), 0, depth_h - 1);
+            const float d = depth_m[static_cast<std::size_t>(dv) * depth_w + du];
+            if (!std::isfinite(d) || d < z_min_dep || d > z_max_dep)
+                continue;
+
+            // Back-project to camera → robot → world
+            const float x_cam = (static_cast<float>(du) - cx_d) * d / std::max(1e-5f, fx_d);
+            const float y_cam = d;
+            const float z_cam = (cy_d - static_cast<float>(dv)) * d / std::max(1e-5f, fy_d);
+
+            const float x_robot = x_cam + params.CAMERA_TX;
+            const float y_robot = y_cam + params.CAMERA_TY;
+            const float z_world = z_cam + params.CAMERA_TZ;
+
+            // --- w_infra: height-based infrastructure suppression ---
+            if (z_world < z_floor || z_world > z_ceiling)
+                continue;
+
+            // Wall proximity: skip points within 5 cm of room boundary
+            const Eigen::Vector2f p_world = robot_pose * Eigen::Vector2f(x_robot, y_robot);
+            float min_wall = std::numeric_limits<float>::max();
+            for (std::size_t k = 0; k < room_polygon.size(); ++k)
+            {
+                const auto& a = room_polygon[k];
+                const auto& b = room_polygon[(k + 1) % room_polygon.size()];
+                const Eigen::Vector2f ab = b - a;
+                const float t = std::clamp(ab.dot(p_world - a) / std::max(1e-8f, ab.squaredNorm()), 0.f, 1.f);
+                min_wall = std::min(min_wall, (p_world - (a + t * ab)).norm());
+            }
+            if (min_wall < 0.05f)
+                continue;
+
+            // --- w_yolo ---
+            if (use_yolo &&
+                !pip_yolo(static_cast<float>(u), static_cast<float>(v),
+                          yolo_match->imagePolygon))
+                continue;
+
+            // --- w_prox: Gaussian proximity to projected wireframe edges ---
+            float min_edge = std::numeric_limits<float>::max();
+            const Eigen::Vector2f pix(static_cast<float>(u), static_cast<float>(v));
+            for (const auto& [ea, eb] : projected_edges)
+                min_edge = std::min(min_edge, point_seg_dist(pix, ea, eb));
+            const float w_prox = std::exp(-min_edge * min_edge / (2.f * prox_sigma * prox_sigma));
+            if (w_prox < w_thresh)
+                continue;
+
+            fit_points.emplace_back(p_world.x(), p_world.y(), z_world);
+        }
+    }
+
+    qInfo() << "[Fit]" << QString::fromStdString(base_name)
+            << "| ROI" << (u1 - u0) << "x" << (v1 - v0)
+            << "| YOLO" << (use_yolo ? "yes" : "no")
+            << "| edges" << projected_edges.size()
+            << "| pts" << fit_points.size();
+
+    if (fit_points.size() < 20)
+    {
+        qWarning() << "[Fit] too few depth points:" << fit_points.size();
+        if (grounding_status_label_)
+            grounding_status_label_->setText(
+                QString("Fit: too few depth points (%1)").arg(fit_points.size()));
+        return;
+    }
+
+    // --- 9. Run SDF optimizer -----------------------------------------------
+    rc::MeshSDFOptimizer optimizer;
+    const auto result = optimizer.optimize_mesh_with_pose(
+        fit_points, fp.vertices, room_polygon);
+
+    if (!result.ok)
+    {
+        qWarning() << "[Fit] optimizer failed";
+        if (grounding_status_label_)
+            grounding_status_label_->setText("Fit: optimizer failed");
+        return;
+    }
+
+    qInfo() << "[Fit] SDF" << result.initial_loss << "→" << result.final_loss
+            << "| Δ" << result.translation.x() << result.translation.y();
+
+    // --- 10. Apply result ---------------------------------------------------
+    push_undo_snapshot();
+
+    auto& fp_mut = layout_manager_.furniture_mutable()[static_cast<std::size_t>(idx)];
+    pending_fit_ = PendingFit{
+        idx,
+        fp_mut.vertices,          // save originals for potential revert
+        result.vertices,
+        result.initial_loss,
+        result.final_loss
+    };
+
+    // Update through scene graph adapter (validates & syncs scene graph)
+    rc::SceneGraphAdapter::accept_fit_if_improved(
+        scene_graph_, fp_mut, result.vertices, result.final_loss);
+    update_furniture_draw_item(static_cast<std::size_t>(idx));
+    save_scene_graph_to_usd();
+
+    if (grounding_status_label_)
+        grounding_status_label_->setText(
+            QString("Fit: %1  SDF %2 → %3  (%4 pts)")
+                .arg(QString::fromStdString(base_name))
+                .arg(result.initial_loss, 0, 'f', 3)
+                .arg(result.final_loss, 0, 'f', 3)
+                .arg(fit_points.size()));
+    if (grounding_sdf_label_)
+        grounding_sdf_label_->setText(
+            QString("SDF fit: %1 → %2")
+                .arg(result.initial_loss, 0, 'f', 3)
+                .arg(result.final_loss, 0, 'f', 3));
+
+    // Refresh wireframe overlay with updated vertices
+    update_camera_wireframe_overlay(robot_pose);
+}

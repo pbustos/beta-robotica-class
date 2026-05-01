@@ -59,7 +59,7 @@ namespace rc
  *
  * Flujo previsto en esta fase:
  *  - set_initial_state(...) con el GT / hipótesis inicial de la habitación y pose aproximada.
- *  - update(...) optimiza esos 5 parámetros minimizando mean(SDF^2) vía Adam.
+ *  - update(...) optimiza la pose del robot minimizando mean(SDF^2) vía Adam.
  */
 
 class RoomConceptAI

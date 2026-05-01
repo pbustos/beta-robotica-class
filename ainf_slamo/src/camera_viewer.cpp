@@ -238,6 +238,10 @@ CameraViewer::CameraViewer(RoboCompImageSegmentation::ImageSegmentationPrxPtr pr
     ctrl_layout->addWidget(yolo_button_);
     connect(yolo_button_, &QPushButton::toggled, this, [this](bool on){ show_yolo_ = on; });
 
+    fit_button_ = new QPushButton("Fit", ctrl_bar);
+    fit_button_->setToolTip("Fit the focused object model to depth pixels using weighted SDF");
+    ctrl_layout->addWidget(fit_button_);
+
     ctrl_layout->addStretch();
 
     status_label_ = new QLabel("Idle", ctrl_bar);
@@ -261,6 +265,7 @@ CameraViewer::CameraViewer(RoboCompImageSegmentation::ImageSegmentationPrxPtr pr
     connect(em_button_, &QPushButton::clicked, this, &CameraViewer::emRequested);
     connect(em_accept_button_, &QPushButton::clicked, this, &CameraViewer::emAcceptRequested);
     connect(em_reject_button_, &QPushButton::clicked, this, &CameraViewer::emRejectRequested);
+    connect(fit_button_, &QPushButton::clicked, this, &CameraViewer::fitRequested);
 }
 
 void CameraViewer::set_period_ms(int ms)

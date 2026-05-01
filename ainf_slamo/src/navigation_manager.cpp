@@ -273,6 +273,7 @@ void NavigationManager::stop()
     nav_target_object_name_.clear();
     object_align_cycles_ = 0;
     object_final_align_active_ = false;
+    sign_change_count_ = 0;
 
     trajectory_controller_.stop();
     current_path_.clear();
@@ -289,6 +290,7 @@ bool NavigationManager::clear(bool stop_controller, bool clear_stored)
 {
     object_final_align_active_ = false;
     object_align_cycles_ = 0;
+    sign_change_count_ = 0;
     nav_target_object_center_.reset();
     nav_target_object_name_.clear();
 
@@ -343,8 +345,11 @@ NavigationManager::StepResult NavigationManager::compute_step(
                 current_path_.clear();
                 object_final_align_active_ = true;
                 object_align_cycles_ = 0;
+                prev_angle_err_ = 0.f;
+                sign_change_count_ = 0;
                 if (ctx_.send_velocity) ctx_.send_velocity(0.f, 0.f, 0.f);
                 result.object_align_started = true;
+                qInfo() << "[Align] Phase 2 started for" << QString::fromStdString(nav_target_object_name_);
                 return result;
             }
 
@@ -353,6 +358,7 @@ NavigationManager::StepResult NavigationManager::compute_step(
             nav_target_object_name_.clear();
             if (ctx_.send_velocity) ctx_.send_velocity(0.f, 0.f, 0.f);
             result.goal_reached = true;
+            qInfo() << "[Nav] Goal reached (no object alignment target)";
             return result;
         }
 
@@ -490,18 +496,29 @@ NavigationManager::StepResult NavigationManager::compute_step(
 
         constexpr float kYawTol = 0.08f;
         constexpr int kMaxAlignCycles = 70;
+        constexpr int kSignChangesNeeded = 2;  // require 2 consecutive sign changes
         const float angle_err = std::atan2(object_robot.x(), object_robot.y());
+
+        // Track sign changes for oscillation detection
+        if (object_align_cycles_ > 0 && std::signbit(angle_err) != std::signbit(prev_angle_err_))
+            sign_change_count_++;
+        else if (object_align_cycles_ > 0)
+            sign_change_count_ = 0;  // reset on same-sign
 
         const bool done = (std::abs(angle_err) <= kYawTol)
                        || (object_robot.norm() <= 0.05f)
                        || (object_align_cycles_ >= kMaxAlignCycles)
-                       || (object_align_cycles_ > 3 && std::signbit(angle_err) != std::signbit(prev_angle_err_)
+                       || (object_align_cycles_ > 5 && sign_change_count_ >= kSignChangesNeeded
                            && std::abs(angle_err) < 0.18f);
 
         if (done)
         {
+            qInfo() << "[Align] Done after" << object_align_cycles_ << "cycles,"
+                    << "angle_err=" << angle_err << "rad,"
+                    << "dist=" << object_robot.norm() << "m";
             object_final_align_active_ = false;
             object_align_cycles_ = 0;
+            sign_change_count_ = 0;
             nav_target_object_center_.reset();
             nav_target_object_name_.clear();
             if (ctx_.send_velocity) ctx_.send_velocity(0.f, 0.f, 0.f);
@@ -513,6 +530,10 @@ NavigationManager::StepResult NavigationManager::compute_step(
         float rot_cmd = std::clamp(kP * angle_err, -0.45f, 0.45f);
         if (std::abs(rot_cmd) < 0.06f)
             rot_cmd = (angle_err > 0.f) ? 0.06f : -0.06f;
+
+        if (object_align_cycles_ % 10 == 0)
+            qInfo() << "[Align] cycle" << object_align_cycles_
+                    << "angle_err=" << angle_err << "rot_cmd=" << rot_cmd;
 
         if (ctx_.send_velocity) ctx_.send_velocity(0.f, 0.f, rot_cmd);
         result.rot = rot_cmd;
@@ -567,6 +588,11 @@ RoboCompNavigator::NavigationStatus NavigationManager::get_status(float current_
         // we only report NAVIGATING (block detection is handled in compute_step)
         status.state = RoboCompNavigator::NavigationState::NAVIGATING;
         status.statusMessage = "Navigating";
+    }
+    else if (object_final_align_active_)
+    {
+        status.state = RoboCompNavigator::NavigationState::NAVIGATING;
+        status.statusMessage = "Aligning to object";
     }
     else if (!current_path_.empty())
     {

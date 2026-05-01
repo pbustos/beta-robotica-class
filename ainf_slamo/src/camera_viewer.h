@@ -97,6 +97,7 @@ class CameraViewer : public QDialog
         void emRequested();
         void emAcceptRequested();
         void emRejectRequested();
+        void fitRequested();
         /// Emitted once when valid camera intrinsics arrive from TImage.
         void intrinsicsReceived(float fx, float fy, float cx, float cy, int width, int height);
         /// Emitted every frame while attention mode is active, carrying the
@@ -126,6 +127,7 @@ class CameraViewer : public QDialog
         QPushButton* mask_button_     = nullptr;
         QPushButton* attention_button_ = nullptr;
         QPushButton* yolo_button_      = nullptr;
+        QPushButton* fit_button_       = nullptr;
         QCheckBox*  depth_check_  = nullptr;
         bool        raw_mode_     = false;
         bool        show_objects_ = false;
