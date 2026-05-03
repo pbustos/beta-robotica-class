@@ -31,29 +31,41 @@ class LongTermStats:
     """
     Persistent sufficient-statistics accumulator — never decays.
 
-    Two components:
+    AXIOM-rMM-inspired 2D Beta win-rate grid over (target_y, opp_y_at_arrival).
+    Each rally outcome (won/lost) updates one cell.  At placement time the
+    agent reads the row corresponding to the predicted opp_y, Thompson-samples
+    a θ per target_y bin, and aims at the argmax bin (within paddle reach).
 
-    1. Per-(vy_sign, bounced) Bayesian aim calibrator
-       Separate Σ(err) and count for each of the 6 contact trajectory types.
-       Posterior mean per key is a Bayesian estimate of systematic aim error
-       for that trajectory.  Blended with the per-key EMA.
-
-    2. Beta win-rate grid
-       K=12 bins over [0,1] target_y.  Each rally updates Beta(a_k, b_k).
+    Per-(vy_sign, bounced) aim calibrator is retained for the existing landing
+    bias code path — orthogonal concern.
     """
 
-    K        = 12   # target_y bins
+    K_T       = 12   # target_y bins
+    K_O       = 8    # opp_y_at_arrival bins
     BIAS_KEYS = [(-1, 0), (-1, 1), (0, 0), (0, 1), (1, 0), (1, 1)]
 
     def __init__(self):
-        # Per-key aim accumulators
+        # Per-key aim accumulators (legacy bias path)
         self._n_aim   = {k: 0   for k in self.BIAS_KEYS}
         self._sum_err = {k: 0.0 for k in self.BIAS_KEYS}
-        # Aggregate count (for legacy display)
         self.n_aim = 0
-        # Beta win-rate grid (uniform prior: a=b=2)
-        self.a = np.full(self.K, 2.0)
-        self.b = np.full(self.K, 2.0)
+        # 2D Beta grid: a[t, o], b[t, o]; uniform prior (2, 2)
+        self.a = np.full((self.K_T, self.K_O), 2.0)
+        self.b = np.full((self.K_T, self.K_O), 2.0)
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    @classmethod
+    def _t_bin(cls, target_y: float) -> int:
+        return int(np.clip(float(target_y) * cls.K_T, 0, cls.K_T - 1))
+
+    @classmethod
+    def _o_bin(cls, opp_y: float) -> int:
+        return int(np.clip(float(opp_y) * cls.K_O, 0, cls.K_O - 1))
+
+    @classmethod
+    def t_bin_centers(cls) -> np.ndarray:
+        return (np.arange(cls.K_T) + 0.5) / cls.K_T
 
     # ── update interface ──────────────────────────────────────────────────────
 
@@ -64,43 +76,58 @@ class LongTermStats:
             self._n_aim[key]   += 1
             self._sum_err[key] += float(err)
 
-    def record_rally(self, target_y: float, won: bool):
-        """Call at every rally conclusion with the contact-frame target_y."""
-        k = int(np.clip(float(target_y) * self.K, 0, self.K - 1))
+    def record_rally(self, target_y: float, opp_y: float, won: bool):
+        """Update the (target_y, opp_y_at_arrival) cell with the rally outcome."""
+        t = self._t_bin(target_y)
+        o = self._o_bin(opp_y)
         if won:
-            self.a[k] += 1.0
+            self.a[t, o] += 1.0
         else:
-            self.b[k] += 1.0
+            self.b[t, o] += 1.0
 
     # ── read interface ────────────────────────────────────────────────────────
 
     def aim_bias(self, key=None):
-        """Bayesian posterior mean aim error for key (0 if no data)."""
         if key is None or key not in self._n_aim:
             return 0.0
         n = self._n_aim[key]
         return self._sum_err[key] / max(n, 1) if n else 0.0
 
     def aim_trust(self, key=None):
-        """Weight for Bayesian estimate vs EMA. Grows to 0.85 over 80 misses."""
         if key is None or key not in self._n_aim:
             return 0.0
         return min(self._n_aim[key] / 80.0, 0.85)
 
-    def win_rate(self):
-        """E[Beta(a,b)] = a/(a+b) per bin."""
-        return self.a / (self.a + self.b)
+    def expected_win(self, target_y: float, opp_y: float) -> float:
+        """E[θ] = a/(a+b) at the corresponding cell."""
+        t, o = self._t_bin(target_y), self._o_bin(opp_y)
+        return float(self.a[t, o] / (self.a[t, o] + self.b[t, o]))
 
-    def preferred_placement(self):
-        """Returns (magnitude, confidence) for the long-term placement floor."""
-        wr   = self.win_rate()
-        wr_s = np.convolve(wr, [0.25, 0.5, 0.25], mode='same')
-        centers     = (np.arange(self.K) + 0.5) / self.K
-        best_center = float(centers[np.argmax(wr_s)])
-        magnitude   = float(np.clip(abs(best_center - 0.5) * 0.6, 0.0, 0.07))
-        evidence    = float(self.a.sum() + self.b.sum() - 4.0 * self.K)
-        confidence  = float(np.clip(evidence / 200.0, 0.0, 0.8))
-        return magnitude, confidence
+    def thompson_row(self, opp_y: float, rng: np.random.Generator) -> np.ndarray:
+        """One Thompson sample θ_t ~ Beta(a[t,o], b[t,o]) for every target bin."""
+        o = self._o_bin(opp_y)
+        return rng.beta(self.a[:, o], self.b[:, o])
+
+    def ucb_row(self, opp_y: float, kappa: float = 0.3) -> np.ndarray:
+        """
+        Bayes-UCB score for every target bin in the predicted opp_y row:
+            score_t = E[θ] + κ · sqrt(1 / (a + b))
+
+        Greedy argmax on this score is more stable than Thompson — cells with
+        confident bad posteriors stay avoided, while uncertain cells (small
+        a+b) get an exploration bonus that decays as data accumulates.
+        """
+        o = self._o_bin(opp_y)
+        a = self.a[:, o]
+        b = self.b[:, o]
+        n = a + b
+        mean  = a / n
+        width = np.sqrt(1.0 / n)
+        return mean + kappa * width
+
+    def evidence(self) -> float:
+        """Total observed rallies across the whole grid."""
+        return float(self.a.sum() + self.b.sum() - 4.0 * self.K_T * self.K_O)
 
     # ── persistence ───────────────────────────────────────────────────────────
 
@@ -111,15 +138,19 @@ class LongTermStats:
             "sum_err_k": {str(k): v for k, v in self._sum_err.items()},
             "a": self.a.tolist(),
             "b": self.b.tolist(),
+            "K_T": self.K_T,
+            "K_O": self.K_O,
         }
 
     @classmethod
     def from_dict(cls, d):
         lt = cls()
         lt.n_aim = int(d.get("n_aim", 0))
-        lt.a = np.array(d.get("a", np.full(cls.K, 2.0)))
-        lt.b = np.array(d.get("b", np.full(cls.K, 2.0)))
-        # Restore per-key accumulators (keys stored as strings in JSON/pickle)
+        a = np.asarray(d.get("a", lt.a))
+        b = np.asarray(d.get("b", lt.b))
+        # Only adopt persisted grid if shape matches; else keep fresh prior.
+        if a.shape == (cls.K_T, cls.K_O) and b.shape == (cls.K_T, cls.K_O):
+            lt.a, lt.b = a, b
         for raw_k, v in d.get("n_aim_k", {}).items():
             k = tuple(int(x) for x in raw_k.strip("()").split(", "))
             if k in lt._n_aim:
@@ -200,6 +231,21 @@ class EFEAgent:
         # Long-term cross-session learning (LongTermStats / rMM-inspired)
         self.long_term         = LongTermStats()
         self._contact_target_y = None   # set at ball-contact; used for win attribution
+        self._contact_opp_y    = None   # opp_y at the contact frame; pairs with _contact_target_y
+        # RNG kept for Thompson fallback / future use.
+        self._tgt_rng = np.random.default_rng()
+        # Bayes-UCB exploration constant. Larger → more exploration of low-n
+        # cells; small → fast greedy convergence. 0.3 keeps fresh-cell UCB
+        # (≈0.5 + 0.15) below known-good cells (≈0.7+) so well-attested wins
+        # are exploited and unvisited cells get tried only when reachable
+        # neighbours have similar means.
+        self._ucb_kappa = 0.3
+        # Locked target_y for the current incoming approach (None when idle).
+        self._target_y_locked = None
+        # Per-frame diagnostics (instrumented in CSV by play_efe.py)
+        self._tgt_chosen   = 0.5    # last placement-grid pick (raw, pre-bias)
+        self._tgt_opp_pred = 0.5    # predicted opp_y used at last placement choice
+        self._tgt_pwin     = 0.5    # E[win] at chosen cell
 
         # Set to True for exactly one frame after a wall (vy) bounce is detected.
         # Read by play_efe.py to track bounced_this_approach for contact logging.
@@ -316,8 +362,14 @@ class EFEAgent:
             self._bias_dict[key] = float(np.clip(
                 trust * self.long_term.aim_bias(key) + (1.0 - trust) * ema_bias,
                 -0.3, 0.3))
-            # Record rally loss for win-rate grid
-            self.long_term.record_rally(self._last_landing_pred, won=False)
+            # Record rally loss for win-rate grid — attribute to the most
+            # recent contact's (target_y, opp_y).  Misses without a prior
+            # contact this rally are not strategically attributable; skip.
+            if self._contact_target_y is not None and self._contact_opp_y is not None:
+                self.long_term.record_rally(self._contact_target_y,
+                                             self._contact_opp_y, won=False)
+                self._contact_target_y = None
+                self._contact_opp_y    = None
         else:
             # Adapt urgency window: estimate how many more frames were needed.
             frames_needed = abs(paddle_gap) / self._PADDLE_SPEED
@@ -369,23 +421,29 @@ class EFEAgent:
         # the grid is rebinned by eff_placement.
 
     def update_preferences_on_contact(self, player_y: float,
-                                       vy_sign: int = 0, bounced: int = 0):
+                                       vy_sign: int = 0, bounced: int = 0,
+                                       opp_y: float = None):
         """
         Call when the ball contacts our paddle (vx sign flip near player_x).
 
         Records contact key (vy_sign, bounced) for per-trajectory bias lookup,
-        and contact target_y for win attribution.
+        contact target_y for win attribution, and opp_y at contact for the 2D
+        win-rate grid.
         """
         self._contact_vy_sign  = int(vy_sign)
         self._contact_bounced  = int(bounced)
         self._contact_target_y = self._last_landing_pred
+        if opp_y is not None:
+            self._contact_opp_y = float(opp_y)
 
     def record_win(self):
         """Call when reward==+1 (player just scored). Attributes the win to
-        the target_y at the most recent ball-paddle contact."""
-        if self._contact_target_y is not None:
-            self.long_term.record_rally(self._contact_target_y, won=True)
+        the (target_y, opp_y) cell at the most recent ball-paddle contact."""
+        if self._contact_target_y is not None and self._contact_opp_y is not None:
+            self.long_term.record_rally(self._contact_target_y,
+                                         self._contact_opp_y, won=True)
             self._contact_target_y = None
+            self._contact_opp_y    = None
 
     # ── opponent position prediction ──────────────────────────────────────────
 
@@ -429,13 +487,39 @@ class EFEAgent:
     # Sigma[by,by] ≈ 0.10  (fresh/lost)   → confidence ≈ 0.17
     _COV_K = 30.0
 
+    def _choose_target_y(self, landing_y: float, predicted_opp_y: float,
+                          eff_max: float) -> float:
+        """
+        Pick target_y from the 2D Beta grid row at predicted opp_y by
+        Bayes-UCB argmax, restricted to bins reachable within ±eff_max of the
+        landing prediction.  Returns landing_y if no bin is reachable.
+        """
+        if eff_max < 1e-3:
+            return float(np.clip(landing_y, 0.0, 1.0))
+
+        scores  = self.long_term.ucb_row(predicted_opp_y, kappa=self._ucb_kappa)
+        centers = self.long_term.t_bin_centers()
+        bin_w   = 1.0 / self.long_term.K_T
+        # Reachable: bin centre within (eff_max + half-bin) of landing.
+        reach_window = eff_max + 0.5 * bin_w
+        reachable = np.abs(centers - landing_y) <= reach_window
+        if not reachable.any():
+            return float(np.clip(landing_y, 0.0, 1.0))
+
+        masked = np.where(reachable, scores, -np.inf)
+        best   = int(np.argmax(masked))
+        target = float(np.clip(centers[best], landing_y - eff_max, landing_y + eff_max))
+        return float(np.clip(target, 0.0, 1.0))
+
     def _get_preferences(self):
         """
         Compute (o_star, C_inv, log_norm) once per step.
 
         Placement is scaled by belief confidence (inverse of ball-y variance).
-        Opponent position is predicted at ball-arrival time so placement aims
-        at the side the opponent will NOT be — exploiting the opponent model.
+        Opponent position is predicted at ball-arrival time. Target_y is
+        chosen by Thompson sampling the 2D Beta win-rate grid at the predicted
+        opp_y row, restricted to bins reachable within paddle-reach window.
+        Locked per approach to keep the paddle from thrashing.
         """
         sigma_by        = float(self.belief.cov[1, 1])
         self.confidence = 1.0 / (1.0 + self._COV_K * sigma_by)
@@ -445,16 +529,37 @@ class EFEAgent:
         vx      = float(raw_vel[0]) if raw_vel is not None else float(self.belief.mean[2])
         bx      = float(self.belief.mean[0])
 
-        # Predict where the opponent will be when ball arrives
+        target_y_override = None
         if vx > 1e-3:
             frames        = max(0, int(((_PLAYER_X - bx) / vx)))
             predicted_opp = self._predict_opp_y(frames)
+            # Lock a Thompson-sampled target per approach; resample if a bounce
+            # moved the predicted landing outside the locked target's reach.
+            from generative_model import _predict_ball_landing
+            landing_y = _predict_ball_landing(self.belief.mean, raw_vel=raw_vel)
+            placement_scale = float(np.clip(
+                (frames - 10) / max(1, self.preferences._frames_start - 10),
+                0.0, 1.0))
+            eff_max = eff_placement * placement_scale
+            need_sample = (
+                self._target_y_locked is None
+                or abs(self._target_y_locked - landing_y) > eff_max + 0.04)
+            if need_sample:
+                self._target_y_locked = self._choose_target_y(
+                    landing_y, predicted_opp, eff_max)
+                self._tgt_chosen   = self._target_y_locked
+                self._tgt_opp_pred = predicted_opp
+                self._tgt_pwin     = self.long_term.expected_win(
+                    self._target_y_locked, predicted_opp)
+            target_y_override = self._target_y_locked
         else:
-            predicted_opp = float(self.belief.mean[5])
+            predicted_opp           = float(self.belief.mean[5])
+            self._target_y_locked   = None   # outgoing/idle: clear lock
 
         o_star, C_inv, log_norm = self.preferences.contextual_target(
             self.belief.mean, raw_vel=raw_vel,
-            placement=eff_placement, predicted_opp_y=predicted_opp)
+            placement=eff_placement, predicted_opp_y=predicted_opp,
+            target_y_override=target_y_override)
         self._last_confidence = self.confidence
 
         # Compute final biased target using per-(vy_sign, bounced) correction.

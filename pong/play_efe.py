@@ -353,7 +353,8 @@ def main():
         "ball_vx", "ball_vy", "target_y",
         "landing_bias", "confidence", "epistemic_w",
         "action", "reward",
-        "contact", "contact_err", "vy_sign", "bounced"
+        "contact", "contact_err", "vy_sign", "bounced",
+        "tgt_chosen", "tgt_opp_pred", "tgt_pwin",
     ])
 
     print(f"MPPI agent  H={args.horizon}  N={args.rollouts}  γ={GAMMA}"
@@ -394,6 +395,7 @@ def main():
                     o[2],
                     vy_sign=int(np.sign(agent._raw_vy)),
                     bounced=int(bounced_this_approach),
+                    opp_y=float(o[3]),
                 )
                 _contact_log = (
                     1,
@@ -459,7 +461,10 @@ def main():
             f"{float(agent._raw_vx):.4f}", f"{float(agent._raw_vy):.4f}", f"{float(agent._last_landing_pred):.4f}",
             f"{float(agent.landing_bias):.4f}", f"{float(getattr(agent, 'confidence', 0.0)):.4f}", f"{float(getattr(agent, 'epistemic_w', 0.0)):.4f}",
             action, reward,
-            *_contact_log
+            *_contact_log,
+            f"{float(agent._tgt_chosen):.4f}",
+            f"{float(agent._tgt_opp_pred):.4f}",
+            f"{float(agent._tgt_pwin):.4f}",
         ])
         log_file.flush()
         _contact_log = (0, 0.0, 0, 0)   # consumed; reset for next frame
@@ -483,16 +488,13 @@ def main():
             saved_urgency_ema = agent._fell_short_frames_ema
             saved_long_term   = agent.long_term
             lt = saved_long_term
-            lt_mag, lt_conf = lt.preferred_placement()
-            bias_summary = "  ".join(
-                f"{('UP' if k[0]<0 else 'DW' if k[0]>0 else 'FL')+('/B' if k[1] else '/D')}={v:+.3f}"
-                for k, v in sorted(saved_bias_dict.items()) if saved_bias_dict[k] != 0.0
-            ) or "all=0"
+            evidence  = lt.evidence()
+            grid_mean = float((lt.a / (lt.a + lt.b)).mean())
             print(f"  episode {episode}: {score:+.0f}"
-                  f"  bias[{bias_summary}]"
                   f"  placement={saved_placement:.4f}"
                   f"  frames_near={saved_frames_near}"
-                  f"  lt_misses={lt.n_aim}"
+                  f"  rallies={int(evidence)}"
+                  f"  E[win]_grid={grid_mean:.3f}"
                   f"  (mean {np.mean(metrics.score_buf):+.1f})")
             save_state(saved_bias, saved_placement,
                        agent.interaction_model.counts,

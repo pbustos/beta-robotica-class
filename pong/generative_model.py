@@ -341,22 +341,19 @@ class PriorPreferences:
                                              self._frames_near + 5, 40))
 
     def contextual_target(self, belief_mu, raw_vel=None, placement=None,
-                          predicted_opp_y=None):
+                          predicted_opp_y=None, target_y_override=None):
         """
         Return (o_star, C_inv, log_norm) with player_y target set to the
         predicted ball landing y, adjusted for intentional placement.
 
+        If target_y_override is given (e.g. chosen by a Beta-grid Thompson
+        sampler upstream), it replaces the linear-rule placement offset.
+        The override is still clipped to the paddle-reach window around the
+        predicted landing so interception is not sacrificed.
+
         Urgency scaling: σ_py loosens when ball is far (paddle idles),
         tightens linearly from _frames_start to _frames_near before arrival
-        (paddle commits aggressively). Prevents premature oscillation while
-        ensuring decisive movement when the ball is close.
-
-        Placement (ball heading toward us only):
-          offset = clip((oy - 0.5) * 2 * _max_placement, ±_max_placement)
-          Scales with opponent distance from centre — zero at centre,
-          maximum at oy=0.25 / oy=0.75. Aims return to opponent's weak side.
-
-        Coordinate convention: smaller py = higher on screen.
+        (paddle commits aggressively).
         """
         o_star = self.o_star.copy()
         landing_y = _predict_ball_landing(belief_mu, raw_vel=raw_vel)
@@ -378,21 +375,27 @@ class PriorPreferences:
                         - 2.0 * np.log(self._sigma_py_near))
 
         # ── landing target + placement ────────────────────────────────────────
-        # Placement only when we have enough frames to cover the extra distance.
-        # Below _frames_placement_cutoff, intercept cleanly (offset → 0).
         if vx > 1e-3:
-            # Use predicted opponent position if available, else current oy
-            oy = float(predicted_opp_y) if predicted_opp_y is not None \
-                 else float(belief_mu[5])
             max_p = float(placement) if placement is not None else self._max_placement
             placement_scale = float(np.clip(
                 (frames - self._frames_placement_cutoff) /
                 (self._frames_start - self._frames_placement_cutoff),
                 0.0, 1.0))
-            offset = float(np.clip(
-                (oy - 0.5) * 2.0 * max_p * placement_scale,
-                -max_p, max_p))
-            o_star[self.IDX_PY] = float(np.clip(landing_y + offset, 0.0, 1.0))
+            eff_max = max_p * placement_scale
+
+            if target_y_override is not None:
+                # Clip to reachable window around landing.
+                target = float(np.clip(target_y_override,
+                                        landing_y - eff_max,
+                                        landing_y + eff_max))
+            else:
+                # Legacy linear rule: aim away from opponent's centre offset.
+                oy = float(predicted_opp_y) if predicted_opp_y is not None \
+                     else float(belief_mu[5])
+                offset = float(np.clip(
+                    (oy - 0.5) * 2.0 * eff_max, -eff_max, eff_max))
+                target = landing_y + offset
+            o_star[self.IDX_PY] = float(np.clip(target, 0.0, 1.0))
         else:
             o_star[self.IDX_PY] = landing_y
 
