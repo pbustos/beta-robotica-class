@@ -60,8 +60,11 @@ STATE_FILE = pathlib.Path("models/agent_state.pkl")
 
 def save_state(landing_bias, placement, interaction_alpha=None,
                ball_model=None, likelihood=None,
-               frames_near=None, urgency_ema=None):
+               frames_near=None, urgency_ema=None, long_term=None,
+               bias_dict=None):
     state = {"landing_bias": float(landing_bias), "placement": float(placement)}
+    if bias_dict is not None:
+        state["bias_dict"] = {str(k): float(v) for k, v in bias_dict.items()}
     if interaction_alpha is not None:
         state["interaction_alpha"] = interaction_alpha
     if ball_model is not None:
@@ -72,6 +75,8 @@ def save_state(landing_bias, placement, interaction_alpha=None,
         state["frames_near"] = int(frames_near)
     if urgency_ema is not None:
         state["urgency_ema"] = float(urgency_ema)
+    if long_term is not None:
+        state["long_term"] = long_term
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(STATE_FILE, "wb") as f:
         pickle.dump(state, f)
@@ -266,7 +271,11 @@ class MetricsPanel:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--horizon", type=int, default=3)
+    parser.add_argument("--horizon",     type=int,   default=15)
+    parser.add_argument("--rollouts",    type=int,   default=128,
+                        help="MPPI rollouts per root action")
+    parser.add_argument("--temperature", type=float, default=1.0,
+                        help="MPPI soft-min temperature (λ); 0=hard-min, larger=softer")
     parser.add_argument("--learn",   action="store_true",
                         help="also update VBGS and R online (default: bias only)")
     parser.add_argument("--reset",   action="store_true",
@@ -281,6 +290,7 @@ def main():
     state = load_state()
     if state:
         print(f"Loaded state: landing_bias={state.get('landing_bias', 0.0):+.4f}"
+              + ("  bias_dict ✓" if "bias_dict" in state else "")
               + ("  ball_vbgs ✓" if "ball_vbgs" in state else "")
               + ("  R ✓"        if "R"         in state else ""))
     else:
@@ -291,7 +301,7 @@ def main():
     pygame.init()
     screen = pygame.display.set_mode((WIN_W, WIN_H), pygame.RESIZABLE)
     pygame.display.set_caption(
-        f"EFE agent  H={args.horizon}  {'[online]' if learn else '[frozen+bias]'}")
+        f"MPPI agent  H={args.horizon}  N={args.rollouts}  {'[online]' if learn else '[frozen+bias]'}")
     clock   = pygame.time.Clock()
     font_sm = pygame.font.SysFont("monospace", 13, bold=True)
     font_xs = pygame.font.SysFont("monospace", 11)
@@ -300,6 +310,12 @@ def main():
     opp_tracker, belief, agent = make_episode_state(ball_model, opp_model, likelihood)
     agent.landing_bias = state.get("landing_bias", 0.0)
     agent.placement    = state.get("placement",     0.02)
+    # Restore per-key bias dict if present (new format); scalar fallback handled by setter
+    if "bias_dict" in state:
+        for raw_k, v in state["bias_dict"].items():
+            k = tuple(int(x) for x in raw_k.strip("()").split(", "))
+            if k in agent._bias_dict:
+                agent._bias_dict[k] = float(v)
     if "interaction_alpha" in state:
         agent.interaction_model.alpha = state["interaction_alpha"].copy()
     if "frames_near" in state:
@@ -308,6 +324,9 @@ def main():
         agent.preferences._frames_start = fn + 15
     if "urgency_ema" in state:
         agent._fell_short_frames_ema = float(state["urgency_ema"])
+    if "long_term" in state:
+        from efe_agent import LongTermStats
+        agent.long_term = LongTermStats.from_dict(state["long_term"])
 
     obs, _ = env.reset()
     o = extract_obs(obs)
@@ -329,15 +348,19 @@ def main():
     log_file = open(log_filename, mode='w', newline='')
     log_writer = csv.writer(log_file)
     log_writer.writerow([
-        "episode", "score", "ball_in_play", 
-        "ball_x", "ball_y", "player_y", "opp_y", 
+        "episode", "score", "ball_in_play",
+        "ball_x", "ball_y", "player_y", "opp_y",
         "ball_vx", "ball_vy", "target_y",
         "landing_bias", "confidence", "epistemic_w",
-        "action", "reward"
+        "action", "reward",
+        "contact", "contact_err", "vy_sign", "bounced"
     ])
 
-    print(f"EFE agent  H={args.horizon}  γ={GAMMA}"
+    print(f"MPPI agent  H={args.horizon}  N={args.rollouts}  γ={GAMMA}"
           f"  {'online' if learn else 'frozen+bias'}  — close window to quit\n")
+
+    bounced_this_approach = False   # True if a vy-bounce occurred this approach
+    _contact_log = (0, 0.0, 0, 0)  # (contact, contact_err, vy_sign, bounced)
 
     while True:
         for event in pygame.event.get():
@@ -345,9 +368,11 @@ def main():
                 save_state(agent.landing_bias, agent.placement,
                            agent.interaction_model.counts,
                            ball_model if learn else None,
-                           likelihood if learn else None)
-                print(f"Saved state  bias={agent.landing_bias:+.4f}"
-                      f"  placement={agent.placement:.4f}")
+                           likelihood if learn else None,
+                           long_term=agent.long_term.to_dict())
+                print(f"Saved state  bias_dict={dict(sorted(agent._bias_dict.items()))}"
+                      f"  placement={agent.placement:.4f}"
+                      f"  lt_misses={agent.long_term.n_aim}")
                 log_file.close()
                 env.close(); pygame.quit(); return
 
@@ -358,11 +383,25 @@ def main():
         if ball_in_play:
             prev_raw_vx = agent._raw_vx
             agent.update_raw_velocity(o[0], o[1])
+            if agent._last_vy_bounce:
+                bounced_this_approach = True
             # Detect player-paddle contact: vx flips + to − near player side
             if (prev_raw_vx > 0.008 and agent._raw_vx < -0.008
                     and o[0] > 0.60):
                 contact_offset = o[1] - o[2]   # ball_y − player_y
                 agent.interaction_model.observe(contact_offset)
+                agent.update_preferences_on_contact(
+                    o[2],
+                    vy_sign=int(np.sign(agent._raw_vy)),
+                    bounced=int(bounced_this_approach),
+                )
+                _contact_log = (
+                    1,
+                    float(o[1] - agent._last_landing_pred),   # contact_err
+                    int(np.sign(agent._raw_vy)),               # vy_sign
+                    int(bounced_this_approach),                # bounced
+                )
+                bounced_this_approach = False   # reset for next approach
             ball_state_4 = belief.mean[:4].copy()
 
             # Separate predict/correct to expose innovation
@@ -384,10 +423,13 @@ def main():
             belief.initialise(o)
             agent.reset_raw_velocity()
             prev_ball = None
+            bounced_this_approach = False   # new serve resets approach state
 
-# --- RESTORE EFE ACTION SELECTION ---
-        action, _ = agent.select_action_horizon(horizon=args.horizon, gamma=GAMMA)
-        
+        action, _ = agent.select_action_mppi(horizon=args.horizon,
+                                                 n_rollouts=args.rollouts,
+                                                 temperature=args.temperature,
+                                                 gamma=GAMMA)
+
         prev_opp_y  = opp_y
         prev_action = action
 
@@ -416,34 +458,50 @@ def main():
             f"{o[0]:.4f}", f"{o[1]:.4f}", f"{o[2]:.4f}", f"{o[3]:.4f}",
             f"{float(agent._raw_vx):.4f}", f"{float(agent._raw_vy):.4f}", f"{float(agent._last_landing_pred):.4f}",
             f"{float(agent.landing_bias):.4f}", f"{float(getattr(agent, 'confidence', 0.0)):.4f}", f"{float(getattr(agent, 'epistemic_w', 0.0)):.4f}",
-            action, reward
+            action, reward,
+            *_contact_log
         ])
         log_file.flush()
+        _contact_log = (0, 0.0, 0, 0)   # consumed; reset for next frame
 
         if reward == -1:
             fell_short, gap = agent.update_from_miss(o[1], o[2])
             metrics.push_miss(fell_short, gap, o[0])
             metrics.push_learn(agent.landing_bias, agent.placement)
 
+        if reward == 1:
+            agent.record_win()
+
         if terminated or truncated:
             agent.update_from_episode(score)
             metrics.push_learn(agent.landing_bias, agent.placement)
             metrics.push_score(score)
             saved_bias        = agent.landing_bias
+            saved_bias_dict   = agent._bias_dict.copy()
             saved_placement   = agent.placement
             saved_frames_near = agent.preferences._frames_near
             saved_urgency_ema = agent._fell_short_frames_ema
+            saved_long_term   = agent.long_term
+            lt = saved_long_term
+            lt_mag, lt_conf = lt.preferred_placement()
+            bias_summary = "  ".join(
+                f"{('UP' if k[0]<0 else 'DW' if k[0]>0 else 'FL')+('/B' if k[1] else '/D')}={v:+.3f}"
+                for k, v in sorted(saved_bias_dict.items()) if saved_bias_dict[k] != 0.0
+            ) or "all=0"
             print(f"  episode {episode}: {score:+.0f}"
-                  f"  bias={saved_bias:+.4f}"
+                  f"  bias[{bias_summary}]"
                   f"  placement={saved_placement:.4f}"
                   f"  frames_near={saved_frames_near}"
+                  f"  lt_misses={lt.n_aim}"
                   f"  (mean {np.mean(metrics.score_buf):+.1f})")
             save_state(saved_bias, saved_placement,
                        agent.interaction_model.counts,
                        ball_model if learn else None,
                        likelihood if learn else None,
                        frames_near=saved_frames_near,
-                       urgency_ema=saved_urgency_ema)
+                       urgency_ema=saved_urgency_ema,
+                       long_term=lt.to_dict(),
+                       bias_dict=saved_bias_dict)
             episode += 1
             score = 0
             obs, _ = env.reset()
@@ -454,12 +512,14 @@ def main():
             opp_tracker, belief, agent = make_episode_state(
                 ball_model, opp_model, likelihood)
             agent.landing_bias                = saved_bias
+            agent._bias_dict                  = saved_bias_dict.copy()
             agent.placement                   = saved_placement
             agent._score_history              = saved_history
             agent.interaction_model.alpha     = saved_interaction
             agent.preferences._frames_near    = saved_frames_near
             agent.preferences._frames_start   = saved_frames_near + 15
             agent._fell_short_frames_ema      = saved_urgency_ema
+            agent.long_term                   = saved_long_term
             o = extract_obs(obs)
             belief.initialise(o)
             prev_opp_y  = o[3]
