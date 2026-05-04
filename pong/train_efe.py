@@ -24,7 +24,7 @@ from generative_model import (
     BallTransitionVBGS, OpponentTransitionVBGS, LikelihoodModel,
     PriorPreferences, OpponentBeliefTracker, MixtureBeliefFilter
 )
-from efe_agent import EFEAgent
+from efe_agent import EFEAgent, LongTermStats
 
 gym.register_envs(ale_py)
 
@@ -46,20 +46,26 @@ def make_models():
             OpponentTransitionVBGS.from_file(),
             LikelihoodModel())
 
-def make_episode_state(ball_model, opp_model, likelihood):
+def make_episode_state(ball_model, opp_model, likelihood, long_term=None):
     """
     Create per-episode belief + agent that reference the shared models.
     A new OpponentBeliefTracker resets responsibility history but the
     underlying opp_model VBGS continues to accumulate data.
+
+    If `long_term` is provided, the agent's LongTermStats is replaced with
+    it so the rMM win-rate model accumulates across episodes.
     """
     opp_tracker = OpponentBeliefTracker(opp_model)
     belief      = MixtureBeliefFilter(ball_model, opp_tracker, likelihood)
     prefs       = PriorPreferences()
     agent       = EFEAgent(belief, likelihood, prefs)
+    if long_term is not None:
+        agent.long_term = long_term
     return opp_tracker, belief, agent
 
 
-def run_episode(env, ball_model, opp_model, likelihood, learn=True, landing_bias=0.0):
+def run_episode(env, ball_model, opp_model, likelihood,
+                learn=True, landing_bias=0.0, long_term=None):
     """
     Run one episode.
 
@@ -68,18 +74,23 @@ def run_episode(env, ball_model, opp_model, likelihood, learn=True, landing_bias
       4.1  likelihood.update_R(innovations) every R_BATCH frames.
     learn=False:
       Matches Phase 3.3 validate_efe.py behaviour exactly.
+
+    Contact + win/loss bookkeeping (rMM updates) is wired in unconditionally
+    — this is what populates the rMM and lets _choose_target_y use it.
     """
-    opp_tracker, belief, agent = make_episode_state(ball_model, opp_model, likelihood)
+    opp_tracker, belief, agent = make_episode_state(
+        ball_model, opp_model, likelihood, long_term=long_term)
     agent.landing_bias = landing_bias
     obs, _ = env.reset()
     o = extract_obs(obs)
     belief.initialise(o)
 
-    score           = 0
-    prev_opp_y      = o[3]
-    prev_action     = 0
-    prev_ball_state = None   # post-correct ball state from previous in-play frame
-    innovations     = []
+    score                 = 0
+    prev_opp_y            = o[3]
+    prev_action           = 0
+    prev_ball_state       = None   # post-correct ball state from previous in-play frame
+    innovations           = []
+    bounced_this_approach = False  # vy-bounce flag for the current approach
 
     while True:
         o            = extract_obs(obs)
@@ -87,7 +98,24 @@ def run_episode(env, ball_model, opp_model, likelihood, learn=True, landing_bias
         opp_y        = o[3]
 
         if ball_in_play:
+            prev_raw_vx = agent._raw_vx
             agent.update_raw_velocity(o[0], o[1])
+            if agent._last_vy_bounce:
+                bounced_this_approach = True
+
+            # Detect player-paddle contact: vx flips + to − near player side.
+            # Matches play_efe.py contact-detection logic exactly.
+            if (prev_raw_vx > 0.008 and agent._raw_vx < -0.008
+                    and o[0] > 0.60):
+                contact_offset = o[1] - o[2]
+                agent.interaction_model.observe(contact_offset)
+                agent.update_preferences_on_contact(
+                    o[2],
+                    vy_sign=int(np.sign(agent._raw_vy)),
+                    bounced=int(bounced_this_approach),
+                    opp_y=float(o[3]),
+                )
+                bounced_this_approach = False
 
             # Capture pre-predict state (matches original opp_tracker ordering)
             ball_state_4 = belief.mean[:4].copy()
@@ -117,6 +145,7 @@ def run_episode(env, ball_model, opp_model, likelihood, learn=True, landing_bias
             agent.reset_raw_velocity()
             prev_ball_state = None
             innovations.clear()
+            bounced_this_approach = False
 
         action, _ = agent.select_action_horizon(horizon=HORIZON, gamma=GAMMA)
 
@@ -127,6 +156,8 @@ def run_episode(env, ball_model, opp_model, likelihood, learn=True, landing_bias
 
         if reward == -1:
             agent.update_from_miss(o[1], o[2])
+        if reward == 1:
+            agent.record_win()
 
         if terminated or truncated:
             break
@@ -140,24 +171,33 @@ env = gym.make("ALE/Pong-v5", obs_type="ram", render_mode=None)
 print(f"Phase 4 — Online Learning  (H={HORIZON}, γ={GAMMA}, N={N_EPISODES})\n")
 
 # ── frozen baseline: fresh load each episode (reproduces Phase 3.3) ───────────
-print("── Frozen baseline (fresh models per episode) ──")
+# rMM / LongTermStats is shared across episodes in both arms — otherwise the
+# win-rate model never accumulates data and _choose_target_y has nothing to
+# query.  This matches play_efe.py (which persists long_term to disk).
+print("── Frozen baseline (fresh models per episode, shared LongTermStats) ──")
 frozen_scores, t0, bias = [], time.time(), 0.0
+lt_frozen = LongTermStats()
 for ep in range(N_EPISODES):
     bm, om, lk = make_models()
-    s, bias = run_episode(env, bm, om, lk, learn=False, landing_bias=bias)
+    s, bias = run_episode(env, bm, om, lk, learn=False,
+                          landing_bias=bias, long_term=lt_frozen)
     frozen_scores.append(s)
     print(f"  ep {ep+1:2d}: {s:+.0f}  bias={bias:+.4f}"
+          f"  K={lt_frozen.n_components()}  rallies={int(lt_frozen.evidence())}"
           f"  (mean {np.mean(frozen_scores):+.1f})")
 print(f"  → {time.time()-t0:.0f}s total\n")
 
 # ── online: shared models accumulate updates across all episodes ───────────────
-print("── Online learning (shared models across episodes) ──")
+print("── Online learning (shared models + LongTermStats across episodes) ──")
 bm_on, om_on, lk_on = make_models()
 online_scores, t0, bias = [], time.time(), 0.0
+lt_online = LongTermStats()
 for ep in range(N_EPISODES):
-    s, bias = run_episode(env, bm_on, om_on, lk_on, learn=True, landing_bias=bias)
+    s, bias = run_episode(env, bm_on, om_on, lk_on, learn=True,
+                          landing_bias=bias, long_term=lt_online)
     online_scores.append(s)
     print(f"  ep {ep+1:2d}: {s:+.0f}  bias={bias:+.4f}"
+          f"  K={lt_online.n_components()}  rallies={int(lt_online.evidence())}"
           f"  (mean {np.mean(online_scores):+.1f})")
 print(f"  → {time.time()-t0:.0f}s total\n")
 
