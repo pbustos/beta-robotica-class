@@ -486,15 +486,16 @@ def main():
             saved_placement   = agent.placement
             saved_frames_near = agent.preferences._frames_near
             saved_urgency_ema = agent._fell_short_frames_ema
-            saved_long_term   = agent.long_term
+            saved_long_term = agent.long_term
             lt = saved_long_term
-            evidence  = lt.evidence()
-            grid_mean = float((lt.a / (lt.a + lt.b)).mean())
+            comp_means = [c["a_won"] / (c["a_won"] + c["b_won"])
+                          for c in lt.rmm.components] or [0.5]
             print(f"  episode {episode}: {score:+.0f}"
                   f"  placement={saved_placement:.4f}"
                   f"  frames_near={saved_frames_near}"
-                  f"  rallies={int(evidence)}"
-                  f"  E[win]_grid={grid_mean:.3f}"
+                  f"  rallies={int(lt.evidence())}"
+                  f"  K_rmm={lt.n_components()}"
+                  f"  E[win]_avg={float(np.mean(comp_means)):.3f}"
                   f"  (mean {np.mean(metrics.score_buf):+.1f})")
             save_state(saved_bias, saved_placement,
                        agent.interaction_model.counts,

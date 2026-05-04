@@ -17,12 +17,184 @@ Prior preferences use an adaptive player-y precision:
 import numpy as np
 from generative_model import (MixtureBeliefFilter, LikelihoodModel,
                                PriorPreferences, PADDLE_DY,
-                               _PLAYER_X, _OPPONENT_X, InteractionModel)
+                               _PLAYER_X, _OPPONENT_X, InteractionModel, NIW)
 
 # Constant-velocity ball dynamics; paddle/opponent carry forward.
 _F = np.eye(6)
 _F[0, 2] = 1.0   # bx += vx
 _F[1, 3] = 1.0   # by += vy
+
+
+# ── Recurrent Mixture Model (Phase 1: continuous f → won) ─────────────────────
+
+class RMM:
+    """
+    AXIOM-style rMM, Phase 1: continuous features → rally outcome.
+
+    Each component k owns:
+        NIW(m_k, κ_k, ν_k, W_k)   — over continuous features f ∈ R^D_F
+        Beta(a_k, b_k)            — over rally outcome won ∈ {0, 1}
+        n_k                        — count of hard assignments to this cluster
+
+    Online streaming, hard assignment, deterministic CRP growth:
+        - if max_k log p(f | θ_k) < LL_THRESH  AND  K < K_MAX → spawn new
+        - else update argmax_k by NIW-CAVI M-step (one-sample)
+
+    Phase 2 will extend the per-component discrete heads to include
+    next_target_y_bin so EFE can do contact-to-contact lookahead.
+    """
+
+    D_F       = 2          # (target_y, opp_y_at_arrival)
+    K_MAX     = 16
+    LL_THRESH = -2.0       # log p(f|θ_k) below this → spawn new cluster
+                           # Also: above this no novelty bonus in UCB
+    KAPPA_0   = 0.5        # NIW pseudo-count on the mean
+    NU_0      = 4          # NIW dof (must be > D_F + 1 = 3)
+    W_0       = 0.0025     # NIW scale; predictive 1σ ≈ 0.05 in normalised units
+    A_0       = 2.0        # Beta prior wins
+    B_0       = 2.0        # Beta prior losses
+
+    def __init__(self):
+        self.components: list = []   # each: {niw, a_won, b_won, n}
+
+    # ── component lifecycle ──────────────────────────────────────────────────
+
+    def _spawn(self, f: np.ndarray) -> dict:
+        m = np.asarray(f, float).copy()
+        W = np.eye(self.D_F) * self.W_0
+        return {
+            "niw":   NIW(m, self.KAPPA_0, self.NU_0, W),
+            "a_won": self.A_0,
+            "b_won": self.B_0,
+            "n":     0,
+        }
+
+    def _log_lik(self, f: np.ndarray) -> np.ndarray:
+        """log p(f | θ_k) for each component, using the NIW Gaussian predictive."""
+        if not self.components:
+            return np.array([])
+        f = np.asarray(f, float)
+        return np.array([
+            c["niw"].marginal_log_likelihood(f, self.D_F)
+            for c in self.components
+        ])
+
+    def _responsibilities(self, f: np.ndarray) -> np.ndarray:
+        """Soft mixture weights r_k ∝ π_k · p(f|θ_k); π_k from sample counts."""
+        if not self.components:
+            return np.array([])
+        log_lik = self._log_lik(f)
+        n_vec   = np.array([c["n"] + 1.0 for c in self.components])
+        log_pi  = np.log(n_vec / n_vec.sum())
+        log_r   = log_pi + log_lik
+        log_r  -= log_r.max()
+        r       = np.exp(log_r)
+        return r / r.sum()
+
+    # ── learning ─────────────────────────────────────────────────────────────
+
+    def update(self, f: np.ndarray, won: bool):
+        """One streaming observation: hard-assign or spawn, then update."""
+        f = np.asarray(f, float)
+        log_lik = self._log_lik(f)
+
+        if (len(self.components) == 0
+                or (len(self.components) < self.K_MAX
+                    and log_lik.max() < self.LL_THRESH)):
+            self.components.append(self._spawn(f))
+            k = len(self.components) - 1
+        else:
+            # Hard MAP assignment: include mixing weight prior log π_k.
+            # Without this, a small under-populated cluster with wide
+            # predictive cov can outscore a tight well-attested one on
+            # far points (its Gaussian is flatter so log p(f|θ) decays
+            # less). This matches `_responsibilities`.
+            n_vec  = np.array([c["n"] + 1.0 for c in self.components])
+            log_pi = np.log(n_vec / n_vec.sum())
+            k      = int(np.argmax(log_pi + log_lik))
+
+        comp = self.components[k]
+        # NIW one-sample CAVI M-step: N=1, x_bar=f, S=0
+        comp["niw"] = comp["niw"].update(
+            N_k=1.0, x_bar=f, S_k=np.zeros((self.D_F, self.D_F)))
+        if won:
+            comp["a_won"] += 1.0
+        else:
+            comp["b_won"] += 1.0
+        comp["n"] += 1
+
+    # ── prediction ───────────────────────────────────────────────────────────
+
+    def expected_win(self, f: np.ndarray) -> float:
+        """E[won | f] under the soft component mixture."""
+        if not self.components:
+            return 0.5
+        r     = self._responsibilities(f)
+        means = np.array([c["a_won"] / (c["a_won"] + c["b_won"])
+                          for c in self.components])
+        return float(np.sum(r * means))
+
+    def ucb_score(self, f: np.ndarray, kappa: float = 0.3) -> float:
+        """
+        Bayes-UCB on the soft mixture:
+            score = E[won|f] + κ · sqrt(1 / effective_observed_mass)
+
+        Effective mass aggregates the prior-subtracted Beta count weighted by
+        responsibility.  When the query point is novel (max log p(f|θ_k) <
+        LL_THRESH), the responsibilities are unreliable — return the prior
+        with full κ-bonus so unexplored regions look attractive.
+        """
+        if not self.components:
+            return 0.5 + kappa
+        log_lik = self._log_lik(f)
+        if log_lik.max() < self.LL_THRESH:
+            return 0.5 + kappa
+        r     = self._responsibilities(f)
+        means = np.array([c["a_won"] / (c["a_won"] + c["b_won"])
+                          for c in self.components])
+        n_eff = np.array([
+            (c["a_won"] - self.A_0) + (c["b_won"] - self.B_0)
+            for c in self.components])
+        weighted_n = float(np.sum(r * n_eff))
+        bonus = kappa * np.sqrt(1.0 / max(weighted_n, 1.0))
+        return float(np.sum(r * means)) + bonus
+
+    # ── diagnostics / persistence ────────────────────────────────────────────
+
+    def n_components(self) -> int:
+        return len(self.components)
+
+    def total_observed(self) -> float:
+        return float(sum(c["n"] for c in self.components))
+
+    def to_dict(self) -> dict:
+        return {
+            "components": [
+                {"m":     c["niw"].m.tolist(),
+                 "kappa": float(c["niw"].kappa),
+                 "nu":    float(c["niw"].nu),
+                 "W":     c["niw"].W.tolist(),
+                 "a_won": float(c["a_won"]),
+                 "b_won": float(c["b_won"]),
+                 "n":     int(c["n"])}
+                for c in self.components
+            ]
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RMM":
+        rmm = cls()
+        for c in d.get("components", []):
+            rmm.components.append({
+                "niw":   NIW(np.array(c["m"], float),
+                              float(c["kappa"]),
+                              float(c["nu"]),
+                              np.array(c["W"], float)),
+                "a_won": float(c["a_won"]),
+                "b_won": float(c["b_won"]),
+                "n":     int(c["n"]),
+            })
+        return rmm
 
 
 # ── Long-term cross-session learning (rMM-inspired) ───────────────────────────
@@ -31,17 +203,14 @@ class LongTermStats:
     """
     Persistent sufficient-statistics accumulator — never decays.
 
-    AXIOM-rMM-inspired 2D Beta win-rate grid over (target_y, opp_y_at_arrival).
-    Each rally outcome (won/lost) updates one cell.  At placement time the
-    agent reads the row corresponding to the predicted opp_y, Thompson-samples
-    a θ per target_y bin, and aims at the argmax bin (within paddle reach).
+    Win-rate predictor: `RMM` over continuous (target_y, opp_y_at_arrival)
+    features with a Beta(won) head per cluster.  Each rally outcome updates
+    the rMM via one CAVI step.  Placement-choice queries the rMM via UCB.
 
-    Per-(vy_sign, bounced) aim calibrator is retained for the existing landing
-    bias code path — orthogonal concern.
+    Per-(vy_sign, bounced) aim calibrator is retained for the existing
+    landing-bias code path — orthogonal concern, kept for backward compat.
     """
 
-    K_T       = 12   # target_y bins
-    K_O       = 8    # opp_y_at_arrival bins
     BIAS_KEYS = [(-1, 0), (-1, 1), (0, 0), (0, 1), (1, 0), (1, 1)]
 
     def __init__(self):
@@ -49,23 +218,8 @@ class LongTermStats:
         self._n_aim   = {k: 0   for k in self.BIAS_KEYS}
         self._sum_err = {k: 0.0 for k in self.BIAS_KEYS}
         self.n_aim = 0
-        # 2D Beta grid: a[t, o], b[t, o]; uniform prior (2, 2)
-        self.a = np.full((self.K_T, self.K_O), 2.0)
-        self.b = np.full((self.K_T, self.K_O), 2.0)
-
-    # ── helpers ──────────────────────────────────────────────────────────────
-
-    @classmethod
-    def _t_bin(cls, target_y: float) -> int:
-        return int(np.clip(float(target_y) * cls.K_T, 0, cls.K_T - 1))
-
-    @classmethod
-    def _o_bin(cls, opp_y: float) -> int:
-        return int(np.clip(float(opp_y) * cls.K_O, 0, cls.K_O - 1))
-
-    @classmethod
-    def t_bin_centers(cls) -> np.ndarray:
-        return (np.arange(cls.K_T) + 0.5) / cls.K_T
+        # Win-rate rMM
+        self.rmm = RMM()
 
     # ── update interface ──────────────────────────────────────────────────────
 
@@ -77,13 +231,9 @@ class LongTermStats:
             self._sum_err[key] += float(err)
 
     def record_rally(self, target_y: float, opp_y: float, won: bool):
-        """Update the (target_y, opp_y_at_arrival) cell with the rally outcome."""
-        t = self._t_bin(target_y)
-        o = self._o_bin(opp_y)
-        if won:
-            self.a[t, o] += 1.0
-        else:
-            self.b[t, o] += 1.0
+        """Stream one rally outcome into the rMM."""
+        f = np.array([float(target_y), float(opp_y)])
+        self.rmm.update(f, bool(won))
 
     # ── read interface ────────────────────────────────────────────────────────
 
@@ -99,58 +249,33 @@ class LongTermStats:
         return min(self._n_aim[key] / 80.0, 0.85)
 
     def expected_win(self, target_y: float, opp_y: float) -> float:
-        """E[θ] = a/(a+b) at the corresponding cell."""
-        t, o = self._t_bin(target_y), self._o_bin(opp_y)
-        return float(self.a[t, o] / (self.a[t, o] + self.b[t, o]))
+        return self.rmm.expected_win(np.array([float(target_y), float(opp_y)]))
 
-    def thompson_row(self, opp_y: float, rng: np.random.Generator) -> np.ndarray:
-        """One Thompson sample θ_t ~ Beta(a[t,o], b[t,o]) for every target bin."""
-        o = self._o_bin(opp_y)
-        return rng.beta(self.a[:, o], self.b[:, o])
-
-    def ucb_row(self, opp_y: float, kappa: float = 0.3) -> np.ndarray:
-        """
-        Bayes-UCB score for every target bin in the predicted opp_y row:
-            score_t = E[θ] + κ · sqrt(1 / (a + b))
-
-        Greedy argmax on this score is more stable than Thompson — cells with
-        confident bad posteriors stay avoided, while uncertain cells (small
-        a+b) get an exploration bonus that decays as data accumulates.
-        """
-        o = self._o_bin(opp_y)
-        a = self.a[:, o]
-        b = self.b[:, o]
-        n = a + b
-        mean  = a / n
-        width = np.sqrt(1.0 / n)
-        return mean + kappa * width
+    def ucb_score(self, target_y: float, opp_y: float,
+                   kappa: float = 0.3) -> float:
+        return self.rmm.ucb_score(np.array([float(target_y), float(opp_y)]),
+                                    kappa=kappa)
 
     def evidence(self) -> float:
-        """Total observed rallies across the whole grid."""
-        return float(self.a.sum() + self.b.sum() - 4.0 * self.K_T * self.K_O)
+        return self.rmm.total_observed()
+
+    def n_components(self) -> int:
+        return self.rmm.n_components()
 
     # ── persistence ───────────────────────────────────────────────────────────
 
     def to_dict(self):
         return {
-            "n_aim":   self.n_aim,
-            "n_aim_k": {str(k): v for k, v in self._n_aim.items()},
+            "n_aim":     self.n_aim,
+            "n_aim_k":   {str(k): v for k, v in self._n_aim.items()},
             "sum_err_k": {str(k): v for k, v in self._sum_err.items()},
-            "a": self.a.tolist(),
-            "b": self.b.tolist(),
-            "K_T": self.K_T,
-            "K_O": self.K_O,
+            "rmm":       self.rmm.to_dict(),
         }
 
     @classmethod
     def from_dict(cls, d):
         lt = cls()
         lt.n_aim = int(d.get("n_aim", 0))
-        a = np.asarray(d.get("a", lt.a))
-        b = np.asarray(d.get("b", lt.b))
-        # Only adopt persisted grid if shape matches; else keep fresh prior.
-        if a.shape == (cls.K_T, cls.K_O) and b.shape == (cls.K_T, cls.K_O):
-            lt.a, lt.b = a, b
         for raw_k, v in d.get("n_aim_k", {}).items():
             k = tuple(int(x) for x in raw_k.strip("()").split(", "))
             if k in lt._n_aim:
@@ -159,6 +284,43 @@ class LongTermStats:
             k = tuple(int(x) for x in raw_k.strip("()").split(", "))
             if k in lt._sum_err:
                 lt._sum_err[k] = float(v)
+        if "rmm" in d:
+            lt.rmm = RMM.from_dict(d["rmm"])
+        elif "a" in d and "b" in d:
+            # Legacy 2D Beta grid → preserve per-cell Beta heads exactly.
+            # Top-K_MAX cells (by observed mass) each become a dedicated cluster
+            # centred at the cell's centre, with the cell's (a, b) Beta directly
+            # transferred. Remaining cells (if any) replay into nearest cluster.
+            a = np.asarray(d["a"], float)
+            b = np.asarray(d["b"], float)
+            K_T, K_O = a.shape
+            cells = []
+            for ti in range(K_T):
+                for oi in range(K_O):
+                    n_won  = max(0.0, a[ti, oi] - 2.0)
+                    n_lost = max(0.0, b[ti, oi] - 2.0)
+                    if n_won + n_lost > 0:
+                        cells.append((ti, oi, n_won, n_lost, n_won + n_lost))
+            cells.sort(key=lambda x: -x[4])
+
+            for ti, oi, n_won, n_lost, n_tot in cells[:RMM.K_MAX]:
+                m = np.array([(ti + 0.5) / K_T, (oi + 0.5) / K_O])
+                W = np.eye(RMM.D_F) * RMM.W_0
+                lt.rmm.components.append({
+                    "niw":   NIW(m,
+                                  RMM.KAPPA_0 + n_tot,
+                                  RMM.NU_0 + n_tot,
+                                  W),
+                    "a_won": RMM.A_0 + n_won,
+                    "b_won": RMM.B_0 + n_lost,
+                    "n":     int(round(n_tot)),
+                })
+            for ti, oi, n_won, n_lost, _ in cells[RMM.K_MAX:]:
+                f = np.array([(ti + 0.5) / K_T, (oi + 0.5) / K_O])
+                for _ in range(int(round(n_won))):
+                    lt.rmm.update(f, True)
+                for _ in range(int(round(n_lost))):
+                    lt.rmm.update(f, False)
         return lt
 
 
@@ -487,29 +649,27 @@ class EFEAgent:
     # Sigma[by,by] ≈ 0.10  (fresh/lost)   → confidence ≈ 0.17
     _COV_K = 30.0
 
+    # Number of candidate target_y points scanned within the reach window.
+    _N_TARGET_CANDIDATES = 9
+
     def _choose_target_y(self, landing_y: float, predicted_opp_y: float,
                           eff_max: float) -> float:
         """
-        Pick target_y from the 2D Beta grid row at predicted opp_y by
-        Bayes-UCB argmax, restricted to bins reachable within ±eff_max of the
-        landing prediction.  Returns landing_y if no bin is reachable.
+        Pick target_y by Bayes-UCB argmax over a discrete sweep of candidates
+        within the reach window [landing_y − eff_max, landing_y + eff_max],
+        scored by the rMM via `long_term.ucb_score(t, opp)`.
         """
         if eff_max < 1e-3:
             return float(np.clip(landing_y, 0.0, 1.0))
 
-        scores  = self.long_term.ucb_row(predicted_opp_y, kappa=self._ucb_kappa)
-        centers = self.long_term.t_bin_centers()
-        bin_w   = 1.0 / self.long_term.K_T
-        # Reachable: bin centre within (eff_max + half-bin) of landing.
-        reach_window = eff_max + 0.5 * bin_w
-        reachable = np.abs(centers - landing_y) <= reach_window
-        if not reachable.any():
-            return float(np.clip(landing_y, 0.0, 1.0))
-
-        masked = np.where(reachable, scores, -np.inf)
-        best   = int(np.argmax(masked))
-        target = float(np.clip(centers[best], landing_y - eff_max, landing_y + eff_max))
-        return float(np.clip(target, 0.0, 1.0))
+        candidates = np.linspace(landing_y - eff_max, landing_y + eff_max,
+                                  self._N_TARGET_CANDIDATES)
+        candidates = np.clip(candidates, 0.0, 1.0)
+        scores = np.array([
+            self.long_term.ucb_score(t, predicted_opp_y, kappa=self._ucb_kappa)
+            for t in candidates
+        ])
+        return float(candidates[int(np.argmax(scores))])
 
     def _get_preferences(self):
         """
