@@ -714,6 +714,7 @@ This table tracks which phases of the full Active Inference Pong system have bee
 | 4.1 | Online R estimation from innovations | ✅ |
 | 4.2 | Online ball VBGS from live transitions | ✅ |
 | 4.3 | Online opponent model (active since 2.3) | ✅ |
+| 4.4 | Win-rate rMM (NIW + Beta head; replaces 2-D Beta grid) | ✅ |
 | 5 | MPPI receding-horizon planner + greedy nominal | ✅ |
 | 6 | Cross-session Bayesian aim calibration (LongTermStats) | ✅ |
 | 7 | 100-episode evaluation vs rule-based and RL baseline | — |
@@ -870,47 +871,109 @@ Time constant: $\tau = 1/(1-\alpha) \approx 3$ frames.
 
 ## 17. Cross-Session Learning — LongTermStats (Phase 6)
 
-This section introduces persistent memory that survives between Python sessions. The agent accumulates Bayesian sufficient statistics for two quantities: the systematic aim bias (mean miss offset) and the win-rate per landing zone. Both are serialised to disk and loaded at startup. Over hundreds of rallies the aim calibrator suppresses systematic errors in the intercept prediction, while the win-rate grid steers placement toward zones where the agent historically scores. A trust schedule ensures early noisy estimates do not override the faster session-level EMA.
+This section introduces persistent memory that survives between Python sessions. The agent accumulates Bayesian sufficient statistics for two quantities: the systematic aim bias (mean miss offset, §17.1) and a *win-rate model* indexed by the strategic context $(y^*,\; o_y^\text{arr})$ — where the ball was aimed and where the opponent was when it arrived (§17.2). Both are serialised to disk and loaded at startup. The win-rate model is consumed at placement time to steer the intercept target toward zones where the agent has historically scored.
 
-### 17.1 Structure
+The win-rate model was originally a fixed-resolution 2-D Beta grid (12 × 8 cells over $(y^*,\; o_y^\text{arr})$). Phase 4.4 replaced it with a **continuous-feature recurrent Mixture Model (rMM)** in the AXIOM style — a Bayesian mixture that places NIW components and a per-component Beta(won) head over the same 2-D feature space, growing the cluster count adaptively. Sections 17.2–17.4 describe the rMM and its consumers.
 
-`LongTermStats` accumulates sufficient statistics across all sessions, serialised to `models/agent_state.pkl`. Two components:
+### 17.1 Bayesian aim calibrator
 
-**Bayesian aim calibrator:** tracks the systematic aim error $\epsilon = b_y^\text{miss} - y^*_\text{pred}$ at non-fell-short misses.
+Tracks the systematic aim error $\epsilon = b_y^\text{miss} - y^*_\text{pred}$ at non-fell-short misses. Stored as **six independent EMAs** keyed by $(\operatorname{sgn}(\dot b_y),\; \text{bounced} \in \{0,1\})$ — the trajectory class at the most recent paddle contact — because the systematic error differs across these regimes.
 
-$$\hat\mu_\epsilon = \frac{\sum_{i=1}^n \epsilon_i}{n} \quad\text{(posterior mean aim bias)}$$
+$$\hat\mu_\epsilon^{(k)} = \frac{\sum_{i=1}^{n_k} \epsilon_i^{(k)}}{n_k} \quad\text{(posterior mean aim bias for key } k\text{)}$$
 
-$$\text{trust}(n) = \min\!\left(\frac{n}{80},\; 0.85\right)$$
+$$\text{trust}(n_k) = \min\!\left(\frac{n_k}{80},\; 0.85\right)$$
 
-This is blended with a per-episode EMA:
+Blended with a per-episode EMA:
 
-$$\text{landing\_bias} \leftarrow \text{trust}(n) \cdot \hat\mu_\epsilon + (1 - \text{trust}(n)) \cdot \text{bias}_\text{EMA}$$
+$$\text{landing\_bias}^{(k)} \leftarrow \text{trust}(n_k) \cdot \hat\mu_\epsilon^{(k)} + (1 - \text{trust}(n_k)) \cdot \text{bias}_\text{EMA}^{(k)}$$
 
 The cap at 0.85 ensures the EMA (fast) can always override the long-term estimate by 15% — protecting against distribution shift.
 
-**Beta win-rate grid:** $K = 12$ equal-width bins over $y^* \in [0,1]$. Each rally updates:
+### 17.2 Win-rate rMM
 
-$$\text{won: } \alpha_k \mathrel{+}= 1, \qquad \text{lost: } \beta_k \mathrel{+}= 1$$
+The rMM models the joint distribution $p(\mathbf{f},\, \text{won})$ where $\mathbf{f} = [y^*,\; o_y^\text{arr}] \in [0,1]^2$ is the strategic context at ball-paddle contact and $\text{won} \in \{0, 1\}$ is the outcome of the rally that follows.
 
-Posterior mean win rate per bin:
+**Component structure.** Each cluster $k$ owns:
 
-$$\hat W_k = \frac{\alpha_k}{\alpha_k + \beta_k}, \qquad \alpha_k, \beta_k \ge 2 \text{ (uniform prior)}$$
+- An NIW prior over the continuous features $\mathbf{f}$:
 
-3-bin smoothing reveals the best target zone:
+$$q(\mu_k, \Lambda_k) = \mathcal{NIW}(\mathbf{m}_k,\; \kappa_k,\; \nu_k,\; \mathbf{W}_k)$$
 
-$$\hat W^\text{smooth}_k = \sum_{j} [0.25, 0.5, 0.25]_{j-k} \cdot \hat W_j$$
+- A Beta(won) head:
 
-### 17.2 Preferred placement from win-rate grid
+$$q(\theta_k) = \text{Beta}(\alpha_k,\; \beta_k)$$
 
-$$k^* = \arg\max_k \hat W^\text{smooth}_k, \qquad y^*_{k^*} = \frac{k^* + 0.5}{K}$$
+- A hard-assignment count $n_k$.
 
-$$p_\text{lt} = \operatorname{clip}\!\left(|y^*_{k^*} - 0.5| \cdot 0.6,\; 0,\; 0.07\right)$$
+**Hyperparameters.**
 
-Confidence grows with evidence (total rallies above prior):
+| Symbol | Value | Meaning |
+|--------|-------|---------|
+| $D_F$ | 2 | feature dimension $(y^*, o_y^\text{arr})$ |
+| $K_\text{max}$ | 16 | maximum components |
+| $\ell_\text{thresh}$ | $-2.0$ | spawn threshold on $\log p(\mathbf{f}\mid \theta_k)$ |
+| $\kappa_0$ | 0.5 | NIW pseudo-count |
+| $\nu_0$ | 4 | NIW dof (must be $> D_F + 1$) |
+| $W_0$ | 0.0025 $\mathbf{I}$ | NIW scale → predictive $1\sigma \approx 0.05$ in normalised units |
+| $\alpha_0,\,\beta_0$ | 2.0 | Beta prior (uniform) |
 
-$$c_\text{lt} = \operatorname{clip}\!\left(\frac{(\sum_k \alpha_k + \beta_k) - 4K}{200},\; 0,\; 0.8\right)$$
+**Streaming update (one observation $(\mathbf{f},\, \text{won})$).** Hard assignment, deterministic CRP-style growth:
 
-Only meaningful after $\sim$200 rallies; before that, session-level score trend drives placement.
+1. Compute the per-component NIW Gaussian-marginal log-likelihood $\ell_k = \log p(\mathbf{f}\mid \theta_k)$ for $k = 1, \ldots, K$.
+2. **Spawn rule:** if $K = 0$, or if $K < K_\text{max}$ and $\max_k \ell_k < \ell_\text{thresh}$, append a new component with $\mathbf{m} = \mathbf{f}$, $\kappa_0, \nu_0, W_0$, $\alpha_0, \beta_0$, $n = 0$. Set $k^* \leftarrow K + 1$.
+3. Otherwise hard-assign:
+
+$$k^* = \arg\max_k\; \log\hat\pi_k + \ell_k, \qquad \hat\pi_k = \frac{n_k + 1}{\sum_j (n_j + 1)}$$
+
+4. Apply one-sample NIW M-step (§2.2 with $N_k=1,\, \bar{\mathbf{x}}_k = \mathbf{f},\, S_k = 0$) to component $k^*$, then update its Beta head:
+
+$$\alpha_{k^*} \mathrel{+}= \mathbb{1}[\text{won}=1], \qquad \beta_{k^*} \mathrel{+}= \mathbb{1}[\text{won}=0], \qquad n_{k^*} \mathrel{+}= 1$$
+
+The mixing-weight prior $\log\hat\pi_k$ in step 3 is essential: an under-populated component with wide predictive covariance can otherwise outscore a tight, well-attested one on far points (its Gaussian decays more slowly), pulling assignments away from the true cluster.
+
+**Soft responsibilities for prediction.** Given a query $\mathbf{f}$:
+
+$$r_k(\mathbf{f}) = \frac{\hat\pi_k\, \exp(\ell_k)}{\sum_j \hat\pi_j\, \exp(\ell_j)}$$
+
+### 17.3 Bayes-UCB scoring
+
+When the agent must choose a target $y$, it queries the rMM at $\mathbf{f} = [y,\; \hat o_y^\text{arr}]$ where $\hat o_y^\text{arr}$ is the predicted opponent y at ball arrival.
+
+**Expected win probability:**
+
+$$\mathbb{E}[\text{won} \mid \mathbf{f}] = \sum_k r_k(\mathbf{f})\, \frac{\alpha_k}{\alpha_k + \beta_k}$$
+
+**Exploration bonus (Bayes-UCB):**
+
+$$U(\mathbf{f}) = \mathbb{E}[\text{won}\mid \mathbf{f}] + \kappa\, \sqrt{\frac{1}{\max(n_\text{eff}(\mathbf{f}),\, 1)}}$$
+
+with effective observed mass
+
+$$n_\text{eff}(\mathbf{f}) = \sum_k r_k(\mathbf{f})\,\bigl((\alpha_k - \alpha_0) + (\beta_k - \beta_0)\bigr)$$
+
+and $\kappa = 0.3$. Subtracting the prior $(\alpha_0, \beta_0)$ inside $n_\text{eff}$ counts only *real* observations — fresh clusters with only the prior get a full $\kappa$ bonus.
+
+**Novelty fallback.** If $\max_k \ell_k < \ell_\text{thresh}$ at query time, the responsibilities are unreliable (the query lies outside any observed cluster). In that case $U(\mathbf{f}) \leftarrow 0.5 + \kappa$, ensuring unexplored regions look attractive.
+
+### 17.4 Target selection via UCB sweep
+
+The intercept y target is chosen by Bayes-UCB argmax over a discrete sweep of candidates within the agent's reach window:
+
+$$y^*_{\text{cand},i} = y_\text{land} + \frac{2(i-1) - (N-1)}{N - 1}\,\Delta_\text{reach}, \qquad i = 1, \ldots, N$$
+
+with $N = 9$ candidates and $\Delta_\text{reach} = $ paddle-step budget over the remaining frames-to-arrival, clipped to $[0, 1]$.
+
+$$y^* = y_{\text{cand},\, i^*}, \qquad i^* = \arg\max_i\; U([y_{\text{cand},i},\, \hat o_y^\text{arr}])$$
+
+If $\Delta_\text{reach} < 10^{-3}$ (paddle has no budget left) the sweep is skipped and $y^* = y_\text{land}$.
+
+This replaces the original argmax-over-fixed-bins lookup. Because the rMM lives in a continuous feature space, the candidates are placed wherever the reach window is — no quantisation artefact at bin edges, and no need for cross-bin smoothing.
+
+### 17.5 Persistence and migration
+
+`LongTermStats` is serialised inside `models/agent_state.pkl` at every episode end and on window-close in `play_efe.py`. The serialised form contains the aim-calibrator EMAs (per key) and the rMM components (each with $\mathbf{m},\, \kappa,\, \nu,\, \mathbf{W},\, \alpha,\, \beta,\, n$).
+
+Legacy state files (Phase 6 era, with the 2-D Beta grid) are auto-migrated on load: the top $K_\text{max}$ cells by observed mass each become a dedicated rMM cluster centred at the cell's centre, with the cell's $(\alpha, \beta)$ Beta head transferred directly and NIW counts incremented by the cell mass. Remaining cells are replayed observation-by-observation into the nearest existing cluster. A 1299-rally legacy grid migrates cleanly in ${<}1$ s, saturating $K = K_\text{max}$.
 
 ### 17.3 Episode-level placement update
 
