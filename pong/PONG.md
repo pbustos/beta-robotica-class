@@ -2,9 +2,117 @@
 
 > **Current implementation:** MPPI receding-horizon planner with greedy nominal, adaptive EMA target smoothing, urgency-scaled preference covariance, opponent-aware placement, and cross-session Bayesian aim calibration.
 
+---
+
+## 0. Problem and architecture
+
+### 0.1 Problem description
+
+**ALE/Pong-v5** is a two-player video game in which each player controls a vertical paddle. The right player (agent) must intercept a moving ball with its paddle and return it past the left opponent's paddle to score. The first to reach 21 points wins; an episode ends when either player reaches that score.
+
+The agent reads four bytes directly from the Atari 2600 RAM each frame:
+
+| Signal | RAM byte | Range |
+|--------|----------|-------|
+| Ball x | 49 | 0–255 |
+| Ball y | 54 | 0–255 |
+| Player paddle y | 51 | 0–255 |
+| Opponent paddle y | 50 | 0–255 |
+
+All values are normalised to $[0,1]$. The **ball velocity** is not available in any single frame — it is a latent variable that must be inferred from the sequence of observations.
+
+**What makes this hard:**
+
+- *Latent dynamics.* Neither velocity nor acceleration is directly observable. The agent must maintain a probabilistic belief over the full 6D state $[b_x, b_y, \dot b_x, \dot b_y, p_y, o_y]$ and propagate it forward in time.
+- *Non-linear bounce dynamics.* The ball reflects off the top and bottom walls (sign flip in $\dot b_y$) and off both paddles (sign flip in $\dot b_x$). A single Gaussian cannot represent the bimodal predictive distribution at bounce events.
+- *Adversarial opponent.* The opponent tracks the ball reactively. Winning requires not just intercepting the ball but placing the return where the opponent cannot reach it.
+- *Tight timing.* The paddle moves $\approx 0.060$ normalised units per frame (frame-skip = 4). Missing a rally by one paddle-step is enough to lose the point.
+
+**What the agent does NOT use:**
+
+- No reward signal, no policy network, no value function.
+- No replay buffer, no gradient descent, no neural networks.
+- No hand-crafted game-specific heuristics beyond the choice of RAM bytes.
+
+**What the agent DOES use:**
+
+The agent is built on **Active Inference** (Friston et al.) — a framework in which behaviour emerges from minimising a single objective, the **Expected Free Energy** (EFE). At each frame the agent asks: *which action leads to a future that best matches my preferred observations?* Preferences encode the goal (intercept the ball, put it past the opponent); the world model (VBGS) encodes how the game evolves; MPPI searches for the action sequence that minimises EFE over a 15-frame horizon.
+
+**Current performance** (frozen VBGS, rMM win-rate model, 30 episodes):
+
+| Agent | Mean score |
+|-------|-----------|
+| Rule-based (track ball y) | −14.4 |
+| EFE H=3, intercept target | −6.6 |
+| EFE frozen, rMM, 30 eps | −7.4 |
+
+The EFE agent beats the rule-based baseline by **+7 points** on average and regularly wins individual episodes.
+
+---
+
+### 0.2 Block diagram
+
+```mermaid
+flowchart TD
+    ENV["**ALE / Pong-v5**\nAtari RAM, frame-skip = 4"]
+
+    subgraph OBS["Observation"]
+        RAM["o_t = [bx, by, py, oy] / 255\n4D normalised"]
+    end
+
+    subgraph WORLD["World model  (generative_model.py)"]
+        BVBGS["BallTransitionVBGS\nK=3 NIW components\nfree-flight · wall-bounce · paddle-bounce"]
+        OVBGS["OpponentTransitionVBGS\nK=2 NIW components"]
+        LM["LikelihoodModel\no = H·s + ε,  R = 1e-4·I"]
+        BF["MixtureBeliefFilter\nK=2 Kalman (bounce-aware)\npredict → correct each frame"]
+        OBT["OpponentBeliefTracker\nonline VBGS update per frame"]
+    end
+
+    subgraph PREF["Preferences  (generative_model.py)"]
+        LP["_predict_ball_landing\nforward-simulate to player_x=0.740"]
+        PP["PriorPreferences\no* = [0.15, ·, y_land+δ, 0.10]\nC = diag(σ²) urgency-scaled"]
+    end
+
+    subgraph MEMORY["Cross-session memory  (efe_agent.py)"]
+        AIM["Aim calibrator\n6 EMAs keyed by (vy_sign, bounced)"]
+        RMM["Win-rate rMM\nNIW + Beta head · K≤16 clusters\nBayes-UCB target selection"]
+    end
+
+    subgraph AGENT["EFE Agent  (efe_agent.py)"]
+        MPPI["MPPI planner\nH=15 frames · N=128 rollouts\nVBGS step-0 + linear steps 1..H-1\nsoft-min over rollout costs"]
+    end
+
+    ENV -->|"RAM bytes"| RAM
+    RAM -->|"o_t"| BF
+    BVBGS -->|"predict p(s'|s,a)"| BF
+    LM -->|"correct p(o|s)"| BF
+    OBT -->|"ô_y"| BF
+    OVBGS --- OBT
+
+    BF -->|"μ_t, Σ_t"| LP
+    BF -->|"μ_t, Σ_t"| MPPI
+    LP -->|"y_land"| PP
+    AIM -->|"landing_bias"| PP
+    RMM -->|"UCB argmax → y*"| PP
+    PP -->|"o*, C⁻¹"| MPPI
+
+    MPPI -->|"a_t ∈ {NOOP, UP, DOWN}"| ENV
+
+    BF -.->|"online CAVI step"| BVBGS
+    BF -.->|"innovation → EMA"| LM
+    ENV -.->|"contact → record_win/miss"| RMM
+    ENV -.->|"miss error"| AIM
+```
+
+**Signal flow (solid arrows):** each frame, the environment emits a RAM observation → the Belief Filter predicts and corrects to produce $(\mu_t, \Sigma_t)$ → the MPPI planner evaluates 128 perturbed rollouts against the preference target → the lowest-EFE first action is sent back to the environment.
+
+**Learning flow (dashed arrows):** the VBGS and likelihood noise $R$ are refined online from live transitions and Kalman innovations; the win-rate rMM and aim calibrator accumulate rally outcomes across sessions.
+
+---
+
 ## 1. State and observations
 
-This section defines the raw signals the agent reads from the Atari RAM and the minimal state representation built on top of them. Getting the state space right determines what the generative model needs to explain — too little and the agent is blind to important dynamics; too much and learning slows without benefit.
+The agent reads a small number of bytes from the Atari 2600 RAM on every simulated frame, rather than processing raw pixel images. This section defines those signals and the 6D latent state built on top of them. Getting the state space right determines what the generative model must explain — too few dimensions and the agent is blind to critical dynamics; too many and fitting slows without benefit. The key design constraint here is that **velocities are not available** from a single frame: they must be inferred by the belief filter (§9) from the sequence of positions. This is why the state is strictly larger than the observation — the observation tells us where things are, but the state also encodes how fast they are moving.
 
 All RAM bytes are normalised to $[0,1]$ by dividing by 255.
 
@@ -35,11 +143,13 @@ $$
 | $p_y$  | 51        | Player paddle y (right) |
 | $o_y$  | 50        | Opponent paddle y (left) |
 
+The four observable positions combine with two latent velocities to form the **full 6D state** $s = [b_x,\, b_y,\, \dot b_x,\, \dot b_y,\, p_y,\, o_y]^\top$ used throughout §8–§9. The transition models (§5) learn to predict $s_{t+1}$ from $s_t$; the likelihood model (§8) connects the 6D state back to the 4D observation via the $H$ matrix.
+
 ---
 
 ## 2. Normal-Inverse-Wishart prior
 
-This section presents the conjugate prior placed over the parameters of each Gaussian mixture component. The Normal-Inverse-Wishart (NIW) family is chosen because it is conjugate to the Gaussian likelihood, enabling closed-form Bayesian updates without sampling. All subsequent CAVI update equations in the VBGS (§3) derive from this prior.
+Every component of the mixture models in this system — the VBGS transition model (§3), the win-rate rMM (§17) — stores its sufficient statistics as a Normal-Inverse-Wishart (NIW) distribution over the component's mean and precision matrix. The NIW family is the **conjugate prior** to the multivariate Gaussian likelihood: this means that after observing data, the posterior has the same parametric form as the prior, and the update reduces to simple arithmetic on four numbers $(\mathbf{m}_k, \kappa_k, \nu_k, \mathbf{W}_k)$ rather than an integral. Conjugacy is the reason the whole system is gradient-free — every learning step is a closed-form update, not a gradient descent step. This section derives the two quantities used repeatedly in CAVI: the expected log-determinant of the precision (used in the E-step responsibilities) and the expected Mahalanobis distance (used to score how well a data point fits each component).
 
 Each mixture component $k$ has a Gaussian likelihood with unknown mean $\mu_k$ and precision $\Lambda_k$.  
 The conjugate prior is the Normal-Inverse-Wishart (NIW):
@@ -114,11 +224,15 @@ $$
 
 The two scales differ by the factor $\frac{(\kappa_k+1)(\nu_k-d-1)}{\kappa_k(\nu_k-d+1)}$, which deviates non-trivially from 1 when component counts $N_k$ are small (early training). Both approximations improve as $N_k \to \infty$: the mean-field bias vanishes and the Student-$t$ converges to a Gaussian, so the two scales converge.
 
+The NIW posterior update (§2.2) is called at two places in the system: the batch CAVI M-step during pretraining (§3.2), and the single-sample online update during play (§6, §17.2). In both cases the same four equations apply — only the effective count $N_k$ differs (batch vs 1).
+
 ---
 
 ## 3. Variational Bayesian Gaussian Sum (VBGS)
 
-This section specifies the core probabilistic model used for all transition and likelihood functions in the agent. The VBGS is a joint Gaussian Mixture Model over input-output pairs, fitted with Coordinate Ascent Variational Inference (CAVI). It serves as the agent's internal "physics engine": given the current state, it predicts the next state as a mixture of Gaussians, capturing qualitatively distinct dynamical regimes (free flight, wall bounce, paddle bounce) in separate components.
+The VBGS is the agent's probabilistic "physics engine". It is a **joint Gaussian Mixture Model** trained over input-output pairs $(s_t, s_{t+1})$: by fitting a mixture over the joint space, each component captures a distinct dynamical regime (free flight, wall bounce, paddle bounce), and the conditional distribution $p(s_{t+1} \mid s_t)$ is recovered analytically by Gaussian conditioning (§4). This is the model used in the predict step of the belief filter (§9) and at step-0 of every MPPI rollout (§15).
+
+Fitting is done with **Coordinate Ascent Variational Inference (CAVI)** — an iterative algorithm that alternates between a soft E-step (assigning each data point to components in proportion to how well it fits) and an M-step (updating the NIW parameters of each component using the soft assignments). CAVI is an approximation to exact Bayesian inference: it imposes a mean-field factorisation over the latent variables, which makes each factor update tractable but introduces a bias that vanishes as data accumulates. The advantage over EM (maximum-likelihood) is that the NIW prior regularises each component automatically, preventing the degenerate solutions (collapsed covariance, zero-weight components) that plague EM on small datasets.
 
 A joint GMM over $(\mathbf{x}, \mathbf{y})$ with $K$ components.  
 The full variational family is:
@@ -170,11 +284,13 @@ $$
 \hat\pi_k = \frac{\alpha_k}{\sum_j \alpha_j}
 $$
 
+After pretraining on $\sim$30,000 frames the ball VBGS converges to component weights approximately $[0.29,\, 0.46,\, 0.25]$ — wall bounces are the most frequent regime, consistent with the ball spending the majority of each rally bouncing off the top and bottom walls. The opponent VBGS converges faster (1D output) and is already usable after a few hundred frames. With sufficient data the M-step degenerates to a single-sample update (§6), enabling online refinement with negligible computational cost.
+
 ---
 
 ## 4. Conditional prediction
 
-This section describes how the agent extracts a predictive distribution $p(\mathbf{y}\mid\mathbf{x})$ from the jointly trained VBGS. Because each component encodes a joint distribution over inputs and outputs, standard Gaussian conditioning yields a closed-form per-component prediction. Mixing these conditionals — reweighted by how well each component explains the current input — gives the final mixture predictive used during belief propagation and EFE rollouts.
+Training a joint GMM over $(s_t, s_{t+1})$ pairs gives a model of the *joint* distribution. To use it for prediction — given where the ball is now, where will it be next? — we need the *conditional* $p(s_{t+1} \mid s_t)$. This section derives that conditional for a single Gaussian component and then forms the mixture. The key insight is that a jointly Gaussian distribution has a Gaussian conditional obtainable by the standard Schur-complement formula: the result is exact (no approximation) within each component, and the mixture is reweighted by how probable the observed $s_t$ is under each component's marginal. This reweighting is what activates the correct dynamical regime — the wall-bounce component gets high weight when the ball is near a wall, the free-flight component elsewhere.
 
 The joint NIW for component $k$ defines a joint Gaussian $(\mathbf{x}, \mathbf{y}) \sim \mathcal{N}(\boldsymbol{\mu}_k, \hat\Sigma_k)$.  
 Partitioned as:
@@ -207,11 +323,13 @@ $$
 \hat{\mathbf{y}} = \sum_k w_k\,\boldsymbol{\mu}_{y|x}^k
 $$
 
+The mixture predictive is used in two ways downstream. In the **belief filter** (§9) it provides the predicted mean and covariance for the Kalman predict step, collapsed to a single Gaussian by moment-matching. In the **MPPI rollouts** (§15) only step-0 uses the full VBGS conditional; deeper steps switch to a cheap linear model to keep the per-frame compute budget under 7 ms.
+
 ---
 
 ## 5. Transition models
 
-This section instantiates the VBGS architecture (§3–4) for the two dynamical subsystems the agent must predict: the ball and the opponent paddle. Each model is given physics-informed priors that reflect the qualitatively distinct regimes of Pong, so even a cold-start (no data) agent behaves sensibly and converges faster.
+This section instantiates the VBGS architecture (§3–4) for the two dynamical subsystems the agent must predict: the ball and the opponent paddle. Each model receives weak physics-informed priors that seed the component means at physically plausible values — free-flight velocity, wall-bounce sign flip, paddle-bounce sign flip. These priors are deliberately weak (small pseudo-counts $\kappa_0 = 1$, $\nu_0 = d+2$) so that they are overridden after a few dozen real observations. The purpose of the prior is not to impose structure but to prevent the model from starting in a degenerate configuration and to ensure that even the first few frames of a new episode produce sensible action choices.
 
 ### 5.1 Ball transition model
 
@@ -249,11 +367,13 @@ $$
 | 0 | Tracking (confident) | $\mathbf{W}_0 = 0.005\,\mathbf{I}$ |
 | 1 | Stationary / lag | $\mathbf{W}_0 = 0.02\,\mathbf{I}$ |
 
+Both transition models are pretrained offline (`pretrain_models.py`) on $\approx$30,000 frames before any live play. The pretrained models are loaded from `models/ball_vbgs.pkl` and `models/opponent_vbgs.pkl`. During play they can be frozen (default) or updated online (§6). The opponent model is updated every frame by `OpponentBeliefTracker.update()` regardless of the frozen/online flag — its update is cheap (1D output) and its fast adaptation is needed to track the opponent's current strategy.
+
 ---
 
 ## 6. Online learning
 
-This section describes how the pretrained transition models are continuously refined during play. Rather than freezing the world model after pretraining, the agent performs a single CAVI E+M step on every new transition. Because the NIW sufficient statistics absorb data incrementally, this is statistically equivalent to full batch retraining on all data seen so far — with zero memory overhead and negligible per-frame cost.
+After pretraining the world model captures average Pong dynamics, but individual games can exhibit specific quirks — slightly different bounce angles, opponent movement patterns, or frame-timing artefacts. This section describes how the pretrained transition models are continuously refined during play. Rather than freezing the world model after pretraining, the agent performs a single CAVI E+M step on every new transition. Because the NIW sufficient statistics accumulate data additively, this is statistically equivalent to full batch retraining on all data seen so far — with zero memory overhead and negligible per-frame cost ($<0.1$ ms).
 
 Both models are updated online after each observed transition using a single CAVI iteration (one E-step + one M-step). No replay buffer — the NIW sufficient statistics accumulate incrementally.
 
@@ -263,6 +383,8 @@ Each frame:
 2. Form joint $\mathbf{z} = [s_t;\; s_{t+1}]$
 3. E-step: compute $r_{k}$ for $\mathbf{z}$
 4. M-step: update $\alpha_k$, $\mathbf{m}_k$, $\kappa_k$, $\nu_k$, $\mathbf{W}_k$
+
+Because the pretrained NIW statistics encode $\sim$30,000 frames, each new online observation shifts the posterior by approximately $1/30{,}000$ — producing slow, noise-resistant adaptation rather than catastrophic forgetting. A detailed treatment of the online learning phases and their wiring in the codebase is given in §14.
 
 ---
 
@@ -305,6 +427,8 @@ $$
 $$
 
 This is the **instrumental value** term of the Expected Free Energy (Phase 3).
+
+The preference distribution $\tilde{p}(o)$ defined here is the fixed core; §16 layers context-sensitivity on top of it by making $\sigma_{p_y}$ and the target $o^*_{p_y}$ functions of the current game state. Together §7 and §16 fully specify the right-hand input $o^*, C$ to the EFE minimisation in §11.
 
 ---
 
@@ -393,11 +517,17 @@ $$
 
 with learning rate $\eta = 0.01$ (Phase 4.1).
 
+The likelihood model occupies a critical position in the information pipeline: $H$ and $R$ appear in both the Kalman gain (§9.2) and the EFE epistemic term (§11.4). An underestimated $R$ gives the filter too much trust in noisy observations, destabilising the velocity estimates; an overestimated $R$ makes the filter sluggish and delays detection of bounces. The initial value $R = 10^{-4}\,\mathbf{I}$ is calibrated to RAM quantisation noise; online refinement (§8.5) lets it adapt to game-specific observation statistics over the course of a session.
+
 ---
 
 ## 9. Belief filter (Phase 2.1)
 
-This section presents the agent's state estimator. Because the state $s$ contains latent velocities that are not directly observable, the agent must maintain a belief $q(s_t)$ and update it each frame. With a linear-Gaussian generative model the optimal belief filter is the Kalman filter, and §9.3 shows this is also what CAVI variational inference recovers — connecting the engineering algorithm to the Active Inference framework.
+The belief filter is the agent's perception system: it translates the stream of raw RAM observations into a probability distribution $q(s_t) = \mathcal{N}(\mu_t, \Sigma_t)$ over the full 6D state, including the latent velocities. Without this filter the agent would have to pick actions based only on positions — it would not know whether the ball is moving toward it or away, how fast, or how uncertain that estimate is.
+
+The filter uses a **K=2 mixture of Kalman filters** to handle the bimodal predictive distribution that arises when the ball is near a wall: one component tracks the trajectory assuming no bounce, the other assuming an imminent sign-flip of $\dot b_y$. The two hypotheses are maintained in parallel until the next observation resolves which one was correct. This makes the filter significantly more accurate near the walls than a single Gaussian (which would blur the bimodal distribution into an artificially widened Gaussian).
+
+§9.3 shows that this predict-correct recursion is not just an engineering choice: it is what CAVI variational inference recovers for a linear-Gaussian model, making the belief filter a direct instantiation of the Active Inference perception loop.
 
 The agent maintains a single Gaussian belief over the full 6D state:
 
@@ -439,11 +569,13 @@ Minimising the variational free energy $F = \mathbb{E}_q[\log q(s) - \log p(s,o)
 | $\mu_{\dot b_x}, \mu_{\dot b_y}$ | Ball velocity — **latent**, not in any single RAM frame |
 | $\Sigma$ diagonal | Per-dimension uncertainty — feeds epistemic EFE term in Phase 3 |
 
+The belief $(\mu_t, \Sigma_t)$ is the single input to all downstream computation: the landing predictor (§13) reads $\mu$ to simulate ball trajectory; the EFE (§11) and MPPI planner (§15) use both $\mu$ and $\Sigma$; the win-rate rMM (§17) is queried with the predicted opponent y derived from $\mu$. Accurate velocity estimation is the single most important factor in landing prediction quality — a 2-frame lag in detecting a bounce produces a $\sim$0.12 normalised-unit error in the predicted landing y, which is comparable to the paddle half-width.
+
 ---
 
 ## 10. Validation results
 
-This section reports the predictive accuracy of the pretrained VBGS transition models before any online refinement. The numbers confirm that the prior-seeded models are already useful — ball position error of $\approx 2.3$ px and opponent error of $\approx 4.9$ px are well below the paddle half-width ($\approx 12$ px), meaning the belief filter starts with a meaningful signal from the very first frame.
+This section reports the predictive accuracy of the pretrained VBGS transition models before any online refinement. The numbers serve two purposes: they confirm the models are useful as a starting point (errors well below the paddle half-width), and they establish a baseline against which online refinement can be measured.
 
 After pretraining on 30,053 frames (~15 s at 2,000 fps):
 
@@ -455,11 +587,15 @@ After pretraining on 30,053 frames (~15 s at 2,000 fps):
 Final ball component weights: $[0.29,\; 0.46,\; 0.25]$.  
 Component 1 (wall bounce) dominates, consistent with the ball spending most time bouncing off the top and bottom walls.
 
+The ball MAE of 2.3 px is well below the paddle half-width of $\approx$12 px: the filter predicts where the ball will be within a quarter-paddle-width, giving the planner a reliable target to aim for. The opponent MAE of 4.9 px is larger but still within the paddle half-width, sufficient for the opponent-aware placement logic (§16.3) to exploit.
+
 ---
 
 ## 11. Expected Free Energy — Phase 3
 
-This section derives the action-selection criterion. The Expected Free Energy $G(a)$ decomposes into an *instrumental* term (how far the predicted observation is from the preferred distribution) and an *epistemic* term (how much information the action would yield). Minimising $G$ therefore simultaneously drives the agent toward its goals and toward actions that reduce uncertainty — the hallmark of Active Inference.
+The Expected Free Energy (EFE) is the decision criterion that replaces the reward function in standard reinforcement learning. Rather than maximising a scalar signal provided by the environment, the agent evaluates each candidate action by asking: *if I take this action, how much will the resulting observation deviate from what I prefer, and how much uncertainty will remain about the state of the world?* The EFE is the sum of these two costs. Minimising it simultaneously drives the agent toward its goals (instrumental term) and toward actions that resolve uncertainty (epistemic term) — an intrinsic drive toward exploration that emerges naturally from the free energy objective, without any extrinsic curiosity reward.
+
+This section derives the analytic form of the EFE for the Gaussian generative model defined in §7–§9. The derivation is exact under the linear-Gaussian assumptions and results in simple matrix expressions involving the predicted covariance $S(a)$, the preference covariance $C$, and the predicted mean $H\mu^-_a$.
 
 ### 11.1 Full EFE decomposition
 
@@ -522,11 +658,13 @@ $$
 $\lambda = 0$ recovers Phase 3.1 (instrumental only).  
 $\lambda > 0$ adds curiosity — the agent prefers actions that lead to more informative observations.
 
+The 1-step EFE serves as the building block for both the horizon planner (§12) and the MPPI planner (§15). In both cases $G(a)$ as defined here is evaluated at each time step of the rollout; the planners differ only in how they search over action sequences. The preference target $o^*$ and covariance $C$ entering §11.3 are computed once per frame by `PriorPreferences.contextual_target()` and shared across all action branches (§12.6, §15.4).
+
 ---
 
 ## 12. N-step planning horizon (Phase 3.3)
 
-This section extends the one-step EFE to a multi-step policy tree. A single-frame lookahead cannot reason about trajectories that span many frames — for example, that moving the paddle UP for five consecutive frames will intercept a ball that is currently 40 pixels away. Expanding to a horizon of $N$ steps allows the agent to compare full action sequences rather than isolated actions, producing qualitatively better decisions at the cost of an exponential search space that is controlled by the hybrid VBGS/linear rollout scheme.
+A single-frame EFE evaluation (§11) is myopic: it sees only one step ahead. The paddle moves $\approx 0.060$ normalised units per frame; a ball 0.3 units away takes at least 5 frames to reach. An agent that only looks one frame ahead cannot distinguish UP from NOOP when the target is more than half a paddle-step away, because in both cases the gap does not close within that single frame. This section extends the EFE to a full $N$-step policy tree, enabling the agent to reason that *five consecutive UPs* will close the gap while *five NOOPs* will not — a qualitative difference invisible to the 1-step criterion.
 
 ### 12.1 Motivation
 
@@ -591,6 +729,8 @@ Tree structure: only 3 VBGS calls (one per first action), then $3^2 + \cdots + 3
 
 The intercept target $o^*_{p_y}$ is computed **once per frame** from the current belief mean and shared across all branches of the tree. Computing it separately inside each branch introduces action-dependent noise (the VBGS slightly changes the ball estimate per action), which can corrupt the UP vs DOWN comparison. The single shared target eliminates this.
 
+The tree-search horizon planner of §12 is the predecessor of the MPPI planner (§15). It is still used in `train_efe.py` and `validate_efe.py` at H=3. The MPPI planner extends the same idea to H=15 by replacing exhaustive enumeration with stochastic sampling, making it practical to plan over longer horizons at the cost of an approximation error that decreases with $N_r$.
+
 ---
 
 ## 13. Ball-intercept prior preference (Phase 3.3+)
@@ -637,11 +777,13 @@ With intercept targeting $o^*_{p_y} = y_\text{land}$:
 EFE H=3 with intercept targeting beats rule-based by **+4 points** (mean).  
 H=5 underperforms because the linear rollout's constant-velocity approximation drifts at depth 4–5 without wall-bounce corrections.
 
+The landing prediction derived here feeds two downstream consumers: the preference covariance tightening in §16.2 (which sharpens $\sigma_{p_y}$ as the estimated arrival approaches), and the UCB sweep in §17.4 (which selects among candidate landing targets based on historical win rates). The raw EMA velocity (not the Kalman $\dot b$) is used as input to avoid spike contamination from paddle contacts.
+
 ---
 
 ## 14. Online learning — Phase 4
 
-This section groups three concurrent refinement loops that run while the agent plays. Unlike the pretraining stage, these loops do not require stored data: they exploit the stream of live transitions and Kalman innovations to tighten the observation noise model, update the ball dynamics, and maintain the opponent tracker. Together they allow the agent to adapt to game-specific statistics (paddle pixel size, bounce geometry) that cannot be measured offline.
+The pretrained models (§5, §10) capture average Pong dynamics but are fixed snapshots. This section introduces three concurrent refinement loops that run during live play, adapting the world model to the specific statistics of the current session. Each loop targets a different aspect of the generative model: the observation noise $R$ (§14.1), the ball transition dynamics (§14.2), and the opponent model (§14.3). All three operate in a streaming, memory-free fashion by exploiting the NIW conjugate-update structure derived in §2.
 
 Three sub-phases of online refinement run continuously while the agent plays.
 
@@ -692,11 +834,13 @@ Frozen (validate_efe.py)      Online (train_efe.py)
   ep 3: load → run → discard     ep 3:       run  │
 ```
 
+A known limitation: the online ball VBGS path (§14.2) currently causes score collapse in `train_efe.py` (agent scores −20/−21 for all episodes, misses ball on first contact). Root cause is undiagnosed; the ball VBGS online update is disabled by default in `play_efe.py` (`--learn` flag required). The frozen arm of `train_efe.py` is unaffected and performs at the expected level.
+
 ---
 
 ## 15. MPPI Receding-Horizon Planner (Phase 5)
 
-This section replaces the exhaustive policy-tree search (§12) with a stochastic sampling approach. Model Predictive Path Integral (MPPI) control draws $N_r$ perturbed rollouts from a greedy nominal trajectory, weights them by exponential cost, and aggregates into a soft-min free energy estimate. This scales to long horizons ($H=15$) that would be computationally intractable with tree enumeration while preserving the Active Inference objective.
+The tree-search planner of §12 enumerates all $3^N$ action sequences, which becomes intractable beyond $N \approx 5$. This section replaces exact enumeration with **Model Predictive Path Integral (MPPI)** control: a stochastic sampling approach that draws $N_r = 128$ rollouts from a greedy nominal trajectory, weights them by exponential EFE cost, and aggregates into a soft-min estimate of the path-integral free energy. The key benefit is that the horizon can be extended to $H = 15$ frames (covering a full approach from mid-court to the paddle) while keeping per-frame compute under 7 ms. The Active Inference objective — EFE minimisation — is unchanged; only the search strategy differs.
 
 ### 15.1 Motivation
 
@@ -767,11 +911,13 @@ Computational cost: $O(N_r T)$ inner products rather than $O(N_r T \cdot d^3)$ m
 | $\Delta_\text{paddle}$ | 0.060 | Paddle step size (normalised) |
 | deadband | 0.030 | Half-step: gap below this → NOOP in nominal |
 
+The MPPI planner is the outermost layer of the action-selection stack. It calls into the VBGS (§5) for step-0 predictions and into the linear rollout model for steps 1..H-1. Its output — a single action index $a^* \in \{0, 2, 3\}$ — is passed directly to the ALE environment. The preference target $o^*$ and covariance $C$ that enter the cost function are prepared by §16 (adaptive preferences) from the landing prediction of §13 and the win-rate query of §17.
+
 ---
 
 ## 16. Adaptive Prior Preferences (Phase 5)
 
-This section refines the static preference covariance $C$ into a context-sensitive, urgency-scaled structure. Rather than treating all dimensions uniformly, the agent tightens $\sigma_{p_y}$ as the ball approaches, shifts the target away from the predicted opponent position to exploit open court, and smooths the landing prediction with an EMA that resets on bounces. These adaptations remain within the Active Inference framework: only the preference distribution changes; the world model and EFE criterion are untouched.
+The static preference distribution of §7 encodes the agent's *permanent* goals — intercept the ball, push it to the opponent's side. This section introduces *context-sensitive* modifications that adapt the preference to the current game state without changing the underlying goals. Three adaptations are stacked: the paddle-alignment precision $\sigma_{p_y}$ tightens as the ball approaches (urgency, §16.2); the intercept target is shifted away from the predicted opponent position to exploit gaps in the court (placement, §16.3); and the target is smoothed with a bounce-aware EMA to suppress frame-to-frame VBGS noise (§16.5). All three operate purely on the preference distribution — the world model, the EFE formula, and the MPPI planner are unchanged.
 
 ### 16.1 Preference covariance $C$
 
@@ -839,6 +985,8 @@ Time constant: $\tau = 1/(1-\alpha) \approx 3$ frames.
 **Reset conditions** (both force $y^*_\text{smooth} \leftarrow \texttt{None}$, reinitialised on next frame):
 1. Wall bounce detected ($v_y$ sign flip with $|dv_y| > 0.008$): landing direction changes instantly; stale EMA would send paddle the wrong way for 3 frames.
 2. Ball not approaching ($v_x \le 0$): between rallies — no prediction to smooth.
+
+The output of §16 is the tuple $(o^*, C^{-1}, \log|C|)$ returned by `PriorPreferences.contextual_target()`. This is the sole interface between the preferences subsystem and the MPPI planner: the planner reads this tuple once per frame and uses it to evaluate all 128 rollouts. The separation ensures that changes to the preference logic (urgency schedule, placement magnitude, EMA) can be tuned independently of the planner.
 
 ---
 
@@ -972,11 +1120,15 @@ $$f_\text{near} \leftarrow \text{round}(f_\text{ema}) + 2, \qquad \alpha_u = 0.1
 
 This closes the loop: if the paddle consistently runs out of time, $f_\text{near}$ increases so urgency kicks in earlier next rally.
 
+The `LongTermStats` object is the only component that persists *between* Python sessions. All other state — VBGS parameters, belief filter, preferences — is either frozen (preloaded from disk) or reset per episode. `LongTermStats` accumulates across episodes and sessions, enabling the agent's strategic knowledge to improve over time independently of the fast session-level adapters.
+
 ---
 
 ## 18. Key Design Decisions and AIF Rationale
 
-This section explains the non-obvious architectural choices in the implementation and ties each back to Active Inference principles. Three failure modes are analysed: adapting $\sigma_{p_y}$ to observed errors (corrupts the preference channel), adding a habit prior (causes NOOP-lock near target), and running MPPI with a NOOP nominal (collapses soft-min to uniform weights). Understanding these failure modes clarifies *why* the current design works and guards against superficially appealing modifications that would break it.
+This section explains the non-obvious architectural choices in the implementation and ties each back to Active Inference principles. Each subsection presents a *failure mode* — a superficially reasonable modification that turns out to break the system — and explains why the current design avoids it. Understanding these failure modes is more valuable than simply knowing the final constants: it clarifies which invariants the system depends on and which parameters can be tuned safely.
+
+Three failure modes are analysed: adapting $\sigma_{p_y}$ to observed errors (corrupts the preference channel), adding a habit prior (causes NOOP-lock near target), and running MPPI with a NOOP nominal (collapses soft-min to uniform weights).
 
 ### 18.1 Why $\sigma_{p_y}^\text{near}$ must not adapt
 
@@ -1011,6 +1163,8 @@ With greedy nominal: rollouts near $\hat\pi$ converge on target; divergent rollo
 $$\text{weight}^{(i)} \propto \exp\!\left(-C^{(i)}/\lambda_T\right)$$
 
 Low-cost near-nominal rollouts dominate. The soft-min correctly reflects the value of starting with the action that enables the greedy trajectory.
+
+These three failure modes share a common structure: each is a *plausible-sounding regularisation* (adapt uncertainty to observations; prefer repeating past actions; start MPPI from a neutral baseline) that turns out to sever a critical signal path in the Active Inference architecture. The preference channel, the action-selection gradient, and the nominal baseline are all load-bearing; modifying them requires understanding what information flows through them.
 
 ---
 
