@@ -312,7 +312,7 @@ This is the **instrumental value** term of the Expected Free Energy (Phase 3).
 
 This section specifies how the 4D RAM observation vector relates to the 6D latent state. The observation model $p(o\mid s)$ is a linear Gaussian (the $H$-matrix projection), which makes the downstream Kalman belief update (§9) exact. The section also derives the marginalised likelihood when the agent holds a Gaussian state belief and provides the analytic form of the observation noise $R$, which drives the Kalman gain.
 
-### 7.1 Full state vector
+### 8.1 Full state vector
 
 The generative model operates on a 6D state that merges the ball and paddle sub-states:
 
@@ -322,7 +322,7 @@ $$
 
 Velocities $(\dot b_x, \dot b_y)$ are latent — they cannot be read from a single RAM frame.
 
-### 7.2 Observation model
+### 8.2 Observation model
 
 The 4D observation vector contains only the directly readable positions:
 
@@ -349,7 +349,7 @@ $$
 
 The noise covariance $R = r\,\mathbf{I}_4$ with $r = 10^{-4}$, reflecting RAM quantisation noise of $\pm 1$ pixel $\approx \pm 0.004$ in normalised units.
 
-### 7.3 Marginalised likelihood over a Gaussian belief
+### 8.3 Marginalised likelihood over a Gaussian belief
 
 When the agent holds a Gaussian belief $q(s) = \mathcal{N}(\mu, \Sigma)$, the expected likelihood is obtained by marginalising over $s$:
 
@@ -357,7 +357,7 @@ $$
 p(o \mid q) = \int p(o \mid s)\, q(s)\, ds = \mathcal{N}\!\left(o \;;\; H\mu,\; H\Sigma H^\top + R\right)
 $$
 
-### 7.4 Kalman measurement update
+### 8.4 Kalman measurement update
 
 The observation $o_t$ updates the Gaussian belief via the standard Kalman correction:
 
@@ -383,7 +383,7 @@ $$
 \log p(o) = -\frac{1}{2}\left(d_o \ln(2\pi) + \ln|S| + (o - H\mu)^\top S^{-1}(o - H\mu)\right)
 $$
 
-### 7.5 Online noise estimation
+### 8.5 Online noise estimation
 
 $R$ can be refined online from observed innovations $\nu_t = o_t - H\mu_t$ via an exponential moving average:
 
@@ -694,33 +694,6 @@ Frozen (validate_efe.py)      Online (train_efe.py)
 
 ---
 
-## 8. Roadmap
-
-This table tracks which phases of the full Active Inference Pong system have been implemented and validated. Phases build on one another: state representation and world models must be correct before belief filtering is meaningful, belief filtering before EFE is correct, and EFE before planning and cross-session learning. The table serves as a progress log and a navigation index for the sections above.
-
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 0 | Environment, RAM observations, rule-based baseline | ✅ |
-| 1.1 | State representation | ✅ |
-| 1.2 | Transition models (VBGS) | ✅ |
-| 1.3 | Likelihood model $p(o\mid s)$ | ✅ |
-| 1.4 | Prior preferences | ✅ |
-| 2.1 | Single Gaussian belief (CAVI / Kalman) | ✅ |
-| 2.2 | Mixture of Gaussians belief near walls | ✅ |
-| 2.3 | Online opponent model | ✅ |
-| 3.1 | EFE — instrumental value only | ✅ |
-| 3.2 | EFE — full with epistemic term | ✅ |
-| 3.3 | Planning horizon $N$ steps | ✅ |
-| 4.1 | Online R estimation from innovations | ✅ |
-| 4.2 | Online ball VBGS from live transitions | ✅ |
-| 4.3 | Online opponent model (active since 2.3) | ✅ |
-| 4.4 | Win-rate rMM (NIW + Beta head; replaces 2-D Beta grid) | ✅ |
-| 5 | MPPI receding-horizon planner + greedy nominal | ✅ |
-| 6 | Cross-session Bayesian aim calibration (LongTermStats) | ✅ |
-| 7 | 100-episode evaluation vs rule-based and RL baseline | — |
-
----
-
 ## 15. MPPI Receding-Horizon Planner (Phase 5)
 
 This section replaces the exhaustive policy-tree search (§12) with a stochastic sampling approach. Model Predictive Path Integral (MPPI) control draws $N_r$ perturbed rollouts from a greedy nominal trajectory, weights them by exponential cost, and aggregates into a soft-min free energy estimate. This scales to long horizons ($H=15$) that would be computationally intractable with tree enumeration while preserving the Active Inference objective.
@@ -975,7 +948,7 @@ This replaces the original argmax-over-fixed-bins lookup. Because the rMM lives 
 
 Legacy state files (Phase 6 era, with the 2-D Beta grid) are auto-migrated on load: the top $K_\text{max}$ cells by observed mass each become a dedicated rMM cluster centred at the cell's centre, with the cell's $(\alpha, \beta)$ Beta head transferred directly and NIW counts incremented by the cell mass. Remaining cells are replayed observation-by-observation into the nearest existing cluster. A 1299-rally legacy grid migrates cleanly in ${<}1$ s, saturating $K = K_\text{max}$.
 
-### 17.3 Episode-level placement update
+### 17.6 Episode-level placement update
 
 At episode end, score trend drives the placement magnitude adjustment:
 
@@ -987,7 +960,7 @@ $$p \leftarrow \operatorname{clip}(p + \Delta p,\; 0.025,\; 0.07), \qquad \alpha
 
 `tanh` soft-clipping prevents large trend spikes from making extreme placement jumps.
 
-### 17.4 Fell-short classification and urgency adaptation
+### 17.7 Fell-short classification and urgency adaptation
 
 A miss is classified as **fell-short** when $|p_y - y^*| > \Theta_\text{fs} = 0.090 \approx 1.5\,\Delta_\text{paddle}$. This indicates a timing failure (paddle never reached the target), not a prediction failure.
 
@@ -1038,4 +1011,31 @@ With greedy nominal: rollouts near $\hat\pi$ converge on target; divergent rollo
 $$\text{weight}^{(i)} \propto \exp\!\left(-C^{(i)}/\lambda_T\right)$$
 
 Low-cost near-nominal rollouts dominate. The soft-min correctly reflects the value of starting with the action that enables the greedy trajectory.
+
+---
+
+## 19. Roadmap
+
+This table tracks which phases of the full Active Inference Pong system have been implemented and validated. Phases build on one another: state representation and world models must be correct before belief filtering is meaningful, belief filtering before EFE is correct, and EFE before planning and cross-session learning. The table serves as a progress log and a navigation index for the sections above.
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 0 | Environment, RAM observations, rule-based baseline | ✅ |
+| 1.1 | State representation | ✅ |
+| 1.2 | Transition models (VBGS) | ✅ |
+| 1.3 | Likelihood model $p(o\mid s)$ | ✅ |
+| 1.4 | Prior preferences | ✅ |
+| 2.1 | Single Gaussian belief (CAVI / Kalman) | ✅ |
+| 2.2 | Mixture of Gaussians belief near walls | ✅ |
+| 2.3 | Online opponent model | ✅ |
+| 3.1 | EFE — instrumental value only | ✅ |
+| 3.2 | EFE — full with epistemic term | ✅ |
+| 3.3 | Planning horizon $N$ steps | ✅ |
+| 4.1 | Online R estimation from innovations | ✅ |
+| 4.2 | Online ball VBGS from live transitions | ✅ |
+| 4.3 | Online opponent model (active since 2.3) | ✅ |
+| 4.4 | Win-rate rMM (NIW + Beta head; replaces 2-D Beta grid) | ✅ |
+| 5 | MPPI receding-horizon planner + greedy nominal | ✅ |
+| 6 | Cross-session Bayesian aim calibration (LongTermStats) | ✅ |
+| 7 | 100-episode evaluation vs rule-based and RL baseline | — |
 
