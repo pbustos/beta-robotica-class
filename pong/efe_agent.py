@@ -431,7 +431,13 @@ class EFEAgent:
 
     # Minimum |dv| to treat a sign flip as a real bounce rather than noise.
     # Normal ball speed ≈ 0.015–0.025/frame; serve jitter is near-zero.
-    _BOUNCE_THRESH = 0.008
+    _BOUNCE_THRESH = 0.003
+
+    # Wall-clip detection: if y is within this distance of an edge and the
+    # current vy is heading further into that edge, force a vy reversal.
+    # Catches bounces where the ball is clipped to the wall for a frame and
+    # dvy = 0 → original threshold-based detector misses the sign flip.
+    _WALL_CLIP_MARGIN = 0.005
 
     def update_raw_velocity(self, bx: float, by: float):
         """
@@ -441,8 +447,11 @@ class EFEAgent:
         On bounce frames: hard-reset to the new frame-difference velocity so the
         landing prediction immediately reflects the reversed direction.
 
-        Bounce detection: the new dv has the opposite sign to the current EMA
-        estimate AND its magnitude exceeds _BOUNCE_THRESH (rules out noise).
+        Bounce detection — vy is reversed when EITHER:
+          (a) dvy and current EMA have opposite sign and |dvy| > _BOUNCE_THRESH
+              (the original sign-flip rule), OR
+          (b) `by` is at a wall edge and the EMA still points further into that
+              wall (wall-clip case where dvy ≈ 0 hides the sign flip).
         """
         if self._prev_bx is not None:
             dvx = float(np.clip(bx - self._prev_bx, -0.06, 0.06))
@@ -450,6 +459,15 @@ class EFEAgent:
 
             vx_bounce = (dvx * self._raw_vx < 0) and abs(dvx) > self._BOUNCE_THRESH
             vy_bounce = (dvy * self._raw_vy < 0) and abs(dvy) > self._BOUNCE_THRESH
+
+            # Wall-clip: by clipped to top (≈0) while raw_vy still negative,
+            # or to bottom (≈1) while raw_vy still positive.
+            margin = self._WALL_CLIP_MARGIN
+            if (by < margin and self._raw_vy < -self._BOUNCE_THRESH) \
+                    or (by > 1.0 - margin and self._raw_vy > self._BOUNCE_THRESH):
+                vy_bounce = True
+                # Estimate post-bounce dvy by reflecting current raw_vy
+                dvy = -self._raw_vy
 
             if vx_bounce or vy_bounce:
                 # Direction reversed — accept new velocity instantly
@@ -652,6 +670,12 @@ class EFEAgent:
     # Number of candidate target_y points scanned within the reach window.
     _N_TARGET_CANDIDATES = 9
 
+    # Hysteresis slack on the relock criterion. Must exceed typical
+    # frame-to-frame landing_y jitter so the target stays locked through
+    # prediction noise; otherwise the lock thrashes once eff_max collapses
+    # in the final approach.
+    _LOCK_SLACK = 0.10
+
     def _choose_target_y(self, landing_y: float, predicted_opp_y: float,
                           eff_max: float) -> float:
         """
@@ -703,7 +727,7 @@ class EFEAgent:
             eff_max = eff_placement * placement_scale
             need_sample = (
                 self._target_y_locked is None
-                or abs(self._target_y_locked - landing_y) > eff_max + 0.04)
+                or abs(self._target_y_locked - landing_y) > eff_max + self._LOCK_SLACK)
             if need_sample:
                 self._target_y_locked = self._choose_target_y(
                     landing_y, predicted_opp, eff_max)
