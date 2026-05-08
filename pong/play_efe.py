@@ -370,7 +370,10 @@ def main():
                            agent.interaction_model.counts,
                            ball_model if learn else None,
                            likelihood if learn else None,
-                           long_term=agent.long_term.to_dict())
+                           frames_near=agent.preferences._frames_near,
+                           urgency_ema=agent._fell_short_frames_ema,
+                           long_term=agent.long_term.to_dict(),
+                           bias_dict=agent._bias_dict.copy())
                 print(f"Saved state  bias_dict={dict(sorted(agent._bias_dict.items()))}"
                       f"  placement={agent.placement:.4f}"
                       f"  lt_misses={agent.long_term.n_aim}")
