@@ -234,8 +234,9 @@ def _predict_ball_landing(mu6: np.ndarray,
 
     Both are clamped to ±0.06 before integration.
 
-    Ball moving away (vx ≤ 1e-3): return current by — the ball is heading
-    toward the opponent; the return will land near the current by.
+    Ball moving away (vx ≤ 1e-3): return center (0.5). Empirically (100-ep
+    paired bench) this is the right idle target — alternatives like opp_y
+    drift the paddle away from the geometric worst-case-minimising default.
 
     mu6: [bx, by, vx, vy, py, oy] (normalised [0,1]).
     Returns predicted landing y in [0, 1].
@@ -250,7 +251,7 @@ def _predict_ball_landing(mu6: np.ndarray,
         vy = float(np.clip(mu6[3], -0.06, 0.06))
 
     if vx <= 1e-3:
-        return 0.5  # RL STRATEGY: Return to center when ball is moving away
+        return 0.5
 
     for _ in range(max_steps):
         # Precise linear interpolation at the exact plane of the paddle.
