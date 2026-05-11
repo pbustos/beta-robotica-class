@@ -1,9 +1,14 @@
 """
-A/B benchmark for raw-velocity bounce-detection tweaks.
+A/B benchmark — planner comparison.
 
-Two arms, identical seeds, frozen models, warm rMM:
-  - baseline: original bounce detection (_BOUNCE_THRESH=0.008, no wall-clip)
-  - sensitive: lower threshold (0.003) + wall-clip detection (margin 0.005)
+Both arms use current (committed) constants. Only the action selector differs:
+  - mppi_h3: select_action_mppi(horizon=3, n_rollouts=128) — same horizon
+             as the tree-search arm but with MPPI's stochastic sampling.
+  - tree_h3: select_action_horizon(horizon=3) — full deterministic tree.
+
+If mppi_h3 matches tree_h3, MPPI is fine and play_efe.py's H=15 was the
+problem. If mppi_h3 still trails tree_h3, the stochastic averaging itself
+is the issue and play_efe.py should switch planner.
 
 Usage:
     python bench_lock_slack.py [N_EPISODES]
@@ -18,6 +23,7 @@ import numpy as np
 import gymnasium as gym
 import ale_py
 
+import generative_model
 from generative_model import (
     BallTransitionVBGS, OpponentTransitionVBGS, LikelihoodModel,
     PriorPreferences, OpponentBeliefTracker, MixtureBeliefFilter
@@ -42,10 +48,11 @@ def load_warm_long_term():
 
 gym.register_envs(ale_py)
 
-N_EPISODES = int(sys.argv[1]) if len(sys.argv) > 1 else 30
-HORIZON    = 3
-GAMMA      = 0.9
-SEED_BASE  = 12345
+N_EPISODES   = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+MPPI_N       = 128
+MPPI_TEMP    = 1.0
+GAMMA        = 0.9
+SEED_BASE    = 12345
 
 
 def extract_obs(ram):
@@ -58,7 +65,8 @@ def make_models():
             LikelihoodModel())
 
 
-def run_episode(env, seed, ball_model, opp_model, likelihood, long_term, landing_bias):
+def run_episode(env, seed, ball_model, opp_model, likelihood, long_term, landing_bias,
+                planner):
     opp_tracker = OpponentBeliefTracker(opp_model)
     belief      = MixtureBeliefFilter(ball_model, opp_tracker, likelihood)
     prefs       = PriorPreferences()
@@ -112,7 +120,12 @@ def run_episode(env, seed, ball_model, opp_model, likelihood, long_term, landing
             agent.reset_raw_velocity()
             bounced_this_approach = False
 
-        action, _ = agent.select_action_horizon(horizon=HORIZON, gamma=GAMMA)
+        if planner == "mppi_h3":
+            action, _ = agent.select_action_mppi(
+                horizon=3, n_rollouts=MPPI_N,
+                temperature=MPPI_TEMP, gamma=GAMMA)
+        else:  # tree_h3
+            action, _ = agent.select_action_horizon(horizon=3, gamma=GAMMA)
         prev_opp_y  = opp_y
         prev_action = action
 
@@ -134,11 +147,8 @@ def run_episode(env, seed, ball_model, opp_model, likelihood, long_term, landing
     return score, agent.landing_bias, n_contacts, n_no_contact_losses
 
 
-def run_arm(label, bounce_thresh, wall_clip_margin, warm_lt_dict, warm_bias):
-    print(f"\n── {label}  (bounce_thresh={bounce_thresh}, "
-          f"wall_clip_margin={wall_clip_margin})  N={N_EPISODES} ──")
-    EFEAgent._BOUNCE_THRESH = bounce_thresh
-    EFEAgent._WALL_CLIP_MARGIN = wall_clip_margin
+def run_arm(label, planner, warm_lt_dict, warm_bias):
+    print(f"\n── {label}  planner={planner}  N={N_EPISODES} ──")
     env = gym.make("ALE/Pong-v5", obs_type="ram", render_mode=None)
     bm, om, lk = make_models()
     if warm_lt_dict is not None:
@@ -151,7 +161,7 @@ def run_arm(label, bounce_thresh, wall_clip_margin, warm_lt_dict, warm_bias):
     t0 = time.time()
     for ep in range(N_EPISODES):
         seed = SEED_BASE + ep
-        s, bias, nc, nl = run_episode(env, seed, bm, om, lk, lt, bias)
+        s, bias, nc, nl = run_episode(env, seed, bm, om, lk, lt, bias, planner)
         scores.append(s); contacts.append(nc); ncls.append(nl)
         print(f"  ep {ep+1:2d}: score={s:+3.0f}  contacts={nc:3d}  "
               f"no-contact-losses={nl:2d}  K={lt.n_components()}  "
@@ -170,15 +180,14 @@ if __name__ == "__main__":
         print(f"Loaded warm long_term from {STATE_FILE} (bias={warm_bias:+.4f})")
     else:
         print("No warm state — starting from cold rMM")
-    # margin=0 disables wall-clip (the by<0 / by>1-0 condition is never true)
-    base_scores, base_nc, base_ncl = run_arm("baseline",  0.008, 0.000, warm_lt, warm_bias)
-    new_scores,  new_nc,  new_ncl  = run_arm("sensitive", 0.003, 0.005, warm_lt, warm_bias)
+    base_scores, base_nc, base_ncl = run_arm("mppi_h3", "mppi_h3", warm_lt, warm_bias)
+    new_scores,  new_nc,  new_ncl  = run_arm("tree_h3", "tree_h3", warm_lt, warm_bias)
 
     print("\n── Summary ──")
     print(f"{'arm':<10} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
-    for label, scs, ncs, nls in [("baseline",  base_scores, base_nc, base_ncl),
-                                   ("sensitive", new_scores, new_nc, new_ncl)]:
+    for label, scs, ncs, nls in [("mppi_h3", base_scores, base_nc, base_ncl),
+                                   ("tree_h3", new_scores, new_nc, new_ncl)]:
         a = np.array(scs)
         print(f"{label:<10} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")
