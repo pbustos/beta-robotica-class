@@ -15,7 +15,6 @@ startup, so landing bias (and VBGS/R when --learn) carry across restarts.
 Usage:
     python play_efe.py              # frozen models, bias learning on
     python play_efe.py --learn      # also update VBGS and R online
-    python play_efe.py --horizon 1
     python play_efe.py --reset      # wipe saved state and start fresh
 """
 
@@ -271,11 +270,6 @@ class MetricsPanel:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--horizon",     type=int,   default=15)
-    parser.add_argument("--rollouts",    type=int,   default=128,
-                        help="MPPI rollouts per root action")
-    parser.add_argument("--temperature", type=float, default=1.0,
-                        help="MPPI soft-min temperature (λ); 0=hard-min, larger=softer")
     parser.add_argument("--learn",   action="store_true",
                         help="also update VBGS and R online (default: bias only)")
     parser.add_argument("--reset",   action="store_true",
@@ -301,7 +295,7 @@ def main():
     pygame.init()
     screen = pygame.display.set_mode((WIN_W, WIN_H), pygame.RESIZABLE)
     pygame.display.set_caption(
-        f"MPPI agent  H={args.horizon}  N={args.rollouts}  {'[online]' if learn else '[frozen+bias]'}")
+        f"EFE tree-search agent  H=3  {'[online]' if learn else '[frozen+bias]'}")
     clock   = pygame.time.Clock()
     font_sm = pygame.font.SysFont("monospace", 13, bold=True)
     font_xs = pygame.font.SysFont("monospace", 11)
@@ -357,7 +351,7 @@ def main():
         "tgt_chosen", "tgt_opp_pred", "tgt_pwin",
     ])
 
-    print(f"MPPI agent  H={args.horizon}  N={args.rollouts}  γ={GAMMA}"
+    print(f"EFE tree-search agent  H=3  γ={GAMMA}"
           f"  {'online' if learn else 'frozen+bias'}  — close window to quit\n")
 
     bounced_this_approach = False   # True if a vy-bounce occurred this approach
@@ -430,10 +424,7 @@ def main():
             prev_ball = None
             bounced_this_approach = False   # new serve resets approach state
 
-        action, _ = agent.select_action_mppi(horizon=args.horizon,
-                                                 n_rollouts=args.rollouts,
-                                                 temperature=args.temperature,
-                                                 gamma=GAMMA)
+        action, _ = agent.select_action_horizon(horizon=3, gamma=GAMMA)
 
         prev_opp_y  = opp_y
         prev_action = action
