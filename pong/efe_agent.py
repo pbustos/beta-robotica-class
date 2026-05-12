@@ -29,7 +29,7 @@ _F[1, 3] = 1.0   # by += vy
 
 class RMM:
     """
-    AXIOM-style rMM, Phase 1: continuous features → rally outcome.
+    AXIOM-style rMM: continuous features → rally outcome.
 
     Each component k owns:
         NIW(m_k, κ_k, ν_k, W_k)   — over continuous features f ∈ R^D_F
@@ -40,11 +40,17 @@ class RMM:
         - if max_k log p(f | θ_k) < LL_THRESH  AND  K < K_MAX → spawn new
         - else update argmax_k by NIW-CAVI M-step (one-sample)
 
-    Phase 2 will extend the per-component discrete heads to include
-    next_target_y_bin so EFE can do contact-to-contact lookahead.
+    Feature v2 (current): f = (offset_scaled, opp_y_at_arrival)
+        offset_scaled = (target_y - landing_y) / OFFSET_SCALE
+        with OFFSET_SCALE = 0.05 (max_placement). Decouples the strategic
+        return-angle choice from the absolute paddle height — the same
+        absolute target_y produces opposite return angles depending on
+        landing_y, so target_y alone conflates angle with geometry.
     """
 
-    D_F       = 2          # (target_y, opp_y_at_arrival)
+    FEATURE_VERSION = "v2-offset"
+
+    D_F       = 2          # (offset_scaled, opp_y_at_arrival)
     K_MAX     = 16
     LL_THRESH = -2.0       # log p(f|θ_k) below this → spawn new cluster
                            # Also: above this no novelty bonus in UCB
@@ -169,6 +175,7 @@ class RMM:
 
     def to_dict(self) -> dict:
         return {
+            "feature_version": self.FEATURE_VERSION,
             "components": [
                 {"m":     c["niw"].m.tolist(),
                  "kappa": float(c["niw"].kappa),
@@ -184,6 +191,8 @@ class RMM:
     @classmethod
     def from_dict(cls, d: dict) -> "RMM":
         rmm = cls()
+        if d.get("feature_version") != cls.FEATURE_VERSION:
+            return rmm   # incompatible feature space → cold start
         for c in d.get("components", []):
             rmm.components.append({
                 "niw":   NIW(np.array(c["m"], float),
@@ -230,9 +239,9 @@ class LongTermStats:
             self._n_aim[key]   += 1
             self._sum_err[key] += float(err)
 
-    def record_rally(self, target_y: float, opp_y: float, won: bool):
-        """Stream one rally outcome into the rMM."""
-        f = np.array([float(target_y), float(opp_y)])
+    def record_rally(self, offset_scaled: float, opp_y: float, won: bool):
+        """Stream one rally outcome into the rMM (v2-offset feature space)."""
+        f = np.array([float(offset_scaled), float(opp_y)])
         self.rmm.update(f, bool(won))
 
     # ── read interface ────────────────────────────────────────────────────────
@@ -248,12 +257,12 @@ class LongTermStats:
             return 0.0
         return min(self._n_aim[key] / 80.0, 0.85)
 
-    def expected_win(self, target_y: float, opp_y: float) -> float:
-        return self.rmm.expected_win(np.array([float(target_y), float(opp_y)]))
+    def expected_win(self, offset_scaled: float, opp_y: float) -> float:
+        return self.rmm.expected_win(np.array([float(offset_scaled), float(opp_y)]))
 
-    def ucb_score(self, target_y: float, opp_y: float,
+    def ucb_score(self, offset_scaled: float, opp_y: float,
                    kappa: float = 0.3) -> float:
-        return self.rmm.ucb_score(np.array([float(target_y), float(opp_y)]),
+        return self.rmm.ucb_score(np.array([float(offset_scaled), float(opp_y)]),
                                     kappa=kappa)
 
     def evidence(self) -> float:
@@ -286,41 +295,6 @@ class LongTermStats:
                 lt._sum_err[k] = float(v)
         if "rmm" in d:
             lt.rmm = RMM.from_dict(d["rmm"])
-        elif "a" in d and "b" in d:
-            # Legacy 2D Beta grid → preserve per-cell Beta heads exactly.
-            # Top-K_MAX cells (by observed mass) each become a dedicated cluster
-            # centred at the cell's centre, with the cell's (a, b) Beta directly
-            # transferred. Remaining cells (if any) replay into nearest cluster.
-            a = np.asarray(d["a"], float)
-            b = np.asarray(d["b"], float)
-            K_T, K_O = a.shape
-            cells = []
-            for ti in range(K_T):
-                for oi in range(K_O):
-                    n_won  = max(0.0, a[ti, oi] - 2.0)
-                    n_lost = max(0.0, b[ti, oi] - 2.0)
-                    if n_won + n_lost > 0:
-                        cells.append((ti, oi, n_won, n_lost, n_won + n_lost))
-            cells.sort(key=lambda x: -x[4])
-
-            for ti, oi, n_won, n_lost, n_tot in cells[:RMM.K_MAX]:
-                m = np.array([(ti + 0.5) / K_T, (oi + 0.5) / K_O])
-                W = np.eye(RMM.D_F) * RMM.W_0
-                lt.rmm.components.append({
-                    "niw":   NIW(m,
-                                  RMM.KAPPA_0 + n_tot,
-                                  RMM.NU_0 + n_tot,
-                                  W),
-                    "a_won": RMM.A_0 + n_won,
-                    "b_won": RMM.B_0 + n_lost,
-                    "n":     int(round(n_tot)),
-                })
-            for ti, oi, n_won, n_lost, _ in cells[RMM.K_MAX:]:
-                f = np.array([(ti + 0.5) / K_T, (oi + 0.5) / K_O])
-                for _ in range(int(round(n_won))):
-                    lt.rmm.update(f, True)
-                for _ in range(int(round(n_lost))):
-                    lt.rmm.update(f, False)
         return lt
 
 
@@ -340,6 +314,11 @@ class EFEAgent:
     I_PY    = 4            # player-y index in 6D state
 
     _I_PY_OBS = 2   # player-y index in 4D observation (o_star)
+
+    # rMM feature scaling: offset_scaled = (target_y - landing_y) / OFFSET_SCALE.
+    # 0.05 = max_placement; with target ∈ [landing - 0.05, landing + 0.05]
+    # after clipping in _choose_target_y, offset_scaled stays in [-1, +1].
+    OFFSET_SCALE = 0.05
 
     def __init__(self, belief: MixtureBeliefFilter,
                  likelihood: LikelihoodModel,
@@ -391,9 +370,14 @@ class EFEAgent:
         self._fell_short_frames_ema = float(preferences._frames_near)  # warm-start
 
         # Long-term cross-session learning (LongTermStats / rMM-inspired)
-        self.long_term         = LongTermStats()
-        self._contact_target_y = None   # set at ball-contact; used for win attribution
-        self._contact_opp_y    = None   # opp_y at the contact frame; pairs with _contact_target_y
+        self.long_term       = LongTermStats()
+        # Snapshotted at each paddle contact for win attribution:
+        #   _contact_offset = (target_y_locked - landing_y) / OFFSET_SCALE at
+        #                     the moment of contact (in v2-offset feature units).
+        #   _contact_opp_y  = predicted opp_y at our arrival, locked at choice
+        #                     time (matches the feature passed to ucb_score).
+        self._contact_offset = None
+        self._contact_opp_y  = None
         # RNG kept for Thompson fallback / future use.
         self._tgt_rng = np.random.default_rng()
         # Bayes-UCB exploration constant. Larger → more exploration of low-n
@@ -402,8 +386,10 @@ class EFEAgent:
         # are exploited and unvisited cells get tried only when reachable
         # neighbours have similar means.
         self._ucb_kappa = 0.3
-        # Locked target_y for the current incoming approach (None when idle).
+        # Locked target_y for the current incoming approach (None when idle),
+        # and the offset_scaled feature it represents.
         self._target_y_locked = None
+        self._locked_offset   = None
         # Per-frame diagnostics (instrumented in CSV by play_efe.py)
         self._tgt_chosen   = 0.5    # last placement-grid pick (raw, pre-bias)
         self._tgt_opp_pred = 0.5    # predicted opp_y used at last placement choice
@@ -542,14 +528,14 @@ class EFEAgent:
             self._bias_dict[key] = float(np.clip(
                 trust * self.long_term.aim_bias(key) + (1.0 - trust) * ema_bias,
                 -0.3, 0.3))
-            # Record rally loss for win-rate grid — attribute to the most
-            # recent contact's (target_y, opp_y).  Misses without a prior
-            # contact this rally are not strategically attributable; skip.
-            if self._contact_target_y is not None and self._contact_opp_y is not None:
-                self.long_term.record_rally(self._contact_target_y,
+            # Record rally loss for the rMM — attribute to the most recent
+            # contact's (offset_scaled, opp_y). Misses without a prior contact
+            # this rally are not strategically attributable; skip.
+            if self._contact_offset is not None and self._contact_opp_y is not None:
+                self.long_term.record_rally(self._contact_offset,
                                              self._contact_opp_y, won=False)
-                self._contact_target_y = None
-                self._contact_opp_y    = None
+                self._contact_offset = None
+                self._contact_opp_y  = None
         else:
             # Adapt urgency window: estimate how many more frames were needed.
             frames_needed = abs(paddle_gap) / self._PADDLE_SPEED
@@ -607,23 +593,23 @@ class EFEAgent:
         Call when the ball contacts our paddle (vx sign flip near player_x).
 
         Records contact key (vy_sign, bounced) for per-trajectory bias lookup,
-        contact target_y for win attribution, and opp_y at contact for the 2D
-        win-rate grid.
+        the offset_scaled chosen at lock time for rMM win attribution, and
+        opp_y at contact for the second rMM feature.
         """
-        self._contact_vy_sign  = int(vy_sign)
-        self._contact_bounced  = int(bounced)
-        self._contact_target_y = self._last_landing_pred
+        self._contact_vy_sign = int(vy_sign)
+        self._contact_bounced = int(bounced)
+        self._contact_offset  = self._locked_offset
         if opp_y is not None:
             self._contact_opp_y = float(opp_y)
 
     def record_win(self):
         """Call when reward==+1 (player just scored). Attributes the win to
-        the (target_y, opp_y) cell at the most recent ball-paddle contact."""
-        if self._contact_target_y is not None and self._contact_opp_y is not None:
-            self.long_term.record_rally(self._contact_target_y,
+        the (offset_scaled, opp_y) feature at the most recent paddle contact."""
+        if self._contact_offset is not None and self._contact_opp_y is not None:
+            self.long_term.record_rally(self._contact_offset,
                                          self._contact_opp_y, won=True)
-            self._contact_target_y = None
-            self._contact_opp_y    = None
+            self._contact_offset = None
+            self._contact_opp_y  = None
 
     # ── opponent position prediction ──────────────────────────────────────────
 
@@ -676,23 +662,42 @@ class EFEAgent:
     # in the final approach.
     _LOCK_SLACK = 0.10
 
+    # rMM trust threshold (rally count). Below this we default to aiming at
+    # landing_y directly — the cold rMM has too few components for UCB to
+    # discriminate, and its "explore novel regions" preference systematically
+    # pushes the target to the edge of the reach window, killing contact rate.
+    _RMM_TRUST_RALLIES = 30
+
     def _choose_target_y(self, landing_y: float, predicted_opp_y: float,
                           eff_max: float) -> float:
         """
         Pick target_y by Bayes-UCB argmax over a discrete sweep of candidates
-        within the reach window [landing_y − eff_max, landing_y + eff_max],
-        scored by the rMM via `long_term.ucb_score(t, opp)`.
+        within the reach window [landing_y − eff_max, landing_y + eff_max].
+        The rMM is scored on (offset_scaled, opp_y) where
+        offset_scaled = (candidate − landing_y) / OFFSET_SCALE, so the rMM
+        learns return-angle preferences independent of where the ball lands.
         """
         if eff_max < 1e-3:
+            return float(np.clip(landing_y, 0.0, 1.0))
+
+        if self.long_term.evidence() < self._RMM_TRUST_RALLIES:
             return float(np.clip(landing_y, 0.0, 1.0))
 
         candidates = np.linspace(landing_y - eff_max, landing_y + eff_max,
                                   self._N_TARGET_CANDIDATES)
         candidates = np.clip(candidates, 0.0, 1.0)
-        scores = np.array([
-            self.long_term.ucb_score(t, predicted_opp_y, kappa=self._ucb_kappa)
-            for t in candidates
+        offsets    = (candidates - landing_y) / self.OFFSET_SCALE
+        scores     = np.array([
+            self.long_term.ucb_score(o, predicted_opp_y, kappa=self._ucb_kappa)
+            for o in offsets
         ])
+        # Uninformative rMM (cold start or novel feature region) → all scores
+        # collapse to 0.5 + κ. Default to the centre candidate (= landing_y)
+        # rather than letting argmax pick index 0 (= landing - eff_max), which
+        # systematically aims the paddle below the ball and tanks the contact
+        # rate until the rMM has populated this region.
+        if scores.max() - scores.min() < 1e-9:
+            return float(np.clip(landing_y, 0.0, 1.0))
         return float(candidates[int(np.argmax(scores))])
 
     def _get_preferences(self):
@@ -731,18 +736,26 @@ class EFEAgent:
             if need_sample:
                 self._target_y_locked = self._choose_target_y(
                     landing_y, predicted_opp, eff_max)
+                self._locked_offset   = ((self._target_y_locked - landing_y)
+                                          / self.OFFSET_SCALE)
                 self._tgt_chosen   = self._target_y_locked
                 self._tgt_opp_pred = predicted_opp
                 self._tgt_pwin     = self.long_term.expected_win(
-                    self._target_y_locked, predicted_opp)
+                    self._locked_offset, predicted_opp)
             target_y_override = self._target_y_locked
         else:
-            predicted_opp           = float(self.belief.mean[5])
-            self._target_y_locked   = None   # outgoing/idle: clear lock
+            predicted_opp         = float(self.belief.mean[5])
+            self._target_y_locked = None   # outgoing/idle: clear lock
+            self._locked_offset   = None
 
+        # Pass the current frame's eff_max (with placement_scale fade) to the
+        # preferences module so it re-clips the locked target into the
+        # current reach window — prevents the stale lock drifting beyond the
+        # placement budget as landing_y evolves.
+        em_for_clip = eff_max if vx > 1e-3 else None
         o_star, C_inv, log_norm = self.preferences.contextual_target(
             self.belief.mean, raw_vel=raw_vel,
-            placement=eff_placement, predicted_opp_y=predicted_opp,
+            eff_max=em_for_clip,
             target_y_override=target_y_override)
         self._last_confidence = self.confidence
 
@@ -795,27 +808,6 @@ class EFEAgent:
         # rMM epistemic term (AXIOM): expected KL update to the Dirichlet
         # count model over contact offsets — drives exploration of unexplored
         # parts of the paddle to learn the offset→angle map.
-        contact_offset = self._last_landing_pred - float(mu_pred[4])
-        g_epist        = self.interaction_model.epistemic_value(contact_offset)
-
-        return g_instr, g_epist, mu_pred, Sigma_pred
-
-    def _vbgs_efe_advancing(self, action: int, o_star, C_inv, log_norm):
-        """
-        Like _vbgs_efe but leaves the belief in the post-predict state.
-        Use when chaining multiple VBGS steps; caller must save/restore.
-        Returns (G_instr, G_epist, mu_pred_6D, Sigma_pred_6x6).
-        """
-        self.belief.predict(action)
-        mu_pred    = self.belief.mean.copy()
-        Sigma_pred = self.belief.cov.copy()
-
-        H, R = self.likelihood.H, self.likelihood.R
-        mu_o = H @ mu_pred
-        S    = H @ Sigma_pred @ H.T + R
-
-        g_instr = -self.preferences.expected_log_prior(mu_o, S, o_star,
-                                                        C_inv, log_norm)
         contact_offset = self._last_landing_pred - float(mu_pred[4])
         g_epist        = self.interaction_model.epistemic_value(contact_offset)
 
@@ -940,148 +932,3 @@ class EFEAgent:
 
         return best_action, action_scores
 
-    # ── MPPI receding-horizon planning ────────────────────────────────────────
-
-    def select_action_mppi(self, horizon: int = 15, n_rollouts: int = 128,
-                           gamma: float = 0.9, temperature: float = 1.0,
-                           noise_rate: float = 0.3, epistemic_weight=None):
-        """
-        MPPI receding-horizon planner (AXIOM-style).
-
-        Key fix over naive random shooting: the NOMINAL sequence is the
-        greedy policy — at each rollout step, move toward target_y if the
-        gap exceeds half a paddle step, else NOOP. Perturbations (noise_rate
-        fraction of steps replaced uniformly) explore around this near-optimal
-        baseline rather than around the trivially-wrong NOOP baseline.
-
-        Steps:
-          1. VBGS step-0 (3 calls, one per root action).
-          2. Greedy nominal computed from mu1 and current target_y.
-          3. N rollouts = nominal with noise_rate fraction of steps randomised.
-          4. Soft-min (log-sum-exp / temperature) over rollout costs.
-
-        Returns (best_first_action, {action: G_total}).
-        """
-        self._gamma = gamma
-        o_star, C_inv, log_norm = self._get_preferences()
-
-        # Adaptive epistemic weight
-        bx = float(self.belief.mean[0])
-        vx = float(self._raw_vx if self._prev_bx is not None else self.belief.mean[2])
-        frames = max(0, int((_PLAYER_X - bx) / vx)) if vx > 1e-3 else 999
-        if epistemic_weight is None:
-            base_ew = self._lambda_max * (1.0 - self.confidence)
-            self.epistemic_w = base_ew if frames > 8 else 0.0
-        else:
-            self.epistemic_w = float(epistemic_weight)
-        ew = self.epistemic_w
-
-        # P4: noise_rate schedule — fade to 0 as ball approaches paddle
-        fn = float(self.preferences._frames_near)
-        fs = float(self.preferences._frames_start)
-        noise_scale = float(np.clip((frames - fn) / max(fs - fn, 1.0), 0.0, 1.0))
-        noise_rate_eff = noise_rate * noise_scale
-
-        Q     = self.belief.Q
-        H_mat = self.likelihood.H
-        R_mat = self.likelihood.R
-        _, logdet_R = np.linalg.slogdet(R_mat)
-        n_acts   = len(self.ACTIONS)
-        a_deltas = np.array([PADDLE_DY.get(a, 0.0) for a in self.ACTIONS])
-        # a_deltas indices: 0→NOOP(0.0), 1→UP(-0.06), 2→DOWN(+0.06)
-        T = horizon - 1   # rollout depth after VBGS steps 0+1
-
-        # Target player_y from current preferences (4D obs index 2)
-        tgt_py = float(o_star[self._I_PY_OBS])
-
-        action_scores = {}
-
-        for a0 in self.ACTIONS:
-            # ── Steps 0+1: two VBGS calls (handles wall bounces at t≤1) ──────
-            saved0 = self._save_belief()
-
-            # Step 0: advance belief with a0, compute EFE
-            g_i0, g_e0, mu1, Sigma1 = self._vbgs_efe_advancing(
-                a0, o_star, C_inv, log_norm)
-
-            # Greedy nominal for step 1 based on mu1
-            gap_1  = float(mu1[self.I_PY]) - tgt_py
-            a1_nom = 2 if gap_1 > 0.03 else (3 if gap_1 < -0.03 else 0)
-
-            # Step 1: advance belief with a1_nom, compute EFE
-            g_i1, g_e1, mu2, Sigma2 = self._vbgs_efe_advancing(
-                a1_nom, o_star, C_inv, log_norm)
-
-            self._restore_belief(saved0)
-
-            g_root = (g_i0 - ew * g_e0) + gamma * (g_i1 - ew * g_e1)
-
-            T2 = T - 1   # remaining linear-rollout depth (horizon − 2 VBGS steps)
-            if T2 <= 0:
-                action_scores[a0] = g_root
-                continue
-
-            # ── Pre-compute action-independent Sigma costs from Sigma2 ─────────
-            Sigma_t    = Sigma2.copy()
-            step_const = []
-            for _ in range(T2):
-                Sigma_t = _F @ Sigma_t @ _F.T + Q
-                S_t     = H_mat @ Sigma_t @ H_mat.T + R_mat
-                tr_part = 0.5 * (np.trace(C_inv @ S_t) + log_norm)
-                _, logdet_S = np.linalg.slogdet(S_t)
-                step_const.append((float(tr_part),
-                                   float(0.5 * (logdet_S - logdet_R))))
-
-            # ── Greedy nominal: move toward tgt_py starting from mu2 ──────────
-            nominal  = np.zeros(T2, dtype=int)
-            sim_py   = float(mu2[self.I_PY])
-            for t in range(T2):
-                gap = sim_py - tgt_py
-                if gap > 0.03:        # above target → UP
-                    nominal[t] = 1
-                    sim_py = np.clip(sim_py - 0.060, 0.0, 1.0)
-                elif gap < -0.03:     # below target → DOWN
-                    nominal[t] = 2
-                    sim_py = np.clip(sim_py + 0.060, 0.0, 1.0)
-
-            # ── Biased sampling around greedy nominal ─────────────────────────
-            idx  = np.tile(nominal, (n_rollouts, 1))              # (N, T2)
-            mask = np.random.rand(n_rollouts, T2) < noise_rate_eff
-            idx[mask] = np.random.randint(0, n_acts, mask.sum())
-            deltas = a_deltas[idx]                                # (N, T2)
-
-            # ── Vectorised rollout from mu2 ───────────────────────────────────
-            mus   = np.tile(mu2, (n_rollouts, 1))   # (N, 6)
-            costs = np.zeros(n_rollouts)
-            disc  = gamma * gamma   # already discounted by 2 VBGS steps
-
-            for t in range(T2):
-                # Advance state: constant-velocity ball + per-rollout paddle action
-                mus[:, 0] += mus[:, 2]               # bx += vx
-                mus[:, 1] += mus[:, 3]               # by += vy
-                mus[:, self.I_PY] += deltas[:, t]    # paddle action delta
-
-                lo = mus[:, 1] < 0.0
-                mus[lo, 1] = -mus[lo, 1];  mus[lo, 3] = -mus[lo, 3]
-                hi = mus[:, 1] > 1.0
-                mus[hi, 1] = 2.0 - mus[hi, 1];  mus[hi, 3] = -mus[hi, 3]
-                mus[:, self.I_PY] = np.clip(mus[:, self.I_PY], 0.0, 1.0)
-
-                mu_os = (H_mat @ mus.T).T
-                diffs = mu_os - o_star
-                quad  = np.einsum('ni,ij,nj->n', diffs, C_inv, diffs)
-
-                tr_part, g_ep = step_const[t]
-                costs += disc * (tr_part + 0.5 * quad - ew * g_ep)
-                disc  *= gamma
-
-            # ── MPPI soft-min: G = -λ log(1/N Σ exp(-c/λ)) ──────────────────
-            lc     = -costs / max(temperature, 1e-6)
-            shift  = lc.max()
-            soft_g = -temperature * (shift + np.log(np.mean(np.exp(lc - shift))))
-
-            g_total = g_root + float(soft_g)
-            action_scores[a0] = g_total
-
-        best_action = min(action_scores, key=action_scores.get)
-        return best_action, action_scores

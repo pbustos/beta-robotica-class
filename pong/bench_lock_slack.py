@@ -1,14 +1,10 @@
 """
-A/B benchmark — planner comparison.
+Paired-seed A/B benchmark harness (template).
 
-Both arms use current (committed) constants. Only the action selector differs:
-  - mppi_h3: select_action_mppi(horizon=3, n_rollouts=128) — same horizon
-             as the tree-search arm but with MPPI's stochastic sampling.
-  - tree_h3: select_action_horizon(horizon=3) — full deterministic tree.
-
-If mppi_h3 matches tree_h3, MPPI is fine and play_efe.py's H=15 was the
-problem. If mppi_h3 still trails tree_h3, the stochastic averaging itself
-is the issue and play_efe.py should switch planner.
+Both arms run the same pipeline (tree H=3, warm rMM, identical seeds).
+Re-template `run_arm` and the two `run_arm(...)` invocations at the
+bottom of the script to flip whichever knob the current experiment
+needs (typically a class attribute on EFEAgent or a module constant).
 
 Usage:
     python bench_lock_slack.py [N_EPISODES]
@@ -34,25 +30,46 @@ from efe_agent import EFEAgent, LongTermStats
 STATE_FILE = pathlib.Path("models/agent_state.pkl")
 
 
-def load_warm_long_term():
-    """Load the warm LongTermStats from agent_state.pkl so the rMM is populated."""
+def load_warm_state():
+    """Load the full warm state (rMM + adaptive params) from agent_state.pkl."""
     if not STATE_FILE.exists():
-        return None, 0.0
+        return {}
     with open(STATE_FILE, "rb") as f:
-        s = pickle.load(f)
-    lt_dict = s.get("long_term")
-    bias = float(s.get("landing_bias", 0.0)) if not isinstance(s.get("landing_bias"), dict) else 0.0
-    if lt_dict is None:
-        return None, bias
-    return lt_dict, bias
+        return pickle.load(f)
+
+
+def apply_warm_state(agent, state):
+    """Initialise a fresh per-episode agent with any saved adaptive state."""
+    lt_dict = state.get("long_term")
+    if lt_dict is not None:
+        from efe_agent import LongTermStats
+        agent.long_term = LongTermStats.from_dict(copy.deepcopy(lt_dict))
+
+    bd = state.get("bias_dict")
+    if bd is not None:
+        for raw_k, v in bd.items():
+            k = tuple(int(x) for x in raw_k.strip("()").split(", "))
+            if k in agent._bias_dict:
+                agent._bias_dict[k] = float(v)
+    elif "landing_bias" in state and not isinstance(state["landing_bias"], dict):
+        agent.landing_bias = float(state["landing_bias"])   # legacy scalar fan-out
+
+    if "placement" in state:
+        agent.placement = float(state["placement"])
+    if "frames_near" in state and state["frames_near"] is not None:
+        fn = int(state["frames_near"])
+        agent.preferences.update_urgency(frames_near=fn, frames_start=fn + 15)
+    if "urgency_ema" in state and state["urgency_ema"] is not None:
+        agent._fell_short_frames_ema = float(state["urgency_ema"])
+    if "interaction_alpha" in state and state["interaction_alpha"] is not None:
+        agent.interaction_model.alpha = np.asarray(
+            state["interaction_alpha"], float)
 
 gym.register_envs(ale_py)
 
-N_EPISODES   = int(sys.argv[1]) if len(sys.argv) > 1 else 30
-MPPI_N       = 128
-MPPI_TEMP    = 1.0
-GAMMA        = 0.9
-SEED_BASE    = 12345
+N_EPISODES = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+GAMMA      = 0.9
+SEED_BASE  = 12345
 
 
 def extract_obs(ram):
@@ -65,14 +82,15 @@ def make_models():
             LikelihoodModel())
 
 
-def run_episode(env, seed, ball_model, opp_model, likelihood, long_term, landing_bias,
-                planner):
-    opp_tracker = OpponentBeliefTracker(opp_model)
-    belief      = MixtureBeliefFilter(ball_model, opp_tracker, likelihood)
-    prefs       = PriorPreferences()
-    agent       = EFEAgent(belief, likelihood, prefs)
-    agent.long_term     = long_term
-    agent.landing_bias  = landing_bias
+def run_episode(env, seed, ball_model, opp_model, likelihood, agent):
+    """Reset belief filter & opp tracker; reuse the persistent agent
+    (its rMM, bias_dict, placement, urgency, etc. carry across episodes)."""
+    opp_tracker  = OpponentBeliefTracker(opp_model)
+    belief       = MixtureBeliefFilter(ball_model, opp_tracker, likelihood)
+    agent.belief = belief
+    agent.reset_raw_velocity()
+    agent._target_y_locked = None
+    agent._locked_offset   = None
 
     obs, _ = env.reset(seed=seed)
     o = extract_obs(obs)
@@ -120,12 +138,7 @@ def run_episode(env, seed, ball_model, opp_model, likelihood, long_term, landing
             agent.reset_raw_velocity()
             bounced_this_approach = False
 
-        if planner == "mppi_h3":
-            action, _ = agent.select_action_mppi(
-                horizon=3, n_rollouts=MPPI_N,
-                temperature=MPPI_TEMP, gamma=GAMMA)
-        else:  # tree_h3
-            action, _ = agent.select_action_horizon(horizon=3, gamma=GAMMA)
+        action, _ = agent.select_action_horizon(horizon=3, gamma=GAMMA)
         prev_opp_y  = opp_y
         prev_action = action
 
@@ -144,28 +157,35 @@ def run_episode(env, seed, ball_model, opp_model, likelihood, long_term, landing
         if terminated or truncated:
             break
 
-    return score, agent.landing_bias, n_contacts, n_no_contact_losses
+    return score, n_contacts, n_no_contact_losses
 
 
-def run_arm(label, planner, warm_lt_dict, warm_bias):
-    print(f"\n── {label}  planner={planner}  N={N_EPISODES} ──")
+def run_arm(label, knob, warm_state):
+    print(f"\n── {label}  knob={knob}  N={N_EPISODES} ──")
+    # Re-template per experiment: assign `knob` to the relevant class
+    # attribute / module constant here, e.g.
+    #   EFEAgent._SOME_FLAG = bool(knob)
     env = gym.make("ALE/Pong-v5", obs_type="ram", render_mode=None)
     bm, om, lk = make_models()
-    if warm_lt_dict is not None:
-        lt = LongTermStats.from_dict(copy.deepcopy(warm_lt_dict))
-        print(f"  loaded warm rMM: K={lt.n_components()}  rallies={int(lt.evidence())}")
-    else:
-        lt = LongTermStats()
+    # One persistent agent per arm so the rMM, bias_dict, urgency window,
+    # and placement adapt across episodes (same semantics as the original
+    # shared-lt bench).
+    prefs = PriorPreferences()
+    belief = MixtureBeliefFilter(bm, OpponentBeliefTracker(om), lk)
+    agent  = EFEAgent(belief, lk, prefs)
+    apply_warm_state(agent, copy.deepcopy(warm_state))
     scores, contacts, ncls = [], [], []
-    bias = float(warm_bias) if warm_bias is not None else 0.0
     t0 = time.time()
     for ep in range(N_EPISODES):
         seed = SEED_BASE + ep
-        s, bias, nc, nl = run_episode(env, seed, bm, om, lk, lt, bias, planner)
+        s, nc, nl = run_episode(env, seed, bm, om, lk, agent)
         scores.append(s); contacts.append(nc); ncls.append(nl)
+        agent.update_from_episode(s)
+        K = agent.long_term.n_components()
+        rallies = int(agent.long_term.evidence())
         print(f"  ep {ep+1:2d}: score={s:+3.0f}  contacts={nc:3d}  "
-              f"no-contact-losses={nl:2d}  K={lt.n_components()}  "
-              f"rallies={int(lt.evidence())}  (mean {np.mean(scores):+.2f})")
+              f"no-contact-losses={nl:2d}  K={K}  rallies={rallies}  "
+              f"(mean {np.mean(scores):+.2f})")
     env.close()
     arr = np.array(scores)
     print(f"  → {time.time()-t0:.0f}s  mean={arr.mean():+.2f}  std={arr.std():.2f}  "
@@ -175,19 +195,26 @@ def run_arm(label, planner, warm_lt_dict, warm_bias):
 
 
 if __name__ == "__main__":
-    warm_lt, warm_bias = load_warm_long_term()
-    if warm_lt is not None:
-        print(f"Loaded warm long_term from {STATE_FILE} (bias={warm_bias:+.4f})")
+    warm_state = load_warm_state()
+    if warm_state:
+        lt_dict = warm_state.get("long_term")
+        if lt_dict is not None:
+            lt = LongTermStats.from_dict(lt_dict)
+            print(f"Loaded warm state: rMM K={lt.n_components()}  "
+                  f"rallies={int(lt.evidence())}  "
+                  f"placement={warm_state.get('placement', 'n/a')}")
+        else:
+            print(f"Loaded warm state (no rMM)")
     else:
-        print("No warm state — starting from cold rMM")
-    base_scores, base_nc, base_ncl = run_arm("mppi_h3", "mppi_h3", warm_lt, warm_bias)
-    new_scores,  new_nc,  new_ncl  = run_arm("tree_h3", "tree_h3", warm_lt, warm_bias)
+        print("No warm state — starting cold")
+    base_scores, base_nc, base_ncl = run_arm("A", False, warm_state)
+    new_scores,  new_nc,  new_ncl  = run_arm("B", True,  warm_state)
 
     print("\n── Summary ──")
     print(f"{'arm':<10} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
-    for label, scs, ncs, nls in [("mppi_h3", base_scores, base_nc, base_ncl),
-                                   ("tree_h3", new_scores, new_nc, new_ncl)]:
+    for label, scs, ncs, nls in [("A", base_scores, base_nc, base_ncl),
+                                  ("B", new_scores,  new_nc,  new_ncl)]:
         a = np.array(scs)
         print(f"{label:<10} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")

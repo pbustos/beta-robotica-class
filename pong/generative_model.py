@@ -307,16 +307,8 @@ class PriorPreferences:
         self._rebuild_C()
 
         # Urgency: tighten σ_py over this frame window before arrival
-        # NOT ACTING LAZY: Increased start window from 20 to 50 frames to account for max paddle speed
         self._frames_start = 50   # begin tightening at 50 frames out
         self._frames_near  =  5   # full urgency at 5 frames out
-
-        # Aggressive placement: scale offset by opponent distance from centre.
-        # Paddle half-height ≈ 0.030; 0.05 hits near edge — steep angle.
-        # Offset fades to zero below _frames_placement_cutoff so interception
-        # is never sacrificed for placement when time is short.
-        self._max_placement = 0.05
-        self._frames_placement_cutoff = 10
 
     def _rebuild_C(self):
         sigma = np.array([self._sigma_bx, self._sigma_by,
@@ -326,13 +318,6 @@ class PriorPreferences:
         self._log_norm = (self.D_OBS * np.log(2 * np.pi)
                           + np.linalg.slogdet(self.C)[1])
 
-    def update_sigma(self, sigma_py_near=None, sigma_oy=None):
-        if sigma_py_near is not None:
-            self._sigma_py_near = float(np.clip(sigma_py_near, 0.015, 0.08))
-        if sigma_oy is not None:
-            self._sigma_oy = float(np.clip(sigma_oy, 0.05, 0.30))
-        self._rebuild_C()
-
     def update_urgency(self, frames_near=None, frames_start=None):
         """Adapt the urgency tightening window from observed fell-short timing."""
         if frames_near is not None:
@@ -341,20 +326,23 @@ class PriorPreferences:
             self._frames_start = int(np.clip(frames_start,
                                              self._frames_near + 5, 40))
 
-    def contextual_target(self, belief_mu, raw_vel=None, placement=None,
-                          predicted_opp_y=None, target_y_override=None):
+    def contextual_target(self, belief_mu, raw_vel=None, eff_max=None,
+                          target_y_override=None):
         """
-        Return (o_star, C_inv, log_norm) with player_y target set to the
-        predicted ball landing y, adjusted for intentional placement.
+        Return (o_star, C_inv, log_norm).
 
-        If target_y_override is given (e.g. chosen by a Beta-grid Thompson
-        sampler upstream), it replaces the linear-rule placement offset.
-        The override is still clipped to the paddle-reach window around the
-        predicted landing so interception is not sacrificed.
+        target_y_override is the strategic paddle target chosen upstream
+        (typically by `EFEAgent._choose_target_y`). It is re-clipped here to
+        the current paddle-reach window [landing_y ± eff_max] — the lock can
+        drift up to LOCK_SLACK outside its original window as landing_y
+        evolves, and without this re-clip the paddle chases a stale target
+        further than current placement allows. The caller passes the fresh
+        eff_max (which includes the placement_scale fade-out in the final
+        approach) so the clip tightens as frames-to-arrival shrinks.
 
-        Urgency scaling: σ_py loosens when ball is far (paddle idles),
-        tightens linearly from _frames_start to _frames_near before arrival
-        (paddle commits aggressively).
+        σ_py tightens linearly from `_frames_start` to `_frames_near` before
+        ball arrival, so the paddle idles when the ball is far and commits
+        aggressively as it approaches.
         """
         o_star = self.o_star.copy()
         landing_y = _predict_ball_landing(belief_mu, raw_vel=raw_vel)
@@ -362,7 +350,6 @@ class PriorPreferences:
         bx = float(belief_mu[0])
         vx = float(raw_vel[0]) if raw_vel is not None else float(belief_mu[2])
 
-        # ── urgency-scaled σ_py ───────────────────────────────────────────────
         frames = _frames_to_arrival(bx, vx)
         t = float(np.clip(
             (frames - self._frames_near) / (self._frames_start - self._frames_near),
@@ -375,41 +362,16 @@ class PriorPreferences:
                         + 2.0 * np.log(sigma_py)
                         - 2.0 * np.log(self._sigma_py_near))
 
-        # ── landing target + placement ────────────────────────────────────────
-        if vx > 1e-3:
-            max_p = float(placement) if placement is not None else self._max_placement
-            placement_scale = float(np.clip(
-                (frames - self._frames_placement_cutoff) /
-                (self._frames_start - self._frames_placement_cutoff),
-                0.0, 1.0))
-            eff_max = max_p * placement_scale
-
-            if target_y_override is not None:
-                # Clip to reachable window around landing.
-                target = float(np.clip(target_y_override,
-                                        landing_y - eff_max,
-                                        landing_y + eff_max))
-            else:
-                # Legacy linear rule: aim away from opponent's centre offset.
-                oy = float(predicted_opp_y) if predicted_opp_y is not None \
-                     else float(belief_mu[5])
-                offset = float(np.clip(
-                    (oy - 0.5) * 2.0 * eff_max, -eff_max, eff_max))
-                target = landing_y + offset
+        if vx > 1e-3 and target_y_override is not None:
+            em      = float(eff_max) if eff_max is not None else 0.05
+            target  = float(np.clip(target_y_override,
+                                     landing_y - em,
+                                     landing_y + em))
             o_star[self.IDX_PY] = float(np.clip(target, 0.0, 1.0))
         else:
             o_star[self.IDX_PY] = landing_y
 
         return o_star, C_inv_dyn, log_norm_dyn
-
-    # ── log p̃(o) ─────────────────────────────────────────────────────────────
-
-    def log_prior(self, o, o_star=None):
-        """log p̃(o) = log N(o ; o*, C).  Uses fixed (non-adaptive) C."""
-        if o_star is None:
-            o_star = self.o_star
-        diff = o - o_star
-        return -0.5 * (diff @ self.C_inv @ diff + self._log_norm)
 
     # ── analytic expectation (used in EFE Phase 3) ────────────────────────────
 
