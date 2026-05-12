@@ -1056,6 +1056,10 @@ class EFEAgent:
             disc  = gamma * gamma   # already discounted by 2 VBGS steps
 
             for t in range(T2):
+                # Advance state: constant-velocity ball + per-rollout paddle action
+                mus[:, 0] += mus[:, 2]               # bx += vx
+                mus[:, 1] += mus[:, 3]               # by += vy
+                mus[:, self.I_PY] += deltas[:, t]    # paddle action delta
 
                 lo = mus[:, 1] < 0.0
                 mus[lo, 1] = -mus[lo, 1];  mus[lo, 3] = -mus[lo, 3]
