@@ -160,20 +160,29 @@ def run_episode(env, seed, ball_model, opp_model, likelihood, agent):
     return score, n_contacts, n_no_contact_losses
 
 
-def run_arm(label, knob, warm_state):
-    print(f"\n── {label}  knob={knob}  N={N_EPISODES} ──")
-    # Re-template per experiment: assign `knob` to the relevant class
-    # attribute / module constant here, e.g.
-    #   EFEAgent._SOME_FLAG = bool(knob)
+def run_arm(label, feature, pkl_path):
+    """Run a single arm in the requested rMM feature mode, loading the
+    matching warm pkl. `feature` is "offset" or "target_y"."""
+    from efe_agent import RMM
+    EFEAgent._RMM_FEATURE = feature
+    RMM.FEATURE_VERSION   = {"offset": "v2-offset",
+                              "target_y": "v2-target_y"}[feature]
+
+    warm_state = {}
+    if pathlib.Path(pkl_path).exists():
+        with open(pkl_path, "rb") as f:
+            warm_state = pickle.load(f)
+
+    print(f"\n── {label}  feature={feature}  pkl={pkl_path}  N={N_EPISODES} ──")
     env = gym.make("ALE/Pong-v5", obs_type="ram", render_mode=None)
     bm, om, lk = make_models()
-    # One persistent agent per arm so the rMM, bias_dict, urgency window,
-    # and placement adapt across episodes (same semantics as the original
-    # shared-lt bench).
     prefs = PriorPreferences()
     belief = MixtureBeliefFilter(bm, OpponentBeliefTracker(om), lk)
     agent  = EFEAgent(belief, lk, prefs)
     apply_warm_state(agent, copy.deepcopy(warm_state))
+    print(f"  loaded: rMM K={agent.long_term.n_components()}  "
+          f"rallies={int(agent.long_term.evidence())}  "
+          f"placement={agent.placement:.4f}")
     scores, contacts, ncls = [], [], []
     t0 = time.time()
     for ep in range(N_EPISODES):
@@ -195,26 +204,19 @@ def run_arm(label, knob, warm_state):
 
 
 if __name__ == "__main__":
-    warm_state = load_warm_state()
-    if warm_state:
-        lt_dict = warm_state.get("long_term")
-        if lt_dict is not None:
-            lt = LongTermStats.from_dict(lt_dict)
-            print(f"Loaded warm state: rMM K={lt.n_components()}  "
-                  f"rallies={int(lt.evidence())}  "
-                  f"placement={warm_state.get('placement', 'n/a')}")
-        else:
-            print(f"Loaded warm state (no rMM)")
-    else:
-        print("No warm state — starting cold")
-    base_scores, base_nc, base_ncl = run_arm("A", False, warm_state)
-    new_scores,  new_nc,  new_ncl  = run_arm("B", True,  warm_state)
+    # Paired A/B: target_y feature (legacy) vs offset feature (current).
+    # Each arm loads its own matching warm pkl (built by warmup_rmm.py
+    # with --feature target_y / --feature offset).
+    base_scores, base_nc, base_ncl = run_arm(
+        "target_y", "target_y", "models/agent_state.target_y.pkl")
+    new_scores,  new_nc,  new_ncl  = run_arm(
+        "offset",   "offset",   "models/agent_state.offset.pkl")
 
     print("\n── Summary ──")
     print(f"{'arm':<10} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
-    for label, scs, ncs, nls in [("A", base_scores, base_nc, base_ncl),
-                                  ("B", new_scores,  new_nc,  new_ncl)]:
+    for label, scs, ncs, nls in [("target_y", base_scores, base_nc, base_ncl),
+                                   ("offset",   new_scores,  new_nc,  new_ncl)]:
         a = np.array(scs)
         print(f"{label:<10} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")

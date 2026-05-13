@@ -1,9 +1,12 @@
 """
-Warm up a fresh (v2-offset) rMM by playing N episodes with a single
-persistent agent. Saves models/agent_state.pkl on completion.
+Warm up a fresh rMM by playing N episodes with a single persistent agent.
 
 Usage:
-    python warmup_rmm.py [N_EPISODES]   (default 50)
+    python warmup_rmm.py [N_EPISODES] [--feature offset|target_y]
+
+Default feature is "offset"; "target_y" produces the legacy-feature baseline
+for the paired A/B. Saves to models/agent_state.{feature}.pkl (and also
+copies to models/agent_state.pkl for convenience).
 """
 import sys, copy, pickle, pathlib, time
 import numpy as np
@@ -13,14 +16,26 @@ import ale_py
 from generative_model import (
     BallTransitionVBGS, OpponentTransitionVBGS, LikelihoodModel,
     PriorPreferences, OpponentBeliefTracker, MixtureBeliefFilter)
-from efe_agent import EFEAgent
+from efe_agent import EFEAgent, RMM
 
 gym.register_envs(ale_py)
 
-N_EPISODES = int(sys.argv[1]) if len(sys.argv) > 1 else 50
+# Parse args
+_pos     = [a for a in sys.argv[1:] if not a.startswith("--")]
+N_EPISODES = int(_pos[0]) if _pos else 50
+FEATURE = "offset"
+if "--feature" in sys.argv:
+    FEATURE = sys.argv[sys.argv.index("--feature") + 1]
+assert FEATURE in ("offset", "target_y"), f"unknown feature {FEATURE!r}"
+
+# Wire the rMM feature mode + pkl version sentinel.
+EFEAgent._RMM_FEATURE = FEATURE
+RMM.FEATURE_VERSION   = {"offset": "v2-offset", "target_y": "v2-target_y"}[FEATURE]
+
 GAMMA      = 0.9
 SEED_BASE  = 24680
-STATE_FILE = pathlib.Path("models/agent_state.pkl")
+STATE_FILE_GENERIC = pathlib.Path("models/agent_state.pkl")
+STATE_FILE_FEAT    = pathlib.Path(f"models/agent_state.{FEATURE}.pkl")
 
 
 def extract_obs(ram):
@@ -127,7 +142,7 @@ def main():
           f"wins(>0)={int((np.array(scores)>0).sum())}")
 
     # Save the persistent state for later benches.
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE_FEAT.parent.mkdir(parents=True, exist_ok=True)
     state = {
         "landing_bias": float(agent.landing_bias),
         "bias_dict":    {str(k): float(v) for k, v in agent._bias_dict.items()},
@@ -136,10 +151,14 @@ def main():
         "frames_near":  int(agent.preferences._frames_near),
         "urgency_ema":  float(agent._fell_short_frames_ema),
         "long_term":    agent.long_term.to_dict(),
+        "rmm_feature":  FEATURE,   # for downstream consumers
     }
-    with open(STATE_FILE, "wb") as f:
+    with open(STATE_FILE_FEAT, "wb") as f:
         pickle.dump(state, f)
-    print(f"saved {STATE_FILE}  (rMM K={agent.long_term.n_components()}  "
+    with open(STATE_FILE_GENERIC, "wb") as f:
+        pickle.dump(state, f)
+    print(f"saved {STATE_FILE_FEAT}  (feature={FEATURE}  "
+          f"K={agent.long_term.n_components()}  "
           f"rallies={int(agent.long_term.evidence())})")
 
 

@@ -48,6 +48,9 @@ class RMM:
         landing_y, so target_y alone conflates angle with geometry.
     """
 
+    # Set at module level (warmup / bench) before any RMM is constructed.
+    # "v2-offset"   → f = ((target_y - landing_y) / OFFSET_SCALE, opp_y)
+    # "v2-target_y" → f = (target_y, opp_y) — legacy feature for paired A/B
     FEATURE_VERSION = "v2-offset"
 
     D_F       = 2          # (offset_scaled, opp_y_at_arrival)
@@ -319,6 +322,17 @@ class EFEAgent:
     # 0.05 = max_placement; with target ∈ [landing - 0.05, landing + 0.05]
     # after clipping in _choose_target_y, offset_scaled stays in [-1, +1].
     OFFSET_SCALE = 0.05
+
+    # rMM feature mode: "offset" (default) or "target_y" (legacy A/B baseline).
+    # Mirror RMM.FEATURE_VERSION so the pkl version sentinel matches.
+    _RMM_FEATURE = "offset"
+
+    @classmethod
+    def _to_rmm_feature(cls, target_y: float, landing_y: float) -> float:
+        """target_y → rMM feature value, per `_RMM_FEATURE` mode."""
+        if cls._RMM_FEATURE == "offset":
+            return (float(target_y) - float(landing_y)) / cls.OFFSET_SCALE
+        return float(target_y)
 
     def __init__(self, belief: MixtureBeliefFilter,
                  likelihood: LikelihoodModel,
@@ -686,10 +700,11 @@ class EFEAgent:
         candidates = np.linspace(landing_y - eff_max, landing_y + eff_max,
                                   self._N_TARGET_CANDIDATES)
         candidates = np.clip(candidates, 0.0, 1.0)
-        offsets    = (candidates - landing_y) / self.OFFSET_SCALE
+        feats      = np.array([self._to_rmm_feature(t, landing_y)
+                                for t in candidates])
         scores     = np.array([
-            self.long_term.ucb_score(o, predicted_opp_y, kappa=self._ucb_kappa)
-            for o in offsets
+            self.long_term.ucb_score(f, predicted_opp_y, kappa=self._ucb_kappa)
+            for f in feats
         ])
         # Uninformative rMM (cold start or novel feature region) → all scores
         # collapse to 0.5 + κ. Default to the centre candidate (= landing_y)
@@ -736,8 +751,8 @@ class EFEAgent:
             if need_sample:
                 self._target_y_locked = self._choose_target_y(
                     landing_y, predicted_opp, eff_max)
-                self._locked_offset   = ((self._target_y_locked - landing_y)
-                                          / self.OFFSET_SCALE)
+                self._locked_offset   = self._to_rmm_feature(
+                    self._target_y_locked, landing_y)
                 self._tgt_chosen   = self._target_y_locked
                 self._tgt_opp_pred = predicted_opp
                 self._tgt_pwin     = self.long_term.expected_win(
