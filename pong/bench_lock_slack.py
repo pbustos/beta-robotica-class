@@ -160,13 +160,14 @@ def run_episode(env, seed, ball_model, opp_model, likelihood, agent):
     return score, n_contacts, n_no_contact_losses
 
 
-def run_arm(label, feature, pkl_path, adaptive_horizon=False):
-    """Run a single arm in the requested rMM feature mode, loading the
-    matching warm pkl. `feature` is "offset" or "target_y". When
-    `adaptive_horizon`, the planner grows H up to _MAX_HORIZON near contact."""
+def run_arm(label, feature, pkl_path, adaptive_horizon=False,
+            vel_alpha_hybrid=False):
+    """Run a single arm with the requested rMM feature mode + planner/EMA
+    toggles. `feature` is "offset" or "target_y"."""
     from efe_agent import RMM
     EFEAgent._RMM_FEATURE      = feature
     EFEAgent._ADAPTIVE_HORIZON = bool(adaptive_horizon)
+    EFEAgent._VEL_ALPHA_HYBRID = bool(vel_alpha_hybrid)
     RMM.FEATURE_VERSION        = {"offset": "v2-offset",
                                    "target_y": "v2-target_y"}[feature]
 
@@ -176,7 +177,8 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False):
             warm_state = pickle.load(f)
 
     print(f"\n── {label}  feature={feature}  adaptive_H={adaptive_horizon}  "
-          f"pkl={pkl_path}  N={N_EPISODES} ──")
+          f"vel_α_hybrid={vel_alpha_hybrid}  pkl={pkl_path}  "
+          f"N={N_EPISODES} ──")
     env = gym.make("ALE/Pong-v5", obs_type="ram", render_mode=None)
     bm, om, lk = make_models()
     prefs = PriorPreferences()
@@ -207,21 +209,23 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False):
 
 
 if __name__ == "__main__":
-    # Paired A/B: fixed H=3 vs adaptive horizon, both with target_y feature
-    # and the same warm pkl. The adaptive arm grows H up to _MAX_HORIZON
-    # when ball is in the urgency window; otherwise behaves like fixed H=3.
+    # Paired A/B: single-α (current) vs hybrid-α raw velocity EMA. Both
+    # arms use the target_y feature and fixed H=3, same warm pkl.
+    # Hybrid uses α=0.3 (smoothed) when frames-to-arrival ≥ 6, α=0.7
+    # (responsive) otherwise — targets the late-approach landing drift
+    # that drives no-contact losses.
     base_scores, base_nc, base_ncl = run_arm(
-        "H3_fixed",   "target_y", "models/agent_state.target_y.pkl",
-        adaptive_horizon=False)
+        "α_fixed",  "target_y", "models/agent_state.target_y.pkl",
+        vel_alpha_hybrid=False)
     new_scores,  new_nc,  new_ncl  = run_arm(
-        "H_adapt",    "target_y", "models/agent_state.target_y.pkl",
-        adaptive_horizon=True)
+        "α_hybrid", "target_y", "models/agent_state.target_y.pkl",
+        vel_alpha_hybrid=True)
 
     print("\n── Summary ──")
     print(f"{'arm':<10} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
-    for label, scs, ncs, nls in [("H3_fixed", base_scores, base_nc, base_ncl),
-                                   ("H_adapt",  new_scores,  new_nc,  new_ncl)]:
+    for label, scs, ncs, nls in [("α_fixed",  base_scores, base_nc, base_ncl),
+                                   ("α_hybrid", new_scores,  new_nc,  new_ncl)]:
         a = np.array(scs)
         print(f"{label:<10} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")

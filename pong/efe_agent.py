@@ -346,11 +346,13 @@ class EFEAgent:
                  likelihood: LikelihoodModel,
                  preferences: PriorPreferences,
                  vel_alpha: float = 0.7,
+                 vel_alpha_far: float = 0.3,
                  bias_alpha: float = 0.10):
-        self.belief      = belief
-        self.likelihood  = likelihood
-        self.preferences = preferences
-        self._vel_alpha  = vel_alpha
+        self.belief         = belief
+        self.likelihood     = likelihood
+        self.preferences    = preferences
+        self._vel_alpha     = vel_alpha     # near-contact (responsive)
+        self._vel_alpha_far = vel_alpha_far  # far approach (smoothed)
         self._raw_vx     = 0.0
         self._raw_vy     = 0.0
         self._prev_bx    = None
@@ -447,6 +449,15 @@ class EFEAgent:
     # dvy = 0 → original threshold-based detector misses the sign flip.
     _WALL_CLIP_MARGIN = 0.005
 
+    # Hybrid α for the raw velocity EMA. When the ball is more than
+    # `_VEL_NEAR_FRAMES` frames from arrival, use `_vel_alpha_far`
+    # (low → heavy smoothing) so quantisation jitter doesn't drift the
+    # landing prediction. Within the urgency window, fall back to
+    # `_vel_alpha` (high → responsive) so wall-bounces and last-frame
+    # corrections aren't lagged. Class toggle for A/B.
+    _VEL_ALPHA_HYBRID = False
+    _VEL_NEAR_FRAMES  = 6
+
     def update_raw_velocity(self, bx: float, by: float):
         """
         Call once per frame with the latest raw ball position (normalised).
@@ -489,6 +500,10 @@ class EFEAgent:
                 self._last_vy_bounce = vy_bounce   # True only when vy reversed
             else:
                 a = self._vel_alpha
+                if self._VEL_ALPHA_HYBRID and self._raw_vx > 1e-3:
+                    frames_left = (_PLAYER_X - bx) / self._raw_vx
+                    if frames_left >= self._VEL_NEAR_FRAMES:
+                        a = self._vel_alpha_far
                 self._raw_vx = a * dvx + (1.0 - a) * self._raw_vx
                 self._raw_vy = a * dvy + (1.0 - a) * self._raw_vy
                 self._last_vy_bounce = False
