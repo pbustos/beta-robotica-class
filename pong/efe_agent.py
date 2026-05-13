@@ -49,9 +49,9 @@ class RMM:
     """
 
     # Set at module level (warmup / bench) before any RMM is constructed.
+    # "v2-target_y" → f = (target_y, opp_y)   — default; paired bench winner
     # "v2-offset"   → f = ((target_y - landing_y) / OFFSET_SCALE, opp_y)
-    # "v2-target_y" → f = (target_y, opp_y) — legacy feature for paired A/B
-    FEATURE_VERSION = "v2-offset"
+    FEATURE_VERSION = "v2-target_y"
 
     D_F       = 2          # (offset_scaled, opp_y_at_arrival)
     K_MAX     = 16
@@ -323,9 +323,17 @@ class EFEAgent:
     # after clipping in _choose_target_y, offset_scaled stays in [-1, +1].
     OFFSET_SCALE = 0.05
 
-    # rMM feature mode: "offset" (default) or "target_y" (legacy A/B baseline).
-    # Mirror RMM.FEATURE_VERSION so the pkl version sentinel matches.
-    _RMM_FEATURE = "offset"
+    # rMM feature mode: "target_y" (default, paired A/B winner) or "offset".
+    # Must mirror RMM.FEATURE_VERSION so the pkl version sentinel matches.
+    _RMM_FEATURE = "target_y"
+
+    # Adaptive planning horizon: when the ball is within _MAX_HORIZON frames
+    # of arrival, grow H to plan past the contact step. _tree_min_efe early-
+    # stops branches once the rollout crosses _PLAYER_X so cost stays bounded.
+    # When False, select_action_horizon uses the caller-passed `horizon`.
+    _ADAPTIVE_HORIZON = False
+    _MIN_HORIZON      = 3
+    _MAX_HORIZON      = 6
 
     @classmethod
     def _to_rmm_feature(cls, target_y: float, landing_y: float) -> float:
@@ -870,13 +878,20 @@ class EFEAgent:
 
     def _tree_min_efe(self, mu, Sigma, depth, ew, discount,
                       o_star, C_inv, log_norm):
-        """Min discounted EFE over a depth-step linear-Gaussian tree."""
+        """
+        Min discounted EFE over a depth-step linear-Gaussian tree.
+
+        Branches whose rollout has already crossed _PLAYER_X are not expanded
+        further — past contact, the action-dependent component of the cost is
+        irrelevant (paddle can't affect this rally), so deeper expansion is
+        pure compute waste. Keeps adaptive horizon bounded.
+        """
         best = np.inf
         for a in self.ACTIONS:
             g_i, g_e, mu_n, Sigma_n = self._linear_efe(
                 mu, Sigma, a, o_star, C_inv, log_norm)
             g = discount * (g_i - ew * g_e)
-            if depth > 1:
+            if depth > 1 and mu_n[0] < _PLAYER_X:
                 g += self._tree_min_efe(mu_n, Sigma_n, depth - 1, ew,
                                         discount * self._gamma,
                                         o_star, C_inv, log_norm)
@@ -927,6 +942,15 @@ class EFEAgent:
             self.epistemic_w = float(epistemic_weight)
         ew = self.epistemic_w
 
+        # Adaptive horizon: when ball is within _MAX_HORIZON frames of arrival
+        # plan all the way to contact (+1 for the contact step itself). Beyond
+        # _MAX_HORIZON, fall back to the caller's `horizon`. _tree_min_efe will
+        # early-stop branches that cross _PLAYER_X so the tree stays bounded.
+        if self._ADAPTIVE_HORIZON and frames < self._MAX_HORIZON:
+            H = max(self._MIN_HORIZON, frames + 1)
+        else:
+            H = horizon
+
         best_G      = np.inf
         best_action = self.ACTIONS[0]
         action_scores = {}
@@ -935,8 +959,8 @@ class EFEAgent:
             g_i, g_e, mu_1, Sigma_1 = self._vbgs_efe(a0, o_star, C_inv, log_norm)
             g0 = g_i - ew * g_e
 
-            if horizon > 1:
-                g0 += self._tree_min_efe(mu_1, Sigma_1, horizon - 1,
+            if H > 1:
+                g0 += self._tree_min_efe(mu_1, Sigma_1, H - 1,
                                          ew, gamma,
                                          o_star, C_inv, log_norm)
 
