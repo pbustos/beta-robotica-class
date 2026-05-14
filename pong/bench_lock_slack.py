@@ -161,13 +161,13 @@ def run_episode(env, seed, ball_model, opp_model, likelihood, agent):
 
 
 def run_arm(label, feature, pkl_path, adaptive_horizon=False,
-            vel_alpha_hybrid=False):
-    """Run a single arm with the requested rMM feature mode + planner/EMA
-    toggles. `feature` is "offset" or "target_y"."""
+            vel_alpha_hybrid=False, relock_on_bounce=False):
+    """Run a single arm with the requested rMM feature mode + toggles."""
     from efe_agent import RMM
     EFEAgent._RMM_FEATURE      = feature
     EFEAgent._ADAPTIVE_HORIZON = bool(adaptive_horizon)
     EFEAgent._VEL_ALPHA_HYBRID = bool(vel_alpha_hybrid)
+    EFEAgent._RELOCK_ON_BOUNCE = bool(relock_on_bounce)
     RMM.FEATURE_VERSION        = {"offset": "v2-offset",
                                    "target_y": "v2-target_y"}[feature]
 
@@ -177,8 +177,8 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
             warm_state = pickle.load(f)
 
     print(f"\n── {label}  feature={feature}  adaptive_H={adaptive_horizon}  "
-          f"vel_α_hybrid={vel_alpha_hybrid}  pkl={pkl_path}  "
-          f"N={N_EPISODES} ──")
+          f"vel_α_hybrid={vel_alpha_hybrid}  relock_on_bounce={relock_on_bounce}  "
+          f"pkl={pkl_path}  N={N_EPISODES} ──")
     env = gym.make("ALE/Pong-v5", obs_type="ram", render_mode=None)
     bm, om, lk = make_models()
     prefs = PriorPreferences()
@@ -209,23 +209,25 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
 
 
 if __name__ == "__main__":
-    # Paired A/B: single-α (current) vs hybrid-α raw velocity EMA. Both
-    # arms use the target_y feature and fixed H=3, same warm pkl.
-    # Hybrid uses α=0.3 (smoothed) when frames-to-arrival ≥ 6, α=0.7
-    # (responsive) otherwise — targets the late-approach landing drift
-    # that drives no-contact losses.
+    # Paired A/B: lock_hold (current) vs relock_on_bounce. Both arms use
+    # the target_y feature and fixed H=3, same warm pkl. The relock arm
+    # clears _target_y_locked on every detected vy_bounce while ball is
+    # approaching, forcing _get_preferences to resample against the
+    # post-bounce landing prediction. Hypothesis from analyze_failures:
+    # late bounces are the dominant aim-error driver and they bypass the
+    # existing LOCK_SLACK=0.10 hysteresis.
     base_scores, base_nc, base_ncl = run_arm(
-        "α_fixed",  "target_y", "models/agent_state.target_y.pkl",
-        vel_alpha_hybrid=False)
+        "lock_hold",   "target_y", "models/agent_state.target_y.pkl",
+        relock_on_bounce=False)
     new_scores,  new_nc,  new_ncl  = run_arm(
-        "α_hybrid", "target_y", "models/agent_state.target_y.pkl",
-        vel_alpha_hybrid=True)
+        "lock_relock", "target_y", "models/agent_state.target_y.pkl",
+        relock_on_bounce=True)
 
     print("\n── Summary ──")
     print(f"{'arm':<10} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
-    for label, scs, ncs, nls in [("α_fixed",  base_scores, base_nc, base_ncl),
-                                   ("α_hybrid", new_scores,  new_nc,  new_ncl)]:
+    for label, scs, ncs, nls in [("lock_hold",   base_scores, base_nc, base_ncl),
+                                   ("lock_relock", new_scores,  new_nc,  new_ncl)]:
         a = np.array(scs)
         print(f"{label:<10} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")

@@ -458,6 +458,13 @@ class EFEAgent:
     _VEL_ALPHA_HYBRID = False
     _VEL_NEAR_FRAMES  = 6
 
+    # Force a target re-sample on every detected vy bounce, so the paddle
+    # re-aims against the post-bounce landing prediction instead of holding
+    # a stale lock. The existing LOCK_SLACK=0.10 hysteresis lets late bounces
+    # (which change landing by 0.05–0.08) slip through without re-sampling;
+    # the failure analyzer shows ~0.03 of aim error accumulates per bounce.
+    _RELOCK_ON_BOUNCE = False
+
     def update_raw_velocity(self, bx: float, by: float):
         """
         Call once per frame with the latest raw ball position (normalised).
@@ -497,6 +504,11 @@ class EFEAgent:
                     # immediately but EMA target would lag 3 frames → wrong paddle
                     # direction after each bounce.  Reset so next frame reinitialises.
                     self._smooth_tgt = None
+                    if self._RELOCK_ON_BOUNCE and self._raw_vx > 1e-3:
+                        # Force _get_preferences to resample target against the
+                        # post-bounce landing prediction.
+                        self._target_y_locked = None
+                        self._locked_offset   = None
                 self._last_vy_bounce = vy_bounce   # True only when vy reversed
             else:
                 a = self._vel_alpha
@@ -865,7 +877,7 @@ class EFEAgent:
         delta[self.I_PY] = PADDLE_DY.get(action, 0.0)
 
         mu_pred    = _F @ mu + delta
-        
+
         # Handle wall bounces in mental rollout
         if mu_pred[1] < 0.0:
             mu_pred[1] = -mu_pred[1]
@@ -873,7 +885,7 @@ class EFEAgent:
         elif mu_pred[1] > 1.0:
             mu_pred[1] = 2.0 - mu_pred[1]
             mu_pred[3] = -mu_pred[3]  # flip vy
-            
+
         mu_pred[self.I_PY] = np.clip(mu_pred[self.I_PY], 0.0, 1.0)
         Sigma_pred = _F @ Sigma @ _F.T + Q
 

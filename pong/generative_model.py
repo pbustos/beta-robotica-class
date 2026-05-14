@@ -203,6 +203,14 @@ class InteractionModel:
 _PLAYER_X   = 0.740   # measured player paddle x (RAM normalised)
 _OPPONENT_X = 0.270   # measured opponent paddle x
 
+# NOTE on wall coordinates: the actual top/bottom walls in RAM-normalised by
+# units are at by ≈ 0.18 and 0.81 (measured: TOP peaks in [0.1725, 0.1882],
+# BOT peaks in [0.7961, 0.8118]).  The code below treats them as 0 and 1.
+# Replacing the bounds with the measured values produced a 1.2-pt regression
+# in 100-ep paired benches (even after 200-ep re-warmup), because the
+# bias_dict and rMM had silently absorbed the bug into their state and lose
+# information when it is removed.  Restored to the empirically-better state.
+
 def _frames_to_arrival(bx: float, vx: float,
                         player_x: float = _PLAYER_X) -> int:
     """Frames until ball reaches player_x. Returns 999 if ball not coming."""
@@ -212,7 +220,10 @@ def _frames_to_arrival(bx: float, vx: float,
 
 
 def _wall_bounce(by, vy):
-    """Reflect position and velocity off top/bottom walls."""
+    """Reflect position and velocity off top/bottom walls.
+
+    See the NOTE near _PLAYER_X about wall coordinates — the actual walls are
+    at by ≈ 0.18 / 0.81 but the code uses [0, 1]; bias_dict compensates."""
     if by < 0.0:
         return -by, -vy
     if by > 1.0:
@@ -263,7 +274,7 @@ def _predict_ball_landing(mu6: np.ndarray,
             if by < 0.0 or by > 1.0:
                 by, _ = _wall_bounce(by, vy)  # apply one final bounce if needed
             break
-        
+
         bx += vx
         by += vy
         by, vy = _wall_bounce(by, vy)
