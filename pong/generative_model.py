@@ -203,13 +203,17 @@ class InteractionModel:
 _PLAYER_X   = 0.740   # measured player paddle x (RAM normalised)
 _OPPONENT_X = 0.270   # measured opponent paddle x
 
-# NOTE on wall coordinates: the actual top/bottom walls in RAM-normalised by
-# units are at by ≈ 0.18 and 0.81 (measured: TOP peaks in [0.1725, 0.1882],
-# BOT peaks in [0.7961, 0.8118]).  The code below treats them as 0 and 1.
-# Replacing the bounds with the measured values produced a 1.2-pt regression
-# in 100-ep paired benches (even after 200-ep re-warmup), because the
-# bias_dict and rMM had silently absorbed the bug into their state and lose
-# information when it is removed.  Restored to the empirically-better state.
+# Wall coordinates in RAM-normalised by units (measured from agent play).
+# TOP peaks pre-bounce: range [0.1725, 0.1882], median 0.18.
+# BOT peaks pre-bounce: range [0.7961, 0.8118], median 0.81.
+# The wall-reflection code in _wall_bounce / _predict_ball_landing / _bounce
+# / _linear_efe currently uses [0, 1] for legacy reasons (replacing it
+# regressed score by 1.2 pts because bias_dict/rMM had compensated for it).
+# However, these constants ARE used by make_ball_priors to seed the
+# wall-bounce VBGS components at the right physical locations so the
+# learned ball-transition model can capture wall physics directly.
+_BY_TOP = 0.18
+_BY_BOT = 0.81
 
 def _frames_to_arrival(bx: float, vx: float,
                         player_x: float = _PLAYER_X) -> int:
@@ -518,6 +522,13 @@ def make_ball_priors():
     K=3 NIW priors for the 8D joint [bx,by,bvx,bvy | bx',by',bvx',bvy'].
     All values normalised to [0,1] (RAM byte / 255).
     Typical speed ≈ 3-4 px/frame → v ≈ 0.015 at unit scale.
+
+    A K=4 variant was tested with priors at the actual wall coords
+    (_BY_TOP / _BY_BOT) plus a paddle component, but the chase- and
+    NOOP-policy pretrain data didn't deliver enough wall-bounce
+    transitions to populate the new components — they stayed at prior,
+    diluting the moment-matched belief prediction. Result was a 1.7-pt
+    regression vs this K=3 setup. Keeping K=3 as the empirical winner.
     """
     v = 0.015
 

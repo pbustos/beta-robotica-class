@@ -33,6 +33,13 @@ def chase_action(ram):
     py, by = ram[51] / 255.0, ram[54] / 255.0
     return 3 if py < by - 0.02 else (2 if py > by + 0.02 else 0)
 
+
+def noop_action(_ram):
+    """NOOP policy — player paddle never moves. Ball is missed more often,
+    rallies are short, but during the ball's traversal it freely bounces
+    off walls. Required to populate the wall-bounce VBGS components."""
+    return 0
+
 def rolling_mean(buf, w):
     return float(np.mean(buf[-w:])) if len(buf) >= w else float(np.mean(buf))
 
