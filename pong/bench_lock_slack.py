@@ -161,15 +161,21 @@ def run_episode(env, seed, ball_model, opp_model, likelihood, agent):
 
 
 def run_arm(label, feature, pkl_path, adaptive_horizon=False,
-            vel_alpha_hybrid=False, relock_on_bounce=False):
+            vel_alpha_hybrid=False, relock_on_bounce=False,
+            strategic_alpha=0.0, terminal_strategic=False,
+            aim_below=0.0, anticipatory=False):
     """Run a single arm with the requested rMM feature mode + toggles."""
     from efe_agent import RMM
-    EFEAgent._RMM_FEATURE      = feature
-    EFEAgent._ADAPTIVE_HORIZON = bool(adaptive_horizon)
-    EFEAgent._VEL_ALPHA_HYBRID = bool(vel_alpha_hybrid)
-    EFEAgent._RELOCK_ON_BOUNCE = bool(relock_on_bounce)
-    RMM.FEATURE_VERSION        = {"offset": "v2-offset",
-                                   "target_y": "v2-target_y"}[feature]
+    EFEAgent._RMM_FEATURE             = feature
+    EFEAgent._ADAPTIVE_HORIZON        = bool(adaptive_horizon)
+    EFEAgent._VEL_ALPHA_HYBRID        = bool(vel_alpha_hybrid)
+    EFEAgent._RELOCK_ON_BOUNCE        = bool(relock_on_bounce)
+    EFEAgent._STRATEGIC_ALPHA         = float(strategic_alpha)
+    EFEAgent._TERMINAL_STRATEGIC      = bool(terminal_strategic)
+    EFEAgent._AIM_BELOW               = float(aim_below)
+    EFEAgent._ANTICIPATORY_POSITIONING = bool(anticipatory)
+    RMM.FEATURE_VERSION               = {"offset": "v2-offset",
+                                          "target_y": "v2-target_y"}[feature]
 
     warm_state = {}
     if pathlib.Path(pkl_path).exists():
@@ -178,6 +184,8 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
 
     print(f"\n── {label}  feature={feature}  adaptive_H={adaptive_horizon}  "
           f"vel_α_hybrid={vel_alpha_hybrid}  relock_on_bounce={relock_on_bounce}  "
+          f"strategic_α={strategic_alpha}  terminal_strat={terminal_strategic}  "
+          f"aim_below={aim_below}  anticipatory={anticipatory}  "
           f"pkl={pkl_path}  N={N_EPISODES} ──")
     env = gym.make("ALE/Pong-v5", obs_type="ram", render_mode=None)
     bm, om, lk = make_models()
@@ -209,25 +217,25 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
 
 
 if __name__ == "__main__":
-    # Paired A/B: lock_hold (current) vs relock_on_bounce. Both arms use
-    # the target_y feature and fixed H=3, same warm pkl. The relock arm
-    # clears _target_y_locked on every detected vy_bounce while ball is
-    # approaching, forcing _get_preferences to resample against the
-    # post-bounce landing prediction. Hypothesis from analyze_failures:
-    # late bounces are the dominant aim-error driver and they bypass the
-    # existing LOCK_SLACK=0.10 hysteresis.
+    # Paired A/B: baseline (no aim-below) vs aim_below=0.020. Both arms
+    # use the same target_y warm pkl and fixed H=3. The aim-below arm
+    # shifts the planner's paddle target 0.020 below the bias-corrected
+    # landing prediction (= higher y = paddle lower on screen; without
+    # affecting bias_dict feedback), so contact_offset = ball_y - paddle_y
+    # is negative — in the analyzer-identified high-win bin
+    # (offset ≈ -0.025, win rate 0.68 vs 0.35-0.55 for positive offsets).
     base_scores, base_nc, base_ncl = run_arm(
-        "lock_hold",   "target_y", "models/agent_state.target_y.pkl",
-        relock_on_bounce=False)
+        "baseline", "target_y", "models/agent_state.target_y.pkl",
+        anticipatory=False)
     new_scores,  new_nc,  new_ncl  = run_arm(
-        "lock_relock", "target_y", "models/agent_state.target_y.pkl",
-        relock_on_bounce=True)
+        "anticipatory", "target_y", "models/agent_state.target_y.pkl",
+        anticipatory=True)
 
     print("\n── Summary ──")
     print(f"{'arm':<10} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
-    for label, scs, ncs, nls in [("lock_hold",   base_scores, base_nc, base_ncl),
-                                   ("lock_relock", new_scores,  new_nc,  new_ncl)]:
+    for label, scs, ncs, nls in [("baseline",     base_scores, base_nc, base_ncl),
+                                   ("anticipatory", new_scores,  new_nc,  new_ncl)]:
         a = np.array(scs)
         print(f"{label:<10} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")

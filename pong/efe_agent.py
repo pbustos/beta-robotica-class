@@ -17,7 +17,40 @@ Prior preferences use an adaptive player-y precision:
 import numpy as np
 from generative_model import (MixtureBeliefFilter, LikelihoodModel,
                                PriorPreferences, PADDLE_DY,
-                               _PLAYER_X, _OPPONENT_X, InteractionModel, NIW)
+                               _PLAYER_X, _OPPONENT_X,
+                               _BY_TOP, _BY_BOT,
+                               InteractionModel, NIW)
+
+
+# ── Paddle reflection physics (measured from data) ────────────────────────────
+#
+# vy_post = -vy_pre + Δvy(offset)
+#
+# offset = ball_y − paddle_y at the contact frame.  The bin centres /
+# Δvy values come from `measure_paddle_k.py` over 1706 contacts:
+#
+#   offset bin       n     mean Δvy
+#   [-0.08, -0.06]   25    -0.024
+#   [-0.06, -0.04]  107    -0.028
+#   [-0.04, -0.02]  211    -0.028
+#   [-0.02,  0.00]  376    -0.023
+#   [ 0.00, +0.02]  241    -0.007
+#   [+0.02, +0.04]  253    +0.005
+#   [+0.04, +0.06]  223    +0.019
+#   [+0.06, +0.08]  139    +0.024
+#
+# Linear k=0.38, R²=0.22 — the response is monotonic but banded, so we
+# keep the 8-bin lookup rather than collapsing to a single coefficient.
+class PaddleReflection:
+    OFFSET_BINS = np.linspace(-0.08, 0.08, 9)            # 8 bins
+    DELTA_VY    = np.array([-0.024, -0.028, -0.028, -0.023,
+                            -0.007, +0.005, +0.019, +0.024])
+
+    @classmethod
+    def post_vy(cls, vy_pre: float, offset: float) -> float:
+        idx = int(np.clip(np.searchsorted(cls.OFFSET_BINS[1:], offset),
+                          0, len(cls.DELTA_VY) - 1))
+        return float(-vy_pre + cls.DELTA_VY[idx])
 
 # Constant-velocity ball dynamics; paddle/opponent carry forward.
 _F = np.eye(6)
@@ -668,6 +701,74 @@ class EFEAgent:
         if by > 1.0: return 2.0 - by, -vy
         return by, vy
 
+    def _predict_return_landing(self):
+        """
+        Anticipatory: when the ball is going to opp (vx < 0), predict where
+        it will arrive back at our paddle line.
+
+        Pipeline: forward-simulate the ball to opp_x → predict opp_y at
+        arrival (via OpponentBeliefTracker) → predict opp's contact-frame
+        reflection (PaddleReflection treated as a fair model of opp's
+        paddle too) → simulate the return ball back to player_x.
+
+        Returns the predicted return landing y, or None if the prediction
+        chain can't run (no raw velocity, ball not heading to opp, etc.).
+        """
+        if self._prev_bx is None:
+            return None
+        vx = float(self._raw_vx)
+        vy = float(self._raw_vy)
+        if vx > -1e-3:          # ball not approaching opp
+            return None
+
+        bx = float(self.belief.mean[0])
+        by = float(self.belief.mean[1])
+        if bx <= _OPPONENT_X:    # already past opp; nothing to anticipate
+            return None
+
+        # ── forward to opp_x ────────────────────────────────────────────────
+        cur_bx, cur_by, cur_vy = bx, by, vy
+        frames_to_opp = 0
+        for _ in range(200):
+            if cur_bx + vx <= _OPPONENT_X:
+                t_int = (_OPPONENT_X - cur_bx) / vx
+                cur_by += t_int * cur_vy
+                cur_by, cur_vy = self._bounce(cur_by, cur_vy)
+                cur_bx = _OPPONENT_X
+                frames_to_opp += 1
+                break
+            cur_bx += vx
+            cur_by += cur_vy
+            cur_by, cur_vy = self._bounce(cur_by, cur_vy)
+            frames_to_opp += 1
+        else:
+            return None
+        ball_y_at_opp = float(np.clip(cur_by, 0.0, 1.0))
+
+        # ── predict opp_y at arrival ───────────────────────────────────────
+        opp_y_pred = self._predict_opp_y(frames_to_opp)
+        opp_offset = ball_y_at_opp - opp_y_pred
+        # Opp's reflection: use PaddleReflection (best available model of
+        # what paddle-ball contact does in this game).
+        opp_vy_post = PaddleReflection.post_vy(cur_vy, opp_offset)
+        opp_vx_post = +abs(vx)   # ball now heading back to player
+
+        # ── simulate ball back to player_x ─────────────────────────────────
+        cur_bx, cur_by, cur_vy = _OPPONENT_X, ball_y_at_opp, opp_vy_post
+        for _ in range(200):
+            if cur_bx + opp_vx_post >= _PLAYER_X:
+                t_int = (_PLAYER_X - cur_bx) / opp_vx_post
+                cur_by += t_int * cur_vy
+                cur_by, cur_vy = self._bounce(cur_by, cur_vy)
+                break
+            cur_bx += opp_vx_post
+            cur_by += cur_vy
+            cur_by, cur_vy = self._bounce(cur_by, cur_vy)
+        else:
+            return None
+
+        return float(np.clip(cur_by, 0.0, 1.0))
+
     def _predict_opp_y(self, frames: int) -> float:
         """
         Predict opponent y after `frames` steps using the opponent belief tracker.
@@ -717,19 +818,119 @@ class EFEAgent:
     # pushes the target to the edge of the reach window, killing contact rate.
     _RMM_TRUST_RALLIES = 30
 
-    def _choose_target_y(self, landing_y: float, predicted_opp_y: float,
-                          eff_max: float) -> float:
+    # Strategic-value blending in _choose_target_y. The model-based win
+    # estimate (PaddleReflection → wall-aware ball flight → opp prediction)
+    # is mixed with the rMM UCB score:
+    #     combined = (1 - α) * ucb_rmm + α * strategic_value
+    # α=0.0 reproduces the rMM-only behaviour (current production).
+    # α∈(0,1] introduces model-based shaping; A/B with bench harness.
+    _STRATEGIC_ALPHA = 0.0
+    # Half-width of the opponent's reach. Wins start counting when the
+    # ball-vs-opp gap exceeds this; sigma controls how steeply the win
+    # probability rises beyond it.
+    _OPP_REACH       = 0.030
+    _STRATEGIC_SIGMA = 0.04
+
+    # Terminal strategic cost at H=3 leaves. Different from _STRATEGIC_ALPHA
+    # (which acts in _choose_target_y per candidate); this acts INSIDE the
+    # planner's tree per leaf. Each leaf's paddle position propagates into
+    # the contact-frame offset and the post-contact ball trajectory.
+    # Weight balances against the standard EFE terms.
+    _TERMINAL_STRATEGIC        = False
+    _TERMINAL_STRATEGIC_WEIGHT = 5.0
+
+    # Aim-below prior preference. Constant negative-offset bias on the
+    # paddle target. With contact_offset = ball_y − paddle_y, negative
+    # offset means paddle is BELOW ball at contact (ball hits paddle's
+    # bottom half), which sends the ball deflecting upward.
+    # Empirical motivation (analyze_failures.py over 1101 rallies):
+    #   contact offset [-0.04, -0.02]: post-contact win rate 0.684 (n=114)
+    #   contact offset [+0.02, +0.04]: post-contact win rate 0.354 (n=99)
+    # Setting _AIM_BELOW = 0.025 shifts paddle target to landing_y + 0.025
+    # (higher y = lower on screen) so the ball strikes the upper portion
+    # of the paddle, producing offset ≈ -0.025 in the high-win bin.
+    # Decoupled from bias_dict so it doesn't unlearn.
+    _AIM_BELOW = 0.0   # default off — set positive (e.g. 0.020) to enable
+
+    # Anticipatory pre-positioning during idle (ball going to opp).
+    # Instead of letting the paddle settle at landing_y=0.5 while ball
+    # travels to opp, predict the opp's return trajectory (using
+    # OpponentBeliefTracker + PaddleReflection as opp's reflection
+    # model) and pre-position paddle toward the predicted return
+    # landing. Acts only when raw_vx < 0; never affects bias_dict
+    # (no _last_landing_pred update) so the agent's normal landing-
+    # prediction adapters are unaffected.
+    _ANTICIPATORY_POSITIONING = False
+
+    def _strategic_value(self, target_y: float, landing_y: float,
+                         frames_to_contact: int) -> float:
         """
-        Pick target_y by Bayes-UCB argmax over a discrete sweep of candidates
-        within the reach window [landing_y − eff_max, landing_y + eff_max].
-        The rMM is scored on (offset_scaled, opp_y) where
-        offset_scaled = (candidate − landing_y) / OFFSET_SCALE, so the rMM
-        learns return-angle preferences independent of where the ball lands.
+        Model-based estimate of P(win | aim at target_y).  Pure AIF: uses
+        the existing generative model (paddle reflection, wall-aware ball
+        flight, opponent belief tracker) to predict the post-contact
+        rally outcome and scores it against the win condition.
+
+        Steps:
+          1. offset = landing_y − target_y (= ball y minus paddle y at contact)
+          2. post-contact vx = -|raw_vx|, post-contact vy = PaddleReflection.post_vy
+          3. forward-simulate the ball from (player_x, landing_y) with
+             wall-aware reflection until it reaches opp_x
+          4. predict opp_y at total_frames = frames_to_contact + frames_post
+          5. return σ((|ball_y_at_opp − opp_y_pred| − OPP_REACH) / σ_strategy)
+             ∈ [0, 1] — high when our return goes where opp isn't.
+        """
+        # Use raw EMA velocity (more accurate than belief mean here).
+        if self._prev_bx is None:
+            return 0.5
+        vx_pre = float(self._raw_vx)
+        vy_pre = float(self._raw_vy)
+        if abs(vx_pre) < 1e-3:
+            return 0.5
+
+        offset  = float(landing_y) - float(target_y)
+        vx_post = -abs(vx_pre)                                     # back to opp
+        vy_post = PaddleReflection.post_vy(vy_pre, offset)
+
+        # Forward-simulate ball back to _OPPONENT_X.
+        bx, by = float(_PLAYER_X), float(landing_y)
+        frames_post = 0
+        max_steps = 200
+        while bx > _OPPONENT_X and frames_post < max_steps:
+            bx += vx_post
+            by += vy_post
+            by, vy_post = self._bounce(by, vy_post)
+            frames_post += 1
+        # Linear interpolation at exact opp plane (ball overshot)
+        if bx <= _OPPONENT_X and frames_post > 0:
+            overshoot = (_OPPONENT_X - bx) / vx_post   # negative time, fraction
+            by -= overshoot * vy_post                  # wind back
+        ball_y_at_opp = float(np.clip(by, 0.0, 1.0))
+
+        # Predict opp_y at the time the ball arrives at opp_x.
+        total_frames = int(frames_to_contact) + frames_post
+        opp_y_pred   = self._predict_opp_y(total_frames)
+
+        gap   = abs(ball_y_at_opp - opp_y_pred) - self._OPP_REACH
+        # Sigmoid: 0.5 at gap=0; → 1 as gap grows; → 0 if gap is negative.
+        return float(1.0 / (1.0 + np.exp(-gap / self._STRATEGIC_SIGMA)))
+
+    def _choose_target_y(self, landing_y: float, predicted_opp_y: float,
+                          eff_max: float,
+                          frames_to_contact: int = 0) -> float:
+        """
+        Pick target_y by argmax of a blended score:
+            combined = (1 - α) * ucb_rmm + α * strategic_value
+        over a discrete sweep of candidates in [landing_y ± eff_max].
+
+        α = `_STRATEGIC_ALPHA` (default 0.0 → pure rMM, current production).
+        Setting α > 0 brings in the model-based win predictor.
         """
         if eff_max < 1e-3:
             return float(np.clip(landing_y, 0.0, 1.0))
 
-        if self.long_term.evidence() < self._RMM_TRUST_RALLIES:
+        # Pure-rMM cold-start guard kept only when α=0 (no model-based signal).
+        if (self._STRATEGIC_ALPHA <= 0.0
+                and self.long_term.evidence() < self._RMM_TRUST_RALLIES):
             return float(np.clip(landing_y, 0.0, 1.0))
 
         candidates = np.linspace(landing_y - eff_max, landing_y + eff_max,
@@ -737,15 +938,22 @@ class EFEAgent:
         candidates = np.clip(candidates, 0.0, 1.0)
         feats      = np.array([self._to_rmm_feature(t, landing_y)
                                 for t in candidates])
-        scores     = np.array([
+        ucb        = np.array([
             self.long_term.ucb_score(f, predicted_opp_y, kappa=self._ucb_kappa)
             for f in feats
         ])
-        # Uninformative rMM (cold start or novel feature region) → all scores
-        # collapse to 0.5 + κ. Default to the centre candidate (= landing_y)
-        # rather than letting argmax pick index 0 (= landing - eff_max), which
-        # systematically aims the paddle below the ball and tanks the contact
-        # rate until the rMM has populated this region.
+
+        if self._STRATEGIC_ALPHA > 0.0:
+            strat = np.array([
+                self._strategic_value(t, landing_y, frames_to_contact)
+                for t in candidates
+            ])
+            scores = (1.0 - self._STRATEGIC_ALPHA) * ucb \
+                     + self._STRATEGIC_ALPHA * strat
+        else:
+            scores = ucb
+
+        # Tiebreak (uninformative): default to landing_y (centre candidate).
         if scores.max() - scores.min() < 1e-9:
             return float(np.clip(landing_y, 0.0, 1.0))
         return float(candidates[int(np.argmax(scores))])
@@ -785,7 +993,8 @@ class EFEAgent:
                 or abs(self._target_y_locked - landing_y) > eff_max + self._LOCK_SLACK)
             if need_sample:
                 self._target_y_locked = self._choose_target_y(
-                    landing_y, predicted_opp, eff_max)
+                    landing_y, predicted_opp, eff_max,
+                    frames_to_contact=frames)
                 self._locked_offset   = self._to_rmm_feature(
                     self._target_y_locked, landing_y)
                 self._tgt_chosen   = self._target_y_locked
@@ -833,6 +1042,29 @@ class EFEAgent:
         o_star = o_star.copy()
         o_star[self._I_PY_OBS]  = np.clip(final_tgt, 0.0, 1.0)
         self._last_landing_pred = float(o_star[self._I_PY_OBS])
+
+        # Aim-below prior preference.  Apply ONLY to the planner's o_star;
+        # do not affect _last_landing_pred so the bias_dict (driven by
+        # observed-ball − _last_landing_pred residuals) does not learn to
+        # cancel it.  Only meaningful while the ball is approaching.
+        # Shift paddle target by +AIM_BELOW (= higher y, lower on screen)
+        # so contact offset = ball_y − paddle_y goes negative.
+        if vx > 1e-3 and self._AIM_BELOW > 0:
+            o_star[self._I_PY_OBS] = float(np.clip(
+                o_star[self._I_PY_OBS] + self._AIM_BELOW, 0.0, 1.0))
+
+        # Anticipatory pre-positioning during idle (ball going to opp).
+        # When raw_vx < 0, replace the default idle target (= landing_y,
+        # which is 0.5 when vx≤1e-3) with the predicted return landing
+        # so paddle is already moving toward where the ball will come back.
+        # No update to _last_landing_pred — the bias_dict only learns from
+        # actual approach phases.
+        if (self._ANTICIPATORY_POSITIONING and vx <= 1e-3):
+            anticipated = self._predict_return_landing()
+            if anticipated is not None:
+                o_star[self._I_PY_OBS] = float(np.clip(
+                    anticipated, 0.0, 1.0))
+
         return o_star, C_inv, log_norm
 
     # ── VBGS-based single-step EFE + predicted state ──────────────────────────
@@ -903,6 +1135,76 @@ class EFEAgent:
 
     # ── recursive tree search (linear-Gaussian, steps 1+) ────────────────────
 
+    def _terminal_strategic_cost(self, mu_leaf):
+        """
+        Counterfactual strategic value at a planner leaf.
+
+        Treats `mu_leaf` (state after H branched actions) as a snapshot: from
+        here the paddle holds (NOOP) and the ball continues with constant
+        velocity + wall bounces until it crosses _PLAYER_X. At that frame the
+        paddle reflects the ball (PaddleReflection lookup using
+        ball_y_at_contact − py_leaf as offset). The reflected ball flies back
+        to _OPPONENT_X with wall bounces. We then predict where the opponent
+        will be at total_time and score the gap.
+
+        Returns a NEGATIVE cost (lower = better strategic outcome) weighted
+        by _TERMINAL_STRATEGIC_WEIGHT. The discount factor is applied by the
+        caller.
+        """
+        bx = float(mu_leaf[0]);  by = float(mu_leaf[1])
+        vx = float(mu_leaf[2]);  vy = float(mu_leaf[3])
+        py = float(mu_leaf[self.I_PY])
+        if vx < 1e-3:
+            return 0.0          # ball not approaching → no strategic info
+
+        # ── forward to player_x ────────────────────────────────────────────
+        frames_to_contact = 0
+        for _ in range(200):
+            if bx + vx >= _PLAYER_X:
+                t_int = (_PLAYER_X - bx) / vx
+                by += t_int * vy
+                by, vy = self._bounce(by, vy)
+                bx = _PLAYER_X
+                frames_to_contact += 1
+                break
+            bx += vx
+            by += vy
+            by, vy = self._bounce(by, vy)
+            frames_to_contact += 1
+        else:
+            return 0.0
+
+        # ── paddle reflection ──────────────────────────────────────────────
+        offset  = by - py
+        vy_post = PaddleReflection.post_vy(vy, offset)
+        vx_post = -abs(vx)
+
+        # ── ball back to opp_x ─────────────────────────────────────────────
+        frames_post = 0
+        for _ in range(200):
+            if bx + vx_post <= _OPPONENT_X:
+                t_int = (_OPPONENT_X - bx) / vx_post
+                by += t_int * vy_post
+                by, vy_post = self._bounce(by, vy_post)
+                frames_post += 1
+                break
+            bx += vx_post
+            by += vy_post
+            by, vy_post = self._bounce(by, vy_post)
+            frames_post += 1
+        else:
+            return 0.0
+        ball_y_at_opp = float(np.clip(by, 0.0, 1.0))
+
+        # ── opp belief at arrival time ─────────────────────────────────────
+        total_frames = frames_to_contact + frames_post
+        opp_y_pred   = self._predict_opp_y(total_frames)
+
+        # ── strategic value & negative cost ────────────────────────────────
+        gap        = abs(ball_y_at_opp - opp_y_pred) - self._OPP_REACH
+        strat_prob = 1.0 / (1.0 + np.exp(-gap / self._STRATEGIC_SIGMA))
+        return -self._TERMINAL_STRATEGIC_WEIGHT * strat_prob
+
     def _tree_min_efe(self, mu, Sigma, depth, ew, discount,
                       o_star, C_inv, log_norm):
         """
@@ -912,6 +1214,12 @@ class EFEAgent:
         further — past contact, the action-dependent component of the cost is
         irrelevant (paddle can't affect this rally), so deeper expansion is
         pure compute waste. Keeps adaptive horizon bounded.
+
+        At leaves (depth==1, no further branching), optionally add a terminal
+        strategic cost that propagates each leaf's paddle position through
+        contact reflection + opp prediction. Encourages the planner to pick
+        action sequences whose end-state produces better returns, not just
+        better interception.
         """
         best = np.inf
         for a in self.ACTIONS:
@@ -922,6 +1230,8 @@ class EFEAgent:
                 g += self._tree_min_efe(mu_n, Sigma_n, depth - 1, ew,
                                         discount * self._gamma,
                                         o_star, C_inv, log_norm)
+            elif self._TERMINAL_STRATEGIC:
+                g += discount * self._terminal_strategic_cost(mu_n)
             if g < best:
                 best = g
         return best
