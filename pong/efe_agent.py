@@ -862,6 +862,74 @@ class EFEAgent:
     # prediction adapters are unaffected.
     _ANTICIPATORY_POSITIONING = False
 
+    # Late-bounce strategic value. Per-candidate score in _choose_target_y
+    # that prefers contact offsets whose post-contact ball trajectory has
+    # a wall bounce within LATE_BOUNCE_WINDOW frames of reaching opp_x.
+    # The exploitable weakness: ALE Pong's opp tracker has 1-2 frames of
+    # update lag, so direction reversals close to opp's contact line eat
+    # opp's reaction budget regardless of opp's max speed.
+    # Independent of opp prediction — uses only forward ball physics with
+    # the MEASURED wall coords (_BY_TOP, _BY_BOT).
+    _LATE_BOUNCE_STRATEGIC = False
+    _LATE_BOUNCE_WINDOW    = 5         # frames before opp contact
+    _LATE_BOUNCE_ALPHA     = 0.5       # blend weight in _choose_target_y
+
+    def _late_bounce_score(self, target_y: float, landing_y: float) -> float:
+        """
+        Strategic value for a candidate paddle target. High when our
+        post-contact ball trajectory has a wall bounce within
+        _LATE_BOUNCE_WINDOW frames of reaching opp_x — ALE Pong's opp
+        tracker has 1-2 frames of update lag, so direction reversals
+        close to opp's contact line eat opp's reaction budget.
+
+        Uses MEASURED wall coords _BY_TOP / _BY_BOT for the forward
+        simulation (independent of the production wall-handling path
+        which uses [0, 1] bounds + bias_dict compensation).
+
+        Returns a value in [0, 1]:
+          - 0.0 if no wall bounce happens before opp contact
+          - 1.0 if a bounce happens exactly at the opp-contact frame
+          - linear ramp in between, zero past LATE_BOUNCE_WINDOW.
+        """
+        from generative_model import _BY_TOP, _BY_BOT
+        if self._prev_bx is None or self._raw_vx < 1e-3:
+            return 0.0
+        vx_pre = float(self._raw_vx)
+        vy_pre = float(self._raw_vy)
+
+        offset  = float(landing_y) - float(target_y)   # ball_y − paddle_y
+        vy_post = PaddleReflection.post_vy(vy_pre, offset)
+        vx_post = -abs(vx_pre)
+
+        bx = float(_PLAYER_X)
+        by = float(landing_y)
+        vy = vy_post
+
+        frames_total      = 0
+        last_bounce_frame = -1
+        for _ in range(200):
+            if bx + vx_post <= _OPPONENT_X:
+                break
+            bx += vx_post
+            by += vy
+            if by < _BY_TOP:
+                by = 2.0 * _BY_TOP - by
+                vy = -vy
+                last_bounce_frame = frames_total
+            elif by > _BY_BOT:
+                by = 2.0 * _BY_BOT - by
+                vy = -vy
+                last_bounce_frame = frames_total
+            frames_total += 1
+        else:
+            return 0.0
+
+        if last_bounce_frame < 0:
+            return 0.0           # straight shot — opp catches easily
+        frames_since_bounce = frames_total - last_bounce_frame
+        window = float(self._LATE_BOUNCE_WINDOW)
+        return float(max(0.0, 1.0 - frames_since_bounce / window))
+
     def _strategic_value(self, target_y: float, landing_y: float,
                          frames_to_contact: int) -> float:
         """
@@ -952,6 +1020,17 @@ class EFEAgent:
                      + self._STRATEGIC_ALPHA * strat
         else:
             scores = ucb
+
+        # Late-bounce strategic score: bonus for candidates whose return
+        # trajectory has a wall bounce close to opp's contact line.
+        # Composes with the other blends additively (independent signal).
+        if self._LATE_BOUNCE_STRATEGIC:
+            lb = np.array([
+                self._late_bounce_score(t, landing_y)
+                for t in candidates
+            ])
+            scores = (1.0 - self._LATE_BOUNCE_ALPHA) * scores \
+                     + self._LATE_BOUNCE_ALPHA * lb
 
         # Tiebreak (uninformative): default to landing_y (centre candidate).
         if scores.max() - scores.min() < 1e-9:
