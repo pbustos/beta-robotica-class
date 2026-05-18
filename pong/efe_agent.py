@@ -872,7 +872,11 @@ class EFEAgent:
     # the MEASURED wall coords (_BY_TOP, _BY_BOT).
     _LATE_BOUNCE_STRATEGIC = False
     _LATE_BOUNCE_WINDOW    = 5         # frames before opp contact
-    _LATE_BOUNCE_ALPHA     = 0.5       # blend weight in _choose_target_y
+    # α-sweep at 100 eps/arm (sweep_alpha_100.log):
+    #   α=0.3 → -0.68    α=0.4 → +0.23    α=0.5 → +0.57
+    #   α=0.6 → +0.71    α=0.8 → -0.03
+    # Best at α=0.6 (Δ=+0.52 vs baseline, NCL/ep 7.24 vs 8.02).
+    _LATE_BOUNCE_ALPHA     = 0.6
 
     def _late_bounce_score(self, target_y: float, landing_y: float) -> float:
         """
