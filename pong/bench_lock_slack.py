@@ -239,18 +239,23 @@ if __name__ == "__main__":
     # contact offsets whose return trajectory has a wall bounce within
     # _LATE_BOUNCE_WINDOW frames of opp's contact line. Exploits ALE
     # Pong opp's tracker lag on direction reversals.
+    # Composition: anticipatory pre-positioning + late_bounce strategic.
+    # Anticipatory acts in idle phase (paddle pre-positions for predicted
+    # return); late_bounce acts in contact-choice phase (prefer
+    # trajectories with wall bounces near opp's contact). Different
+    # mechanisms, different phases — likely compound.
     base_scores, base_nc, base_ncl = run_arm(
-        "baseline", "target_y", "models/agent_state.target_y.pkl",
-        late_bounce=False)
+        "late_bounce_α0.6", "target_y", "models/agent_state.target_y.pkl",
+        late_bounce=True, late_bounce_alpha=0.6)
     new_scores,  new_nc,  new_ncl  = run_arm(
-        "late_bounce_α0.8", "target_y", "models/agent_state.target_y.pkl",
-        late_bounce=True, late_bounce_alpha=0.8)
+        "lb_α0.6+ant", "target_y", "models/agent_state.target_y.pkl",
+        late_bounce=True, late_bounce_alpha=0.6, anticipatory=True)
 
     print("\n── Summary ──")
     print(f"{'arm':<10} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
-    for label, scs, ncs, nls in [("baseline",         base_scores, base_nc, base_ncl),
-                                   ("late_bounce_α0.8", new_scores,  new_nc,  new_ncl)]:
+    for label, scs, ncs, nls in [("late_bounce_α0.6", base_scores, base_nc, base_ncl),
+                                   ("lb_α0.6+ant",     new_scores,  new_nc,  new_ncl)]:
         a = np.array(scs)
         print(f"{label:<10} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")
