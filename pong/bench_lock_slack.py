@@ -164,7 +164,8 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
             vel_alpha_hybrid=False, relock_on_bounce=False,
             strategic_alpha=0.0, terminal_strategic=False,
             aim_below=0.0, anticipatory=False,
-            late_bounce=False, late_bounce_alpha=0.5):
+            late_bounce=False, late_bounce_alpha=0.5,
+            paddle_centered=False):
     """Run a single arm with the requested rMM feature mode + toggles."""
     from efe_agent import RMM
     EFEAgent._RMM_FEATURE              = feature
@@ -177,6 +178,7 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
     EFEAgent._ANTICIPATORY_POSITIONING = bool(anticipatory)
     EFEAgent._LATE_BOUNCE_STRATEGIC    = bool(late_bounce)
     EFEAgent._LATE_BOUNCE_ALPHA        = float(late_bounce_alpha)
+    EFEAgent._PADDLE_CENTERED_DEFENSE  = bool(paddle_centered)
     RMM.FEATURE_VERSION                = {"offset": "v2-offset",
                                            "target_y": "v2-target_y"}[feature]
 
@@ -190,6 +192,7 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
           f"strategic_α={strategic_alpha}  terminal_strat={terminal_strategic}  "
           f"aim_below={aim_below}  anticipatory={anticipatory}  "
           f"late_bounce={late_bounce}(α={late_bounce_alpha})  "
+          f"paddle_centered={paddle_centered}  "
           f"pkl={pkl_path}  N={N_EPISODES} ──")
     env = gym.make("ALE/Pong-v5", obs_type="ram", render_mode=None)
     bm, om, lk = make_models()
@@ -239,23 +242,24 @@ if __name__ == "__main__":
     # contact offsets whose return trajectory has a wall bounce within
     # _LATE_BOUNCE_WINDOW frames of opp's contact line. Exploits ALE
     # Pong opp's tracker lag on direction reversals.
-    # Composition: anticipatory pre-positioning + late_bounce strategic.
-    # Anticipatory acts in idle phase (paddle pre-positions for predicted
-    # return); late_bounce acts in contact-choice phase (prefer
-    # trajectories with wall bounces near opp's contact). Different
-    # mechanisms, different phases — likely compound.
+    # Paddle-centered defense: when incoming ball is predicted to have its
+    # last wall bounce 3-6 frames before our contact, override the strategic
+    # target with landing_y exactly (no rMM, no late_bounce, no aim_below).
+    # Empirical motivation (measure_bounce_vs_miss.py): we lose
+    # disproportionately in that bounce-recency window because the paddle
+    # is mid-motion when ball arrives.
     base_scores, base_nc, base_ncl = run_arm(
-        "late_bounce_α0.6", "target_y", "models/agent_state.target_y.pkl",
+        "lb_α0.6", "target_y", "models/agent_state.target_y.pkl",
         late_bounce=True, late_bounce_alpha=0.6)
     new_scores,  new_nc,  new_ncl  = run_arm(
-        "lb_α0.6+ant", "target_y", "models/agent_state.target_y.pkl",
-        late_bounce=True, late_bounce_alpha=0.6, anticipatory=True)
+        "lb_α0.6+defense", "target_y", "models/agent_state.target_y.pkl",
+        late_bounce=True, late_bounce_alpha=0.6, paddle_centered=True)
 
     print("\n── Summary ──")
     print(f"{'arm':<10} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
-    for label, scs, ncs, nls in [("late_bounce_α0.6", base_scores, base_nc, base_ncl),
-                                   ("lb_α0.6+ant",     new_scores,  new_nc,  new_ncl)]:
+    for label, scs, ncs, nls in [("lb_α0.6",         base_scores, base_nc, base_ncl),
+                                   ("lb_α0.6+defense", new_scores,  new_nc,  new_ncl)]:
         a = np.array(scs)
         print(f"{label:<10} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")

@@ -878,6 +878,67 @@ class EFEAgent:
     # Best at α=0.6 (Δ=+0.52 vs baseline, NCL/ep 7.24 vs 8.02).
     _LATE_BOUNCE_ALPHA     = 0.6
 
+    # Paddle-centered defense on incoming late bounces.
+    # Symmetric mirror of the late_bounce attack: when WE're about to
+    # receive a ball whose last wall bounce is in [_DEFENSE_WINDOW_MIN,
+    # _DEFENSE_WINDOW_MAX) frames before contact, the paddle is
+    # mid-motion (saw the bounce, started repositioning, hasn't arrived).
+    # In that window, override the strategic target with landing_y
+    # exactly — sacrifice placement for guaranteed contact.
+    # Empirical motivation (measure_bounce_vs_miss.py, 30 eps):
+    #   fslb [0-3): wins 33.7% vs LWC 4.8% — we win fresh bounces
+    #   fslb [3-6): wins  0.5% vs LWC 16.5% — we lose stale-ish bounces
+    _PADDLE_CENTERED_DEFENSE = False
+    _DEFENSE_WINDOW_MIN      = 3   # frames before our contact
+    _DEFENSE_WINDOW_MAX      = 6
+
+    def _incoming_in_defense_window(self) -> bool:
+        """
+        Return True iff the incoming ball is predicted to have its last
+        wall bounce in [_DEFENSE_WINDOW_MIN, _DEFENSE_WINDOW_MAX) frames
+        before reaching our paddle line.
+
+        Uses measured wall coords _BY_TOP, _BY_BOT and raw EMA velocity.
+        In this window the paddle is mid-motion (it saw the bounce,
+        started repositioning, has not arrived).  Empirically this is
+        where most of our losing-with-contact rallies fall.
+        """
+        from generative_model import _BY_TOP, _BY_BOT
+        if self._prev_bx is None or self._raw_vx <= 1e-3:
+            return False
+
+        bx = float(self.belief.mean[0])
+        by = float(self.belief.mean[1])
+        vx = float(self._raw_vx)
+        vy = float(self._raw_vy)
+        if bx >= _PLAYER_X:
+            return False
+
+        frames_total      = 0
+        last_bounce_frame = -1
+        for _ in range(200):
+            if bx + vx >= _PLAYER_X:
+                # arrived this step
+                break
+            bx += vx
+            by += vy
+            if by < _BY_TOP:
+                by = 2.0 * _BY_TOP - by
+                vy = -vy
+                last_bounce_frame = frames_total
+            elif by > _BY_BOT:
+                by = 2.0 * _BY_BOT - by
+                vy = -vy
+                last_bounce_frame = frames_total
+            frames_total += 1
+        else:
+            return False
+
+        if last_bounce_frame < 0:
+            return False
+        fslb = frames_total - last_bounce_frame
+        return self._DEFENSE_WINDOW_MIN <= fslb < self._DEFENSE_WINDOW_MAX
+
     def _late_bounce_score(self, target_y: float, landing_y: float) -> float:
         """
         Strategic value for a candidate paddle target. High when our
@@ -1147,6 +1208,18 @@ class EFEAgent:
             if anticipated is not None:
                 o_star[self._I_PY_OBS] = float(np.clip(
                     anticipated, 0.0, 1.0))
+
+        # Paddle-centered defense on incoming late bounces.
+        # If the incoming ball is predicted to have its last wall bounce
+        # in the 3-6 frame window before contact, sacrifice ALL strategic
+        # placement and aim paddle straight at landing_y — this is the
+        # subset of rallies where we lose most by trying to be clever.
+        # Overrides aim_below / late_bounce / rMM target choice.
+        if (self._PADDLE_CENTERED_DEFENSE and vx > 1e-3
+                and self._incoming_in_defense_window()):
+            o_star[self._I_PY_OBS] = float(np.clip(
+                _predict_ball_landing(self.belief.mean, raw_vel=raw_vel),
+                0.0, 1.0))
 
         return o_star, C_inv, log_norm
 
