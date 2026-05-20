@@ -242,6 +242,155 @@ class RMM:
         return rmm
 
 
+# ── Opponent action model (rMM with Dirichlet-Categorical head) ──────────────
+
+class OpponentActionRMM:
+    """
+    Streaming Bayesian model of the ALE/Pong opponent's action selection.
+
+    Same component structure as RMM, but the head is Dirichlet-Categorical(3)
+    over a_opp ∈ {0=NOOP, 1=UP, 2=DOWN} instead of Beta over rally outcome.
+
+    Component k owns:
+        NIW(m_k, κ_k, ν_k, W_k)   — over s = (bx, by, vx, vy, opp_y) ∈ R^5
+        Dir(α_k ∈ R^3)            — over a_opp
+        n_k                       — count of hard assignments
+
+    Online streaming, hard MAP assignment, CRP growth identical to RMM.
+
+    Action recovery from data: a_opp_t is recoverable from one paddle frame
+    transition because under frame_skip=4 the opp moves by ±PADDLE_DY or 0.
+    """
+
+    D_F       = 5          # (bx, by, vx, vy, opp_y)
+    N_ACTIONS = 3          # NOOP, UP, DOWN
+    K_MAX     = 16
+    LL_THRESH = -2.0
+    KAPPA_0   = 0.5
+    NU_0      = 7          # > D_F + 1 = 6
+    W_0       = 0.0025
+    ALPHA_0   = 1.0        # Dir uniform prior
+
+    # Per-step opp paddle displacement under frame_skip=4 (matches PADDLE_DY
+    # in generative_model.py for the player; ALE opp uses the same speed).
+    _OPP_DY    = np.array([0.0, -0.060, +0.060])
+    _DY_THRESH = 0.030     # half of PADDLE_DY; recover action from |dy|
+
+    @classmethod
+    def recover_action(cls, prev_opp_y: float, opp_y: float) -> int:
+        """Map (prev_opp_y, opp_y) → opp action index ∈ {0, 1, 2}."""
+        dy = opp_y - prev_opp_y
+        if dy < -cls._DY_THRESH:
+            return 1   # UP
+        if dy > +cls._DY_THRESH:
+            return 2   # DOWN
+        return 0       # NOOP
+
+    def __init__(self):
+        self.components: list = []
+        self._n_observed = 0
+
+    # ── component lifecycle ──────────────────────────────────────────────────
+
+    def _spawn(self, f: np.ndarray) -> dict:
+        m = np.asarray(f, float).copy()
+        W = np.eye(self.D_F) * self.W_0
+        return {
+            "niw": NIW(m, self.KAPPA_0, self.NU_0, W),
+            "dir": np.full(self.N_ACTIONS, self.ALPHA_0),
+            "n":   0,
+        }
+
+    def _log_lik(self, f: np.ndarray) -> np.ndarray:
+        if not self.components:
+            return np.array([])
+        f = np.asarray(f, float)
+        return np.array([
+            c["niw"].marginal_log_likelihood(f, self.D_F)
+            for c in self.components
+        ])
+
+    # ── learning ─────────────────────────────────────────────────────────────
+
+    def update(self, f: np.ndarray, action: int):
+        f = np.asarray(f, float)
+        log_lik = self._log_lik(f)
+        if (len(self.components) == 0
+                or (len(self.components) < self.K_MAX
+                    and log_lik.max() < self.LL_THRESH)):
+            self.components.append(self._spawn(f))
+            k = len(self.components) - 1
+        else:
+            n_vec  = np.array([c["n"] + 1.0 for c in self.components])
+            log_pi = np.log(n_vec / n_vec.sum())
+            k      = int(np.argmax(log_pi + log_lik))
+        comp = self.components[k]
+        comp["niw"] = comp["niw"].update(
+            N_k=1.0, x_bar=f, S_k=np.zeros((self.D_F, self.D_F)))
+        comp["dir"][int(action)] += 1.0
+        comp["n"] += 1
+        self._n_observed += 1
+
+    # ── prediction ───────────────────────────────────────────────────────────
+
+    def predict_distribution(self, f: np.ndarray) -> np.ndarray:
+        """E[p(a|s)] under the soft mixture posterior. Falls back to uniform
+        when no data has been observed or the query is novel."""
+        if not self.components:
+            return np.full(self.N_ACTIONS, 1.0 / self.N_ACTIONS)
+        f = np.asarray(f, float)
+        log_lik = self._log_lik(f)
+        if log_lik.max() < self.LL_THRESH:
+            return np.full(self.N_ACTIONS, 1.0 / self.N_ACTIONS)
+        n_vec   = np.array([c["n"] + 1.0 for c in self.components])
+        log_pi  = np.log(n_vec / n_vec.sum())
+        log_r   = log_pi + log_lik
+        log_r  -= log_r.max()
+        r       = np.exp(log_r); r /= r.sum()
+        probs   = np.zeros(self.N_ACTIONS)
+        for k, c in enumerate(self.components):
+            probs += r[k] * (c["dir"] / c["dir"].sum())
+        return probs
+
+    def expected_dy(self, f: np.ndarray) -> float:
+        """Expected single-step opp displacement under the action posterior."""
+        return float(np.dot(self.predict_distribution(f), self._OPP_DY))
+
+    # ── diagnostics / persistence ────────────────────────────────────────────
+
+    def n_components(self) -> int:
+        return len(self.components)
+
+    def total_observed(self) -> int:
+        return self._n_observed
+
+    def to_dict(self) -> dict:
+        return {"components": [
+            {"m":     c["niw"].m.tolist(),
+             "kappa": float(c["niw"].kappa),
+             "nu":    float(c["niw"].nu),
+             "W":     c["niw"].W.tolist(),
+             "dir":   c["dir"].tolist(),
+             "n":     int(c["n"])}
+            for c in self.components
+        ], "n_observed": int(self._n_observed)}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "OpponentActionRMM":
+        m = cls()
+        for c in d.get("components", []):
+            m.components.append({
+                "niw": NIW(np.array(c["m"], float),
+                           float(c["kappa"]),
+                           float(c["nu"]),
+                           np.array(c["W"], float)),
+                "dir": np.array(c["dir"], float),
+                "n":   int(c["n"]),
+            })
+        m._n_observed = int(d.get("n_observed", 0))
+        return m
+
+
 # ── Long-term cross-session learning (rMM-inspired) ───────────────────────────
 
 class LongTermStats:
@@ -428,6 +577,10 @@ class EFEAgent:
 
         # Long-term cross-session learning (LongTermStats / rMM-inspired)
         self.long_term       = LongTermStats()
+        # Opponent action model — streaming rMM with Dir-Cat head.
+        # Updated from observed (s_t, a_opp,t) pairs each frame; used by
+        # _predict_opp_y when _OPPONENT_ACTION_MODEL is on.
+        self.opp_action_rmm  = OpponentActionRMM()
         # Snapshotted at each paddle contact for win attribution:
         #   _contact_offset = (target_y_locked - landing_y) / OFFSET_SCALE at
         #                     the moment of contact (in v2-offset feature units).
@@ -591,6 +744,24 @@ class EFEAgent:
         self._outgoing_fslb_at_opp = None
         self._bounce_frame_counter = 0
 
+    def observe_opponent_action(self, prev_opp_y: float, opp_y: float,
+                                  ball_state_4: np.ndarray):
+        """
+        Update the opponent action model with one frame transition.
+
+        Recovers a_opp from (prev_opp_y, opp_y) — under frame_skip=4 the opp
+        moves by ±PADDLE_DY or 0. Conditions on ball_state at the frame the
+        opp made the decision (state from frame t-1, opp action observed
+        between t-1 and t).
+
+        ball_state_4 : [bx, by, vx, vy] at the frame before opp moved.
+        """
+        action = OpponentActionRMM.recover_action(prev_opp_y, opp_y)
+        f = np.array([float(ball_state_4[0]), float(ball_state_4[1]),
+                       float(ball_state_4[2]), float(ball_state_4[3]),
+                       float(prev_opp_y)])
+        self.opp_action_rmm.update(f, action)
+
     # ── belief state save / restore ───────────────────────────────────────────
 
     def _save_belief(self):
@@ -742,6 +913,18 @@ class EFEAgent:
         if by > 1.0: return 2.0 - by, -vy
         return by, vy
 
+    # Wall-correct bounce against MEASURED ALE wall coordinates.
+    # Used only by the opp_action_rmm rollout path inside _predict_opp_y,
+    # which is opt-in via _OPPONENT_ACTION_MODEL. Production codepaths
+    # (bias_dict, rMM queries, _linear_efe) continue to use _bounce above
+    # so their learned compensations are preserved.
+    @staticmethod
+    def _bounce_walls(by, vy):
+        from generative_model import _BY_TOP, _BY_BOT
+        if by < _BY_TOP: return 2.0 * _BY_TOP - by, -vy
+        if by > _BY_BOT: return 2.0 * _BY_BOT - by, -vy
+        return by, vy
+
     def _predict_return_landing(self):
         """
         Anticipatory: when the ball is going to opp (vx < 0), predict where
@@ -810,10 +993,22 @@ class EFEAgent:
 
         return float(np.clip(cur_by, 0.0, 1.0))
 
+    # Use the learned opponent action model (Dir-Cat rMM) inside
+    # _predict_opp_y instead of the existing OpponentBeliefTracker (VBGS
+    # mean regressor). Falls back to the VBGS tracker until the rMM has
+    # seen enough data (n >= _OPP_ACTION_MIN_N).
+    _OPPONENT_ACTION_MODEL = False
+    _OPP_ACTION_MIN_N      = 500   # ~5 episodes of in-play frames
+
     def _predict_opp_y(self, frames: int) -> float:
         """
-        Predict opponent y after `frames` steps using the opponent belief tracker.
+        Predict opponent y after `frames` steps.
+
         Ball trajectory is simulated with constant velocity + wall bounces.
+        Opponent trajectory uses either:
+          (a) the learned action rMM (when _OPPONENT_ACTION_MODEL active
+              and the rMM has at least _OPP_ACTION_MIN_N observations), or
+          (b) the existing OpponentBeliefTracker (VBGS-mean regressor).
         Falls back to current oy when frames is out of range.
         """
         if frames <= 0 or frames > 50:
@@ -824,6 +1019,21 @@ class EFEAgent:
         by = float(mu[1])
         vx = float(np.clip(self._raw_vx if self._prev_bx is not None else mu[2], -0.06, 0.06))
         vy = float(np.clip(self._raw_vy if self._prev_bx is not None else mu[3], -0.06, 0.06))
+        opp_y = float(mu[5])
+
+        use_action_rmm = (
+            self._OPPONENT_ACTION_MODEL
+            and self.opp_action_rmm.total_observed() >= self._OPP_ACTION_MIN_N
+        )
+        if use_action_rmm:
+            for _ in range(frames):
+                f = np.array([bx, by, vx, vy, opp_y])
+                opp_y = float(np.clip(opp_y + self.opp_action_rmm.expected_dy(f),
+                                       0.0, 1.0))
+                bx += vx
+                by += vy
+                by, vy = self._bounce_walls(by, vy)
+            return opp_y
 
         ball_states = []
         for _ in range(frames):
@@ -832,7 +1042,6 @@ class EFEAgent:
             by += vy
             by, vy = self._bounce(by, vy)
 
-        opp_y = float(mu[5])
         traj  = self.belief.opp_tracker.predict_trajectory(
             opp_y, ball_states, [0] * frames)
         return float(traj[-1]) if traj else opp_y

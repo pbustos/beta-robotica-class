@@ -133,6 +133,7 @@ def run_episode(env, seed, ball_model, opp_model, likelihood, agent):
             belief.predict(prev_action)
             belief.correct(o)
             opp_tracker.update(prev_opp_y, ball_state_4, prev_action, opp_y)
+            agent.observe_opponent_action(prev_opp_y, opp_y, ball_state_4)
         else:
             belief.initialise(o)
             agent.reset_raw_velocity()
@@ -165,12 +166,13 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
             strategic_alpha=0.0, terminal_strategic=False,
             aim_below=0.0, anticipatory=False,
             late_bounce=False, late_bounce_alpha=0.5,
-            paddle_centered=False, adaptive_window=False):
+            paddle_centered=False, adaptive_window=False,
+            opp_action_model=False):
     """Run a single arm with the requested rMM feature mode + toggles."""
     from efe_agent import RMM
     EFEAgent._RMM_FEATURE                 = feature
     EFEAgent._ADAPTIVE_HORIZON            = bool(adaptive_horizon)
-    EFEAgent._VEL_ALPHA_HYBRID            = bool(vel_alpha_hybrid)
+    EFEAgent._VEL_ALPHA_HYBRID             = bool(vel_alpha_hybrid)
     EFEAgent._RELOCK_ON_BOUNCE            = bool(relock_on_bounce)
     EFEAgent._STRATEGIC_ALPHA             = float(strategic_alpha)
     EFEAgent._TERMINAL_STRATEGIC          = bool(terminal_strategic)
@@ -180,6 +182,7 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
     EFEAgent._LATE_BOUNCE_ALPHA           = float(late_bounce_alpha)
     EFEAgent._PADDLE_CENTERED_DEFENSE     = bool(paddle_centered)
     EFEAgent._LATE_BOUNCE_ADAPTIVE_WINDOW = bool(adaptive_window)
+    EFEAgent._OPPONENT_ACTION_MODEL       = bool(opp_action_model)
     RMM.FEATURE_VERSION                   = {"offset": "v2-offset",
                                               "target_y": "v2-target_y"}[feature]
 
@@ -223,6 +226,9 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
     print(f"  contacts/ep={np.mean(contacts):.1f}  no-contact-losses/ep={np.mean(ncls):.2f}")
     print(f"  adaptive_window: W={agent._adaptive_window:.2f}  n={agent._adaptive_n}  "
           f"(active={EFEAgent._LATE_BOUNCE_ADAPTIVE_WINDOW})")
+    print(f"  opp_action_rmm: K={agent.opp_action_rmm.n_components()}  "
+          f"n_observed={agent.opp_action_rmm.total_observed()}  "
+          f"(active={EFEAgent._OPPONENT_ACTION_MODEL})")
     return scores, contacts, ncls
 
 
@@ -255,14 +261,14 @@ if __name__ == "__main__":
         "lb_α0.6", "target_y", "models/agent_state.target_y.pkl",
         late_bounce=True, late_bounce_alpha=0.6)
     new_scores,  new_nc,  new_ncl  = run_arm(
-        "lb_α0.6+adapt_W", "target_y", "models/agent_state.target_y.pkl",
-        late_bounce=True, late_bounce_alpha=0.6, adaptive_window=True)
+        "lb_α0.6+opp_act", "target_y", "models/agent_state.target_y.pkl",
+        late_bounce=True, late_bounce_alpha=0.6, opp_action_model=True)
 
     print("\n── Summary ──")
     print(f"{'arm':<16} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
     for label, scs, ncs, nls in [("lb_α0.6",         base_scores, base_nc, base_ncl),
-                                   ("lb_α0.6+adapt_W", new_scores,  new_nc,  new_ncl)]:
+                                   ("lb_α0.6+opp_act", new_scores,  new_nc,  new_ncl)]:
         a = np.array(scs)
         print(f"{label:<16} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")
