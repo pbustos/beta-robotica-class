@@ -456,6 +456,17 @@ class EFEAgent:
         # Read by play_efe.py to track bounced_this_approach for contact logging.
         self._last_vy_bounce = False
 
+        # Adaptive late_bounce window state (only active if
+        # _LATE_BOUNCE_ADAPTIVE_WINDOW). _bounce_frame_counter ticks per
+        # frame and resets on every detected vy bounce. When the ball
+        # crosses opp_x going left (our outgoing return), capture the
+        # counter as _outgoing_fslb_at_opp. On reward=+1 (we score, opp
+        # missed), update _adaptive_window via EMA over the capture.
+        self._bounce_frame_counter = 0
+        self._outgoing_fslb_at_opp = None
+        self._adaptive_window      = float(self._LATE_BOUNCE_WINDOW)
+        self._adaptive_n           = 0
+
     # ── landing_bias public property (display / legacy compatibility) ─────────
 
     @property
@@ -553,6 +564,18 @@ class EFEAgent:
                 self._raw_vy = a * dvy + (1.0 - a) * self._raw_vy
                 self._last_vy_bounce = False
 
+            # Adaptive-window state machine.
+            # _bounce_frame_counter: ticks per frame, resets on a vy bounce.
+            # _outgoing_fslb_at_opp: captured when ball crosses opp_x going left.
+            if self._last_vy_bounce:
+                self._bounce_frame_counter = 0
+            else:
+                self._bounce_frame_counter += 1
+            if (self._raw_vx < -1e-3
+                    and self._prev_bx > _OPPONENT_X >= bx
+                    and self._outgoing_fslb_at_opp is None):
+                self._outgoing_fslb_at_opp = self._bounce_frame_counter
+
         self._prev_bx = bx
         self._prev_by = by
 
@@ -564,6 +587,9 @@ class EFEAgent:
         self._prev_by       = None
         self._smooth_tgt    = None   # reinit EMA on next approach
         self._last_vy_bounce = False
+        # Reset adaptive-window per-rally capture (the rolling EMA persists).
+        self._outgoing_fslb_at_opp = None
+        self._bounce_frame_counter = 0
 
     # ── belief state save / restore ───────────────────────────────────────────
 
@@ -686,12 +712,27 @@ class EFEAgent:
 
     def record_win(self):
         """Call when reward==+1 (player just scored). Attributes the win to
-        the (offset_scaled, opp_y) feature at the most recent paddle contact."""
+        the (offset_scaled, opp_y) feature at the most recent paddle contact.
+
+        Also updates the adaptive late_bounce window: if the outgoing
+        return crossed opp_x and produced the win, the FSLB captured at
+        that crossing is exactly the post-bounce-frames-at-opp's-contact
+        that we want to target. EMA it.
+        """
         if self._contact_offset is not None and self._contact_opp_y is not None:
             self.long_term.record_rally(self._contact_offset,
                                          self._contact_opp_y, won=True)
             self._contact_offset = None
             self._contact_opp_y  = None
+        if self._outgoing_fslb_at_opp is not None:
+            a = float(self._LATE_BOUNCE_ADAPT_ALPHA)
+            self._adaptive_window = float(np.clip(
+                (1.0 - a) * self._adaptive_window
+                + a * float(self._outgoing_fslb_at_opp),
+                self._LATE_BOUNCE_WINDOW_MIN,
+                self._LATE_BOUNCE_WINDOW_MAX))
+            self._adaptive_n += 1
+            self._outgoing_fslb_at_opp = None
 
     # ── opponent position prediction ──────────────────────────────────────────
 
@@ -871,12 +912,19 @@ class EFEAgent:
     # Independent of opp prediction — uses only forward ball physics with
     # the MEASURED wall coords (_BY_TOP, _BY_BOT).
     _LATE_BOUNCE_STRATEGIC = False
-    _LATE_BOUNCE_WINDOW    = 5         # frames before opp contact
+    _LATE_BOUNCE_WINDOW    = 5         # frames before opp contact (static)
     # α-sweep at 100 eps/arm (sweep_alpha_100.log):
     #   α=0.3 → -0.68    α=0.4 → +0.23    α=0.5 → +0.57
     #   α=0.6 → +0.71    α=0.8 → -0.03
     # Best at α=0.6 (Δ=+0.52 vs baseline, NCL/ep 7.24 vs 8.02).
     _LATE_BOUNCE_ALPHA     = 0.6
+    # Adaptive window: track FSLB-at-opp-arrival in OUR winning returns;
+    # EMA it; use as the dynamic window. Falls back to _LATE_BOUNCE_WINDOW
+    # until we have evidence (n ≥ 3 wins).
+    _LATE_BOUNCE_ADAPTIVE_WINDOW = False
+    _LATE_BOUNCE_ADAPT_ALPHA     = 0.15
+    _LATE_BOUNCE_WINDOW_MIN      = 3
+    _LATE_BOUNCE_WINDOW_MAX      = 10
 
     # Paddle-centered defense on incoming late bounces.
     # Symmetric mirror of the late_bounce attack: when WE're about to
@@ -992,7 +1040,10 @@ class EFEAgent:
         if last_bounce_frame < 0:
             return 0.0           # straight shot — opp catches easily
         frames_since_bounce = frames_total - last_bounce_frame
-        window = float(self._LATE_BOUNCE_WINDOW)
+        if self._LATE_BOUNCE_ADAPTIVE_WINDOW and self._adaptive_n >= 3:
+            window = float(self._adaptive_window)
+        else:
+            window = float(self._LATE_BOUNCE_WINDOW)
         return float(max(0.0, 1.0 - frames_since_bounce / window))
 
     def _strategic_value(self, target_y: float, landing_y: float,

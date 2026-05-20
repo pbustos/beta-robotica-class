@@ -28,9 +28,20 @@ if "--feature" in sys.argv:
     FEATURE = sys.argv[sys.argv.index("--feature") + 1]
 assert FEATURE in ("offset", "target_y"), f"unknown feature {FEATURE!r}"
 
-# Wire the rMM feature mode + pkl version sentinel.
-EFEAgent._RMM_FEATURE = FEATURE
+LATE_BOUNCE    = "--late_bounce" in sys.argv
+LB_ALPHA = 0.6
+if "--lb_alpha" in sys.argv:
+    LB_ALPHA = float(sys.argv[sys.argv.index("--lb_alpha") + 1])
+ADAPT_WINDOW   = "--adaptive_window" in sys.argv
+
+# Wire the rMM feature mode + pkl version sentinel + strategic toggles.
+EFEAgent._RMM_FEATURE                 = FEATURE
+EFEAgent._LATE_BOUNCE_STRATEGIC       = LATE_BOUNCE
+EFEAgent._LATE_BOUNCE_ALPHA           = LB_ALPHA
+EFEAgent._LATE_BOUNCE_ADAPTIVE_WINDOW = ADAPT_WINDOW
 RMM.FEATURE_VERSION   = {"offset": "v2-offset", "target_y": "v2-target_y"}[FEATURE]
+print(f"warmup config: feature={FEATURE}  late_bounce={LATE_BOUNCE}(α={LB_ALPHA})  "
+      f"adaptive_window={ADAPT_WINDOW}  N={N_EPISODES}")
 
 GAMMA      = 0.9
 SEED_BASE  = 24680

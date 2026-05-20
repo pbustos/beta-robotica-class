@@ -165,22 +165,23 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
             strategic_alpha=0.0, terminal_strategic=False,
             aim_below=0.0, anticipatory=False,
             late_bounce=False, late_bounce_alpha=0.5,
-            paddle_centered=False):
+            paddle_centered=False, adaptive_window=False):
     """Run a single arm with the requested rMM feature mode + toggles."""
     from efe_agent import RMM
-    EFEAgent._RMM_FEATURE              = feature
-    EFEAgent._ADAPTIVE_HORIZON         = bool(adaptive_horizon)
-    EFEAgent._VEL_ALPHA_HYBRID         = bool(vel_alpha_hybrid)
-    EFEAgent._RELOCK_ON_BOUNCE         = bool(relock_on_bounce)
-    EFEAgent._STRATEGIC_ALPHA          = float(strategic_alpha)
-    EFEAgent._TERMINAL_STRATEGIC       = bool(terminal_strategic)
-    EFEAgent._AIM_BELOW                = float(aim_below)
-    EFEAgent._ANTICIPATORY_POSITIONING = bool(anticipatory)
-    EFEAgent._LATE_BOUNCE_STRATEGIC    = bool(late_bounce)
-    EFEAgent._LATE_BOUNCE_ALPHA        = float(late_bounce_alpha)
-    EFEAgent._PADDLE_CENTERED_DEFENSE  = bool(paddle_centered)
-    RMM.FEATURE_VERSION                = {"offset": "v2-offset",
-                                           "target_y": "v2-target_y"}[feature]
+    EFEAgent._RMM_FEATURE                 = feature
+    EFEAgent._ADAPTIVE_HORIZON            = bool(adaptive_horizon)
+    EFEAgent._VEL_ALPHA_HYBRID            = bool(vel_alpha_hybrid)
+    EFEAgent._RELOCK_ON_BOUNCE            = bool(relock_on_bounce)
+    EFEAgent._STRATEGIC_ALPHA             = float(strategic_alpha)
+    EFEAgent._TERMINAL_STRATEGIC          = bool(terminal_strategic)
+    EFEAgent._AIM_BELOW                   = float(aim_below)
+    EFEAgent._ANTICIPATORY_POSITIONING    = bool(anticipatory)
+    EFEAgent._LATE_BOUNCE_STRATEGIC       = bool(late_bounce)
+    EFEAgent._LATE_BOUNCE_ALPHA           = float(late_bounce_alpha)
+    EFEAgent._PADDLE_CENTERED_DEFENSE     = bool(paddle_centered)
+    EFEAgent._LATE_BOUNCE_ADAPTIVE_WINDOW = bool(adaptive_window)
+    RMM.FEATURE_VERSION                   = {"offset": "v2-offset",
+                                              "target_y": "v2-target_y"}[feature]
 
     warm_state = {}
     if pathlib.Path(pkl_path).exists():
@@ -220,6 +221,8 @@ def run_arm(label, feature, pkl_path, adaptive_horizon=False,
     print(f"  → {time.time()-t0:.0f}s  mean={arr.mean():+.2f}  std={arr.std():.2f}  "
           f"wins(>0)={int((arr>0).sum())}  best={arr.max():+.0f}  worst={arr.min():+.0f}")
     print(f"  contacts/ep={np.mean(contacts):.1f}  no-contact-losses/ep={np.mean(ncls):.2f}")
+    print(f"  adaptive_window: W={agent._adaptive_window:.2f}  n={agent._adaptive_n}  "
+          f"(active={EFEAgent._LATE_BOUNCE_ADAPTIVE_WINDOW})")
     return scores, contacts, ncls
 
 
@@ -252,16 +255,16 @@ if __name__ == "__main__":
         "lb_α0.6", "target_y", "models/agent_state.target_y.pkl",
         late_bounce=True, late_bounce_alpha=0.6)
     new_scores,  new_nc,  new_ncl  = run_arm(
-        "lb_α0.6+defense", "target_y", "models/agent_state.target_y.pkl",
-        late_bounce=True, late_bounce_alpha=0.6, paddle_centered=True)
+        "lb_α0.6+adapt_W", "target_y", "models/agent_state.target_y.pkl",
+        late_bounce=True, late_bounce_alpha=0.6, adaptive_window=True)
 
     print("\n── Summary ──")
-    print(f"{'arm':<10} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
+    print(f"{'arm':<16} {'mean':>8} {'std':>6} {'wins':>5} {'best':>5} {'worst':>5} "
           f"{'contacts/ep':>12} {'NCL/ep':>7}")
     for label, scs, ncs, nls in [("lb_α0.6",         base_scores, base_nc, base_ncl),
-                                   ("lb_α0.6+defense", new_scores,  new_nc,  new_ncl)]:
+                                   ("lb_α0.6+adapt_W", new_scores,  new_nc,  new_ncl)]:
         a = np.array(scs)
-        print(f"{label:<10} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
+        print(f"{label:<16} {a.mean():>+8.2f} {a.std():>6.2f} {int((a>0).sum()):>5d} "
               f"{a.max():>+5.0f} {a.min():>+5.0f} {np.mean(ncs):>12.1f} {np.mean(nls):>7.2f}")
 
     delta = np.mean(new_scores) - np.mean(base_scores)
