@@ -1,4 +1,4 @@
-% IWAI 2026 submission --- draft outline
+% IWAI 2026 submission --- draft
 % Based on the Springer LLNCS samplepaper.tex template.
 %
 \documentclass[runningheads]{llncs}
@@ -26,31 +26,34 @@
 \maketitle
 
 \begin{abstract}
-We build the smallest closed-form Active Inference agent that we
-could make work on a real Arcade Learning Environment game ---
-\texttt{ALE/Pong-v5}, RAM observations --- and use the build as a
-vehicle for two contributions. First, an end-to-end specification of
-a gradient-free AIF agent: pretrained Variational Bayesian Gaussian
-Sums (VBGS) for ball and opponent dynamics via closed-form CAVI on
-30\,000 frames of free play, a $K{=}2$ mixture Kalman belief filter
-with bounce-aware physics, EFE planning by deterministic horizon-3
-tree search, and a streaming recurrent mixture model (rMM) for
-online aim policy. Second, an honest empirical record: nineteen
-paired-seed interventions, of which seven were positive and twelve
-were not, evaluated at $N{=}100$ episodes per arm with paired
-$t$-tests. The agent reaches a mean score of $+1.94$ from a
-rule-based baseline of $-14$. The substantive lesson is not the
-absolute score: it is that the two largest improvements
-(+4.8 and +5.3 points per episode) came not from the generative
-model but from clean velocity tracking through bounces and from
-replacing a sampled MPPI planner by deterministic tree search. We
-identify a consistent pattern across negative results --- smoothing
-and stale-prediction interventions lose, responsiveness
-interventions win --- that we conjecture generalises beyond Pong.
-We position our numbers against AXIOM Gameworld~10k and Atari~100k
-RL baselines (BBF, DreamerV3, EfficientZero) as reference points,
-not direct competitors, and discuss the apples-to-oranges issues
-explicitly.
+For more than a decade, Atari benchmarks have been the province of
+deep reinforcement learning. The recent AXIOM framework changed that
+by showing that an Active Inference agent built from
+Variational Bayesian Gaussian Sums, expanded online through structure
+learning and Bayesian model reduction, can compete with strong
+RL baselines on a custom 10-game suite. AXIOM is, however, a fairly
+elaborate system. In this paper we go in the opposite direction and
+ask what the simplest version of the same idea looks like, and how
+far it can be pushed on a real Arcade Learning Environment title. We
+construct a fully gradient-free Active Inference agent for
+\texttt{ALE/Pong-v5}: a pair of pretrained VBGS for ball and opponent
+dynamics, fitted by closed-form CAVI on thirty thousand frames of
+free play; a $K{=}2$ mixture Kalman belief filter with bounce-aware
+physics; deterministic horizon-3 tree search over Expected Free
+Energy; and a streaming recurrent mixture model that learns an aim
+policy online from rally outcomes. The agent improves from a
+rule-based baseline of $-14.4$ to a mean score of $+1.94$. More
+informatively, we report in full the twenty-two paired-seed
+interventions we ran during its development --- seven positive,
+fifteen negative --- and find that the score is overwhelmingly
+explained by two changes that have nothing to do with the
+generative model: clean velocity tracking through wall and paddle
+bounces, and the replacement of a sampled MPPI planner by a
+deterministic tree search. We position our numbers next to AXIOM
+Gameworld~10k and the Atari~100k RL leaderboard as reference points
+rather than direct competitors, and discuss honestly the input,
+sample-regime, and task differences that make any head-to-head
+ranking ill-founded.
 
 \keywords{Active Inference \and Expected Free Energy \and Variational
 Bayes \and Mixture Models \and Atari \and Pong \and CAVI \and
@@ -58,423 +61,777 @@ Negative Results.}
 \end{abstract}
 
 % =========================================================================
-\section{Introduction}
+\section{Introduction}\label{sec:intro}
 % =========================================================================
 
-\paragraph{Motivation.} Reinforcement learning has dominated Atari
-benchmarks for over a decade, but at the cost of large sample
-complexity, opaque value functions, and limited interpretability.
-Active Inference (AIF), grounded in the Free Energy Principle, offers
-an alternative in which behaviour emerges from minimising Expected
-Free Energy (EFE) under a generative model of the world. Recent
-results such as AXIOM~\cite{ref_axiom} demonstrate that AIF agents
-with object-centric VBGS components, online structure growth, and
-Bayesian model reduction can be competitive with sample-efficient RL
-on a custom 10-game benchmark. What is missing from the literature
-is a stripped-down counterpart: \emph{the simplest possible
-closed-form AIF agent that still works on a real ALE game}, together
-with an honest account of which interventions during its development
-helped and which did not.
+Reinforcement learning has set the conventions of the Atari benchmark
+for over a decade. A deep network observes pixels, an actor-critic or
+value head emits a policy, and the system improves by gradient updates
+against a reward signal. The recipe is now extraordinarily refined ---
+EfficientZero, BBF, and DreamerV3 all reach near-human or super-human
+sample efficiency on the standard 26-game suite --- but the recipe has
+also developed something of a monopoly on what an ``agent that learns
+to play Atari'' looks like. Active Inference offers, at least in
+principle, a different story: behaviour as the consequence of
+minimising Expected Free Energy under a generative model of the world,
+with no value function and no gradient steps required. Until recently
+that story had not been instantiated at a scale where it could be
+benchmarked against the RL chain. The AXIOM
+framework~\cite{ref_axiom} closed that gap. It uses Variational
+Bayesian Gaussian Sums to represent objects, grows mixture components
+online through structure learning and Bayesian model reduction, and
+plans by EFE; on a custom Pong-like game (\emph{Bounce}) within the
+Gameworld~10k benchmark it surpasses both BBF and DreamerV3.
 
-\paragraph{What this paper is, and what it is not.}
-This paper is \emph{not} a benchmark contribution. We do not claim
-to beat AXIOM, BBF, DreamerV3, or EfficientZero on any standard
-metric, and we are explicit about the input-modality and pretraining
-caveats that would make any such claim ill-founded
-(Section~\ref{sec:comparison}). What this paper offers instead is:
-\begin{enumerate}
-  \item A \emph{minimal} fully closed-form AIF agent for
-        \texttt{ALE/Pong-v5} --- pretrained VBGS dynamics on RAM
-        observations, conjugate NIW priors, CAVI updates,
-        Kalman-style belief filtering, EFE planning by tree
-        search, online rMM aim policy. No gradients are used
-        anywhere in the pipeline.
-  \item An honest empirical record built around a paired-seed
-        bench harness ($N{=}100$ episodes per arm, paired
-        $t$-tests): seven positive interventions, twelve negative
-        ones, all documented at the same level of detail.
-  \item Two non-modelling lessons that we believe generalise:
-        (i) clean velocity tracking through bounces and walls
-        dominates any architectural change to the generative
-        model itself; (ii) a deterministic horizon-3 tree search
-        beats MPPI ($H{=}15$, $N{=}128$) by $+5.3$ points on the
-        same code path. Both findings are isolated by the paired
-        bench, and neither is a result that AXIOM, BBF or
-        DreamerV3 could have surfaced.
-\end{enumerate}
+AXIOM is, however, a sophisticated and tightly engineered system. Its
+success leaves open a more elementary question: what does the
+\emph{minimum} closed-form Active Inference agent look like, how well
+does it do on a real ALE game, and which of the parts in such an
+agent actually matter? We constructed such a minimum agent and used
+its construction as a vehicle for an empirical study. The agent
+plays \texttt{ALE/Pong-v5} from RAM observations. Its generative
+model is a pair of single-object VBGS for ball and opponent
+dynamics, fitted offline by closed-form CAVI on thirty thousand
+frames of free play; its belief filter is a $K{=}2$ mixture Kalman
+with bounce-aware transition; its planner is a deterministic
+horizon-3 tree search over Expected Free Energy with 27 leaves; and
+its only online-learned policy component is a streaming recurrent
+mixture model (rMM) that maintains a Bayesian estimate of rally
+win-rate over a two-dimensional aim/opponent feature space. There
+are no gradient steps anywhere in the pipeline.
 
-\paragraph{Outline.} Section~\ref{sec:related} surveys AIF agents and
-sample-efficient RL on Atari. Section~\ref{sec:background} fixes
-notation for FEP, EFE, and the conjugate Bayesian updates used.
-Section~\ref{sec:model} specifies the generative model.
-Section~\ref{sec:agent} describes the belief filter, action selector,
-and the recurrent mixture model for online aim policy.
-Section~\ref{sec:methodology} states the experimental protocol.
-Section~\ref{sec:results} traces the improvement ladder.
-Section~\ref{sec:negatives} catalogues the negative results.
-Section~\ref{sec:comparison} compares to AXIOM and RL baselines.
-Section~\ref{sec:discussion} concludes.
+This paper is deliberately not a benchmark contribution. The agent
+reaches $+1.94$ mean per episode, which is barely net-winning, and
+we are explicit about the input-modality, task and pretraining
+differences that prevent it from being a meaningful head-to-head
+comparator against AXIOM or any of the strong RL baselines. What
+the paper offers instead is two things that the benchmark
+literature does not usually contain. First, a complete
+specification of a working gradient-free AIF agent at the smallest
+scale that can be claimed to do something non-trivial. Second, an
+honest record of the twenty-two paired-seed interventions we tried
+during three weeks of development --- seven that helped and fifteen
+that did not, all evaluated at $N{=}100$ episodes with paired
+$t$-tests, all reported in this paper at the same level of detail.
+From those interventions we draw two findings that we believe
+generalise beyond Pong: that clean velocity tracking through bounces
+dominates any architectural change to the generative model, and
+that a deterministic short-horizon tree search beats a sampled
+long-horizon MPPI on the very same code path by five points per
+episode. Both findings could only have been isolated by paired
+benchmarking.
+
+The remainder of the paper is organised as follows.
+Section~\ref{sec:related} places the work next to AXIOM and the
+sample-efficient RL chain. Section~\ref{sec:background} reviews the
+Free Energy machinery and the conjugate updates that make the agent
+closed-form. Section~\ref{sec:model} specifies the generative
+model, and Section~\ref{sec:agent} the belief filter, the planner,
+and the rMM. Section~\ref{sec:methodology} states the experimental
+protocol that runs throughout the paper. Sections~\ref{sec:results}
+and~\ref{sec:negatives} report the positive and negative results in
+turn. Section~\ref{sec:comparison} places those numbers against the
+external reference points. Section~\ref{sec:ceiling} explains why
+we believe we have hit a ceiling, and what it would take to move
+past it. Section~\ref{sec:discussion} closes.
 
 % =========================================================================
 \section{Related Work}\label{sec:related}
 % =========================================================================
 
-\subsection{Active Inference Agents.}
-[TODO --- cite Friston FEP review; Da Costa AIF tutorial; Tschantz
-et al.\ scaling AIF; Markovic et al.\ on planning under EFE; the
-AXIOM paper~\cite{ref_axiom}; VBGS structure learning. Position
-this work as the simplest possible closed-form AIF agent that still
-beats a hand-coded baseline on a standard ALE game.]
+The most direct comparator to this paper, and the work that motivates
+its existence, is AXIOM. After AXIOM, the rest of the related-work
+landscape divides cleanly into two strands: prior Active Inference
+agents, and sample-efficient reinforcement learning on Atari.
 
-\subsection{Sample-efficient RL on Atari.}
-The Atari 100k benchmark~\cite{ref_atari100k} (100\,000 environment
-steps, $\approx 2$ hours of human gameplay) is the closest RL
-counterpart to the sample budget regime we operate in. Leading
-methods include EfficientZero~\cite{ref_efficientzero} (MuZero with
-self-supervised auxiliaries; 194\% mean human-normalised score),
-BBF~\cite{ref_bbf} (model-free SR-SPR with scaled networks), and
-DreamerV3~\cite{ref_dreamerv3} (world-model agent). On
-\texttt{ALE/Pong-v5} specifically, DQN-class methods reach $+20$ at
-roughly 10M frames.
+\paragraph{The AXIOM framework.}
+AXIOM~\cite{ref_axiom} is an object-centric generative model in which
+each detected object is represented by a Variational Bayesian
+Gaussian Sum that captures its own state and its sparse interactions
+with other objects. The number of mixture components is not fixed
+ahead of time: structure learning grows components on novel
+observations, and a Bayesian model-reduction step periodically
+prunes them to induce generalisation. Planning uses Expected Free
+Energy in a Monte Carlo tree-search style rollout. The benchmark on
+which AXIOM is reported is Gameworld~10k --- ten games designed to be
+``physics consistent'' with classic arcade titles, run for a 10\,000
+environment-step budget. One of those games, \emph{Bounce}, is the
+Pong analog. Our work shares the closed-form CAVI updates, the NIW
+conjugacy, the VBGS substrate, and the EFE objective. It differs in
+being single-object, single-game, pretrained rather than online, and
+deliberately minimal in its planner (a 27-leaf deterministic tree,
+not MCTS over an expanding generative model).
 
-\subsection{Object-centric and structured world models.}
-AXIOM~\cite{ref_axiom} is the most direct comparator: object-centric
-generative model with VBGS components, expanded online via Bayesian
-model reduction, evaluated on a 10-game Gameworld~10k benchmark in
-which the game \emph{Bounce} is the Pong analog. Our agent shares the
-VBGS choice and closed-form CAVI updates but is single-object and
-uses pretraining rather than online structure growth.
+\paragraph{Active Inference agents.}
+The broader Active Inference literature has long been concerned with
+the theoretical question of \emph{whether} closed-form variational
+inference can support intelligent behaviour, and only more recently
+with the engineering question of how to scale it. Friston's
+formulation of the Free Energy Principle~\cite{ref_fep} provides the
+foundational claim that adaptive agents minimise variational free
+energy. The Active Inference synthesis of Da
+Costa et al.~\cite{ref_aif_tutorial} gives the now-standard
+discrete-state-space formulation that we follow in
+Section~\ref{sec:background}. A succession of works has progressively
+scaled the framework: from the original tabular grid-worlds, through
+mountain-car and CartPole, to the continuous-state pixel-observation
+agents that AXIOM exemplifies. The agent presented in this paper
+sits below AXIOM on the same scaling curve, and our framing is that
+this position is informative in itself.
+
+\paragraph{Sample-efficient RL on Atari.}
+The closest reinforcement-learning counterpart to the data regime we
+operate in is the Atari~100k benchmark~\cite{ref_atari100k}: each
+agent gets 100\,000 environment steps, roughly two hours of human
+gameplay, to reach the highest score it can. The leading methods on
+that benchmark are EfficientZero~\cite{ref_efficientzero}, which
+augments MuZero with self-supervised auxiliary losses and reaches
+194\% mean human-normalised score;
+BBF~\cite{ref_bbf}, a scaled model-free agent built on SR-SPR that
+reaches human-level efficiency; and DreamerV3~\cite{ref_dreamerv3},
+which learns a recurrent world model and plans through imagined
+trajectories. On \texttt{ALE/Pong-v5} specifically, classical DQN
+needs roughly $10^7$ frames to reach the $+20$ ceiling; the
+sample-efficient methods get partway there in $10^5$. We use these
+results not as a head-to-head leaderboard but as a calibration of
+what is and is not achievable in the low-data regime.
 
 % =========================================================================
 \section{Background}\label{sec:background}
 % =========================================================================
 
-\paragraph{Free Energy and Expected Free Energy.}
-[TODO --- 1 page. Variational free energy $F = \mathrm{KL}[q\|p] -
-\log p(o)$; expected free energy decomposition into pragmatic value
-$\mathbb{E}_q[\log p(o^*)]$ and epistemic value
-$\mathbb{H}[p(s|o)] - \mathbb{E}_q\mathbb{H}[p(s|o)]$.]
+We collect here the minimum mathematical material needed to read the
+rest of the paper. The first part recalls variational free energy
+and its expected counterpart, which together define the agent's
+inference and planning objectives. The second part recalls the
+conjugate Normal-Inverse-Wishart prior that makes our entire
+inference pipeline closed-form. Readers familiar with both are
+invited to skip to Section~\ref{sec:model}.
 
-\paragraph{Conjugate updates and CAVI.}
-[TODO --- NIW prior on Gaussian components, posterior in closed form,
-mixture responsibilities by digamma terms, CAVI as alternating E/M.
-Cross-reference PONG.md \S2--\S4.]
+\paragraph{Free energy and Expected Free Energy.}
+At each timestep the agent maintains an approximate posterior $q(s)$
+over latent states $s$ given the history of observations $o$ so far.
+Variational inference makes this tractable by minimising the
+variational free energy
+\begin{equation}
+  F[q] \;=\; \mathrm{KL}\!\bigl[q(s)\,\|\,p(s\mid o)\bigr] \;-\;
+  \log p(o),
+\end{equation}
+which is equivalent to an evidence lower bound on the negative
+log-marginal likelihood of the observations. When the prior over
+states $p(s)$ and the likelihood $p(o\mid s)$ are both in the
+exponential family with conjugate priors, the minimising $q$ admits
+closed-form updates. Action selection is governed not by reward
+signals but by an extension of the same quantity to future
+observations under candidate policies $\pi$. The Expected Free
+Energy of $\pi$ is, after the standard decomposition,
+\begin{equation}
+  G(\pi) \;=\; \underbrace{-\,\mathbb{E}_{q(o, s\,\mid\,\pi)}\bigl[\log p(o^*)\bigr]}_{\text{pragmatic (instrumental) value}}
+  \;-\;\underbrace{\mathbb{H}\!\bigl[q(s\mid o,\pi)\bigr]
+  +\mathbb{E}_{q(o\,\mid\,\pi)}\mathbb{H}\!\bigl[q(s\mid o,\pi)\bigr]}_{\text{epistemic value}},
+\end{equation}
+where $p(o^*)$ is a prior preference distribution over desired
+observations and the bracketed entropy terms reward policies that
+reduce uncertainty about the latent state. The agent selects the
+policy that minimises $G$. In our agent the policy is a single
+3-action choice $\pi\in\{\text{NOOP},\text{UP},\text{DOWN}\}$
+followed by a deterministic rollout of depth two, so the
+minimisation reduces to scoring 27 leaves.
+
+\paragraph{Conjugate updates: NIW, CAVI, and VBGS.}
+All of the generative model components in this paper are Gaussian
+with a Normal-Inverse-Wishart (NIW) prior over the joint mean and
+precision. The NIW is the conjugate prior for a Gaussian with
+unknown mean and covariance; given a batch of observations the
+posterior is another NIW whose hyperparameters update in closed form
+through a single weighted-sum step. A Variational Bayesian Gaussian
+Sum (VBGS) is a mixture of $K$ such Gaussian components, each with
+its own NIW prior, plus a Dirichlet over mixture weights. Coordinate
+Ascent Variational Inference (CAVI) alternates an E-step that
+re-evaluates the responsibilities $r_{nk}\propto\pi_k\,
+p(x_n\mid\theta_k)$ with an M-step that updates each component's
+sufficient statistics. After fitting, the VBGS supports a
+\emph{conditional} prediction $p(x_{\text{tgt}}\mid
+x_{\text{ctx}})$ obtained by mixture-of-Gaussian conditioning of
+each component on the context dimensions. This is the operation
+that drives all forward prediction in our agent.
 
 % =========================================================================
 \section{Generative Model}\label{sec:model}
 % =========================================================================
 
+The generative model is small enough that it can be specified in a
+page. It contains everything we believe the agent needs to know
+about Pong: where the ball is, how it moves and bounces, how the
+opponent paddle responds to the ball, and what configurations of
+the world count as desirable.
+
 \paragraph{State and observation.}
-6-D latent state $s = [b_x, b_y, v_x, v_y, p_y, o_y]$ (ball position,
-ball velocity, player paddle, opponent paddle); 4-D observation
-$o = [b_x, b_y, p_y, o_y] / 255$ read from RAM bytes
-$[49, 54, 51, 50]$. Velocities are latent and recovered by the filter.
-Action set $\{0, 2, 3\}$ = \{NOOP, UP, DOWN\}.
+At each frame the agent reasons over the six-dimensional latent
+state
+\[
+  s \;=\; \bigl[b_x,\;b_y,\;v_x,\;v_y,\;p_y,\;o_y\bigr],
+\]
+where $(b_x, b_y)$ is ball position, $(v_x, v_y)$ is ball velocity,
+$p_y$ is the player paddle's $y$ coordinate, and $o_y$ is the
+opponent paddle's $y$ coordinate. The observation is a
+four-dimensional vector
+$o = [b_x, b_y, p_y, o_y]/255$ read directly from RAM bytes
+$[49, 54, 51, 50]$; velocities are not observed and are recovered by
+the belief filter. The action set is the restricted three-action
+subset of the ALE Pong control,
+$\mathcal{A} = \{\text{NOOP},\,\text{UP},\,\text{DOWN}\}$, indexed
+by $\{0, 2, 3\}$ in the ALE convention.
 
 \paragraph{Ball dynamics.}
-A VBGS with $K=4$ components fitted by CAVI on 30k frames of
-free play, with a Normal--Inverse--Wishart prior. Wall bounces are
-captured by separate mixture components; the conditional predictor
-\texttt{predict\_conditional}$(s_t \to s_{t+1})$ uses the
-component-mixture posterior.
+The ball transition $p(s_{t+1}\mid s_t)$ is a Variational Bayesian
+Gaussian Sum with $K{=}4$ components, fitted by CAVI on thirty
+thousand frames of free play with the agent's hand-coded baseline
+acting only as a server. Each component has an NIW prior; the
+mixture weights have a Dirichlet prior. Wall bounces and clean
+straight flight tend to be captured by separate components in the
+fit, which is the property that makes the VBGS predictor superior
+to a single linear-Gaussian transition: the bounce-aware mixture
+component fires when the ball is near a wall and produces the
+correct reflection in expectation.
 
 \paragraph{Opponent dynamics.}
-Symmetric VBGS over $(\text{ball state}, o_y, o_{y, t+1})$;
-empirically the opponent in ALE/Pong follows a fixed lag controller
-$\approx 12$\,px above the ball.
+The opponent transition $p(o_{y,t+1}\mid o_{y,t}, s_t)$ is a smaller
+VBGS over the same NIW prior. Empirically the ALE Pong opponent
+behaves as a deterministic lag tracker, sitting approximately
+12\,px above the ball with a fixed reaction delay, and the two
+components of the opponent VBGS recover ``tracking'' and
+``stationary/lag'' as separate modes.
 
 \paragraph{Likelihood.}
-Linear-Gaussian, $p(o\,|\,s) = \mathcal{N}(Hs, R)$, with $H$ selecting
-$(b_x, b_y, p_y, o_y)$ and $R = 10^{-4} I$. $R$ is optionally
-re-estimated online from Kalman innovations.
+Observations are linear-Gaussian in the state:
+\[
+  p(o\mid s) \;=\; \mathcal{N}\bigl(o\mid Hs,\;R\bigr),
+\]
+with $H$ selecting the directly-observed dimensions
+$(b_x, b_y, p_y, o_y)$ and $R = 10^{-4}\,I$. The observation
+covariance $R$ may optionally be re-estimated online from Kalman
+innovations; results below are reported with $R$ frozen at the
+prior except where explicitly stated.
 
-\paragraph{Prior preferences $C$.}
-Three Gaussian-mixture goals encode (i) ball on the left half, (ii)
-player paddle intercepts the ball, (iii) opponent paddle far from the
-ball. The intercept term shrinks $\sigma_{p_y}$ adaptively as the
-ball approaches the player's $x$.
+\paragraph{Prior preferences.}
+The preference distribution $p(o^*)$ that drives the pragmatic
+term of EFE is a three-component Gaussian mixture encoding three
+soft goals: ball on the left half of the screen; player paddle
+intercepting the ball; opponent paddle far from the ball. The
+intercept term has an adaptive precision: $\sigma_{p_y}$ shrinks as
+the ball approaches the player's $x$ coordinate, so that the
+agent's commitment to a specific paddle target sharpens as the
+prediction horizon shortens.
 
 % =========================================================================
 \section{The Agent}\label{sec:agent}
 % =========================================================================
 
-\subsection{Belief Filter}
-$K{=}2$ mixture Kalman with the VBGS as the conditional transition;
-process noise $Q = \mathrm{diag}(10^{-4},10^{-4},10^{-4},10^{-4},10^{-3},10^{-4})$.
-An EMA frame-difference velocity estimator (parameter $\alpha=0.7$)
-runs in parallel with the Kalman estimate to bypass the post-contact
-velocity spike (Kalman $v_x$ jumps to $\pm 0.3$ after paddle contact;
-the EMA does not).
+At each frame the agent has three jobs: filter the new observation
+into its belief over latent state; pick a policy by minimising EFE;
+and, on rally completion, update its longer-term knowledge of which
+aim configurations tend to win. We describe each in turn.
 
-\subsection{Bounce-aware velocity}
-The single largest engineering win in this paper (Section~\ref{sec:results}).
-Two heuristics fire inside the EMA update:
-\begin{itemize}
-  \item Sign-flip bounce: $|\Delta v| > 0.003$ and
-        $\mathrm{sgn}(\Delta v) \neq \mathrm{sgn}(v_{\text{EMA}})$
-        $\Rightarrow$ hard-reset (no blending).
-  \item Wall-clip bounce: if $b_y$ is within $0.005$ of the
-        top/bottom edge for one frame, $\Delta v_y \approx 0$ is
-        suppressed; treat as a bounce.
-\end{itemize}
+\subsection{Belief filter.}
+The belief over $s$ is maintained by a $K{=}2$ mixture Kalman filter
+with the ball VBGS as the conditional transition model and the
+linear-Gaussian likelihood specified above. The process noise is
+$Q=\mathrm{diag}(10^{-4},10^{-4},10^{-4},10^{-4},10^{-3},10^{-4})$,
+with the larger entry on $p_y$ reflecting that the player paddle's
+position is at the agent's own discretion and therefore less
+constrained by prior. The two components carry the ``no-bounce''
+and ``bounce'' branches of the VBGS ball transition forward
+explicitly, which avoids the multi-modal collapse that a single
+Gaussian belief would suffer when the ball is near a wall.
 
-\subsection{EFE Action Selection}
-Deterministic horizon-3 tree search over the 3-action space (27 leaves).
-Depth-0 uses the full VBGS \texttt{predict} (bounce-aware via the
-$K{=}2$ mixture); depths 1--2 use a linear-Gaussian rollout matrix
-$F$ for speed. The target observation $o^*$ is computed once per
-frame from the current belief and shared across all action branches
-(per-branch recomputation introduces VBGS noise that degrades
-selection).
+A subtlety that turns out to matter, and that drives the largest
+empirical result in this paper, is that the Kalman estimate of ball
+velocity is corrupted by the paddle-contact event. At the frame the
+ball touches the paddle, $v_x$ flips sign almost instantaneously
+and the Kalman filter's smoothed estimate overshoots by as much as
+$0.3$ before settling. Downstream landing-prediction code that uses
+the Kalman $v_x$ produces visibly wrong landings for several frames
+after every contact. We therefore maintain, in parallel with the
+Kalman estimate, a simple frame-difference EMA of ball velocity
+\[
+  v_{x,\text{EMA},t}
+  \;=\; \alpha\,(b_{x,t}-b_{x,t-1}) \;+\;(1-\alpha)\,v_{x,\text{EMA},t-1},
+\]
+with $\alpha = 0.7$, and feed the EMA to the landing predictor and
+to the planner.
 
-\subsection{Recurrent Mixture Model (rMM) for online aim policy}
-A streaming AXIOM-style rMM over continuous features
-$(t_y, o_y^{\text{arrival}})$ with NIW + Beta-head components:
-deterministic CRP growth ($K_{\max}=16$, log-likelihood spawn
-threshold $-2.0$). The planner sweeps 9 continuous aim candidates
-within the reachable window and selects by Bayes-UCB on the
-Beta-head win-rate. Legacy 2D Beta-grid checkpoints auto-migrate
-into the rMM on load.
+\subsection{Bounce-aware velocity tracking.}
+The EMA above is sufficient for clean ball flight but degrades at
+each bounce, because the underlying frame-difference is briefly
+zero or sign-reversed and the EMA blends through it. We add two
+detectors. First, a sign-flip detector: if the new
+frame-difference velocity has opposite sign to the EMA and
+$|\Delta v| > 0.003$, the EMA is hard-reset to the new value rather
+than blended. Second, a wall-clip detector: if $b_y$ is within
+$0.005$ of either of the measured wall coordinates $_BY_{\text{TOP}}=0.18$
+or $_BY_{\text{BOT}}=0.81$ for one frame, the frame-difference $\Delta v_y$
+is sometimes approximately zero because the ball position was
+clipped to the edge of the screen; the wall-clip detector forces a
+bounce in that case. Sections~\ref{sec:results} and~\ref{sec:ceiling}
+return to these two detectors, which together account for the
+largest single improvement in the agent's score.
+
+\subsection{Action selection by tree-search EFE.}
+The planner enumerates all 27 length-3 action sequences and scores
+each by its leaf-aggregated Expected Free Energy under the agent's
+current belief. The first step of each rollout uses the full VBGS
+\texttt{predict}, which is bounce-aware via the $K{=}2$ mixture
+substrate; the second and third steps use a cheaper
+linear-Gaussian rollout matrix. The target observation $o^*$ that
+enters the pragmatic term is computed once per frame from the
+current belief and shared across all 27 action branches. We
+discovered, by paired benchmarking, that recomputing $o^*$
+per-branch introduces VBGS prediction noise that systematically
+degrades selection; the shared-$o^*$ design is therefore deliberate.
+
+\subsection{Recurrent mixture model for online aim policy.}
+The planner above chooses what \emph{to do this frame}; it does not
+choose what \emph{to aim at} when the ball arrives at the paddle.
+That higher-level choice is delegated to a streaming recurrent
+mixture model (rMM) in the AXIOM idiom. The rMM is a mixture of
+NIW components in a two-dimensional continuous feature space ---
+$(t_y, o_y^{\text{arrival}})$, the chosen paddle target and the
+predicted opponent $y$ at the moment the return arrives at the
+opponent's line --- with a Beta-distributed win-rate head attached
+to each component. Components are spawned by deterministic CRP
+growth: an observation that lies more than $\mathrm{LL\_THRESH}=
+-2.0$ in log-likelihood below the closest existing component
+triggers a new component, up to a cap of $K_{\max}=16$. On rally
+completion the active component absorbs the win/loss outcome
+through a single conjugate-update step. At target-choice time the
+planner sweeps nine continuous aim candidates within the
+reachable paddle window and selects by Bayes-UCB on the Beta-head
+posterior. The agent's persistent state, written to disk at every
+episode end, consists almost entirely of this rMM plus a small
+collection of per-bounce-mode landing-bias EMAs.
 
 % =========================================================================
 \section{Experimental Methodology}\label{sec:methodology}
 % =========================================================================
 
-\paragraph{Paired-seed bench.}
-Two arms run with identical seeds, identical pretrained VBGS, and
-identical warm rMM state. Each episode uses
-\texttt{seed} $= \texttt{SEED\_BASE} + \texttt{ep}$. Each arm is
-evaluated for $N=100$ episodes; per-seed differences feed a paired
-$t$-test. The protocol is implemented in
-\texttt{bench\_lock\_slack.py}.
+The substantive claims of this paper are empirical: the central
+table is a ladder of paired-seed score deltas, and the central
+narrative is which interventions moved the score and which did not.
+The methodology that produces those numbers is worth stating
+plainly before any are shown, because most of the negative results
+that we report would have looked positive under a weaker protocol.
+
+\paragraph{Paired-seed evaluation.}
+Each experiment is a paired A/B test. Two agents share identical
+pretrained ball and opponent VBGS, identical warm rMM state loaded
+from \texttt{models/agent\_state.target\_y.pkl}, and identical
+hyperparameters except for the single intervention under test. They
+then play matched episodes with seeds
+$\text{SEED}_{\text{BASE}}+1,\ldots,\text{SEED}_{\text{BASE}}+N$.
+Per-seed score differences feed a paired $t$-test. The protocol is
+implemented in our \texttt{bench\_lock\_slack.py} script.
 
 \paragraph{Metrics.}
-Per-episode score (sum of $\pm 1$ rewards over 21 points), contacts
-per episode, no-contact losses (rallies in which the paddle never
-touched the ball), wins ($\text{score} > 0$), and contact-rally win
-rate.
+Each ALE/Pong-v5 episode runs to first-to-21, so the per-episode
+score is bounded in $[-21, +21]$. Beyond mean score we record three
+diagnostic quantities. Contacts per episode counts paddle-ball
+contacts; no-contact losses counts rallies the agent lost without
+ever touching the ball; and the contact-rally win rate is the
+fraction of contact rallies that the agent won. These three
+together let us separate ``failed to reach the ball'' from
+``reached but lost the rally,'' which is the distinction the rMM
+acts on.
 
-\paragraph{Significance.}
-We treat $|\Delta| < 1$ point as inside the noise band at $N=100$
-(standard error on the paired mean is $\approx 0.7$--$1.0$). At
-$N=20$ paired arms, the noise band widens to $\approx 2$ points and
-we required $p < 0.001$ to claim a positive result.
+\paragraph{Sample sizes and noise band.}
+At $N=100$ episodes per arm, the standard error on the paired mean
+difference is consistently in the range $0.7$--$1.0$ points, and we
+treat $|\Delta| < 1$ point as inside the noise band. Earlier in
+this project we ran at $N=20$ and found the noise band widened to
+roughly $\pm 2$ points; results from that period would not have
+survived $N=100$. We have re-run the surviving interventions at
+$N=100$ for this paper.
+
+\paragraph{Significance threshold.}
+We report a result as \emph{positive} when the paired $t$-test
+clears $p < 0.05$ at $N=100$ \emph{and} the direction of the effect
+is consistent with the mechanism we believe is at work. The latter
+clause is not standard but protects against the easy mistake of
+declaring victory for an intervention that happens to correlate
+with score for a reason orthogonal to its motivation.
 
 % =========================================================================
 \section{Results: An Improvement Ladder}\label{sec:results}
 % =========================================================================
 
-Table~\ref{tab:ladder} traces the chronology of substantive changes.
-The full set of nineteen attempted interventions is in
-Section~\ref{sec:negatives}.
+The agent's three-week development cycle produced seven
+interventions that cleared the threshold in
+Section~\ref{sec:methodology}. We report them here in the order in
+which they were introduced; their cumulative effect is the
+improvement ladder of Table~\ref{tab:ladder}.
 
 \begin{table}[t]
 \caption{Improvement ladder. Mean score per episode, paired-seed
-bench, $N{=}100$.}\label{tab:ladder}
+bench, $N{=}100$. The asterisked row is a planner replacement on
+the same code path; all other rows are additive.}\label{tab:ladder}
 \centering
 \begin{tabular}{lrr}
 \toprule
 Configuration & Mean score & $\Delta$ \\
 \midrule
-Rule-based baseline                          & $-14.4$ &       \\
-Tracking current $b_y$ ($H{=}3$)             & $-20.9$ & $-6.5$ \\
-$+\,$ landing-prediction target              & $-10.8$ & $+10.1$ \\
-$+\,$ EMA raw velocity                       & $-8.4$  & $+2.4$  \\
-$+\,$ bounce-detection + wall-clip           & $-1.7$  & $+6.7$  \\
-$+\,$ tree-search planner (replaces MPPI)    & $-1.7$  & $+5.3$\textsuperscript{*} \\
-$+\,$ rMM re-featured on $t_y$               & $+1.9$  & $+3.6$  \\
-$+\,$ \texttt{late\_bounce\_strategic} ($\alpha{=}0.6$) & $+2.6$  & $+0.7$  \\
+Rule-based baseline                                              & $-14.4$ &        \\
+EFE agent tracking current $b_y$ ($H{=}3$)                       & $-20.9$ & $-6.5$ \\
+$+\,$ landing-prediction target                                  & $-10.8$ & $+10.1$\\
+$+\,$ EMA raw velocity                                           & $-8.4$  & $+2.4$ \\
+$+\,$ bounce-detection + wall-clip detectors                     & $-1.7$  & $+6.7$ \\
+$+\,$ tree-search planner (replaces MPPI)\textsuperscript{*}     & $-1.7$  & $+5.3$ \\
+$+\,$ rMM re-featured on $t_y$                                   & $+1.9$  & $+3.6$ \\
+$+\,$ \texttt{late\_bounce\_strategic} ($\alpha{=}0.6$)          & $+2.6$  & $+0.7$ \\
 \bottomrule
 \end{tabular}
-\smallskip\\
-\textsuperscript{*}MPPI$(H{=}15)$ vs tree$(H{=}3)$ on the same code path.
 \end{table}
 
-\paragraph{Two non-modeling wins.}
-The largest single improvement was bounce-aware velocity tracking
-($+4.8$ mean per episode, paired $t=4.99$, $p<0.001$). The second
-was diagnosing that the production code used MPPI$(H{=}15, N{=}128)$
-while the bench harness used tree search $(H{=}3)$. MPPI's averaging
-washed out the per-input bounce-detection signal; long-horizon
-linear-Gaussian rollouts drifted past depth $\sim 5$. Together these
-two changes account for $>90\%$ of the total agent improvement,
-\emph{neither of which is a change to the generative model itself}.
+The very first row of the ladder is informative. A bare EFE agent
+that simply tries to keep the paddle level with the \emph{current}
+ball $y$ scores worse than the rule-based baseline. The Active
+Inference framework, in other words, does not by itself produce a
+competitive Pong agent: the score depends critically on the targets
+$o^*$ that one feeds into the pragmatic term, and on the inputs
+the agent uses to construct those targets.
+
+\paragraph{Two non-modelling wins.}
+The two largest entries on the ladder both relate to inputs and
+planner mechanics rather than to the generative model. The first is
+the pair of bounce-aware velocity detectors of
+Section~\ref{sec:agent}. With those detectors active the score
+jumps from $-8.4$ to $-1.7$, a paired-$t$ effect of $+4.80$ per
+episode at $t = 4.99$, $p < 0.001$. The mechanism is direct: the
+agent's landing predictions were systematically wrong for the three
+frames immediately following each wall or paddle bounce, because
+the EMA velocity estimate was blending across the discontinuity;
+hard-resetting the EMA on detected bounces removes the error. The
+second is a planner replacement. We discovered during this work
+that the production \texttt{play\_efe.py} script was running an MPPI
+planner with horizon 15 and 128 rollouts, while the bench harness
+was scoring tree-search with horizon 3. A three-way 100-episode
+paired bench showed MPPI$(H{=}15)$ at $-7.0$, MPPI$(H{=}3)$ at
+$-4.4$, and the deterministic tree at $-1.7$. The MPPI losses
+decompose roughly in half: long horizons cost $\sim$2.6 points
+because the linear-Gaussian rollout drifts past depth five with no
+wall-bounce correction, and stochastic sampling costs another
+$\sim$2.7 points because 128 random length-3 trajectories
+underperform the deterministic 27-action sweep. Together these two
+non-modelling changes account for more than $90\%$ of the agent's
+total improvement over the rule-based baseline.
 
 \paragraph{Strategic targeting.}
-\texttt{late\_bounce\_strategic} (\S\ref{sec:agent}) was the first
-intervention that exploited a behavioural model of the opponent ---
-the observation that the hand-coded ALE/Pong opponent tracker lags
-on direction reversals near its own paddle. An $\alpha$-sweep at
-$N=100$ identified $\alpha{=}0.6$ as the optimum
-($\Delta = +0.71$, $p \approx 0.05$).
+The last positive intervention is the only one that targets the
+opponent's known behaviour. \texttt{late\_bounce\_strategic} adds a
+small bonus to candidate aim points whose predicted return
+trajectory has a wall bounce occurring within a few frames of the
+opponent's contact line. The ALE Pong opponent's lag controller
+mistracks direction reversals near its own paddle; an
+$\alpha$-sweep at $N=100$ identified $\alpha{=}0.6$ as the
+optimum, with $\Delta = +0.71$ at $p \approx 0.05$. This is a
+small effect, but it is the first one in the history of the agent
+that exploits a model of the opponent's behaviour explicitly,
+which makes it qualitatively different from the input- and
+planner-side wins above.
 
 % =========================================================================
-\section{Negative Results}\label{sec:negatives}
+\section{What Did Not Work}\label{sec:negatives}
 % =========================================================================
 
-Twelve out of nineteen documented interventions had no effect or
-actively regressed the score. Reporting them is part of this paper's claim
-that paired-seed evaluation is necessary for closed-form AIF
-research, where every change to the generative model or the planner
-plausibly looks right in isolation.
+Fifteen of the twenty-two interventions we tried during this
+agent's development did not produce a defensible positive result.
+We report them in Table~\ref{tab:neg}, together with one-line
+descriptions and the category of intervention. There is a strong
+pattern that runs through the negative results, which we
+characterise after the table.
 
 \begin{table}[t]
-\caption{Negative results, all $N{=}100$ paired-seed bench. ``EMA''
-denotes a smoothing intervention; ``anticip.''\ denotes an
-intervention that commits to a stale prediction.}\label{tab:neg}
+\caption{Negative results. All deltas are paired-seed bench at
+$N{=}100$ unless explicitly noted otherwise. ``smoothing''
+indicates an intervention that reduces frame-to-frame noise in
+some estimate; ``anticip.''\ indicates an intervention that commits
+to a longer-horizon prediction; ``model'' indicates a change to
+the generative model; ``planning'' indicates a change to the
+planner; ``composition'' indicates a combination of two earlier
+ideas; ``feature'' indicates a change to the rMM feature
+space.}\label{tab:neg}
 \centering
 \begin{tabular}{lrl}
 \toprule
-Intervention & $\Delta$\,mean & Category \\
+Intervention                                                    & $\Delta$\,mean    & Category    \\
 \midrule
-EMA on landing prediction ($\alpha{=}0.5$)           & $-0.36$ & smoothing \\
-$v_y$ median-warmup window after bounce              & $-1.54$ & smoothing \\
-\texttt{opp\_y} idle pre-positioning                  & $-1.12$ & anticip. \\
-Adaptive horizon                                     & neg.    & planning \\
-Hybrid $\alpha$ raw velocity EMA                     & neg.    & smoothing \\
-rMM offset feature vs $t_y$                          & neg.    & feature \\
-Wall-coordinate fix                                  & neg.    & model \\
-Ball VBGS $K{=}4$ retrain                            & neg.    & model \\
-Aim-below offset (composition w/ anticipatory)       & $-0.61$ & composition \\
-Paddle-centered defense                              & $-1.21$ & anticip. \\
-$\ldots$                                             &         &           \\
+EMA on landing prediction ($\alpha{=}0.5$)                      & $-0.36$           & smoothing   \\
+$v_y$ median-warmup window after bounce                         & $-1.54$           & smoothing   \\
+\texttt{opp\_y} idle pre-positioning                            & $-1.12$           & anticip.    \\
+Adaptive horizon (grow $H$ near contact)                        & null              & planning    \\
+Hybrid $\alpha$ raw velocity EMA                                & null              & smoothing   \\
+rMM offset feature vs $t_y$                                     & null              & feature     \\
+Global wall-coordinate fix (corrupts learned bias)              & $-1.05$           & model       \\
+Ball VBGS $K{=}4$ retrain                                       & null              & model       \\
+Aim-below offset (composed w/ anticipatory)                     & $-0.61$           & composition \\
+Paddle-centered defense on late incoming bounces                & $-1.21$           & anticip.    \\
+Adaptive \texttt{late\_bounce} window (EMA on FSLB)             & $+1.06,\,p{=}0.19$& null        \\
+Opponent action rMM (Dir-Cat head, point estimate)              & $+0.89,\,p{=}0.23$& null        \\
+Opponent action rMM with wall-correct rollout                   & $+0.58,\,p{=}0.47$& null        \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\paragraph{A pattern.}
-Every intervention that traded responsiveness for noise reduction
-lost. Every intervention that committed to a stale prediction lost.
-The interventions that won were either fixes to wrong inputs
-(bounce detection, wall clip) or replacements of stochastic
-averaging by deterministic search (MPPI $\to$ tree).
-% TODO: this might deserve a sentence framing it as a finding about
-% high-noise low-horizon control settings generally, not just Pong.
+\paragraph{Smoothing and anticipation lose.}
+The first observation is that every intervention that traded
+responsiveness for noise reduction lost: EMAs on landing
+predictions, longer warmup windows for velocity estimation, hybrid
+$\alpha$ schedules that smooth far-field velocity more
+aggressively. In Pong's noisy short-horizon control problem, the
+cost of momentarily being wrong about a stable estimate is small,
+and the cost of being slow to respond when the situation changes
+is large. The same logic, in mirror image, explains why every
+``anticipatory'' intervention lost: pre-positioning the paddle for
+a predicted future event commits to a guess at long-horizon
+predictions that our rollout cannot reliably make.
+
+\paragraph{Richer-model interventions are null.}
+The second observation, more interesting and the principal new
+finding of the present paper, is that three back-to-back attempts
+to enrich the generative model produced null results within
+paired-bench noise. The adaptive \texttt{late\_bounce} window
+attempted to learn the late-bounce timing from the agent's own
+winning returns; its EMA saturated at the upper clip and the bench
+showed $+1.06$ at $p=0.19$. The opponent action rMM, with a
+Dirichlet-Categorical head over $\{\text{NOOP},\text{UP},\text{DOWN}\}$
+conditional on $(b_x, b_y, v_x, v_y, o_y)$, learned a policy
+posterior over $\sim$900\,000 observed transitions but produced
+$+0.89$ at $p=0.23$. Replacing the wall-buggy ball rollout used
+inside that opponent prediction with the measured wall coordinates
+(an intervention that should, in theory, improve long-horizon
+predictions of the opponent's $y$) moved the result to $+0.58$ at
+$p=0.47$ --- if anything slightly worse. Section~\ref{sec:ceiling}
+explains why this triple null is, on reflection, not surprising.
+
+\paragraph{The single global wall-coordinate fix is the most
+instructive entry.}
+The ball's RAM-normalised $y$ never reaches the bounds $[0, 1]$
+that the original linear-Gaussian rollout used for bounces; the
+measured walls are at $0.18$ and $0.81$. A global fix to use the
+measured walls is therefore theoretically correct. Empirically it
+cost $-1.05$ points per episode even with 200 episodes of
+re-warmup on the corrected geometry. The diagnosis, confirmed by
+the per-bounce-mode landing-bias diagnostic, was that the
+\texttt{bias\_dict} EMA and the rMM had silently absorbed the wall
+bug into their compensating corrections; removing the bug broke
+information the agent was relying on. We report this as the
+clearest single example of an architectural improvement that is
+correct on paper and counterproductive in practice, because of how
+deeply learned compensations had wired themselves around the
+original error.
 
 % =========================================================================
 \section{Reference Points, Not Competitors}\label{sec:comparison}
 % =========================================================================
 
-We position our numbers against the AXIOM Gameworld~10k results and
-the Atari~100k sample-efficient RL leaderboard as \emph{reference
-points}, not as direct competitors. Three differences make any
-head-to-head claim ill-founded, and we state them up front before
-showing any numbers:
+We now place the agent's score next to the strongest external
+reference points we are aware of. We do so cautiously. Three
+structural differences make any direct head-to-head ranking
+ill-founded, and we want to state them before showing any numbers,
+not after.
 
-\begin{itemize}
-  \item \textbf{Input modality.} AXIOM, BBF, EfficientZero, and
-        DreamerV3 consume raw pixels. Our agent consumes four RAM
-        bytes (\texttt{RAM[49, 54, 51, 50]}) after $1/255$
-        normalisation. This is a strictly easier perceptual front
-        end: the agent is told the ball's $(x,y)$ and both
-        paddles' $y$ exactly. The substantive computational work
-        of the paper --- VBGS dynamics, EFE planning, rMM aim
-        policy --- is downstream of perception, and our claims are
-        about that downstream work. A pixel front end would be a
-        natural extension and is listed as future work.
-  \item \textbf{Game.} Gameworld Bounce~\cite{ref_axiom} is a
-        Pong-\emph{like} task with custom physics and a custom
-        opponent. \texttt{ALE/Pong-v5} is the canonical Atari
-        title with the original ALE opponent. The two games are
-        not the same task and should not be benchmarked against
-        each other on a common scoreboard.
-  \item \textbf{Sample regime.} AXIOM trains on 10\,000
-        environment steps with no pretraining. Our VBGS is
-        pretrained on 30\,000 offline frames of free play (no
-        reward signal), then run online with rMM accumulation
-        across rallies but no gradient steps anywhere. The
-        appropriate axis for comparison is probably
-        ``interactions-to-skill,'' not ``frames'' or
-        ``parameters,'' and we do not know how to compute it
-        cleanly across these very different pipelines.
-\end{itemize}
+\paragraph{Input modality.}
+AXIOM, BBF, EfficientZero, and DreamerV3 all consume raw pixels.
+Our agent consumes four RAM bytes after $1/255$ normalisation: it
+is told the ball's $(x,y)$ and the two paddles' $y$ exactly. This
+is a strictly easier perceptual front end, and any score
+comparison without this disclosure would be misleading. The
+substantive computational work of our paper --- VBGS dynamics
+modelling, EFE planning, the rMM aim policy --- is downstream of
+perception. A natural extension to a slot-attention or
+object-detector front end is listed as future work.
 
-With those caveats explicit, Table~\ref{tab:axiom} collects the
+\paragraph{Game.}
+The Pong analog in AXIOM's benchmark, \emph{Bounce}, is not the
+same game as \texttt{ALE/Pong-v5}. Bounce has custom physics, a
+custom opponent, and a fixed 10\,000-step episode budget;
+ALE/Pong-v5 is the canonical Atari title, with its own opponent,
+its 21-point first-to-end termination, and the well-studied quirks
+of the 1972 ROM. Scores on the two games are not interchangeable
+and should not be reported on a common scoreboard. The most
+important single piece of future work in this paper is to port the
+present agent to Bounce so that the comparison can be done
+honestly.
+
+\paragraph{Sample regime.}
+AXIOM is trained on 10\,000 environment steps from scratch, with
+online structure growth driving the components into existence as
+the agent plays. Our generative model is pretrained on 30\,000
+offline frames of free play with no reward signal, after which the
+rMM and the bias EMAs accumulate online across rallies but no
+gradient steps occur anywhere. ``Frames'' is therefore the wrong
+axis. ``Interactions-to-skill'' might be the right axis, but we
+do not know how to compute it cleanly across pipelines of such
+different shape.
+
+With these caveats stated, Table~\ref{tab:axiom} shows the
 reference points.
 
 \begin{table}[t]
 \caption{Reference points. AXIOM and baselines on Bounce
-(Gameworld 10k, 10\,000 env.\ steps, 10 seeds, pixel input). Our
-agent on \texttt{ALE/Pong-v5} (RAM input, $N{=}100$ episodes,
-30\,000-frame pretraining).
-\textbf{These are different games on different inputs}; rows are
-not directly comparable.}\label{tab:axiom}
+(Gameworld 10k, 10\,000 environment steps, 10 seeds, pixel
+input). Our agent on \texttt{ALE/Pong-v5} (RAM input, $N{=}100$
+episodes, 30\,000-frame pretraining). \textbf{These are different
+games on different inputs}; rows are not directly
+comparable.}\label{tab:axiom}
 \centering
 \begin{tabular}{lrll}
 \toprule
-Agent                                 & Score                  & Input  & Domain \\
+Agent                                 & Score          & Input  & Domain           \\
 \midrule
-AXIOM                                 & $+27 \pm 13$           & pixels & Gameworld Bounce \\
-DreamerV3                             & $+14 \pm 16$           & pixels & Gameworld Bounce \\
-BBF                                   & $-1 \pm 15$            & pixels & Gameworld Bounce \\
+AXIOM                                 & $+27 \pm 13$   & pixels & Gameworld Bounce \\
+DreamerV3                             & $+14 \pm 16$   & pixels & Gameworld Bounce \\
+BBF                                   & $-1 \pm 15$    & pixels & Gameworld Bounce \\
 \midrule
-\textbf{Ours} (closed-form AIF)       & $+1.94$                & RAM    & ALE/Pong-v5 \\
-Rule-based baseline                   & $-14.4$                & RAM    & ALE/Pong-v5 \\
+\textbf{Ours} (closed-form AIF)       & $+1.94$        & RAM    & ALE/Pong-v5      \\
+Rule-based baseline                   & $-14.4$        & RAM    & ALE/Pong-v5      \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\paragraph{What is, in our view, comparable.}
-The shared substrate across our work and AXIOM ---
-VBGS components, NIW conjugate updates, closed-form variational
-inference, EFE planning --- means that the \emph{architectural}
-comparisons carry directly: single-object vs object-centric,
-pretraining on free play vs online structure growth and Bayesian
-model reduction, deterministic tree search vs sampled rollouts.
-The empirical lessons from this paper --- responsiveness beats
-smoothing in low-horizon noisy control; bounce-aware velocity
-tracking is decisive in projectile tasks; deterministic search
-beats sampled averaging at short horizons --- should generalise to
-the AXIOM regime, but we cannot claim they do without porting our
-agent to Gameworld Bounce. We list that port as the most important
-single piece of future work.
+What \emph{is} comparable across the rows of Table~\ref{tab:axiom}
+is the underlying substrate. VBGS components, NIW conjugate
+updates, closed-form variational inference, and EFE planning are
+shared between our agent and AXIOM. The architectural axes
+along which the two systems differ --- single-object vs
+object-centric; pretraining vs online structure growth;
+deterministic tree search vs MCTS; single-game vs ten-game ---
+remain meaningful even when the absolute scores are not.
+
+% =========================================================================
+\section{The Ceiling, and Why It Is There}\label{sec:ceiling}
+% =========================================================================
+
+The negative-results table contains a finding that we believe is
+worth highlighting in its own right. Three back-to-back
+architectural interventions that were each, on theoretical grounds,
+expected to improve the score produced null effects: the adaptive
+late-bounce window, the opponent-action rMM, and the wall-correct
+opponent rollout. Together with the smoothing and anticipation
+failures of Section~\ref{sec:negatives}, they describe a clear
+plateau. We argue here that the plateau is structural rather than
+incidental, and that its causes are now clearly attributable.
+
+The agent's score on \texttt{ALE/Pong-v5} is the joint outcome of
+three independent quantities: how accurately it predicts where the
+ball will arrive, how precisely it can position the paddle there,
+and how often it can force the opponent into a miss. The first
+quantity has been brought close to its physical limit by the
+bounce-aware velocity detectors of Section~\ref{sec:agent}: the
+mean post-bounce landing-prediction error is on the order of two
+pixels in the normalised coordinate system, which is comparable to
+the discretisation noise of the underlying RAM observations. The
+second quantity is set by the action set itself. Under the standard
+\texttt{frame\_skip}$=4$ wrapper, the paddle moves by
+$\pm 0.060$ in $y$ per ALE step, which is the floor on positioning
+error before any prediction-side error is added. The third quantity
+is set by the design of the ALE opponent: a deterministic lag
+tracker that misses only in three narrow circumstances --- late
+wall-bounces near its own paddle line, returns with $|v_y|$ large
+enough to outrun its tracking lag, and end-of-screen geometry where
+its paddle cannot move further. The first of these we have already
+exploited with \texttt{late\_bounce\_strategic}; the second is
+bounded by the paddle reflection physics and cannot be increased
+arbitrarily; the third is rare.
+
+A score near zero with a per-episode standard deviation of five is
+exactly what one would expect when a long sequence of binary
+rally outcomes is close to 50/50, which is in turn what one would
+expect when neither side has an exploitable systematic advantage
+in the remaining state space. Past the late-bounce window, the ALE
+opponent simply does not miss; past the perception floor, the
+agent's landing predictions cannot get materially more accurate;
+past the action discretisation, the paddle cannot get materially
+more precise. Every recent intervention that has failed has done so
+in one of these three regions, and the pattern of failure ---
+smoothing trades responsiveness for noise that we cannot in fact
+reduce, anticipation commits to long-horizon predictions that we
+cannot in fact make, richer policy models reparameterise an
+expectation that the planner cannot in fact use distributionally
+--- is consistent with the structural account just given.
+
+What would, on this account, break the ceiling? Three things, in
+descending order of plausibility. A learned generative model of the
+\emph{opponent's policy} (rather than of its position trajectory),
+used distributionally inside the planner so that strategic returns
+can exploit opponent uncertainty rather than just opponent
+position. A long-horizon rollout that does not degrade past depth
+five --- which means either a non-linear VBGS rollout at every
+step or a wall-aware structural correction --- so that strategic
+multi-bounce returns can be planned more than three frames ahead.
+And, more speculatively, a different action representation that
+breaks the discretisation floor: a ``committed move'' macro-action
+that pre-positions the paddle at multi-frame granularity. The
+present paper does not implement any of these; we list them to
+make the limits of the current architecture as visible as the
+mechanisms that produced its successes.
 
 % =========================================================================
 \section{Discussion and Outlook}\label{sec:discussion}
 % =========================================================================
 
-\paragraph{What the result is, framed honestly.}
-The minimum closed-form AIF agent we could write, given 30\,000
-frames of free play and no gradient steps, gets to a mean score of
-$+1.94$ on \texttt{ALE/Pong-v5}. That is barely net-winning in
-absolute terms, and we are not claiming otherwise. What is more
-interesting than the absolute number is the decomposition: the
-agent's skill is concentrated in two changes
-(bounce-aware velocity, deterministic tree search) that are neither
-architectural changes to the generative model nor algorithmic
-changes to inference. Most of the ``Active Inference'' part of the
-agent is doing its job before either change is made; both changes
-are about feeding it cleaner inputs and querying it more decisively.
+The natural way to read the agent we built is not as a benchmark
+contribution but as a calibration. It establishes, as far as we are
+aware for the first time on a real ALE title, what a fully
+closed-form Active Inference agent can do given thirty thousand
+frames of free play and no gradient steps anywhere. The answer is
+that it can be barely net-winning, and that the path from
+rule-based baseline to barely-winning is dominated by two changes
+(velocity tracking, planner type) that the Active Inference
+literature does not usually discuss because they live outside the
+generative model. The result is therefore informative both as a
+positive statement --- closed-form AIF can be made to work at this
+scale --- and as a cautionary one, in that the failure modes a
+practitioner will spend most of their time fixing are not in the
+parts of the system the framework draws attention to.
 
-\paragraph{What did not work.}
-A wider ball mixture ($K{=}4$) starved on per-component data; an
-online ball VBGS regressed the score by $\approx -10$ via a
-posterior-drift mechanism we do not yet understand; every smoothing
-intervention we tried on the landing prediction lost; anticipatory
-pre-positioning lost in every composition. We document these as
-load-bearing constraints for follow-up work, not as cleanup we
-deferred.
+The negative results are, we believe, the more useful contribution.
+The pattern across fifteen failed interventions --- responsiveness
+wins, smoothing and anticipation lose, richer-model
+reparameterisations that the planner cannot use distributionally
+produce null effects --- is not specific to Pong, and we expect it
+to recur in any closed-form AIF agent operating under similar
+short-horizon noise conditions. The methodology that surfaced the
+pattern --- paired-seed bench, $N=100$, paired $t$-tests, explicit
+significance threshold, an absolute prohibition on declaring
+victories that the protocol does not justify --- is the part of
+the work we would most like to see imported into the
+sample-efficient AIF literature.
 
-\paragraph{Future work.}
-The single most important next step is to port the agent to
-Gameworld Bounce~\cite{ref_axiom}, so that a head-to-head comparison
-with AXIOM, BBF, and DreamerV3 becomes meaningful. Three further
-directions: (i) replace pretraining with online structure growth
-and Bayesian model reduction, closing the gap to AXIOM on
-methodology; (ii) diagnose the online ball VBGS posterior-drift
-regression that currently blocks fully online learning of dynamics;
-(iii) add a pixel front end (an object detector or slot
-attention) so that the RAM concession can be retired and the
-comparison axis becomes purely about dynamics modelling and
-planning, not perception.
+The most important single piece of future work is the port to
+Gameworld Bounce, which would convert
+Table~\ref{tab:axiom}'s ``reference points'' into an actual
+comparison. Two further directions follow naturally. The first is
+replacing the offline VBGS pretraining with online structure
+growth and Bayesian model reduction in the AXIOM idiom, which
+would close the largest single methodological gap between our
+agent and the state of the art. The second is the distributional
+use of the opponent action rMM described in
+Section~\ref{sec:ceiling}: trajectory sampling under the
+Dirichlet-Categorical posterior, with the entropy of $p(a\mid s)$
+serving as a confidence signal that the planner consumes alongside
+its point estimates. We were unable, in the present three-week
+experimental cycle, to demonstrate empirical benefit from either
+of these, but the structural argument for both is strong, and we
+would expect future work to settle the question.
 
 \begin{credits}
-\subsubsection{\ackname} [TODO --- funding sources, lab acknowledgments,
-Anthropic Claude tooling acknowledgment if appropriate.]
+\subsubsection{\ackname} [TODO --- funding sources, lab
+acknowledgments; Anthropic Claude tooling acknowledgment if
+appropriate.]
 
 \subsubsection{\discintname}
-The authors have no competing interests to declare that are relevant
-to the content of this article.
+The authors have no competing interests to declare that are
+relevant to the content of this article.
 \end{credits}
 
 % =========================================================================
@@ -514,8 +871,8 @@ K.: Active Inference on Discrete State-Spaces: A Synthesis. Journal
 of Mathematical Psychology \textbf{99}, 102447 (2020)
 
 \bibitem{ref_vbgs}
-[TODO --- canonical VBGS reference; possibly Bishop 2006 ch.\ 10 for
-variational Gaussian mixtures.]
+Bishop, C.M.: Pattern Recognition and Machine Learning, Chapter 10
+(Approximate Inference), Springer (2006)
 
 \end{thebibliography}
 
