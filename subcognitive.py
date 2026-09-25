@@ -14,6 +14,21 @@ import toml
 import argparse
 import threading
 import pprint
+import importlib.util
+
+# FastDDS shared-memory hygiene, shared with utils/netmon's launcher. Loaded BY FILE PATH on
+# purpose: importing `netmon.shm_guard` normally would execute netmon/__init__.py, which drags in
+# Ice, the bandwidth sniffer and the web server — none of which this standalone launcher needs.
+def _load_shm_guard():
+    path = Path(__file__).resolve().parent / "utils" / "netmon" / "shm_guard.py"
+    if not path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("shm_guard", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+_shm_guard = _load_shm_guard()
 
 parser = argparse.ArgumentParser(description="RoboComp subcognitive monitor")
 parser.add_argument("file_name", type=str, default="sub.toml", help="Path to TOML components file")
@@ -185,6 +200,17 @@ def remove_existing_processes(components):
     time.sleep(1)
 
 remove_existing_processes(components)
+
+# With our own components just killed, garbage-collect FastDDS segments nothing references any more,
+# then confirm shared-memory discovery actually works before starting the producers. An orphaned
+# /dev/shm/fastdds_port* segment from an unclean shutdown makes every DDS stream read 0.0 Hz with no
+# error anywhere, which is indistinguishable from a code regression until you go looking (07-21).
+if _shm_guard is not None:
+    _shm_guard.clean_orphan_shm(console)
+    if not _shm_guard.preflight_dds(console):
+        raise SystemExit(1)
+else:
+    console.print("[dim][shm] guard not found (utils/netmon/shm_guard.py) — skipping DDS preflight[/dim]")
 
 def print_components_table(components):
     table = Table(title="🧠 Loaded Components", box=box.SIMPLE_HEAVY)
