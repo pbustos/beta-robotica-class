@@ -81,6 +81,52 @@ def check_and_start_webots():
 
 webots_process = check_and_start_webots()
 
+# Check if rcnode (IceStorm inside icebox) is running, start it if not
+RCNODE_PROXY = "IceStorm/TopicManager:tcp -p 9999"
+
+def rcnode_alive():
+    try:
+        with Ice.initialize() as communicator:
+            communicator.stringToProxy(RCNODE_PROXY).ice_ping()
+            return True
+    except Exception:
+        return False
+
+def check_and_start_rcnode(timeout=10):
+    if rcnode_alive():
+        console.print("[green]✓ rcnode is already running[/green]")
+        return True
+
+    robocomp = os.environ.get("ROBOCOMP", os.path.expanduser("~/robocomp"))
+    script = os.path.join(robocomp, "tools", "rcnode", "rcnode.sh")
+    if not os.path.exists(script):
+        console.print(f"[red]rcnode not running and script not found at {script}[/red]")
+        return False
+
+    console.print("[yellow]rcnode not detected. Starting rcnode...[/yellow]")
+    try:
+        subprocess.Popen(
+            ["bash", script],
+            env={**os.environ, "ROBOCOMP": robocomp},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True  # Detach so it outlives this script
+        )
+    except Exception as e:
+        console.print(f"[red]Failed to start rcnode: {e}[/red]")
+        return False
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if rcnode_alive():
+            console.print("[green]✓ rcnode started successfully[/green]")
+            return True
+        time.sleep(0.5)
+    console.print(f"[red]rcnode did not answer on '{RCNODE_PROXY}' after {timeout}s[/red]")
+    return False
+
+check_and_start_rcnode()
+
 def cpu_usage_bar(cpu_percent, width=10):
     """Return a colored CPU usage bar."""
     filled = int((cpu_percent / 100) * width)

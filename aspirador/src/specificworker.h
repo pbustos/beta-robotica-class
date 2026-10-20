@@ -53,7 +53,7 @@ class SpecificWorker : public GenericWorker
 
         //robot
         const int ROBOT_LENGTH = 400;
-        QGraphicsPolygonItem *robot_polygon;
+        QGraphicsItem *robot_polygon;
         int robot_id;
         std::vector<QPointF> trail;
         std::vector<QGraphicsItem *> items;
