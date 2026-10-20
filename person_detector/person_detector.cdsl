@@ -1,0 +1,13 @@
+import "VisualElements.idsl";
+import "Camera360RGB.idsl";
+
+Component person_detector
+{
+    Communications
+    {
+        requires Camera360RGB;
+        implements VisualElements;
+    };
+    language python;
+    gui Qt(QWidget);
+};

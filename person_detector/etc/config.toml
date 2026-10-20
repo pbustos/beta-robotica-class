@@ -1,0 +1,33 @@
+[Proxies]
+Camera360RGB = "camera360rgb:tcp -h localhost -p 10098"
+
+[Endpoints]
+VisualElements = "tcp -p 11105"
+
+[Period]
+Compute = 100
+Emergency = 500
+
+[Detector]
+Model = "yolo26l-seg.engine"
+Confidence = 0.5
+StripWidth = 768
+StripCount = 3
+IouThreshold = 0.5
+TrackIouThreshold = 0.3
+TrackMaxAge = 5
+EdgeTolerance = 2
+VerticalOverlapMin = 0.5
+PublishRoiPixels = false
+
+[Display]
+Enabled =true 
+
+[Component.Debug]
+Verbose = true
+
+[Ice]
+Warn.Connections = "0"
+Trace.Network = "0"
+Trace.Protocol = "0"
+MessageSizeMax = "200048000"

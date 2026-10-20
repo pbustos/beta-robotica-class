@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+bin/
+*.pt
+# TensorRT engines and the ONNX they are built from: large, and specific to this GPU +
+# TensorRT + driver combination, so they are build output and never portable source.
+*.engine
+*.onnx
