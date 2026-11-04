@@ -1,0 +1,29 @@
+[Proxies]
+# Proxies for required interfaces
+# webots-bridge listens on 10006 with its default etc/config.toml; use 20006 if it runs with etc/chocachoca_config.toml.
+# One port only: other servers (e.g. shadow_bridge_dds) also implement Webots2Robocomp, and if two ports were listed Ice
+# could pick the wrong one. If the poses never change, the grader says so in its status line.
+Webots2Robocomp = "webots2robocomp:tcp -h localhost -p 10006"
+
+
+[Grader]
+RobotDEF = "shadow"            # DEF of the robot in the Webots world
+PersonDEF = "HUMAN_Manual"     # DEF of the person (beta_human.wbt)
+Duration = 180.0               # s, length of one measurement
+DistanceRef = 1000.0           # mm, nominal robot-person distance (centre to centre)
+ResultsFile = "results.csv"    # one line appended per measurement
+Student = ""                   # optional: pre-fills the student/group field
+AutoStart = false              # true: start measuring as soon as the component is up (unattended runs)
+
+[Period]
+Compute = 100
+Emergency = 500
+
+[Component.Debug]
+Verbose = true
+
+[Ice]
+Warn.Connections = "0"
+Trace.Network = "0"
+Trace.Protocol = "0"
+MessageSizeMax = "20004800"

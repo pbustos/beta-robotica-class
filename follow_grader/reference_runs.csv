@@ -1,0 +1,8 @@
+date,student,completed,duration_s,samples,sum_dist_err_mm,mean_dist_err_mm,sum_angle_err_rad,mean_angle_err_rad,max_dist_err_mm,var_dist_err_mm2,max_angle_err_rad,var_angle_err_rad2,std_dist_err_mm,std_angle_err_rad
+2026-11-04T09:09:34,"reference: chocachoca_basic (P advance)",1,180.0,1800,2503087.7,1390.6,847.3974,0.4708,,,,,,
+2026-11-04T09:28:43,"reference: chocachoca_basic (PID advance)",1,180.0,1801,3925224.1,2179.5,929.9264,0.5163,,,,,,
+2026-11-04T09:41:34,"reference: chocachoca_basic (PID advance + anti-windup)",1,180.0,1800,2865232.8,1591.8,908.0725,0.5045,3647.4,739777.7,3.1198,0.1862,860.1,0.4315
+2026-11-04T09:52:12,"reference: chocachoca_basic (PID + anti-windup + bbox person filter)",0,163.6,1635,3526885.8,2157.1,904.4481,0.5532,5305.4,1025484.7,3.1232,0.1693,1012.7,0.4115
+2026-11-04T09:57:43,"reference: chocachoca_basic (DWA only + bbox person filter)",1,180.0,1800,3024563.7,1680.3,896.6254,0.4981,3846.7,397990.1,1.3828,0.0954,630.9,0.3089
+2026-11-04T10:03:36,"no obstacles: chocachoca_basic PID only (PID advance + anti-windup)",1,180.0,1801,308592.2,171.3,352.0480,0.1955,681.1,15641.2,0.6530,0.0151,125.1,0.1229
+2026-11-04T10:12:10,"no obstacles: PID only, deadband 30, integral decay below 0.9 m",1,180.0,1801,163964.2,91.0,366.8227,0.2037,612.8,16276.1,0.8723,0.0184,127.6,0.1356

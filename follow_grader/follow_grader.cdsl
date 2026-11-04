@@ -1,0 +1,11 @@
+import "Webots2Robocomp.idsl";
+
+Component follow_grader
+{
+    Communications
+    {
+        requires Webots2Robocomp;
+    };
+    language Cpp11;
+    gui Qt(QWidget);
+};
