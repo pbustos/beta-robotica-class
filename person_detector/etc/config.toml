@@ -1,5 +1,5 @@
 [Proxies]
-Camera360RGB = "camera360rgb:tcp -h localhost -p 10098"
+Camera360RGB = "camera360rgb:tcp -h localhost -p 20098"
 
 [Endpoints]
 VisualElements = "tcp -p 11105"

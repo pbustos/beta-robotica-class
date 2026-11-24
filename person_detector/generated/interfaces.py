@@ -65,6 +65,24 @@ class TMetrics(list):
         super(TMetrics, self).insert(index, item)
 setattr(RoboCompVisualElements, "TMetrics", TMetrics)
 
+class TMask(list):
+    def __init__(self, iterable=list()):
+        super(TMask, self).__init__(iterable)
+
+    def append(self, item):
+        assert isinstance(item, RoboCompVisualElements.TPoint)
+        super(TMask, self).append(item)
+
+    def extend(self, iterable):
+        for item in iterable:
+            assert isinstance(item, RoboCompVisualElements.TPoint)
+        super(TMask, self).extend(iterable)
+
+    def insert(self, index, item):
+        assert isinstance(item, RoboCompVisualElements.TPoint)
+        super(TMask, self).insert(index, item)
+setattr(RoboCompVisualElements, "TMask", TMask)
+
 class TObjectList(list):
     def __init__(self, iterable=list()):
         super(TObjectList, self).__init__(iterable)
