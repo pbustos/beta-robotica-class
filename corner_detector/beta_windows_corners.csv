@@ -1,0 +1,13 @@
+# room polygon, inner wall faces, world frame, mm, counter-clockwise
+# robot start: x=-1920 y=-9453 theta=2.4133 rad (Webots rotation about z)
+id,x,y,type
+0,-100,-4357,convex
+1,-3259,-4357,concave
+2,-3259,-3555,convex
+3,-7979,-3555,convex
+4,-7979,-17958,convex
+5,-100,-17958,convex
+6,-100,-16458,convex
+7,-300,-16458,concave
+8,-300,-5857,concave
+9,-100,-5857,convex
